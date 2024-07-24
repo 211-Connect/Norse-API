@@ -42,7 +42,7 @@ router.get('/', async (req, res) => {
       typeof q.coords === 'string' ? q.coords.split(',') : q.coords;
     coords = coords instanceof Array && coords.length === 2 ? coords : null;
 
-    if (req.tenant.facets && req.tenant.facets instanceof Array) {
+    if (req?.tenant?.facets && req?.tenant?.facets instanceof Array) {
       // Get facets for faceted search for specific tenant
       req.tenant.facets?.forEach((data) => {
         aggs[data.facet] = {
@@ -203,7 +203,7 @@ router.get('/', async (req, res) => {
     const data = await ElasticClient.search(queryBuilder);
 
     const facets: any = {};
-    if (req.tenant.facets && req.tenant.facets instanceof Array) {
+    if (req?.tenant?.facets && req?.tenant?.facets instanceof Array) {
       for (const item of req.tenant.facets) {
         facets[item.facet] = item.name;
       }
@@ -211,32 +211,6 @@ router.get('/', async (req, res) => {
 
     cacheControl(res);
     res.json({ search: data, facets });
-
-    // Log search data
-    logger.log({
-      level: 'search',
-      message: 'search query',
-      sessionId: req.headers['x-session-id'],
-      tenantId: req.tenant.tenantId,
-      search: {
-        type: q.query_type,
-        query: q.query_type === 'text' ? q.query : null,
-        taxonomies: q.query_type === 'taxonomy' ? q.query : null,
-        total:
-          typeof data?.hits?.total !== 'number'
-            ? (data?.hits?.total?.value ?? 0)
-            : (data?.hits?.total ?? 0),
-        facets: q.filters,
-        location:
-          typeof q.coords === 'string' && q.coords.length > 0
-            ? {
-                type: 'point',
-                coordinates: q.coords.split(',').map((el) => parseFloat(el)),
-              }
-            : null,
-        distance: q?.distance ?? null,
-      },
-    });
   } catch (err) {
     logger.error(err);
     res.sendStatus(400);
