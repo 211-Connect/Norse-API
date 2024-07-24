@@ -11,8 +11,6 @@ import { logger } from './lib/winston';
 import { rateLimiter } from './middleware/rateLimiter';
 
 async function start() {
-  console.log(process.env.ELASTIC_NODE);
-
   const port = process.env.PORT ? Number(process.env.PORT) : 8080;
   const app = express();
 
