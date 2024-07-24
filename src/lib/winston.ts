@@ -1,6 +1,4 @@
 import winston from 'winston';
-import { ElasticsearchTransport } from 'winston-elasticsearch';
-import { ElasticClient } from './ElasticClient';
 
 export const logger = winston.createLogger({
   // Here we are adding a custom level called `search`
@@ -20,98 +18,10 @@ export const logger = winston.createLogger({
 
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) {
-  // If we're in production then log to `search-analytics` with the Elasticsearch transport
   logger.add(
-    new ElasticsearchTransport({
-      level: 'search',
-      indexPrefix: 'search-analytics',
-      indexSuffixPattern: 'YYYY.MM.DD',
-      client: ElasticClient,
-      ensureIndexTemplate: true,
-      indexTemplate: {
-        '@timestamp': {
-          type: 'date',
-        },
-        severity: {
-          type: 'text',
-          fields: {
-            keyword: {
-              type: 'keyword',
-            },
-          },
-        },
-        message: {
-          type: 'text',
-          fields: {
-            keyword: {
-              type: 'keyword',
-            },
-          },
-        },
-        sessionId: {
-          type: 'text',
-          fields: {
-            keyword: {
-              type: 'keyword',
-            },
-          },
-        },
-        tenantId: {
-          type: 'text',
-          fields: {
-            keyword: {
-              type: 'keyword',
-            },
-          },
-        },
-        search: {
-          type: {
-            type: 'text',
-            fields: {
-              keyword: {
-                type: 'keyword',
-              },
-            },
-          },
-          query: {
-            type: 'text',
-            fields: {
-              keyword: {
-                type: 'keyword',
-              },
-            },
-          },
-          taxonomies: {
-            type: 'text',
-            fields: {
-              keyword: {
-                type: 'keyword',
-              },
-            },
-          },
-          total: {
-            type: 'integer',
-          },
-          facets: {
-            type: 'object',
-          },
-          location: {
-            type: 'point',
-          },
-          distance: {
-            type: 'short',
-          },
-        },
-      },
-    }),
-  );
-
-  logger.add(
-    new ElasticsearchTransport({
-      level: 'info',
-      index: 'logs-app-api',
-      dataStream: true,
-      client: ElasticClient,
+    new winston.transports.Console({
+      level: 'error',
+      format: winston.format.simple(),
     }),
   );
 } else {
