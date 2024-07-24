@@ -52,7 +52,7 @@ router.delete(
     try {
       const favoriteList = await FavoriteList.findOne({
         ownerId: req.user.id,
-        _id: req.params.favoriteListId,
+        _id: req.params['favoriteListId'],
       });
 
       if (!favoriteList)
@@ -60,7 +60,7 @@ router.delete(
 
       const favorites = favoriteList.favorites;
       const index = favorites.findIndex(
-        (el) => el.toString() === req.params.favoriteId,
+        (el) => el.toString() === req.params['favoriteId'],
       );
 
       if (index > -1) {

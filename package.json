@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun --watch src/server.ts"
+    "dev": "bun --watch ./src/server.ts",
+    "build": "bun build ./src/server.ts --outdir ./build --target node",
+    "start": "node ./build/server.js"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.14.0",
@@ -33,7 +35,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/jwk-to-pem": "^2.0.3",
     "@types/node": "^20.14.12",
-    "dotenv": "^16.4.5",
+    "bun": "^1.1.20",
     "eslint": "^9.7.0",
     "nodemon": "^3.1.4",
     "prettier": "^3.3.3",

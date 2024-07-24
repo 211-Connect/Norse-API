@@ -196,6 +196,7 @@ router.get('/', async (req, res) => {
     }
 
     if (queryBuilder.query?.bool?.filter) {
+      // @ts-ignore
       queryBuilder.query.bool.filter = filters;
     }
 

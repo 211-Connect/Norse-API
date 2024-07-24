@@ -128,7 +128,7 @@ router.put('/:id', authorizeMiddleware(), async (req, res) => {
 
     await FavoriteList.updateOne(
       {
-        _id: req.params.id,
+        _id: req.params['id'],
         ownerId: req.user.id,
       },
       {
@@ -148,7 +148,7 @@ router.put('/:id', authorizeMiddleware(), async (req, res) => {
 router.delete('/:id', authorizeMiddleware(), async (req, res) => {
   try {
     await FavoriteList.deleteOne({
-      _id: req.params.id,
+      _id: req.params['id'],
       ownerId: req.user.id,
     });
     res.sendStatus(200);
