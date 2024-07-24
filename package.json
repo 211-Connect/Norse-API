@@ -5,8 +5,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "bun --watch ./src/server.ts",
-    "build": "bun build ./src/server.ts --outdir ./build --target node",
-    "start": "node ./build/server.js"
+    "build": "bun build ./src/server.ts --outdir ./build --target bun",
+    "start": "bun ./build/server.js"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.14.0",

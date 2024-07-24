@@ -11,7 +11,7 @@ import { logger } from './lib/winston';
 import { rateLimiter } from './middleware/rateLimiter';
 
 async function start() {
-  const port = process.env.PORT ? Number(process.env.PORT) : 3001;
+  const port = process.env.PORT ? Number(process.env.PORT) : 8080;
   const app = express();
 
   await redisClient.connect();
