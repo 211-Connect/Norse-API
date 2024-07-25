@@ -8,7 +8,6 @@ import redisClient from './lib/redis';
 import { connect as mongooseClient } from './lib/mongoose';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './lib/winston';
-import { rateLimiter } from './middleware/rateLimiter';
 
 async function start() {
   const port = process.env.PORT ? Number(process.env.PORT) : 8080;
@@ -17,6 +16,7 @@ async function start() {
   await redisClient.connect();
   await mongooseClient();
 
+  app.set('trust proxy', true);
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -25,9 +25,6 @@ async function start() {
   app.use(cors());
   app.use(compression());
   app.use(express.json());
-  // TODO: Gather metrics so that we can rate limit better
-  // This is a general place holder for now
-  app.use(rateLimiter(1000));
 
   app.get('/__health', (_req, res) => {
     res.sendStatus(200);
