@@ -200,6 +200,16 @@ router.get('/', async (req, res) => {
       queryBuilder.query.bool.filter = filters;
     }
 
+    if (queryBuilder.sort != null) {
+      // eslint-disable-next-line
+      // @ts-ignore
+      queryBuilder.sort = [{ priority: { order: 'desc' } }].concat(
+        // eslint-disable-next-line
+        // @ts-ignore
+        queryBuilder.sort,
+      );
+    }
+
     const data = await ElasticClient.search(queryBuilder);
 
     const facets: any = {};
@@ -213,7 +223,9 @@ router.get('/', async (req, res) => {
     res.json({ search: data, facets });
   } catch (err) {
     logger.error(err);
-    res.sendStatus(400);
+    if (!res.headersSent) {
+      res.sendStatus(400);
+    }
   }
 });
 
