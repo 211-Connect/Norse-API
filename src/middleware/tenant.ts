@@ -68,6 +68,8 @@ export function tenantMiddleware(): RequestHandler {
       }
     } catch (err) {
       logger.error('Tenant middleware error:', err);
+      logger.error(`Host: ${req.hostname}`);
+      logger.error(`Origin: ${req.origin}`);
       return res.sendStatus(500);
     }
   };
