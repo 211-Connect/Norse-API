@@ -23,12 +23,13 @@ const requiredQueryParams = z.object({
 export function tenantMiddleware(): RequestHandler {
   return async (req, res, next) => {
     if (process.env.MULTI_TENANT !== 'true') return next();
-    const q = await requiredQueryParams.parseAsync(req.query);
-
-    const tenantIdQuery = q.tenant_id;
-    if (!tenantIdQuery) return res.sendStatus(400);
 
     try {
+      const q = await requiredQueryParams.parseAsync(req.query);
+
+      const tenantIdQuery = q.tenant_id;
+      if (!tenantIdQuery) return res.sendStatus(400);
+
       const data = await client.hGetAll(tenantIdQuery);
       const unflattenedData: any = unflatten(data);
 
