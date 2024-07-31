@@ -5,7 +5,6 @@ import { flatten, unflatten } from 'flat';
 import client from '../lib/redis';
 import { logger } from '../lib/winston';
 import z from 'zod';
-import useragent from 'useragent';
 
 const populate = qs.stringify({
   populate: {
@@ -72,10 +71,7 @@ export function tenantMiddleware(): RequestHandler {
       logger.error(`Host: ${req.hostname}`);
       logger.error(`Origin: ${req.origin}`);
       logger.error(`IP: ${req.ip}`);
-
-      const agent = useragent.parse(req.headers['user-agent']);
-      const browser = agent.toAgent();
-      logger.error(`Browser: ${browser}`);
+      logger.error(`User-Agent: ${req.headers['user-agent']}`);
       return res.sendStatus(500);
     }
   };

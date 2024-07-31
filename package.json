@@ -24,7 +24,6 @@
     "nanoid": "^3.3.6",
     "redis": "^4.6.15",
     "tslib": "^2.6.3",
-    "useragent": "^2.3.0",
     "winston": "^3.13.1",
     "winston-elasticsearch": "^0.19.0",
     "zod": "^3.23.8"
@@ -37,7 +36,6 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/jwk-to-pem": "^2.0.3",
     "@types/node": "^20.14.12",
-    "@types/useragent": "^2.3.4",
     "eslint": "^9.7.0",
     "nodemon": "^3.1.4",
     "prettier": "^3.3.3",
