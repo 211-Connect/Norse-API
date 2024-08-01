@@ -72,6 +72,8 @@ export function tenantMiddleware(): RequestHandler {
       logger.error(`Origin: ${req.origin}`);
       logger.error(`IP: ${req.ip}`);
       logger.error(`User-Agent: ${req.headers['user-agent']}`);
+      logger.error(`Path: ${req.path}`);
+      logger.error(`Params: ${req.params}`);
       return res.sendStatus(500);
     }
   };
