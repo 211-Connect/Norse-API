@@ -1,12 +1,14 @@
 {
   "name": "norse-api",
-  "module": "src/server.ts",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun --watch ./src/server.ts",
-    "build": "bun build ./src/server.ts --outdir ./build --target bun",
-    "start": "bun ./build/server.js"
+    "build": "esbuild src/server.ts --bundle --platform=node --outfile=build/server.js --format=esm",
+    "start": "node build/server.js",
+    "dev": "run-p dev:*",
+    "dev:tsc": "tsc --watch --preserveWatchOutput",
+    "dev:node": "node --watch build/server.js",
+    "dev:esbuild": "npm run build --watch"
   },
   "dependencies": {
     "@elastic/elasticsearch": "8.8.1",
@@ -14,6 +16,7 @@
     "bun": "^1.1.20",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "flat": "^6.0.1",
@@ -36,8 +39,10 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/jwk-to-pem": "^2.0.3",
     "@types/node": "^20.14.12",
+    "esbuild": "^0.23.0",
     "eslint": "^9.7.0",
     "nodemon": "^3.1.4",
+    "npm-run-all": "^4.1.5",
     "prettier": "^3.3.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
