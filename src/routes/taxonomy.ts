@@ -7,6 +7,10 @@ import { logger } from '../lib/winston';
 
 const router = Router();
 
+const isTaxonomyCode = new RegExp(
+  /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
+);
+
 const QuerySchema = z.object({
   query: z.string().optional(),
   code: z.string().optional(),
@@ -24,6 +28,12 @@ router.get('/', async (req, res) => {
       throw new Error('Query or code is required');
     }
 
+    const isCode = q.query
+      ? isTaxonomyCode.test(q.query)
+      : q.code
+        ? true
+        : false;
+
     const queryBuilder: SearchRequest = {
       index: `${q.tenant_id}-taxonomies_v2_${q.locale}`,
       from: skip,
@@ -36,33 +46,28 @@ router.get('/', async (req, res) => {
       aggs: {},
     };
 
-    if (q.query) {
-      queryBuilder.query = {
-        bool: {
-          must: {
-            multi_match: {
-              query: q.query,
-              type: 'bool_prefix',
-              fields: ['name', 'name._2gram', 'name._3gram'],
-            },
+    const query =
+      (!isCode && q.query) || (isCode && q.query)
+        ? q.query
+        : q.code
+          ? q.code
+          : '';
+    const fields = isCode
+      ? ['code', 'code._2gram', 'code._3gram']
+      : ['name', 'name._2gram', 'name._3gram'];
+
+    queryBuilder.query = {
+      bool: {
+        must: {
+          multi_match: {
+            query: query,
+            type: 'bool_prefix',
+            fields: fields,
           },
-          filter: [],
         },
-      };
-    } else if (q.code) {
-      queryBuilder.query = {
-        bool: {
-          must: {
-            multi_match: {
-              query: q.code,
-              type: 'bool_prefix',
-              fields: ['code', 'code._2gram', 'code._3gram'],
-            },
-          },
-          filter: [],
-        },
-      };
-    }
+        filter: [],
+      },
+    };
 
     const data = await ElasticClient.search(queryBuilder);
 
