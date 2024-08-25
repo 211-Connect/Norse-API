@@ -32,12 +32,15 @@ const QuerySchema = z.object({
     .default(0),
   locale: z.string().default('en'),
   tenant_id: z.string().default(''),
+  limit: z.string().default('25'),
 });
 router.get('/', async (req, res) => {
   try {
     const q = await QuerySchema.parseAsync(req.query);
     const skip = (q.page - 1) * 25;
     const aggs: any = {};
+    const rawLimit = parseInt(q.limit);
+    const limit = isNaN(rawLimit) ? 25 : rawLimit;
     let coords: string[] | null =
       typeof q.coords === 'string' ? q.coords.split(',') : q.coords;
     coords = coords instanceof Array && coords.length === 2 ? coords : null;
@@ -57,7 +60,7 @@ router.get('/', async (req, res) => {
     const queryBuilder: SearchRequest = {
       index: `${q.tenant_id}-results_v2_${q.locale}`,
       from: skip,
-      size: 25,
+      size: limit,
       _source_excludes: ['service_area'],
       query: {},
       sort: [],
