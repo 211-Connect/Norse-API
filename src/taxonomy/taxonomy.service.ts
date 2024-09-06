@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
+import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
 
 const isTaxonomyCode = new RegExp(
   /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
@@ -70,5 +71,30 @@ export class TaxonomyService {
     } catch (err) {
       throw new BadRequestException(err.message);
     }
+  }
+
+  async getTaxonomyTermsForCodes(options: {
+    headers: HeadersDto;
+    query: TaxonomyTermsQueryDto;
+  }) {
+    let q = options.query;
+
+    const queryBuilder: any = {
+      index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
+      query: {
+        terms: {
+          'code.raw': q?.terms ?? [],
+        },
+      },
+    };
+
+    let data;
+    try {
+      data = await this.elasticsearchService.search(queryBuilder);
+    } catch (err) {
+      data = {};
+    }
+
+    return data;
   }
 }

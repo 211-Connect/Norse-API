@@ -13,6 +13,8 @@ import type { RedisClientOptions } from 'redis';
 import { redisStore } from 'cache-manager-redis-store';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
+import { ResourceModule } from './resource/resource.module';
+import { MongooseModule } from '@nestjs/mongoose';
 
 @Module({
   imports: [
@@ -26,12 +28,20 @@ import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMi
       }),
       inject: [ConfigService],
     }),
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        uri: configService.get('MONGODB_URI'),
+      }),
+      inject: [ConfigService],
+    }),
     TaxonomyModule,
     SearchModule,
     ShortUrlModule,
     HealthModule,
     FavoriteModule,
     FavoriteListModule,
+    ResourceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
