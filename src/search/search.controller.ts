@@ -1,11 +1,10 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { ApiHeader, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
 import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
-import { Tenant } from 'src/common/decorators/Tenant';
 
 @ApiTags('Search')
 @Controller('search')
@@ -53,12 +52,12 @@ export class SearchController {
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
-    @Tenant() tenant: Tenant,
+    @Req() req,
   ) {
     return this.searchService.searchResources({
       headers,
       query,
-      tenant,
+      tenant: req.tenant,
     });
   }
 }

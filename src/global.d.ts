@@ -6,24 +6,26 @@ declare global {
     interface Request {
       cacheService: Cache;
       configService: ConfigService;
+      user: {
+        id: string;
+      };
+      tenant: {
+        name: string;
+        tenantId: string;
+        createdAt: string;
+        updatedAt: string;
+        keycloakRealmId: string;
+        facets: {
+          facet: string;
+          name: string;
+        }[];
+        appConfig: {
+          brandName: string;
+          feedbackUrl: string;
+          email: string;
+          phoneNumber: string;
+        };
+      };
     }
-  }
-
-  interface Tenant {
-    name: string;
-    tenantId: string;
-    createdAt: string;
-    updatedAt: string;
-    keycloakRealmId: string;
-    facets: {
-      facet: string;
-      name: string;
-    }[];
-    appConfig: {
-      brandName: string;
-      feedbackUrl: string;
-      email: string;
-      phoneNumber: string;
-    };
   }
 }

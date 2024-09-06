@@ -6,14 +6,17 @@ import {
   Patch,
   Param,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
 import { FavoriteService } from './favorite.service';
 import { CreateFavoriteDto } from './dto/create-favorite.dto';
 import { UpdateFavoriteDto } from './dto/update-favorite.dto';
 import { ApiTags } from '@nestjs/swagger';
+import { KeycloakGuard } from 'src/common/guards/keycloak.guard';
 
 @ApiTags('Favorite')
 @Controller('favorite')
+@UseGuards(KeycloakGuard)
 export class FavoriteController {
   constructor(private readonly favoriteService: FavoriteService) {}
 

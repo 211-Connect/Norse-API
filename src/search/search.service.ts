@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
+import { Request } from 'express';
 
 @Injectable()
 export class SearchService {
@@ -10,7 +11,7 @@ export class SearchService {
   async searchResources(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
-    tenant: Tenant;
+    tenant: Request['tenant'];
   }) {
     const { tenant } = options;
 
