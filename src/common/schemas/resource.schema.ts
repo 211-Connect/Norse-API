@@ -22,7 +22,7 @@ class ServiceArea {
   };
 }
 
-@Schema()
+@Schema({ timestamps: true })
 export class Resource {
   @Prop()
   _id: string;
@@ -64,7 +64,7 @@ export class Resource {
   @Prop()
   requiredDocuments: string;
 
-  @Prop()
+  @Prop({ index: true })
   tenantId: string;
 
   @Prop({ type: Location })

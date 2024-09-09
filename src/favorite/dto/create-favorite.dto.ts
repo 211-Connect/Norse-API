@@ -1,1 +1,4 @@
-export class CreateFavoriteDto {}
+export class CreateFavoriteDto {
+  resourceId: string;
+  favoriteListId: string;
+}

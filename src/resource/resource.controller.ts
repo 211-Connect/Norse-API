@@ -10,7 +10,7 @@ import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 export class ResourceController {
   constructor(private readonly resourceService: ResourceService) {}
 
-  @Get('/:id')
+  @Get(':id')
   getResourceById(
     @Param('id') id,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,

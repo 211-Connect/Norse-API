@@ -6,9 +6,7 @@ declare global {
     interface Request {
       cacheService: Cache;
       configService: ConfigService;
-      user: {
-        id: string;
-      };
+      user: User;
       tenant: {
         name: string;
         tenantId: string;
@@ -28,4 +26,8 @@ declare global {
       };
     }
   }
+
+  type User = {
+    id: string;
+  };
 }

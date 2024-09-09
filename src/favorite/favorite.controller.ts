@@ -1,18 +1,16 @@
 import {
   Controller,
-  Get,
   Post,
   Body,
-  Patch,
   Param,
   Delete,
   UseGuards,
 } from '@nestjs/common';
 import { FavoriteService } from './favorite.service';
 import { CreateFavoriteDto } from './dto/create-favorite.dto';
-import { UpdateFavoriteDto } from './dto/update-favorite.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { KeycloakGuard } from 'src/common/guards/keycloak.guard';
+import { User } from 'src/common/decorators/User';
 
 @ApiTags('Favorite')
 @Controller('favorite')
@@ -21,30 +19,16 @@ export class FavoriteController {
   constructor(private readonly favoriteService: FavoriteService) {}
 
   @Post()
-  create(@Body() createFavoriteDto: CreateFavoriteDto) {
-    return this.favoriteService.create(createFavoriteDto);
+  create(@Body() createFavoriteDto: CreateFavoriteDto, @User() user: User) {
+    return this.favoriteService.create(createFavoriteDto, { user });
   }
 
-  @Get()
-  findAll() {
-    return this.favoriteService.findAll();
-  }
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.favoriteService.findOne(+id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() updateFavoriteDto: UpdateFavoriteDto,
+  @Delete(':favoriteId/:favoriteListId')
+  remove(
+    @Param('favoriteId') favoriteId: string,
+    @Param('favoriteListId') favoriteListId: string,
+    @User() user: User,
   ) {
-    return this.favoriteService.update(+id, updateFavoriteDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.favoriteService.remove(+id);
+    return this.favoriteService.remove({ favoriteId, favoriteListId, user });
   }
 }

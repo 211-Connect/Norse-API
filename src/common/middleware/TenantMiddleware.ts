@@ -1,10 +1,5 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import {
-  BadRequestException,
-  Inject,
-  Injectable,
-  NestMiddleware,
-} from '@nestjs/common';
+import { Inject, Injectable, NestMiddleware } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { Request, Response, NextFunction } from 'express';
@@ -19,21 +14,12 @@ export class TenantMiddleware implements NestMiddleware {
   ) {}
 
   async use(req: Request, res: Response, next: NextFunction) {
-    let tenantHeader;
-    try {
-      tenantHeader = await xTenantIdSchema.parseAsync(
-        req.headers['x-tenant-id'],
-      );
-    } catch (err) {
-      throw new BadRequestException();
-    }
+    const tenantHeader = await xTenantIdSchema.parseAsync(
+      req.headers['x-tenant-id'],
+    );
 
-    try {
-      const tenantData = await fetchTenantById(tenantHeader, { req });
-      req.tenant = tenantData;
-    } catch (err) {
-      throw new BadRequestException();
-    }
+    const tenantData = await fetchTenantById(tenantHeader, { req });
+    req.tenant = tenantData;
 
     next();
   }

@@ -1,4 +1,9 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -49,7 +54,13 @@ import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(ServiceProviderMiddleware).forRoutes('*');
-    consumer.apply(TenantMiddleware);
+    consumer.apply(ServiceProviderMiddleware).forRoutes({
+      path: '*',
+      method: RequestMethod.ALL,
+    });
+    consumer.apply(TenantMiddleware).forRoutes({
+      path: '*',
+      method: RequestMethod.ALL,
+    });
   }
 }
