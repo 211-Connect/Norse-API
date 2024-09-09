@@ -77,7 +77,7 @@ export class TaxonomyService {
     headers: HeadersDto;
     query: TaxonomyTermsQueryDto;
   }) {
-    let q = options.query;
+    const q = options.query;
 
     const queryBuilder: any = {
       index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
@@ -92,6 +92,7 @@ export class TaxonomyService {
     try {
       data = await this.elasticsearchService.search(queryBuilder);
     } catch (err) {
+      console.log(err);
       data = {};
     }
 
