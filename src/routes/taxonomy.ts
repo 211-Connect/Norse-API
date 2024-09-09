@@ -79,6 +79,41 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/term', async (req, res) => {
+  const QuerySchema = z.object({
+    tenant_id: z.string().default(''),
+    locale: z.string().default('en'),
+    terms: z.array(z.string()).default([]),
+  });
+
+  let q;
+  try {
+    q = await QuerySchema.parseAsync(req.query);
+  } catch (err) {
+    logger.error(err);
+    q = {};
+  }
+
+  const queryBuilder: SearchRequest = {
+    index: `${q.tenant_id}-taxonomies_v2_${q.locale}`,
+    query: {
+      terms: {
+        'code.raw': q?.terms ?? [],
+      },
+    },
+  };
+
+  let data;
+  try {
+    data = await ElasticClient.search(queryBuilder);
+  } catch (err) {
+    logger.error(err);
+    data = {};
+  }
+
+  res.json(data);
+});
+
 router.get('/taxonomy-term', async (req, res) => {
   const QuerySchema = z.object({
     tenant_id: z.string().default(''),
