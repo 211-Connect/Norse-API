@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -20,7 +20,7 @@ export class SearchService {
     const aggs: any = {};
     const rawLimit = q.limit;
     const limit = isNaN(rawLimit) ? 25 : rawLimit;
-    let coords = q.coords;
+    const coords = q.coords;
 
     const fieldsToQuery = [
       'display_name',
@@ -188,7 +188,6 @@ export class SearchService {
     }
 
     if (queryBuilder.query?.bool?.filter) {
-      // @ts-ignore
       queryBuilder.query.bool.filter = filters;
     }
 
@@ -202,22 +201,18 @@ export class SearchService {
       );
     }
 
-    try {
-      const data = await this.elasticsearchService.search(queryBuilder);
+    const data = await this.elasticsearchService.search(queryBuilder);
 
-      const facets: any = {};
-      if (tenant?.facets && tenant?.facets instanceof Array) {
-        for (const item of tenant.facets) {
-          facets[item.facet] = item.name;
-        }
+    const facets: any = {};
+    if (tenant?.facets && tenant?.facets instanceof Array) {
+      for (const item of tenant.facets) {
+        facets[item.facet] = item.name;
       }
-
-      return {
-        search: data,
-        facets,
-      };
-    } catch (err) {
-      throw new BadRequestException();
     }
+
+    return {
+      search: data,
+      facets,
+    };
   }
 }
