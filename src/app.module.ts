@@ -78,11 +78,11 @@ export class AppModule implements NestModule {
         method: RequestMethod.ALL,
       },
       {
-        path: 'favorite-list',
+        path: 'favorite',
         method: RequestMethod.ALL,
       },
       {
-        path: 'favorite',
+        path: 'favorite-list',
         method: RequestMethod.ALL,
       },
     );
