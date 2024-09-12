@@ -21,6 +21,12 @@ import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMi
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
+import { TaxonomyController } from './taxonomy/taxonomy.controller';
+import { ShortUrlController } from './short-url/short-url.controller';
+import { SearchController } from './search/search.controller';
+import { ResourceController } from './resource/resource.controller';
+import { FavoriteController } from './favorite/favorite.controller';
+import { FavoriteListController } from './favorite-list/favorite-list.controller';
 
 @Module({
   imports: [
@@ -60,31 +66,15 @@ export class AppModule implements NestModule {
       method: RequestMethod.ALL,
     });
 
-    consumer.apply(TenantMiddleware).forRoutes(
-      {
-        path: 'taxonomy',
-        method: RequestMethod.ALL,
-      },
-      {
-        path: 'short-url',
-        method: RequestMethod.ALL,
-      },
-      {
-        path: 'search',
-        method: RequestMethod.ALL,
-      },
-      {
-        path: 'resource',
-        method: RequestMethod.ALL,
-      },
-      {
-        path: 'favorite',
-        method: RequestMethod.ALL,
-      },
-      {
-        path: 'favorite-list',
-        method: RequestMethod.ALL,
-      },
-    );
+    consumer
+      .apply(TenantMiddleware)
+      .forRoutes(
+        TaxonomyController,
+        ShortUrlController,
+        SearchController,
+        ResourceController,
+        FavoriteController,
+        FavoriteListController,
+      );
   }
 }
