@@ -20,7 +20,6 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
-import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 
 @Module({
   imports: [
@@ -55,10 +54,6 @@ import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(ServiceProviderMiddleware).forRoutes({
-      path: '*',
-      method: RequestMethod.ALL,
-    });
-    consumer.apply(TenantMiddleware).forRoutes({
       path: '*',
       method: RequestMethod.ALL,
     });
