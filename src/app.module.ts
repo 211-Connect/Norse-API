@@ -23,7 +23,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ load: [configuration] }),
+    ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
     CacheModule.registerAsync<RedisClientOptions>({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -32,6 +32,7 @@ import { MongooseModule } from '@nestjs/mongoose';
         pingInterval: 4 * 60 * 1000,
       }),
       inject: [ConfigService],
+      isGlobal: true,
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
