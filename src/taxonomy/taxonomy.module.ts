@@ -1,9 +1,8 @@
-import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TaxonomyService } from './taxonomy.service';
 import { TaxonomyController } from './taxonomy.controller';
 import { ElasticsearchModule } from '@nestjs/elasticsearch';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TenantMiddleware } from 'src/common/middleware/TenantMiddleware';
 
 @Module({
   controllers: [TaxonomyController],
@@ -21,11 +20,4 @@ import { TenantMiddleware } from 'src/common/middleware/TenantMiddleware';
     }),
   ],
 })
-export class TaxonomyModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(TenantMiddleware).forRoutes({
-      path: '*',
-      method: RequestMethod.ALL,
-    });
-  }
-}
+export class TaxonomyModule {}
