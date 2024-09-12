@@ -67,7 +67,7 @@ export class SearchService {
             multi_match: {
               query: q.query,
               analyzer: 'standard',
-              operator: 'AND',
+              operator: 'OR',
               fields: fieldsToQuery,
             },
           },
