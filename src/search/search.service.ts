@@ -47,7 +47,7 @@ export class SearchService {
     }
 
     const queryBuilder: any = {
-      index: `${options.headers['x-tenant-id']}-results_v2_${options.headers['accept-language']}`,
+      index: `${options.headers['x-tenant-id']}-resources_temp_${options.headers['accept-language']}`,
       from: skip,
       size: limit,
       _source_excludes: ['service_area'],
