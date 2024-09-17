@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -7,6 +7,8 @@ import { Request } from 'express';
 @Injectable()
 export class SearchService {
   constructor(private readonly elasticsearchService: ElasticsearchService) {}
+
+  private readonly logger = new Logger(SearchService.name);
 
   async searchResources(options: {
     headers: HeadersDto;
@@ -67,7 +69,7 @@ export class SearchService {
             multi_match: {
               query: q.query,
               analyzer: 'standard',
-              operator: 'OR',
+              operator: 'AND',
               fields: fieldsToQuery,
             },
           },
