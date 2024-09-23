@@ -162,7 +162,7 @@ export class SearchService {
       queryBuilder.sort = [
         {
           _geo_distance: {
-            location: {
+            location_coordinates: {
               lon: coords[0],
               lat: coords[1],
             },
@@ -178,7 +178,7 @@ export class SearchService {
         filters.push({
           geo_distance: {
             distance: `${q.distance}miles`,
-            location: {
+            location_coordinates: {
               lon: coords[0],
               lat: coords[1],
             },
