@@ -23,15 +23,23 @@ export class SearchService {
     const coords = q.coords;
 
     const fieldsToQuery = [
-      'display_name',
-      'service_name',
-      'service_alternate_name',
-      'service_description',
-      'organization_name',
-      'organization_alternate_name',
-      'organization_description',
-      'taxonomy_terms',
-      'taxonomy_descriptions',
+      'name',
+      'description',
+      'summary',
+      'service.name',
+      'service.alternate_name',
+      'service.description',
+      'service.summary',
+      'location.name',
+      'location.alternate_name',
+      'location.description',
+      'location.summary',
+      'organization.name',
+      'organization.alternate_name',
+      'organization.description',
+      'organization.summary',
+      'taxonomies.name',
+      'taxonomies.description',
     ];
 
     if (tenant?.facets && tenant?.facets instanceof Array) {
