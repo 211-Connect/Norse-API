@@ -95,25 +95,30 @@ export class SearchService {
       q.query = typeof q.query === 'string' ? q.query.split(',') : q.query;
 
       queryBuilder.query = {
-        bool: {
-          should:
-            q.query instanceof Array
-              ? q.query.map((el: any) => ({
-                  match_phrase_prefix: {
-                    taxonomy_codes: {
-                      query: el,
+        nested: {
+          path: 'taxonomies',
+          query: {
+            bool: {
+              should:
+                q.query instanceof Array
+                  ? q.query.map((el: any) => ({
+                      match_phrase_prefix: {
+                        'taxonomies.code': {
+                          query: el,
+                        },
+                      },
+                    }))
+                  : {
+                      match_phrase_prefix: {
+                        'taxonomies.code': {
+                          query: q.query,
+                        },
+                      },
                     },
-                  },
-                }))
-              : {
-                  match_phrase_prefix: {
-                    taxonomy_codes: {
-                      query: q.query,
-                    },
-                  },
-                },
-          filter: [],
-          minimum_should_match: 1,
+              filter: [],
+              minimum_should_match: 1,
+            },
+          },
         },
       };
     } else if (q.query_type === 'more_like_this') {
@@ -170,7 +175,7 @@ export class SearchService {
       queryBuilder.sort = [
         {
           _geo_distance: {
-            location_coordinates: {
+            'location.point': {
               lon: coords[0],
               lat: coords[1],
             },
@@ -186,7 +191,7 @@ export class SearchService {
         filters.push({
           geo_distance: {
             distance: `${q.distance}miles`,
-            location_coordinates: {
+            'location.point': {
               lon: coords[0],
               lat: coords[1],
             },
