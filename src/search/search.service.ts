@@ -163,33 +163,35 @@ export class SearchService {
       return {
         query: {
           bool: {
-            filter: filters,
-            should: {
-              nested: {
-                path: 'taxonomies',
-                query: {
-                  bool: {
-                    should:
-                      queryForSearch instanceof Array
-                        ? queryForSearch.map((el: any) => ({
-                            match_phrase_prefix: {
-                              'taxonomies.code': {
-                                query: el,
+            must: [
+              {
+                nested: {
+                  path: 'taxonomies',
+                  query: {
+                    bool: {
+                      should:
+                        queryForSearch instanceof Array
+                          ? queryForSearch.map((el: any) => ({
+                              match_phrase_prefix: {
+                                'taxonomies.code': {
+                                  query: el,
+                                },
+                              },
+                            }))
+                          : {
+                              match_phrase_prefix: {
+                                'taxonomies.code': {
+                                  query: queryForSearch,
+                                },
                               },
                             },
-                          }))
-                        : {
-                            match_phrase_prefix: {
-                              'taxonomies.code': {
-                                query: queryForSearch,
-                              },
-                            },
-                          },
-                    minimum_should_match: 1,
+                      minimum_should_match: 1,
+                    },
                   },
                 },
               },
-            },
+            ],
+            filter: filters,
           },
         },
       };
