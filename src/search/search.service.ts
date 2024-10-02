@@ -36,9 +36,9 @@ export class SearchService {
     'organization.alternate_name',
     'organization.description',
     'organization.summary',
-    'taxonomies.name',
-    'taxonomies.description',
   ];
+
+  nestedFieldsToQuery = ['taxonomies.name', 'taxonomies.description'];
 
   async searchResources(options: {
     headers: HeadersDto;
@@ -117,14 +117,30 @@ export class SearchService {
       return {
         query: {
           bool: {
-            must: {
-              multi_match: {
-                analyzer: 'standard',
-                operator: 'AND',
-                fields: this.fieldsToQuery,
-                query,
+            should: [
+              {
+                multi_match: {
+                  analyzer: 'standard',
+                  operator: 'AND',
+                  fields: this.fieldsToQuery,
+                  query,
+                },
               },
-            },
+              {
+                nested: {
+                  path: 'taxonomies',
+                  query: {
+                    multi_match: {
+                      analyzer: 'standard',
+                      operator: 'AND',
+                      fields: this.nestedFieldsToQuery,
+                      query,
+                    },
+                  },
+                },
+              },
+            ],
+            minimum_should_match: 1,
             filter: filters,
           },
         },
