@@ -4,7 +4,11 @@ import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
 import r from 'radash';
-import { SearchRequest, Sort } from '@elastic/elasticsearch/lib/api/types';
+import {
+  AggregationsAggregate,
+  SearchRequest,
+  Sort,
+} from '@elastic/elasticsearch/lib/api/types';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -85,6 +89,25 @@ export class SearchService {
     const finalQuery = r.assign(baseQuery, queryObject);
 
     const data = await this.elasticsearchService.search(finalQuery);
+
+    // Remove empty facets from the response
+    for (const facet in facets) {
+      const agg = r.get<AggregationsAggregate>(
+        data,
+        `aggregations.${facet}`,
+        {},
+      );
+
+      if (
+        agg &&
+        typeof agg === 'object' &&
+        'buckets' in agg &&
+        agg.buckets instanceof Array &&
+        !agg.buckets.length
+      ) {
+        delete data.aggregations[facet];
+      }
+    }
 
     return {
       search: data,
