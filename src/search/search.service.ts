@@ -47,7 +47,7 @@ export class SearchService {
   }) {
     const { tenant } = options;
 
-    const indexName = `${options.headers['x-tenant-id']}-resources_temp_${options.headers['accept-language']}`;
+    const indexName = `${options.headers['x-tenant-id']}-resources_${options.headers['accept-language']}`;
     const q = options.query;
     const skip = (q.page - 1) * 25;
     const rawLimit = q.limit;
