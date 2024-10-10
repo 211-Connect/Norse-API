@@ -9,6 +9,7 @@ import {
   Req,
   Query,
   Put,
+  Version,
 } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
@@ -27,24 +28,28 @@ export class FavoriteListController {
   constructor(private readonly favoriteListService: FavoriteListService) {}
 
   @Post()
+  @Version('1')
   @UseGuards(KeycloakGuard)
   create(@Body() createFavoriteListDto: CreateFavoriteListDto, @User() user) {
     return this.favoriteListService.create(createFavoriteListDto, { user });
   }
 
   @Get()
+  @Version('1')
   @UseGuards(KeycloakGuard)
   findAll(@User() user) {
     return this.favoriteListService.findAll({ user });
   }
 
   @Get('search')
+  @Version('1')
   @UseGuards(KeycloakGuard)
   search(@Query() query: SearchFavoriteListDto, @User() user) {
     return this.favoriteListService.search(query, { user });
   }
 
   @Get(':id')
+  @Version('1')
   findOne(
     @Param('id') id: string,
     @Req() request,
@@ -57,6 +62,7 @@ export class FavoriteListController {
   }
 
   @Put(':id')
+  @Version('1')
   @UseGuards(KeycloakGuard)
   update(
     @Param('id') id: string,
@@ -67,6 +73,7 @@ export class FavoriteListController {
   }
 
   @Delete(':id')
+  @Version('1')
   @UseGuards(KeycloakGuard)
   remove(@Param('id') id: string, @User() user: User) {
     return this.favoriteListService.remove(id, { user });

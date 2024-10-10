@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { VersioningType } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -11,6 +12,10 @@ async function bootstrap() {
 
   app.use(helmet());
   app.enableCors();
+  app.enableVersioning({
+    type: VersioningType.HEADER,
+    header: 'x-api-version',
+  });
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Norse API')

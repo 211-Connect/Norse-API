@@ -5,6 +5,7 @@ import {
   Param,
   Delete,
   UseGuards,
+  Version,
 } from '@nestjs/common';
 import { FavoriteService } from './favorite.service';
 import { CreateFavoriteDto } from './dto/create-favorite.dto';
@@ -19,11 +20,13 @@ export class FavoriteController {
   constructor(private readonly favoriteService: FavoriteService) {}
 
   @Post()
+  @Version('1')
   create(@Body() createFavoriteDto: CreateFavoriteDto, @User() user: User) {
     return this.favoriteService.create(createFavoriteDto, { user });
   }
 
   @Delete(':favoriteId/:favoriteListId')
+  @Version('1')
   remove(
     @Param('favoriteId') favoriteId: string,
     @Param('favoriteListId') favoriteListId: string,

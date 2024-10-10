@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, Version } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
@@ -11,6 +11,7 @@ export class ResourceController {
   constructor(private readonly resourceService: ResourceService) {}
 
   @Get(':id')
+  @Version('1')
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id' })

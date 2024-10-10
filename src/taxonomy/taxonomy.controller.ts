@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Version } from '@nestjs/common';
 import { TaxonomyService } from './taxonomy.service';
 import { ApiHeader, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
@@ -16,6 +16,7 @@ export class TaxonomyController {
   constructor(private readonly taxonomyService: TaxonomyService) {}
 
   @Get()
+  @Version('1')
   @ApiResponse({
     status: 200,
   })
@@ -40,6 +41,7 @@ export class TaxonomyController {
   }
 
   @Get('term')
+  @Version('1')
   getTaxonomyTermsByCode(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(taxonomyTermsQuerySchema))
