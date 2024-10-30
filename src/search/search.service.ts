@@ -277,12 +277,38 @@ export class SearchService {
 
       if (distance > 0) {
         filters.push({
-          geo_distance: {
-            distance: `${distance}miles`,
-            'location.point': {
-              lon: coords[0],
-              lat: coords[1],
-            },
+          bool: {
+            should: [
+              {
+                bool: {
+                  must: [
+                    {
+                      exists: {
+                        field: 'location.point',
+                      },
+                    },
+                    {
+                      geo_distance: {
+                        distance: `${distance}miles`,
+                        'location.point': {
+                          lon: coords[0],
+                          lat: coords[1],
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                bool: {
+                  must_not: {
+                    exists: {
+                      field: 'location.point',
+                    },
+                  },
+                },
+              },
+            ],
           },
         });
       }
