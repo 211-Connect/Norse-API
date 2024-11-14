@@ -22,6 +22,7 @@ export class SearchService {
     KEYWORD: 'keyword',
     TAXONOMY: 'taxonomy',
     MORE_LIKE_THIS: 'more_like_this',
+    ORGANIZATION: 'organization',
   } as const;
 
   fieldsToQuery = [
@@ -124,6 +125,8 @@ export class SearchService {
       return SearchService.QUERY_TYPE.TAXONOMY;
     } else if (queryType === 'more_like_this') {
       return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
+    } else if (queryType === 'organization') {
+      return SearchService.QUERY_TYPE.ORGANIZATION;
     } else {
       throw new NotImplementedException(
         `Query type "${queryType}" not supported for query "${query}"`,
@@ -232,6 +235,21 @@ export class SearchService {
                 },
               },
             ],
+            filter: filters,
+          },
+        },
+      };
+    } else if (queryType === 'organization') {
+      return {
+        query: {
+          bool: {
+            must: {
+              term: {
+                'organization.name': {
+                  value: query,
+                },
+              },
+            },
             filter: filters,
           },
         },
