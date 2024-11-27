@@ -27,6 +27,7 @@ import { SearchController } from './search/search.controller';
 import { ResourceController } from './resource/resource.controller';
 import { FavoriteController } from './favorite/favorite.controller';
 import { FavoriteListController } from './favorite-list/favorite-list.controller';
+import { SuggestionModule } from './suggestion/suggestion.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { FavoriteListController } from './favorite-list/favorite-list.controller
     FavoriteModule,
     FavoriteListModule,
     ResourceModule,
+    SuggestionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
