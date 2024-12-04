@@ -62,6 +62,11 @@ export class TaxonomyService {
             },
           },
           filter: [],
+          should: [
+            { term: { type: 'taxonomy' } },
+            { bool: { must_not: { exists: { field: 'type' } } } },
+          ],
+          minimum_should_match: 1,
         },
       };
 
