@@ -1,4 +1,4 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import { Injectable, NotImplementedException, Logger } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -13,19 +13,22 @@ import {
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
 
+type Aggregations = Record<string, any>;
+
+type ComplexQuery = {
+  OR?: any[];
+  AND?: any[];
+};
+
 @Injectable()
 export class SearchService {
-  constructor(private readonly elasticsearchService: ElasticsearchService) {}
+  private readonly logger: Logger;
 
-  static readonly QUERY_TYPE = {
-    MATCH_ALL: 'match_all',
-    KEYWORD: 'keyword',
-    TAXONOMY: 'taxonomy',
-    MORE_LIKE_THIS: 'more_like_this',
-    ORGANIZATION: 'organization',
-  } as const;
+  constructor(private readonly elasticsearchService: ElasticsearchService) {
+    this.logger = new Logger(SearchService.name);
+  }
 
-  fieldsToQuery = [
+  private static readonly fieldsToQuery = [
     'name',
     'description',
     'summary',
@@ -43,21 +46,56 @@ export class SearchService {
     'organization.summary',
   ];
 
-  nestedFieldsToQuery = ['taxonomies.name', 'taxonomies.description'];
+  static readonly QUERY_TYPE = {
+    MATCH_ALL: 'match_all',
+    KEYWORD: 'keyword',
+    TAXONOMY: 'taxonomy',
+    MORE_LIKE_THIS: 'more_like_this',
+    ORGANIZATION: 'organization',
+  } as const;
+
+  private static readonly nestedFieldsToQuery = [
+    'taxonomies.name',
+    'taxonomies.description',
+  ];
+
+  // Checks whether the query is an object, and has OR or AND properties of type array.
+  private isComplexQuery(query: any): query is ComplexQuery {
+    try {
+      if (query != null && typeof query === 'string') {
+        const parsed = JSON.parse(query);
+        return (
+          typeof parsed === 'object' &&
+          (Array.isArray(parsed.OR) || Array.isArray(parsed.AND))
+        );
+      }
+
+      return (
+        query != null &&
+        typeof query === 'object' &&
+        (Array.isArray(query.OR) || Array.isArray(query.AND))
+      );
+    } catch {
+      return false;
+    }
+  }
 
   async searchResources(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
     tenant: Request['tenant'];
   }) {
+    this.logger.debug('Searching for resources');
+
     const { tenant } = options;
+    const { query } = options.query;
 
     const indexName = `${options.headers['x-tenant-id']}-resources_${options.headers['accept-language']}`;
     const q = options.query;
     const skip = (q.page - 1) * 25;
     const rawLimit = q.limit;
     const limit = isNaN(rawLimit) ? 25 : rawLimit;
-    const aggs: any = {};
+    const aggs: Aggregations = {};
     const baseFacets: { facet: string; name: string }[] = r.get(
       tenant,
       'facets',
@@ -86,9 +124,28 @@ export class SearchService {
     };
     const filters = this.getFilters(q.filters, q.coords, q.distance);
     const queryType: QueryType = this.getQueryType(q.query, q.query_type);
-    const queryObject = this.getQueryObject(queryType, q.query, filters);
-    const finalQuery = r.assign(baseQuery, queryObject);
 
+    this.logger.debug(`query = ${query}`);
+
+    // Distinguish between simple and complex queries
+    let queryObject: Partial<SearchRequest>;
+
+    if (queryType === 'taxonomy' && this.isComplexQuery(query)) {
+      this.logger.debug('Using complex query logic');
+
+      try {
+        this.validateComplexQuery(query);
+        queryObject = this.getComplexQueryObject(query, filters);
+      } catch (error) {
+        this.logger.error(`Invalid complex query: ${error.message}`);
+        throw new Error(`Invalid query structure: ${error.message}`);
+      }
+    } else {
+      this.logger.debug('Using simple query logic');
+      queryObject = this.getQueryObject(queryType, query, filters);
+    }
+
+    const finalQuery = r.assign(baseQuery, queryObject);
     const data = await this.elasticsearchService.search(finalQuery);
 
     // Remove empty facets from the response
@@ -117,20 +174,29 @@ export class SearchService {
   }
 
   private getQueryType(query: string | string[], queryType: string): QueryType {
-    if (queryType === 'text' && query.length > 0) {
-      return SearchService.QUERY_TYPE.KEYWORD;
-    } else if (queryType === 'text' && query.length === 0) {
-      return SearchService.QUERY_TYPE.MATCH_ALL;
-    } else if (queryType === 'taxonomy') {
-      return SearchService.QUERY_TYPE.TAXONOMY;
-    } else if (queryType === 'more_like_this') {
-      return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
-    } else if (queryType === 'organization') {
-      return SearchService.QUERY_TYPE.ORGANIZATION;
-    } else {
-      throw new NotImplementedException(
-        `Query type "${queryType}" not supported for query "${query}"`,
-      );
+    if (queryType === 'text') {
+      if (Array.isArray(query)) {
+        throw new NotImplementedException(
+          `Query type "text" not supported for query array`,
+        );
+      }
+
+      return query.length > 0
+        ? SearchService.QUERY_TYPE.KEYWORD
+        : SearchService.QUERY_TYPE.MATCH_ALL;
+    }
+
+    switch (queryType) {
+      case 'taxonomy':
+        return SearchService.QUERY_TYPE.TAXONOMY;
+      case 'organization':
+        return SearchService.QUERY_TYPE.ORGANIZATION;
+      case 'more_like_this':
+        return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
+      default:
+        throw new NotImplementedException(
+          `Query type "${queryType}" not supported for query "${query}"`,
+        );
     }
   }
 
@@ -148,7 +214,7 @@ export class SearchService {
                 multi_match: {
                   analyzer: 'standard',
                   operator: 'AND',
-                  fields: this.fieldsToQuery,
+                  fields: SearchService.fieldsToQuery,
                   query,
                 },
               },
@@ -159,7 +225,7 @@ export class SearchService {
                     multi_match: {
                       analyzer: 'standard',
                       operator: 'AND',
-                      fields: this.nestedFieldsToQuery,
+                      fields: SearchService.nestedFieldsToQuery,
                       query,
                     },
                   },
@@ -228,7 +294,7 @@ export class SearchService {
             must: [
               {
                 more_like_this: {
-                  fields: this.fieldsToQuery,
+                  fields: SearchService.fieldsToQuery,
                   like: query,
                   min_term_freq: 1,
                   max_query_terms: 12,
@@ -260,7 +326,7 @@ export class SearchService {
   }
 
   private getFilters(facets, coords, distance) {
-    const filters = [];
+    const filters: any[] = [];
 
     for (const key in facets) {
       if (facets[key] instanceof Array) {
@@ -339,12 +405,14 @@ export class SearchService {
     const baseSort: Sort = [{ priority: 'desc' }];
 
     if (coords) {
+      const [lon, lat] = coords;
+
       return baseSort.concat([
         {
           _geo_distance: {
             'location.point': {
-              lon: coords[0],
-              lat: coords[1],
+              lon,
+              lat,
             },
             order: 'asc',
             unit: 'm',
@@ -355,5 +423,107 @@ export class SearchService {
     }
 
     return baseSort;
+  }
+
+  // Helper method to validate complex queries before processing
+  private validateComplexQuery(query: any): void {
+    const validateNode = (node: any, depth = 1) => {
+      if (depth > 5) {
+        throw new Error(
+          'Query nesting depth exceeds maximum allowed (5 levels)',
+        );
+      }
+
+      if (typeof node === 'string') {
+        if (!node.trim()) {
+          throw new Error('Empty string expressions are not allowed');
+        }
+        return;
+      }
+
+      if (node.OR?.length === 1 || node.AND?.length === 1) {
+        throw new Error('OR/AND operations must have at least 2 operands');
+      }
+
+      if (node.OR) {
+        node.OR.forEach((item) => validateNode(item, depth + 1));
+      }
+
+      if (node.AND) {
+        node.AND.forEach((item) => validateNode(item, depth + 1));
+      }
+    };
+
+    validateNode(query);
+  }
+
+  private getComplexQueryObject(
+    query: ComplexQuery,
+    filters: any[],
+  ): Partial<SearchRequest> {
+    // Parse the query if it's a string
+    const parsedQuery = typeof query === 'string' ? JSON.parse(query) : query;
+
+    const buildMatchPhrasePrefix = (code: string) => ({
+      match_phrase_prefix: {
+        'taxonomies.code': {
+          query: code,
+        },
+      },
+    });
+
+    const processBoolQuery = (expression: any): any => {
+      // Handle OR conditions
+      if (Array.isArray(expression.OR)) {
+        return {
+          bool: {
+            should: expression.OR.map((item) => {
+              if (typeof item === 'string') {
+                return buildMatchPhrasePrefix(item);
+              }
+              return processBoolQuery(item);
+            }),
+            minimum_should_match: 1,
+          },
+        };
+      }
+
+      // Handle AND conditions
+      if (Array.isArray(expression.AND)) {
+        return {
+          bool: {
+            must: expression.AND.map((item) => {
+              if (typeof item === 'string') {
+                return buildMatchPhrasePrefix(item);
+              }
+              return processBoolQuery(item);
+            }),
+          },
+        };
+      }
+
+      // Handle single string
+      if (typeof expression === 'string') {
+        return buildMatchPhrasePrefix(expression);
+      }
+
+      throw new Error(`Invalid query structure: ${JSON.stringify(expression)}`);
+    };
+
+    return {
+      query: {
+        bool: {
+          must: [
+            {
+              nested: {
+                path: 'taxonomies',
+                query: processBoolQuery(parsedQuery),
+              },
+            },
+          ],
+          filter: filters,
+        },
+      },
+    };
   }
 }

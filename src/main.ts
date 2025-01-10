@@ -4,10 +4,18 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { VersioningType } from '@nestjs/common';
+import { VersioningType, LogLevel } from '@nestjs/common';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const nodeEnv = process.env.NODE_ENV;
+  const loggerLevels: LogLevel[] =
+    nodeEnv === 'development'
+      ? ['log', 'error', 'warn', 'debug']
+      : ['error', 'warn'];
+
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    logger: loggerLevels,
+  });
   const config = app.get(ConfigService);
 
   app.use(helmet());
