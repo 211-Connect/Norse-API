@@ -5,9 +5,18 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
 import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
+import { ApiQueryForComplexSearch } from './api-query-decorator';
 
 @ApiTags('Search')
 @Controller('search')
+@ApiHeader({
+  name: 'x-api-version',
+  description: 'API version',
+  required: true,
+  schema: {
+    default: '1',
+  },
+})
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}
 
@@ -147,7 +156,7 @@ export class SearchController {
     enum: ['text', 'taxonomy', 'more_like_this'],
     schema: { default: 'text' },
   })
-  @ApiQuery({ name: 'query', required: false })
+  @ApiQueryForComplexSearch()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
