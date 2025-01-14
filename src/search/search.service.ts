@@ -464,10 +464,13 @@ export class SearchService {
     // Parse the query if it's a string
     const parsedQuery = typeof query === 'string' ? JSON.parse(query) : query;
 
-    const buildMatchPhrasePrefix = (code: string) => ({
-      match_phrase_prefix: {
-        'taxonomies.code': {
-          query: code,
+    const buildTermQuery = (code: string) => ({
+      nested: {
+        path: 'taxonomies',
+        query: {
+          term: {
+            'taxonomies.code.raw': code,
+          },
         },
       },
     });
@@ -479,7 +482,7 @@ export class SearchService {
           bool: {
             should: expression.OR.map((item) => {
               if (typeof item === 'string') {
-                return buildMatchPhrasePrefix(item);
+                return buildTermQuery(item);
               }
               return processBoolQuery(item);
             }),
@@ -494,7 +497,7 @@ export class SearchService {
           bool: {
             must: expression.AND.map((item) => {
               if (typeof item === 'string') {
-                return buildMatchPhrasePrefix(item);
+                return buildTermQuery(item);
               }
               return processBoolQuery(item);
             }),
@@ -504,7 +507,7 @@ export class SearchService {
 
       // Handle single string
       if (typeof expression === 'string') {
-        return buildMatchPhrasePrefix(expression);
+        return buildTermQuery(expression);
       }
 
       throw new Error(`Invalid query structure: ${JSON.stringify(expression)}`);
@@ -513,14 +516,7 @@ export class SearchService {
     return {
       query: {
         bool: {
-          must: [
-            {
-              nested: {
-                path: 'taxonomies',
-                query: processBoolQuery(parsedQuery),
-              },
-            },
-          ],
+          must: processBoolQuery(parsedQuery),
           filter: filters,
         },
       },
