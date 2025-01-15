@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
@@ -10,7 +10,11 @@ const isTaxonomyCode = new RegExp(
 
 @Injectable()
 export class TaxonomyService {
-  constructor(private readonly elasticsearchService: ElasticsearchService) {}
+  private readonly logger: Logger;
+
+  constructor(private readonly elasticsearchService: ElasticsearchService) {
+    this.logger = new Logger(TaxonomyService.name);
+  }
 
   async searchTaxonomies(options: {
     headers: HeadersDto;
@@ -93,11 +97,16 @@ export class TaxonomyService {
       },
     };
 
+    this.logger.debug(
+      `Fetching taxonomy term for codes. queryBuilder: ${JSON.stringify(queryBuilder, null, 2)}`,
+    );
+
     let data;
     try {
       data = await this.elasticsearchService.search(queryBuilder);
     } catch (err) {
-      console.log(err);
+      this.logger.error(err);
+
       data = {};
     }
 
