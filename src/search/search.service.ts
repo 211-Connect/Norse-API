@@ -9,6 +9,7 @@ import {
   SearchRequest,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
+import { getIndexName } from 'src/common/lib/utils';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -87,10 +88,12 @@ export class SearchService {
   }) {
     this.logger.debug('Searching for resources');
 
-    const { tenant } = options;
+    const { tenant, headers } = options;
     const { query } = options.query;
 
-    const indexName = `${options.headers['x-tenant-id']}-resources_${options.headers['accept-language']}`;
+    const indexName = getIndexName(headers, 'resources');
+    this.logger.debug(`searchResources - index name = ${indexName}`);
+
     const q = options.query;
     const skip = (q.page - 1) * 25;
     const rawLimit = q.limit;
@@ -126,6 +129,7 @@ export class SearchService {
     const queryType: QueryType = this.getQueryType(q.query, q.query_type);
 
     this.logger.debug(`query = ${query}`);
+    this.logger.debug(`index name = ${indexName}`);
 
     // Distinguish between simple and complex queries
     let queryObject: Partial<SearchRequest>;

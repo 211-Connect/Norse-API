@@ -3,6 +3,7 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
+import { getIndexName } from 'src/common/lib/utils';
 
 const isTaxonomyCode = new RegExp(
   /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
@@ -22,7 +23,10 @@ export class TaxonomyService {
   }) {
     try {
       const q = options.query;
+      const { headers } = options;
       const skip = (q.page - 1) * 10;
+
+      this.logger.debug(`searchTaxonomies, q=${JSON.stringify(q, null, 2)}`);
 
       if (!q.query && !q.code) {
         throw { message: 'Query or code is required' };
@@ -35,7 +39,7 @@ export class TaxonomyService {
           : false;
 
       const queryBuilder: any = {
-        index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
+        index: getIndexName(headers, 'taxonomies_v2'),
         from: skip,
         size: 10,
         query: {
@@ -74,6 +78,10 @@ export class TaxonomyService {
         },
       };
 
+      this.logger.verbose(
+        `queryBuilder = ${JSON.stringify(queryBuilder, null, 2)}`,
+      );
+
       const data = await this.elasticsearchService.search(queryBuilder);
 
       return data;
@@ -87,9 +95,10 @@ export class TaxonomyService {
     query: TaxonomyTermsQueryDto;
   }) {
     const q = options.query;
+    const { headers } = options;
 
     const queryBuilder: any = {
-      index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
+      index: getIndexName(headers, 'taxonomies_v2'),
       query: {
         terms: {
           'code.raw': q?.terms ?? [],
@@ -104,6 +113,9 @@ export class TaxonomyService {
     let data;
     try {
       data = await this.elasticsearchService.search(queryBuilder);
+      this.logger.debug(
+        `Data for code=${q?.terms}, data=${JSON.stringify(data, null, 2)}`,
+      );
     } catch (err) {
       this.logger.error(err);
 

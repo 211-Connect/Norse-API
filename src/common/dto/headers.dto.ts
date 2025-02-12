@@ -2,19 +2,27 @@ import { z } from 'zod';
 
 export const xTenantIdSchema = z.string(); //.uuid(); We still have tenants not using UUID for tenant_id.
 export const acceptLanguageSchema = z.string().transform((val) => {
-  // Split the header into individual language tags
-  const tags = val.split(',').map((tag) => tag.trim());
+  return val
+    .split(',')
+    .map((tag) => {
+      const [lang, qPart] = tag.trim().split(';');
+      const q = qPart ? parseFloat(qPart.split('=')[1]) || 1 : 1;
 
-  // Parse each tag
-  const parsedTags = tags.map((tag) => {
-    const [full, qPart] = tag.split(';');
-    const base = full.slice(0, 2).toLowerCase();
-    const q = qPart ? parseFloat(qPart.split('=')[1]) : 1;
-    return { full, base, q };
-  });
+      let base = lang;
 
-  // Sort by q value (descending) and return the highest priority base language code
-  return parsedTags.sort((a, b) => b.q - a.q)[0].base;
+      if (lang.includes('-')) {
+        const parts = lang.split('-');
+
+        // Apply sanitization: first part to lowercase, rest preserved
+        base = [parts[0].toLowerCase(), ...parts.slice(1)].join('-');
+      } else {
+        // If it's just a two-character code, make it lowercase
+        base = lang.length === 2 ? lang.toLowerCase() : lang;
+      }
+
+      return { base, q };
+    })
+    .sort((a, b) => b.q - a.q)[0].base; // Return highest priority language
 });
 
 export const headersSchema = z.object({

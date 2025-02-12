@@ -3,6 +3,7 @@ import { Request } from 'express';
 import qs from 'qs';
 import jwt from 'jsonwebtoken';
 import jwkToBuffer from 'jwk-to-pem';
+import { HeadersDto } from 'src/common/dto/headers.dto';
 
 export async function fetchTenantById(
   id: string,
@@ -122,4 +123,24 @@ async function verify(
     console.error(err);
     return null;
   }
+}
+
+// Function to construct Elasticsearch index name
+export function getIndexName(headers: HeadersDto, index: string): string {
+  const language = headers['accept-language'] ?? undefined;
+  const tenantId = headers['x-tenant-id'] ?? undefined;
+
+  let sanitizedLanguage = language;
+
+  if (language && language.includes('-')) {
+    sanitizedLanguage = language
+      .split('-')
+      .map((part, index) =>
+        index === 0 ? part.toLowerCase() : part.toLowerCase(),
+      )
+      .join('_');
+  }
+
+  const indexName = `${tenantId}-${index}_${sanitizedLanguage}`;
+  return indexName;
 }
