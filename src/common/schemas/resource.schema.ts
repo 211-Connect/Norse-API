@@ -24,6 +24,9 @@ class ServiceArea {
 
 @Schema({ timestamps: true })
 export class Resource {
+  @Prop({ index: true })
+  originalId: string;
+
   @Prop()
   _id: string;
 
