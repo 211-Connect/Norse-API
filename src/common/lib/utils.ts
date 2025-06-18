@@ -9,9 +9,9 @@ import axios, { isAxiosError } from 'axios';
 import { Request } from 'express';
 import qs from 'qs';
 import * as jwt from 'jsonwebtoken';
-import jwkToBuffer from 'jwk-to-pem';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Cache } from 'cache-manager';
+import { createPublicKey, JsonWebKey, KeyObject } from 'crypto';
 
 // Define a logger for this utility module
 const logger = new Logger('AuthUtils');
@@ -149,15 +149,8 @@ export async function isAuthorized(request: Request): Promise<boolean> {
 
   const configService = request.configService;
   const cacheService = request.cacheService;
-
-  // if (!request.user) {
-  //   logger.warn(
-  //     'Authorization check failed: No user object found in request (KeycloakGuard likely did not run or failed).',
-  //   );
-  //   throw new UnauthorizedException('User not authenticated.');
-  // }
-
   const tenant = request.tenant;
+
   if (!tenant) {
     logger.error(
       'Authorization check failed: Tenant data not found in request.',
@@ -204,19 +197,19 @@ export async function isAuthorized(request: Request): Promise<boolean> {
       );
     }
 
-    const certs = await getKeycloakCerts(
-      tenant.keycloakRealmId,
-      authServerUrl,
-      cacheService,
-    );
     const decodedToken: any = jwt.decode(token, { complete: true });
-
     if (!decodedToken || !decodedToken.header || !decodedToken.header.kid) {
       logger.warn(
         'Authorization check failed: Invalid JWT format or missing KID in token header.',
       );
       throw new UnauthorizedException('Invalid token format.');
     }
+
+    const certs = await getKeycloakCerts(
+      tenant.keycloakRealmId,
+      authServerUrl,
+      cacheService,
+    );
 
     const cert = certs.find(
       (c: KeycloakCert) => c.kid === decodedToken.header.kid,
@@ -230,7 +223,14 @@ export async function isAuthorized(request: Request): Promise<boolean> {
       );
     }
 
-    const pem = jwkToBuffer(cert as any);
+    // Convert KeycloakCert to JsonWebKey for use with crypto
+    const jwk = cert as unknown as JsonWebKey;
+    // Create a public key from the JWK
+    const publicKey: KeyObject = createPublicKey({
+      key: jwk,
+      format: 'jwk',
+    });
+    const pem = publicKey.export({ type: 'spki', format: 'pem' });
 
     // Verify the token and get the payload
     const verifiedPayload = jwt.verify(token, pem, {
