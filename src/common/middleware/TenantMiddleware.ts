@@ -37,7 +37,7 @@ export class TenantMiddleware implements NestMiddleware {
     } catch (error) {
       if (error instanceof ZodError) {
         this.logger.error(
-          `Zod validation error for tenant on path: ${req.originalUrl}`,
+          `Zod validation error for tenant on path: ${req.originalUrl}, method: ${req.method}`,
         );
         this.logger.error(JSON.stringify(error.errors, null, 2));
 
