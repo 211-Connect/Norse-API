@@ -36,12 +36,20 @@ export class TenantMiddleware implements NestMiddleware {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        this.logger.error('Zod validation error:', error.errors);
+        this.logger.error(
+          `Zod validation error for tenant on path: ${req.originalUrl}`,
+        );
+        this.logger.error(JSON.stringify(error.errors, null, 2));
+
         // Throw a BadRequestException with a user-friendly message
-        throw new BadRequestException('Invalid or missing x-tenant-id header');
+        throw new BadRequestException('Missing or invalid x-tenant-id header.');
       }
 
-      //If not a Zod Error, rethrow original error
+      // Re-throw other unexpected errors
+      this.logger.error(
+        `Unexpected error in TenantMiddleware on path: ${req.originalUrl}`,
+        error,
+      );
       throw error;
     }
   }

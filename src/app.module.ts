@@ -28,6 +28,7 @@ import { ResourceController } from './resource/resource.controller';
 import { FavoriteController } from './favorite/favorite.controller';
 import { FavoriteListController } from './favorite-list/favorite-list.controller';
 import { SuggestionModule } from './suggestion/suggestion.module';
+import { SuggestionController } from './suggestion/suggestion.controller';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ export class AppModule implements NestModule {
         ResourceController,
         FavoriteController,
         FavoriteListController,
+        SuggestionController,
       );
   }
 }
