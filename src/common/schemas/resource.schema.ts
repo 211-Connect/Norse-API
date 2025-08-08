@@ -108,6 +108,8 @@ export class Resource {
     serviceName: string;
     serviceDescription: string;
     organizationDescription: string;
+    accessibility?: string;
+    transportation?: string;
   }[];
 
   @Prop()

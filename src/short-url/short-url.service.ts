@@ -10,20 +10,11 @@ import { Model } from 'mongoose';
 import { XTenantIdDto } from 'src/common/dto/headers.dto';
 import { ShortenedUrl } from 'src/common/schemas/shortened-url.schema';
 import { nanoid } from 'nanoid';
-
-interface ShortUrlResponse {
-  url: string;
-}
-
-interface CreateShortUrlOptions {
-  tenantId: XTenantIdDto;
-}
-
-interface FindShortUrlOptions {
-  tenantId: XTenantIdDto;
-  originalUrl?: string;
-  shortId?: string;
-}
+import {
+  ShortUrlResponse,
+  CreateShortUrlOptions,
+  FindShortUrlOptions,
+} from './short-url.dto';
 
 @Injectable()
 export class ShortUrlService {
