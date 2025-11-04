@@ -10,6 +10,7 @@ import {
   TaxonomySuggestionResponse,
 } from './dto/taxonomy-suggestion-response.dto';
 import { Request } from 'express';
+import * as nlp from 'wink-nlp-utils';
 
 /**
  * Service for providing semantic taxonomy suggestions
@@ -370,6 +371,7 @@ export class SemanticTaxonomySuggestionService {
         hasIntentMatch: boolean;
         hasTextMatch: boolean;
         isFromClassification: boolean;
+        textMatchScores: number[]; // Track text match scores for averaging
       }
     >();
 
@@ -405,16 +407,14 @@ export class SemanticTaxonomySuggestionService {
           // Determine if this taxonomy should be included based on match type
           let shouldInclude = false;
 
-          if (isFromClassification) {
-            // Always include taxonomies from classification
-            shouldInclude = true;
-          } else {
-            // For text matches, check if taxonomy name/code contains the query
-            const queryLower = queryText.toLowerCase();
-            const nameMatch = taxonomy.name?.toLowerCase().includes(queryLower);
-            const codeMatch = taxonomy.code?.toLowerCase().includes(queryLower);
-            shouldInclude = nameMatch || codeMatch;
-          }
+          // Blended approach: Include if from classification OR text matching
+          const textMatchScore = this.computeTextMatchScore(
+            queryText,
+            taxonomy.name,
+            taxonomy.code,
+          );
+
+          shouldInclude = isFromClassification || textMatchScore > 0;
 
           if (shouldInclude) {
             this.addOrUpdateTaxonomy(
@@ -423,25 +423,44 @@ export class SemanticTaxonomySuggestionService {
               score,
               hit._score,
               isFromClassification,
+              textMatchScore,
             );
           }
         });
       }
     });
 
-    // Convert map to array and calculate final scores
+    // Convert map to array and calculate final scores using blended approach
     const suggestions = Array.from(taxonomyMap.values()).map((data) => {
-      // Calculate average score across all occurrences
-      const avgScore =
+      // Signal 1: Classification confidence (40% weight)
+      const classificationScore = data.isFromClassification
+        ? this.getClassificationConfidenceScore(classification.confidence)
+        : 0;
+
+      // Signal 2: Text matching score (30% weight)
+      const avgTextMatchScore =
+        data.textMatchScores.length > 0
+          ? data.textMatchScores.reduce((a, b) => a + b, 0) /
+            data.textMatchScores.length
+          : 0;
+
+      // Signal 3: OpenSearch relevance (20% weight)
+      const avgOpenSearchScore =
         data.scores.reduce((a, b) => a + b, 0) / data.scores.length;
+      const normalizedOpenSearchScore = Math.min(avgOpenSearchScore / 10, 1); // Normalize to 0-1
 
-      // Boost score based on resource count (more resources = more relevant)
-      const resourceCountBoost = Math.log(data.resourceCount + 1) * 0.1;
+      // Signal 4: Popularity boost (10% weight)
+      const popularityScore = Math.min(
+        Math.log(data.resourceCount + 1) / Math.log(100),
+        1,
+      ); // Normalize to 0-1
 
-      // Extra boost for taxonomies that came from classification
-      const classificationBoost = data.isFromClassification ? 0.5 : 0;
-
-      const finalScore = avgScore + resourceCountBoost + classificationBoost;
+      // Blended final score
+      const finalScore =
+        classificationScore * 0.4 +
+        avgTextMatchScore * 0.3 +
+        normalizedOpenSearchScore * 0.2 +
+        popularityScore * 0.1;
 
       // Determine match type
       let matchType: 'intent' | 'text' | 'hybrid' = 'hybrid';
@@ -468,6 +487,86 @@ export class SemanticTaxonomySuggestionService {
   }
 
   /**
+   * Convert classification confidence to a numeric score
+   */
+  private getClassificationConfidenceScore(
+    confidence: 'high' | 'medium' | 'low',
+  ): number {
+    switch (confidence) {
+      case 'high':
+        return 1.0;
+      case 'medium':
+        return 0.7;
+      case 'low':
+        return 0.4;
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Compute text match score using NLP tokenization and n-grams
+   * Uses wink-nlp-utils for better text matching
+   * Returns a score from 0 to 1
+   */
+  private computeTextMatchScore(
+    queryText: string,
+    taxonomyName?: string,
+    taxonomyCode?: string,
+  ): number {
+    if (!queryText || (!taxonomyName && !taxonomyCode)) {
+      return 0;
+    }
+
+    // Tokenize and clean the query
+    const queryTokens = nlp.string.tokenize(queryText.toLowerCase());
+    const queryWords = nlp.tokens.removeWords(queryTokens); // Remove stop words
+    const queryStem = queryWords.map((token) => nlp.string.stem(token));
+
+    // Prepare taxonomy text for matching
+    const taxonomyText = [taxonomyName, taxonomyCode]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const taxonomyTokens = nlp.string.tokenize(taxonomyText);
+    const taxonomyWords = nlp.tokens.removeWords(taxonomyTokens);
+    const taxonomyStem = taxonomyWords.map((token) => nlp.string.stem(token));
+
+    let score = 0;
+
+    // Strategy 1: Exact token matches (after stemming) - highest weight
+    const exactMatches = queryStem.filter((qStem) =>
+      taxonomyStem.includes(qStem),
+    );
+    if (exactMatches.length > 0) {
+      score += 0.5 * (exactMatches.length / queryStem.length);
+    }
+
+    // Strategy 2: Bigram matches - medium weight
+    const queryBigrams = nlp.tokens.bigrams(queryWords);
+    const taxonomyBigrams = nlp.tokens.bigrams(taxonomyWords);
+
+    const bigramMatches = queryBigrams.filter((qBigram) =>
+      taxonomyBigrams.some(
+        (tBigram) => qBigram[0] === tBigram[0] && qBigram[1] === tBigram[1],
+      ),
+    );
+    if (bigramMatches.length > 0 && queryBigrams.length > 0) {
+      score += 0.3 * (bigramMatches.length / queryBigrams.length);
+    }
+
+    // Strategy 3: Substring matches (for compound words) - lower weight
+    const substringMatches = queryStem.filter((qStem) =>
+      taxonomyText.includes(qStem),
+    );
+    if (substringMatches.length > 0) {
+      score += 0.2 * (substringMatches.length / queryStem.length);
+    }
+
+    return Math.min(score, 1.0); // Cap at 1.0
+  }
+
+  /**
    * Helper: Add or update taxonomy in the aggregation map
    */
   private addOrUpdateTaxonomy(
@@ -476,6 +575,7 @@ export class SemanticTaxonomySuggestionService {
     score: number,
     resourceScore: number,
     isFromClassification: boolean,
+    textMatchScore: number,
   ): void {
     const existing = taxonomyMap.get(taxonomy.code);
 
@@ -483,12 +583,14 @@ export class SemanticTaxonomySuggestionService {
       // Update existing entry
       existing.scores.push(score);
       existing.resourceCount++;
+      existing.textMatchScores.push(textMatchScore);
 
       // Update match type tracking
       if (isFromClassification) {
         existing.hasIntentMatch = true;
         existing.isFromClassification = true;
-      } else {
+      }
+      if (textMatchScore > 0) {
         existing.hasTextMatch = true;
       }
     } else {
@@ -500,8 +602,9 @@ export class SemanticTaxonomySuggestionService {
         scores: [score],
         resourceCount: 1,
         hasIntentMatch: isFromClassification,
-        hasTextMatch: !isFromClassification,
+        hasTextMatch: textMatchScore > 0,
         isFromClassification: isFromClassification,
+        textMatchScores: [textMatchScore],
       });
     }
   }
