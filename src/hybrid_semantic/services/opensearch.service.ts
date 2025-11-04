@@ -4,6 +4,7 @@ import { Client } from '@opensearch-project/opensearch';
 import { SearchRequestDto } from '../dto/search-request.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { getTenantShortCode } from 'src/common/config/tenant-mapping.config';
+import * as nlp from 'wink-nlp-utils';
 
 /**
  * Service for building and executing OpenSearch queries
@@ -106,19 +107,61 @@ export class OpenSearchService {
       ),
     );
 
-    // Strategy 4: Keyword search (if enabled)
+    // Strategy 4: Keyword search variations (if enabled)
+    // Generate multiple keyword searches for better coverage:
+    // 4a. Original query (preserves phrases like "utility bills")
+    // 4b. Stemmed content words (normalized matching)
+    // 4c. Bigrams (captures important 2-word phrases)
     if (!searchRequest.disable_intent_classification && searchRequest.q) {
-      strategyNames.push('keyword');
-      msearchBody.push({ index: indexName });
-      msearchBody.push(
-        this.buildKeywordQuery(
-          searchRequest.q,
-          filters,
-          candidatesPerStrategy,
-          searchRequest.search_after,
-          searchRequest,
-        ),
-      );
+      const keywordVariations = this.generateKeywordVariations(searchRequest.q);
+
+      // Original query search
+      if (keywordVariations.original) {
+        strategyNames.push('keyword_original');
+        msearchBody.push({ index: indexName });
+        msearchBody.push(
+          this.buildKeywordQuery(
+            keywordVariations.original,
+            filters,
+            candidatesPerStrategy,
+            searchRequest.search_after,
+            searchRequest,
+            'original',
+          ),
+        );
+      }
+
+      // Stemmed tokens search
+      if (keywordVariations.stemmed) {
+        strategyNames.push('keyword_stemmed');
+        msearchBody.push({ index: indexName });
+        msearchBody.push(
+          this.buildKeywordQuery(
+            keywordVariations.stemmed,
+            filters,
+            candidatesPerStrategy,
+            searchRequest.search_after,
+            searchRequest,
+            'stemmed',
+          ),
+        );
+      }
+
+      // Bigrams search (for phrases like "utility bills")
+      if (keywordVariations.bigrams && keywordVariations.bigrams.length > 0) {
+        strategyNames.push('keyword_bigrams');
+        msearchBody.push({ index: indexName });
+        msearchBody.push(
+          this.buildKeywordQuery(
+            keywordVariations.bigrams.join(' '),
+            filters,
+            candidatesPerStrategy,
+            searchRequest.search_after,
+            searchRequest,
+            'bigrams',
+          ),
+        );
+      }
     }
 
     // Strategy 5: Intent-driven taxonomy search using combined_taxonomy_codes
@@ -407,8 +450,59 @@ export class OpenSearchService {
   }
 
   /**
+   * Generate keyword search variations from the original query
+   * Returns multiple query forms to maximize recall:
+   * - original: Full query preserving phrases
+   * - stemmed: Content words with stemming applied
+   * - bigrams: Important 2-word phrases extracted from content words
+   */
+  private generateKeywordVariations(query: string): {
+    original: string;
+    stemmed: string;
+    bigrams: string[];
+  } {
+    if (!query || query.trim().length === 0) {
+      return { original: query, stemmed: query, bigrams: [] };
+    }
+
+    try {
+      // Tokenize and remove stop words
+      const tokens = nlp.string.tokenize(query.toLowerCase());
+      const contentWords = nlp.tokens.removeWords(tokens);
+
+      // Generate stemmed version
+      const stemmedWords = contentWords.map((word) => nlp.string.stem(word));
+      const stemmed = stemmedWords.join(' ');
+
+      // Generate bigrams from content words (before stemming for better matching)
+      const bigrams: string[] = [];
+      if (contentWords.length >= 2) {
+        for (let i = 0; i < contentWords.length - 1; i++) {
+          bigrams.push(`${contentWords[i]} ${contentWords[i + 1]}`);
+        }
+      }
+
+      this.logger.debug(
+        `Keyword variations - Original: "${query}", Stemmed: "${stemmed}", Bigrams: [${bigrams.join(', ')}]`,
+      );
+
+      return {
+        original: query,
+        stemmed: stemmed || query, // Fallback to original if all stop words
+        bigrams,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Keyword variation generation failed: ${error.message}, using original query`,
+      );
+      return { original: query, stemmed: query, bigrams: [] };
+    }
+  }
+
+  /**
    * Build keyword search query
    * Uses multi_match across text fields combined with geospatial scoring
+   * @param variationType - Type of keyword variation: 'original', 'stemmed', or 'bigrams'
    */
   private buildKeywordQuery(
     query: string,
@@ -416,9 +510,24 @@ export class OpenSearchService {
     size: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    variationType: 'original' | 'stemmed' | 'bigrams' = 'original',
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
-    const keywordWeight = weights?.strategies.keyword_search ?? 1.0;
+    let keywordWeight = weights?.strategies.keyword_search ?? 1.0;
+
+    // Adjust weight based on variation type
+    // Original query gets highest weight (preserves user intent)
+    // Bigrams get medium weight (captures phrases)
+    // Stemmed gets lower weight (more aggressive normalization)
+    if (variationType === 'stemmed') {
+      keywordWeight *= 0.8; // Slightly lower weight for stemmed
+    } else if (variationType === 'bigrams') {
+      keywordWeight *= 0.9; // Medium weight for bigrams
+    }
+
+    this.logger.debug(
+      `Building keyword query [${variationType}]: "${query}" (weight: ${keywordWeight})`,
+    );
 
     const queryBody: any = {
       size: size,
@@ -440,7 +549,9 @@ export class OpenSearchService {
                       'taxonomies.name',
                       'taxonomies.description',
                     ],
-                    type: 'best_fields',
+                    type:
+                      variationType === 'bigrams' ? 'phrase' : 'best_fields',
+                    operator: variationType === 'stemmed' ? 'or' : 'and',
                   },
                 },
               ],
