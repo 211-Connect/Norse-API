@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { SearchRequestDto } from './dto/search-request.dto';
 import { SearchResponse, SearchMetadata } from './dto/search-response.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { AiUtilsService } from './services/ai-utils.service';
+import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
 import { Request } from 'express';
 

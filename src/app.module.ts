@@ -31,6 +31,8 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { HybridSemanticModule } from './hybrid_semantic/hybrid-semantic.module';
 import { HybridSemanticController } from './hybrid_semantic/hybrid-semantic.controller';
+import { SemanticTaxonomySuggestionModule } from './semantic_taxonomy_suggestion/semantic_taxonomy_suggestion.module';
+import { SemanticTaxonomySuggestionController } from './semantic_taxonomy_suggestion/semantic_taxonomy_suggestion.controller';
 
 @Module({
   imports: [
@@ -61,6 +63,7 @@ import { HybridSemanticController } from './hybrid_semantic/hybrid-semantic.cont
     ResourceModule,
     SuggestionModule,
     HybridSemanticModule,
+    SemanticTaxonomySuggestionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
@@ -83,6 +86,7 @@ export class AppModule implements NestModule {
         FavoriteListController,
         SuggestionController,
         HybridSemanticController,
+        SemanticTaxonomySuggestionController,
       );
   }
 }

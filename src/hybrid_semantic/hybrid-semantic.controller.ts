@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, Version } from '@nestjs/common';
+import { Controller, Post, Body, Version } from '@nestjs/common';
 import {
   ApiTags,
   ApiHeader,
@@ -14,6 +14,7 @@ import {
 import { SearchResponse } from './dto/search-response.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
+import { Tenant } from 'src/common/decorators/Tenant';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
 
@@ -415,8 +416,8 @@ export class HybridSemanticController {
   async search(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Body(new ZodValidationPipe(searchRequestSchema)) body: SearchRequestDto,
-    @Req() req: Request,
+    @Tenant() tenant: Request['tenant'],
   ): Promise<SearchResponse> {
-    return this.hybridSemanticService.search(body, headers, req.tenant);
+    return this.hybridSemanticService.search(body, headers, tenant);
   }
 }

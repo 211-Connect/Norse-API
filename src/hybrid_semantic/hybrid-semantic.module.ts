@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HybridSemanticController } from './hybrid-semantic.controller';
 import { HybridSemanticService } from './hybrid-semantic.service';
-import { AiUtilsService } from './services/ai-utils.service';
+import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
 
 /**

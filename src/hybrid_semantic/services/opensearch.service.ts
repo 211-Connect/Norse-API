@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@opensearch-project/opensearch';
 import { SearchRequestDto } from '../dto/search-request.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { getTenantShortCode } from '../config/tenant-mapping.config';
+import { getTenantShortCode } from 'src/common/config/tenant-mapping.config';
 
 /**
  * Service for building and executing OpenSearch queries

@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { IntentClassificationResult } from '../dto/search-response.dto';
 
 /**
- * Service for interfacing with external AI services
+ * Shared service for interfacing with external AI services
  * - Embeddings: Ollama (OpenAI-compatible API)
  * - Classification & Reranking: ai-utils microservice
+ *
+ * This service is shared across multiple modules (hybrid_semantic, semantic_taxonomy_suggestion, etc.)
  */
 @Injectable()
 export class AiUtilsService {
@@ -74,7 +75,14 @@ export class AiUtilsService {
       this.logger.warn(
         'AI_UTILS_URL not configured - skipping intent classification',
       );
-      return this.getMockClassification();
+      return {
+        primary_intent: null,
+        top_intents: [],
+        combined_taxonomy_codes: [],
+        confidence: 'low',
+        is_low_information_query: false,
+        priority_rule_applied: false,
+      };
     }
 
     try {
@@ -108,22 +116,15 @@ export class AiUtilsService {
       );
       // Return a fallback classification instead of throwing
       // This allows search to continue even if classification fails
-      return this.getMockClassification();
+      return {
+        primary_intent: null,
+        top_intents: [],
+        combined_taxonomy_codes: [],
+        confidence: 'low',
+        is_low_information_query: false,
+        priority_rule_applied: false,
+      };
     }
-  }
-
-  /**
-   * Helper: Return a mock classification when ai-utils is unavailable
-   */
-  private getMockClassification(): IntentClassificationResult {
-    return {
-      primary_intent: null,
-      top_intents: [],
-      combined_taxonomy_codes: [],
-      confidence: 'low',
-      is_low_information_query: false,
-      priority_rule_applied: false,
-    };
   }
 
   /**
@@ -206,4 +207,38 @@ export class AiUtilsService {
     const idToDoc = new Map(documents.map((doc) => [doc._id, doc]));
     return rankedIds.map((id) => idToDoc.get(id)).filter(Boolean);
   }
+}
+
+/**
+ * Intent classification result interface
+ * Matches the response from ai-utils microservice
+ */
+export interface IntentScore {
+  intent: string;
+  score: number;
+}
+
+export interface QueryCharacteristics {
+  query_length: number;
+  word_count: number;
+  is_exact_match: boolean;
+  is_meta_question: boolean;
+  has_vague_pattern: boolean;
+  generic_word_ratio: number;
+  max_intent_score: number;
+  score_entropy: number;
+  has_domain_keywords: boolean;
+}
+
+export interface IntentClassificationResult {
+  primary_intent: string | null;
+  top_intents: IntentScore[];
+  combined_taxonomy_codes: string[];
+  confidence: 'high' | 'medium' | 'low';
+  is_low_information_query: boolean;
+  query_characteristics?: QueryCharacteristics;
+  priority_rule_applied: boolean;
+  all_intent_scores?: IntentScore[];
+  setfit_scores?: Record<string, number>;
+  request_id?: string | null;
 }
