@@ -14,7 +14,10 @@ GET /semantic-taxonomy-suggestion?query={query}&limit={limit}&lang={lang}&code={
 - `query` (required): User search query (e.g., "food assistance")
 - `limit` (optional): Number of suggestions to return (default: 10, max: 50)
 - `lang` (optional): Language/locale for search (default: "en")
-- `code` (optional): Taxonomy code prefix to filter results (e.g., "BD")
+- `code` (optional): Taxonomy code prefix(es) to filter results. Supports hierarchical filtering.
+  - Single prefix: `code=BD` (returns all taxonomies starting with "BD")
+  - Multiple prefixes: `code=BD&code=LR` (returns taxonomies starting with "BD" OR "LR")
+  - Hierarchical levels: `code=LR-8000` (returns all taxonomies under LR-8000 hierarchy)
 
 ### Headers
 - `x-tenant-id` (required): Tenant identifier
@@ -346,6 +349,62 @@ curl 'http://localhost:8080/semantic-taxonomy-suggestion?query=housing&limit=5&c
   -H 'x-api-version: 1' \
   -H 'x-tenant-id: 0e50850f-6a7f-49c1-9af8-7d124e2a7008'
 ```
+
+## Hierarchical Code Filtering Examples
+
+The `code` parameter supports hierarchical taxonomy filtering based on the AIRS/211 LA taxonomy structure:
+
+### Taxonomy Hierarchy Structure
+```
+Level I:   L (Health Care)
+Level II:  LR (Rehabilitation/Habilitation Services)
+Level III: LR-8000 (Speech and Hearing)
+Level IV:  LR-8000.0500 (Audiology)
+Level V:   LR-8000.0500-800 (Sign Language Instruction)
+Level VI:  LR-8000.0500-800.05 (American Sign Language)
+```
+
+### Example 1: Filter by Top-Level Category
+```bash
+GET /semantic-taxonomy-suggestion?query=assistance&code=B
+```
+Returns only taxonomies starting with "B" (Basic Needs):
+- `BD-1800` - Food Pantries
+- `BH-1800` - Homeless Shelters
+- `BD-1800.2000` - Emergency Food
+- etc.
+
+### Example 2: Filter by Multiple Top-Level Categories
+```bash
+GET /semantic-taxonomy-suggestion?query=assistance&code=B&code=L
+```
+Returns taxonomies starting with "B" OR "L":
+- `BD-1800` - Food Pantries (Basic Needs)
+- `LR-8000` - Speech and Hearing (Health Care)
+- `BH-1800` - Homeless Shelters (Basic Needs)
+- etc.
+
+Filters out all other categories like "F" (Criminal Justice), "D" (Consumer Services), etc.
+
+### Example 3: Filter by Specific Subcategory
+```bash
+GET /semantic-taxonomy-suggestion?query=food&code=BD-1800
+```
+Returns only taxonomies under the "Food Pantries" hierarchy:
+- `BD-1800` - Food Pantries
+- `BD-1800.2000` - Emergency Food
+- `BD-1800.1500` - Food Delivery
+- etc.
+
+### Example 4: Multiple Subcategories
+```bash
+GET /semantic-taxonomy-suggestion?query=support&code=BD-1800&code=LR-8000
+```
+Returns taxonomies from both hierarchies:
+- `BD-1800.2000` - Emergency Food
+- `LR-8000.0500` - Audiology
+- `LR-8000.0500-800` - Sign Language Instruction
+- etc.
 
 ## Troubleshooting
 

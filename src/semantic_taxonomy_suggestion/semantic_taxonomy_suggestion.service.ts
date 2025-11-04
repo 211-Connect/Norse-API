@@ -78,6 +78,7 @@ export class SemanticTaxonomySuggestionService {
         query.limit,
         classification,
         query.query,
+        query.code,
       );
 
       // Step 4: Build response
@@ -189,7 +190,7 @@ export class SemanticTaxonomySuggestionService {
   private buildIntentTaxonomyQuery(
     taxonomyCodes: string[],
     k: number,
-    codePrefix?: string,
+    codePrefixes?: string[],
   ): any {
     const query: any = {
       size: k,
@@ -218,16 +219,34 @@ export class SemanticTaxonomySuggestionService {
       },
     };
 
-    // Add code prefix filter if provided
-    if (codePrefix) {
-      query.query.nested.query.bool.must.push({
-        prefix: {
-          'taxonomies.code': {
-            value: codePrefix.toUpperCase(),
-            case_insensitive: true,
+    // Add code prefix filter if provided (supports multiple prefixes with OR logic)
+    if (codePrefixes && codePrefixes.length > 0) {
+      if (codePrefixes.length === 1) {
+        // Single prefix: use simple prefix query
+        query.query.nested.query.bool.must.push({
+          prefix: {
+            'taxonomies.code': {
+              value: codePrefixes[0].toUpperCase(),
+              case_insensitive: true,
+            },
           },
-        },
-      });
+        });
+      } else {
+        // Multiple prefixes: use bool should with minimum_should_match: 1
+        query.query.nested.query.bool.must.push({
+          bool: {
+            should: codePrefixes.map((prefix) => ({
+              prefix: {
+                'taxonomies.code': {
+                  value: prefix.toUpperCase(),
+                  case_insensitive: true,
+                },
+              },
+            })),
+            minimum_should_match: 1,
+          },
+        });
+      }
     }
 
     return query;
@@ -240,7 +259,7 @@ export class SemanticTaxonomySuggestionService {
   private buildTextTaxonomyQuery(
     searchQuery: string,
     k: number,
-    codePrefix?: string,
+    codePrefixes?: string[],
   ): any {
     // Check if query looks like a taxonomy code (e.g., "BD-1800" or "BD")
     const isCodePattern = /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i.test(
@@ -311,18 +330,38 @@ export class SemanticTaxonomySuggestionService {
       });
     }
 
-    // Add code prefix filter if provided
-    if (codePrefix) {
-      query.query.nested.query.bool.filter = [
-        {
-          prefix: {
-            'taxonomies.code': {
-              value: codePrefix.toUpperCase(),
-              case_insensitive: true,
+    // Add code prefix filter if provided (supports multiple prefixes with OR logic)
+    if (codePrefixes && codePrefixes.length > 0) {
+      if (codePrefixes.length === 1) {
+        // Single prefix: use simple prefix filter
+        query.query.nested.query.bool.filter = [
+          {
+            prefix: {
+              'taxonomies.code': {
+                value: codePrefixes[0].toUpperCase(),
+                case_insensitive: true,
+              },
             },
           },
-        },
-      ];
+        ];
+      } else {
+        // Multiple prefixes: use bool should with minimum_should_match: 1
+        query.query.nested.query.bool.filter = [
+          {
+            bool: {
+              should: codePrefixes.map((prefix) => ({
+                prefix: {
+                  'taxonomies.code': {
+                    value: prefix.toUpperCase(),
+                    case_insensitive: true,
+                  },
+                },
+              })),
+              minimum_should_match: 1,
+            },
+          },
+        ];
+      }
     }
 
     return query;
@@ -358,6 +397,7 @@ export class SemanticTaxonomySuggestionService {
     limit: number,
     classification: any,
     queryText: string,
+    codePrefixes?: string[],
   ): TaxonomySuggestion[] {
     // Map to store unique taxonomies by code
     const taxonomyMap = new Map<
@@ -380,6 +420,14 @@ export class SemanticTaxonomySuggestionService {
       classification.combined_taxonomy_codes || [],
     );
 
+    // Helper function to check if taxonomy code matches any of the prefixes
+    const matchesCodePrefix = (taxonomyCode: string): boolean => {
+      if (!codePrefixes || codePrefixes.length === 0) return true;
+      return codePrefixes.some((prefix) =>
+        taxonomyCode.toUpperCase().startsWith(prefix.toUpperCase()),
+      );
+    };
+
     // Process each resource and extract matched taxonomies
     results.forEach((hit) => {
       const score = hit._score;
@@ -401,6 +449,9 @@ export class SemanticTaxonomySuggestionService {
       if (hit._source?.taxonomies) {
         hit._source.taxonomies.forEach((taxonomy: any) => {
           if (!taxonomy.code) return;
+
+          // Apply code prefix filter first
+          if (!matchesCodePrefix(taxonomy.code)) return;
 
           const isFromClassification = classificationCodes.has(taxonomy.code);
 

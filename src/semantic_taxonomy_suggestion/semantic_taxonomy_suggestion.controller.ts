@@ -44,8 +44,12 @@ export class SemanticTaxonomySuggestionController {
   @ApiQuery({
     name: 'code',
     required: false,
-    description: 'Optional taxonomy code prefix to filter results',
+    description:
+      'Optional taxonomy code prefix(es) to filter results. Supports hierarchical filtering. ' +
+      'Can be a single code (e.g., "BD") or multiple codes (e.g., "code=B&code=L"). ' +
+      'Only taxonomies starting with the specified prefix(es) will be returned.',
     example: 'BD',
+    isArray: true,
   })
   @ApiQuery({
     name: 'limit',
