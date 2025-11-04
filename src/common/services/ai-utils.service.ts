@@ -102,6 +102,11 @@ export class AiUtilsService {
 
       const classification: IntentClassificationResult = response.data;
 
+      // Add the original query to query_characteristics if present
+      if (classification.query_characteristics) {
+        classification.query_characteristics.query = query;
+      }
+
       this.logger.debug(
         `Intent classification: ${classification.primary_intent || 'low-info'} ` +
           `(confidence: ${classification.confidence}, ` +
@@ -219,7 +224,7 @@ export interface IntentScore {
 }
 
 export interface QueryCharacteristics {
-  query: string;
+  query?: string; // Added by Norse-API after receiving classification response
   query_length: number;
   word_count: number;
   is_exact_match: boolean;
