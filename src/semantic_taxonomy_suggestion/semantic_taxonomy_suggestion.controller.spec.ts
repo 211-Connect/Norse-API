@@ -56,7 +56,7 @@ describe('SemanticTaxonomySuggestionController', () => {
             code: 'BD-1800.1500',
             name: 'Emergency Food',
             score: 0.88,
-            match_type: 'semantic',
+            match_type: 'text',
             resource_count: 15,
           },
         ],

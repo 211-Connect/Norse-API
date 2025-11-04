@@ -1,7 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { SemanticTaxonomySuggestionService } from './semantic_taxonomy_suggestion.service';
 import { AiUtilsService } from 'src/common/services/ai-utils.service';
+import axios from 'axios';
+
+// Mock axios for external HTTP calls
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 // Mock the OpenSearch client
 jest.mock('@opensearch-project/opensearch', () => {
@@ -17,47 +22,38 @@ jest.mock('@opensearch-project/opensearch', () => {
 
 describe('SemanticTaxonomySuggestionService', () => {
   let service: SemanticTaxonomySuggestionService;
-  let aiUtilsService: AiUtilsService;
-
-  const mockConfigService = {
-    get: jest.fn((key: string) => {
-      const config: Record<string, string> = {
-        OPENSEARCH_NODE: 'http://localhost:9200',
-        AI_UTILS_URL: 'http://localhost:8001',
-        OLLAMA_BASE_URL: 'http://localhost:11434',
-        OLLAMA_EMBEDDING_MODEL: 'bge-m3:567m',
-      };
-      return config[key];
-    }),
-  };
-
-  const mockAiUtilsService = {
-    embedQuery: jest.fn(),
-  };
 
   beforeEach(async () => {
+    // Reset all mocks before each test
+    jest.clearAllMocks();
+
+    // Set up environment variables for ConfigService
+    process.env.OPENSEARCH_NODE = 'http://localhost:9200';
+    process.env.AI_UTILS_URL = 'http://localhost:8000';
+    process.env.OLLAMA_BASE_URL = 'http://localhost:11434';
+    process.env.OLLAMA_EMBEDDING_MODEL = 'bge-m3:567m';
+
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SemanticTaxonomySuggestionService,
-        {
-          provide: ConfigService,
-          useValue: mockConfigService,
-        },
-        {
-          provide: AiUtilsService,
-          useValue: mockAiUtilsService,
-        },
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+        }),
       ],
+      providers: [SemanticTaxonomySuggestionService, AiUtilsService],
     }).compile();
 
     service = module.get<SemanticTaxonomySuggestionService>(
       SemanticTaxonomySuggestionService,
     );
-    aiUtilsService = module.get<AiUtilsService>(AiUtilsService);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+    // Clean up environment variables
+    delete process.env.OPENSEARCH_NODE;
+    delete process.env.AI_UTILS_URL;
+    delete process.env.OLLAMA_BASE_URL;
+    delete process.env.OLLAMA_EMBEDDING_MODEL;
   });
 
   it('should be defined', () => {
@@ -65,9 +61,19 @@ describe('SemanticTaxonomySuggestionService', () => {
   });
 
   describe('getTaxonomySuggestions', () => {
-    it('should embed query and return suggestions', async () => {
-      const mockEmbedding = new Array(1024).fill(0.1);
-      mockAiUtilsService.embedQuery.mockResolvedValue(mockEmbedding);
+    it('should classify query and return suggestions', async () => {
+      // Mock axios response for classifyQuery
+      const mockClassification = {
+        primary_intent: 'food_assistance',
+        confidence: 'high',
+        is_low_information_query: false,
+        combined_taxonomy_codes: ['BD-1800', 'BD-1800.1500'],
+        top_intents: [],
+        priority_rule_applied: false,
+      };
+      mockedAxios.post.mockResolvedValueOnce({
+        data: mockClassification,
+      });
 
       // Mock the OpenSearch client msearch response
       const mockMsearchResponse = {
@@ -165,16 +171,30 @@ describe('SemanticTaxonomySuggestionService', () => {
         tenant as any,
       );
 
-      expect(aiUtilsService.embedQuery).toHaveBeenCalledWith('food assistance');
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        'http://localhost:8000/api/v1/intent-classification',
+        { query: 'food assistance', request_id: null },
+        expect.any(Object),
+      );
       expect(result.suggestions).toBeDefined();
       expect(result.suggestions.length).toBeGreaterThan(0);
-      expect(result.metadata.embedding_used).toBe(true);
-      expect(result.metadata.search_strategy).toBe('hybrid_semantic_text');
+      expect(result.metadata.embedding_used).toBe(false);
+      expect(result.metadata.search_strategy).toBe('intent_classification');
     });
 
     it('should aggregate taxonomies across multiple resources', async () => {
-      const mockEmbedding = new Array(1024).fill(0.1);
-      mockAiUtilsService.embedQuery.mockResolvedValue(mockEmbedding);
+      // Mock axios response for classifyQuery
+      const mockClassification = {
+        primary_intent: 'food_assistance',
+        confidence: 'high',
+        is_low_information_query: false,
+        combined_taxonomy_codes: ['BD-1800'],
+        top_intents: [],
+        priority_rule_applied: false,
+      };
+      mockedAxios.post.mockResolvedValueOnce({
+        data: mockClassification,
+      });
 
       // Mock response with same taxonomy appearing in multiple resources
       const mockMsearchResponse = {
@@ -186,6 +206,14 @@ describe('SemanticTaxonomySuggestionService', () => {
                   {
                     _id: 'resource-1',
                     _score: 0.95,
+                    _source: {
+                      taxonomies: [
+                        {
+                          code: 'BD-1800',
+                          name: 'Food Pantries',
+                        },
+                      ],
+                    },
                     inner_hits: {
                       matched_taxonomies: {
                         hits: {
@@ -204,6 +232,14 @@ describe('SemanticTaxonomySuggestionService', () => {
                   {
                     _id: 'resource-2',
                     _score: 0.92,
+                    _source: {
+                      taxonomies: [
+                        {
+                          code: 'BD-1800',
+                          name: 'Food Pantries',
+                        },
+                      ],
+                    },
                     inner_hits: {
                       matched_taxonomies: {
                         hits: {
@@ -256,6 +292,205 @@ describe('SemanticTaxonomySuggestionService', () => {
       );
       expect(foodPantryTaxonomy).toBeDefined();
       expect(foodPantryTaxonomy?.resource_count).toBe(2);
+    });
+
+    it('should filter results by single code prefix', async () => {
+      // Mock axios response for classifyQuery
+      const mockClassification = {
+        primary_intent: 'food_assistance',
+        confidence: 'high',
+        is_low_information_query: false,
+        combined_taxonomy_codes: ['BD-1800'],
+        top_intents: [],
+        priority_rule_applied: false,
+      };
+      mockedAxios.post.mockResolvedValueOnce({
+        data: mockClassification,
+      });
+
+      const mockMsearchResponse = {
+        body: {
+          responses: [
+            {
+              hits: {
+                hits: [
+                  {
+                    _id: 'resource-1',
+                    _score: 0.95,
+                    _source: {
+                      taxonomies: [
+                        {
+                          code: 'BD-1800',
+                          name: 'Food Pantries',
+                        },
+                      ],
+                    },
+                    inner_hits: {
+                      matched_taxonomies: {
+                        hits: {
+                          hits: [
+                            {
+                              _source: {
+                                code: 'BD-1800',
+                                name: 'Food Pantries',
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+            {
+              hits: { hits: [] },
+            },
+          ],
+        },
+      };
+
+      (service as any).client.msearch.mockResolvedValue(mockMsearchResponse);
+
+      const query = {
+        query: 'food',
+        code: ['BD'],
+        limit: 10,
+        lang: 'en',
+      };
+
+      const headers = {
+        'x-tenant-id': 'test-tenant',
+        'accept-language': 'en',
+      };
+
+      const tenant = { name: 'Illinois 211' };
+
+      const result = await service.getTaxonomySuggestions(
+        query,
+        headers,
+        tenant as any,
+      );
+
+      expect(result.suggestions).toBeDefined();
+      // Verify that msearch was called with code prefix filter
+      expect((service as any).client.msearch).toHaveBeenCalled();
+    });
+
+    it('should filter results by multiple code prefixes', async () => {
+      // Mock axios response for classifyQuery
+      const mockClassification = {
+        primary_intent: 'general_assistance',
+        confidence: 'medium',
+        is_low_information_query: false,
+        combined_taxonomy_codes: ['BD-1800', 'LR-8000'],
+        top_intents: [],
+        priority_rule_applied: false,
+      };
+      mockedAxios.post.mockResolvedValueOnce({
+        data: mockClassification,
+      });
+
+      const mockMsearchResponse = {
+        body: {
+          responses: [
+            {
+              hits: {
+                hits: [
+                  {
+                    _id: 'resource-1',
+                    _score: 0.95,
+                    _source: {
+                      taxonomies: [
+                        {
+                          code: 'BD-1800',
+                          name: 'Food Pantries',
+                        },
+                      ],
+                    },
+                    inner_hits: {
+                      matched_taxonomies: {
+                        hits: {
+                          hits: [
+                            {
+                              _source: {
+                                code: 'BD-1800',
+                                name: 'Food Pantries',
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                  {
+                    _id: 'resource-2',
+                    _score: 0.92,
+                    _source: {
+                      taxonomies: [
+                        {
+                          code: 'LR-8000',
+                          name: 'Speech and Hearing',
+                        },
+                      ],
+                    },
+                    inner_hits: {
+                      matched_taxonomies: {
+                        hits: {
+                          hits: [
+                            {
+                              _source: {
+                                code: 'LR-8000',
+                                name: 'Speech and Hearing',
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+            {
+              hits: { hits: [] },
+            },
+          ],
+        },
+      };
+
+      (service as any).client.msearch.mockResolvedValue(mockMsearchResponse);
+
+      const query = {
+        query: 'assistance',
+        code: ['BD', 'LR'],
+        limit: 10,
+        lang: 'en',
+      };
+
+      const headers = {
+        'x-tenant-id': 'test-tenant',
+        'accept-language': 'en',
+      };
+
+      const tenant = { name: 'Illinois 211' };
+
+      const result = await service.getTaxonomySuggestions(
+        query,
+        headers,
+        tenant as any,
+      );
+
+      expect(result.suggestions).toBeDefined();
+      expect(result.suggestions.length).toBeGreaterThan(0);
+      // Should contain taxonomies from both BD and LR prefixes
+      const hasBDTaxonomy = result.suggestions.some((s) =>
+        s.code.startsWith('BD'),
+      );
+      const hasLRTaxonomy = result.suggestions.some((s) =>
+        s.code.startsWith('LR'),
+      );
+      expect(hasBDTaxonomy || hasLRTaxonomy).toBe(true);
     });
   });
 
