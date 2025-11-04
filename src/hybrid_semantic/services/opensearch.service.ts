@@ -53,7 +53,7 @@ export class OpenSearchService {
     headers: HeadersDto,
     tenant: string,
     intentClassification?: any,
-  ): Promise<any[]> {
+  ): Promise<{ results: any[]; queryTimings: Record<string, number> }> {
     // Map tenant name to short code (e.g., "Illinois 211" -> "il211")
     const tenantShortCode = getTenantShortCode(tenant);
     const indexName = this.getIndexName(tenantShortCode, searchRequest.lang);
@@ -61,11 +61,14 @@ export class OpenSearchService {
 
     const filters = this.buildFilters(searchRequest);
     const candidatesPerStrategy = 50; // Configurable
+    const queryTimings: Record<string, number> = {};
 
     // Build multi-search body
     const msearchBody = [];
+    const strategyNames: string[] = [];
 
     // Strategy 1: Service-level semantic search
+    strategyNames.push('semantic_service');
     msearchBody.push({ index: indexName });
     msearchBody.push(
       this.buildServiceSemanticQuery(
@@ -78,6 +81,7 @@ export class OpenSearchService {
     );
 
     // Strategy 2: Taxonomy-level semantic search
+    strategyNames.push('semantic_taxonomy');
     msearchBody.push({ index: indexName });
     msearchBody.push(
       this.buildTaxonomySemanticQuery(
@@ -90,6 +94,7 @@ export class OpenSearchService {
     );
 
     // Strategy 3: Organization-level semantic search
+    strategyNames.push('semantic_organization');
     msearchBody.push({ index: indexName });
     msearchBody.push(
       this.buildOrganizationSemanticQuery(
@@ -103,6 +108,7 @@ export class OpenSearchService {
 
     // Strategy 4: Keyword search (if enabled)
     if (!searchRequest.disable_intent_classification && searchRequest.q) {
+      strategyNames.push('keyword');
       msearchBody.push({ index: indexName });
       msearchBody.push(
         this.buildKeywordQuery(
@@ -126,6 +132,7 @@ export class OpenSearchService {
       this.logger.debug(
         `Adding intent-driven taxonomy search with ${intentClassification.combined_taxonomy_codes.length} codes`,
       );
+      strategyNames.push('intent_taxonomy');
       msearchBody.push({ index: indexName });
       msearchBody.push(
         this.buildIntentTaxonomyQuery(
@@ -143,14 +150,24 @@ export class OpenSearchService {
     }
 
     try {
-      // Execute multi-search
+      // Execute multi-search and track timing
+      const msearchStart = Date.now();
       const response = await this.client.msearch({
         body: msearchBody,
+      });
+      queryTimings.total = Date.now() - msearchStart;
+
+      // Track individual query timings from OpenSearch response
+      response.body.responses.forEach((resp: any, index: number) => {
+        if (resp.took !== undefined && strategyNames[index]) {
+          queryTimings[strategyNames[index]] = resp.took;
+        }
       });
 
       // Combine and deduplicate results from all strategies
       const combinedResults = this.combineSearchResults(
         response.body.responses,
+        strategyNames,
       );
 
       // Add distance information to results
@@ -163,7 +180,7 @@ export class OpenSearchService {
         `Hybrid search returned ${resultsWithDistance.length} unique results`,
       );
 
-      return resultsWithDistance;
+      return { results: resultsWithDistance, queryTimings };
     } catch (error) {
       this.logger.error(
         `OpenSearch query failed: ${error.message}`,
@@ -754,15 +771,26 @@ export class OpenSearchService {
 
   /**
    * Combine and deduplicate results from multiple search strategies
-   * Enhanced to preserve the best scores from different strategies
+   * Enhanced to preserve the best scores from different strategies and track sources
    */
-  private combineSearchResults(responses: any[]): any[] {
+  private combineSearchResults(
+    responses: any[],
+    strategyNames: string[],
+  ): any[] {
     const seenIds = new Set<string>();
     const idToBestHit = new Map<string, any>();
+    const idToSources = new Map<string, Set<string>>();
 
-    responses.forEach((response) => {
+    responses.forEach((response, index) => {
+      const strategyName = strategyNames[index];
       if (response.hits && response.hits.hits) {
         response.hits.hits.forEach((hit: any) => {
+          // Track which strategies found this hit
+          if (!idToSources.has(hit._id)) {
+            idToSources.set(hit._id, new Set());
+          }
+          idToSources.get(hit._id).add(strategyName);
+
           if (!seenIds.has(hit._id)) {
             seenIds.add(hit._id);
             idToBestHit.set(hit._id, hit);
@@ -777,8 +805,11 @@ export class OpenSearchService {
       }
     });
 
-    // Convert map back to array and sort by score
-    const combinedHits = Array.from(idToBestHit.values());
+    // Convert map back to array, add sources metadata, and sort by score
+    const combinedHits = Array.from(idToBestHit.values()).map((hit) => ({
+      ...hit,
+      _sources: Array.from(idToSources.get(hit._id) || []),
+    }));
     combinedHits.sort((a, b) => b._score - a._score);
 
     return combinedHits;

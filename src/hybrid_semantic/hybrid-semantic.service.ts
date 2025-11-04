@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SearchRequestDto } from './dto/search-request.dto';
-import { SearchResponse, SearchMetadata } from './dto/search-response.dto';
+import {
+  SearchResponse,
+  SearchMetadata,
+  GranularPhaseTimings,
+  HitSource,
+} from './dto/search-response.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
@@ -33,7 +38,7 @@ export class HybridSemanticService {
     tenant: Request['tenant'],
   ): Promise<SearchResponse> {
     const startTime = Date.now();
-    const phaseTimings: Record<string, number> = {};
+    const granularTimings: GranularPhaseTimings = {};
 
     this.logger.log(
       `Starting hybrid semantic search for query: "${searchRequest.q}"`,
@@ -49,39 +54,75 @@ export class HybridSemanticService {
       let intentClassification: any = null;
 
       if (searchRequest.q && !searchRequest.disable_intent_classification) {
-        // Execute embedding and classification in parallel
+        // Execute embedding and classification in parallel with individual timing
+        let embeddingTime = 0;
+        let classificationTime = 0;
+
         const [embedding, classification] = await Promise.all([
-          this.aiUtilsService.embedQuery(searchRequest.q),
-          this.aiUtilsService.classifyQuery(searchRequest.q),
+          (async () => {
+            const start = Date.now();
+            const result = await this.aiUtilsService.embedQuery(
+              searchRequest.q,
+            );
+            embeddingTime = Date.now() - start;
+            return result;
+          })(),
+          (async () => {
+            const start = Date.now();
+            const result = await this.aiUtilsService.classifyQuery(
+              searchRequest.q,
+            );
+            classificationTime = Date.now() - start;
+            return result;
+          })(),
         ]);
 
         queryEmbedding = embedding;
         intentClassification = classification;
+
+        const phase1Time = Date.now() - phase1Start;
+        granularTimings.phase_1_embedding_and_classification = {
+          total_parallel_time: phase1Time,
+          embedding: embeddingTime,
+          classification: classificationTime,
+        };
 
         this.logger.debug(
           `Intent classification: ${classification.primary_intent || 'low-info'} (confidence: ${classification.confidence})`,
         );
       } else if (searchRequest.q) {
         // Only embedding needed for keyword search
+        const embeddingStart = Date.now();
         queryEmbedding = await this.aiUtilsService.embedQuery(searchRequest.q);
-      }
+        const embeddingTime = Date.now() - embeddingStart;
+        const phase1Time = Date.now() - phase1Start;
 
-      phaseTimings.embedding_and_classification = Date.now() - phase1Start;
+        granularTimings.phase_1_embedding_and_classification = {
+          total_parallel_time: phase1Time,
+          embedding: embeddingTime,
+          classification: 0,
+        };
+      }
 
       // ============================================================
       // PHASE 2: Multi-Strategy OpenSearch Query
       // ============================================================
       const phase2Start = Date.now();
 
-      const rawResults = await this.openSearchService.executeHybridSearch(
-        queryEmbedding,
-        searchRequest,
-        headers,
-        tenant.name,
-        intentClassification,
-      );
+      const { results: rawResults, queryTimings } =
+        await this.openSearchService.executeHybridSearch(
+          queryEmbedding,
+          searchRequest,
+          headers,
+          tenant.name,
+          intentClassification,
+        );
 
-      phaseTimings.opensearch_query = Date.now() - phase2Start;
+      const phase2Time = Date.now() - phase2Start;
+      granularTimings.phase_2_opensearch = {
+        total_parallel_time: phase2Time,
+        individual_queries: queryTimings,
+      };
 
       this.logger.debug(
         `Retrieved ${rawResults.length} candidates from OpenSearch`,
@@ -105,7 +146,10 @@ export class HybridSemanticService {
         rerankedResults = rawResults.slice(0, searchRequest.limit);
       }
 
-      phaseTimings.reranking = Date.now() - phase3Start;
+      const phase3Time = Date.now() - phase3Start;
+      granularTimings.phase_3_reranking = {
+        total_time: phase3Time,
+      };
 
       this.logger.debug(`Reranked to ${rerankedResults.length} final results`);
 
@@ -119,19 +163,33 @@ export class HybridSemanticService {
         searchRequest,
       );
 
-      phaseTimings.post_processing = Date.now() - phase4Start;
+      const phase4Time = Date.now() - phase4Start;
+      granularTimings.phase_4_post_processing = {
+        total_time: phase4Time,
+      };
 
       // ============================================================
       // Build Final Response
       // ============================================================
       const totalTime = Date.now() - startTime;
 
+      // Build sources_of_top_hits from processed results
+      const sourcesOfTopHits: HitSource[] = processedHits.map((hit, index) => ({
+        id: hit._id,
+        organization_name: hit._source?.organization?.name,
+        service_name: hit._source?.service?.name,
+        rank: index + 1,
+        sources: hit._sources || [],
+        score: hit._score,
+      }));
+
       const metadata: SearchMetadata = {
         search_pipeline: 'hybrid_semantic',
         intent_classification: intentClassification,
         is_low_information_query:
           intentClassification?.is_low_information_query || false,
-        phase_timings: phaseTimings,
+        granular_phase_timings: granularTimings,
+        sources_of_top_hits: sourcesOfTopHits,
       };
 
       const response: SearchResponse = {

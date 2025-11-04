@@ -219,6 +219,7 @@ export interface IntentScore {
 }
 
 export interface QueryCharacteristics {
+  query: string;
   query_length: number;
   word_count: number;
   is_exact_match: boolean;
