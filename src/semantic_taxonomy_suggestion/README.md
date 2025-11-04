@@ -93,6 +93,35 @@ The service executes up to 2 search strategies in parallel using OpenSearch `_ms
 
 **Key Innovation**: Only aggregate taxonomies that actually matched, not all taxonomies from matched resources.
 
+**Search Strategy Determination**:
+- **`intent_classification`**: Classifier returned taxonomy codes → uses intent-driven search
+- **`text_matching`**: Classifier returned 0 codes or low confidence → falls back to text search only
+
+**NLP-Based Text Matching** (using [wink-nlp-utils](https://www.npmjs.com/package/wink-nlp-utils)):
+
+When classification fails or returns low confidence, the system uses sophisticated NLP techniques:
+
+1. **Tokenization**: Breaks text into meaningful tokens
+2. **Stop Word Removal**: Removes common words ("a", "the", "with", "for")
+3. **Stemming**: Reduces words to root form ("mothers" → "mother", "children" → "child")
+4. **Bigram Analysis**: Looks for two-word phrase matches
+5. **Substring Matching**: Catches compound words and variations
+
+**Example**: Query "single mother with two kids"
+```
+Original: "single mother with two kids"
+   ↓ Tokenization
+["single", "mother", "with", "two", "kids"]
+   ↓ Stop Word Removal
+["single", "mother", "kids"]
+   ↓ Stemming
+["singl", "mother", "kid"]
+   ↓ Matching
+✓ Matches "Single Mothers Support Group" (stem: "mother")
+✓ Matches "Parent-Child Programs" (stem: "kid" → "child")
+✓ Matches "Single Parent Services" (bigram: ["single", "parent"])
+```
+
 ```typescript
 results.forEach((resource) => {
   resource.taxonomies.forEach((taxonomy) => {
@@ -103,8 +132,29 @@ results.forEach((resource) => {
       // Always include taxonomies from classification
       include(taxonomy);
     } else {
-      // Only include if taxonomy name/code contains query text
-      if (taxonomy.name.includes(query) || taxonomy.code.includes(query)) {
+      // For text matches: use NLP-based matching with wink-nlp-utils
+      // Multi-strategy approach:
+      
+      // 1. Tokenization & Stop Word Removal
+      //    "single mother with two kids" → ["single", "mother", "kids"]
+      
+      // 2. Stemming
+      //    "mothers" → "mother", "children" → "child"
+      
+      // 3. Exact Token Match (after stemming)
+      //    Query: "mothers" → Stem: "mother"
+      //    Taxonomy: "Single Mothers Support" → Stem: "mother"
+      //    ✓ Match!
+      
+      // 4. Bigram Matching
+      //    Query: "single mother" → Bigrams: [["single", "mother"]]
+      //    Taxonomy: "Single Parent Mothers" → Bigrams: [["single", "parent"], ["parent", "mother"]]
+      //    ✓ Partial match on context
+      
+      // 5. Substring Matching (for compound words)
+      //    Query: "mother" matches "grandmother", "single-mother"
+      
+      if (matchesTextQuery(query, taxonomy.name, taxonomy.code)) {
         include(taxonomy);
       }
     }
@@ -112,23 +162,75 @@ results.forEach((resource) => {
 });
 ```
 
-### 4. Scoring & Ranking (Phase 4)
+### 4. Scoring & Ranking (Phase 4) - **Blended Multi-Signal Approach**
 
-Each unique taxonomy is scored based on:
+Each unique taxonomy is scored using **4 weighted signals** for optimal ranking:
 
 ```typescript
-finalScore = avgScore + resourceCountBoost + classificationBoost
-
-where:
-  avgScore = average OpenSearch score across all occurrences
-  resourceCountBoost = log(resourceCount + 1) * 0.1
-  classificationBoost = 0.5 (if from classification) or 0
+finalScore = 
+  (classificationScore × 0.4) +      // 40% - Intent relevance
+  (textMatchScore × 0.3) +           // 30% - NLP text matching
+  (openSearchScore × 0.2) +          // 20% - Search relevance
+  (popularityScore × 0.1)            // 10% - Resource count
 ```
 
-**Factors**:
-1. **OpenSearch relevance score**: How well the taxonomy matched the query
-2. **Resource count**: How many resources have this taxonomy (popularity signal)
-3. **Classification boost**: Extra weight for taxonomies predicted by the classifier
+#### **Signal Breakdown**
+
+**1. Classification Score (40% weight)** - Primary signal
+```typescript
+if (isFromClassification) {
+  score = confidence === 'high' ? 1.0 :
+          confidence === 'medium' ? 0.7 : 0.4;
+} else {
+  score = 0;
+}
+```
+- Highest weight because classifier is trained on real user queries
+- Confidence level modulates the score
+
+**2. Text Match Score (30% weight)** - NLP-based relevance
+```typescript
+score = 
+  (exactTokenMatches / totalTokens) × 0.5 +    // Stemmed word matches
+  (bigramMatches / totalBigrams) × 0.3 +       // Phrase matches
+  (substringMatches / totalTokens) × 0.2       // Partial matches
+```
+- Computed using wink-nlp-utils tokenization and stemming
+- Rewards exact matches more than partial matches
+
+**3. OpenSearch Score (20% weight)** - Search engine relevance
+```typescript
+score = min(avgOpenSearchScore / 10, 1.0)  // Normalized to 0-1
+```
+- Uses OpenSearch's BM25 scoring
+- Normalized to prevent dominating other signals
+
+**4. Popularity Score (10% weight)** - Usage signal
+```typescript
+score = min(log(resourceCount + 1) / log(100), 1.0)  // Normalized to 0-1
+```
+- More resources = more commonly needed service
+- Logarithmic to prevent popular taxonomies from dominating
+
+#### **Example: Scoring "Single Mother Support"**
+
+Query: `"single mother with two kids"`
+
+| Signal | Calculation | Score | Weight | Contribution |
+|--------|-------------|-------|--------|--------------|
+| Classification | In predicted codes, confidence=high | 1.0 | 40% | **0.40** |
+| Text Match | "single"(0.5) + "mother"(0.5) / 2 tokens | 0.75 | 30% | **0.225** |
+| OpenSearch | BM25 score: 8.5 / 10 | 0.85 | 20% | **0.17** |
+| Popularity | log(26+1) / log(100) = 0.71 | 0.71 | 10% | **0.071** |
+| **Final Score** | | | | **0.866** |
+
+#### **Why This Approach?**
+
+✅ **Broad Discovery**: Union of classification + text matching catches more candidates  
+✅ **Precise Ranking**: Multi-signal scoring surfaces the most relevant results  
+✅ **Balanced**: No single signal dominates (prevents over-reliance on any one method)  
+✅ **Tunable**: Weights can be adjusted based on performance metrics  
+✅ **Resilient**: If classification fails, text matching + OpenSearch still provide good results
 
 ### 5. Response Construction
 
@@ -196,6 +298,7 @@ where:
 - **`AiUtilsService.classifyQuery()`**: Intent classification via ai-utils microservice
 - **OpenSearch**: Document and taxonomy storage/search
 - **ai-utils microservice**: SetFit-based intent classification model
+- **wink-nlp-utils**: NLP library for tokenization, stemming, stop word removal, and n-gram generation
 
 ## Example Flow
 
@@ -244,9 +347,58 @@ curl 'http://localhost:8080/semantic-taxonomy-suggestion?query=housing&limit=5&c
   -H 'x-tenant-id: 0e50850f-6a7f-49c1-9af8-7d124e2a7008'
 ```
 
+## Troubleshooting
+
+### No Results Returned
+
+**Symptom**: Query returns empty `suggestions` array
+
+**Possible Causes**:
+
+1. **Classifier returned 0 taxonomy codes** (`taxonomy_codes_count: 0`)
+   - The query doesn't match any trained intents
+   - Falls back to `text_matching` strategy
+   - Solution: Improve classifier training data or adjust confidence thresholds
+
+2. **Text matching found no NLP matches**
+   - After tokenization, stemming, and n-gram analysis, no taxonomies matched
+   - Example: "single mother with two kids" → uses NLP to match stems like "mother", "kid", "parent"
+   - The system tries multiple strategies: exact token match, bigrams, and substring matching
+   - Solution: Query may be too specific, or taxonomies may use very different terminology
+
+3. **No resources in the index**
+   - Check if OpenSearch index exists and has data
+   - Verify tenant ID is correct
+
+**Example**:
+```json
+{
+  "search_strategy": "text_matching",
+  "classification": {
+    "primary_intent": null,
+    "confidence": "low",
+    "taxonomy_codes_count": 0
+  }
+}
+```
+This indicates the classifier couldn't identify an intent, so only text matching ran.
+
+### Low Relevance Results
+
+**Symptom**: Results are returned but seem unrelated
+
+**Check**:
+- `match_type` field: Shows how each taxonomy was found
+  - `intent`: From classification (usually more accurate)
+  - `text`: From text matching (may be less precise)
+  - `hybrid`: Matched both ways
+- `confidence` in metadata: "low" confidence may produce weaker results
+
 ## Future Enhancements
 
 - [ ] Cache classification results for common queries
 - [ ] Add support for multi-language classification
 - [ ] Implement query expansion for low-confidence classifications
 - [ ] Add A/B testing framework to compare with embedding-based approach
+- [ ] Improve handling of demographic/persona-based queries (e.g., "single mother")
+- [ ] Add synonym expansion for text matching fallback
