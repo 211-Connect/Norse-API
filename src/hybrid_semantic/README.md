@@ -256,12 +256,49 @@ The following nested fields contain KNN vector embeddings:
       total_document_relevance_score: number;  // Final combined score
       sources: Array<{
         strategy: string;           // Strategy name (e.g., 'semantic_service', 'keyword_original')
-        pre_weight_score: number;   // Score before strategy weight was applied
+        pre_weight_score: number;   // Normalized score (0-1) before strategy weight was applied
         strategy_weight: number;    // Weight multiplier applied to this strategy
       }>;
     }>;
   };
 }
+```
+
+### Score Normalization for Fair Strategy Comparison
+
+**Problem**: Different search strategies produce scores on vastly different scales:
+- **Semantic (KNN)**: 0.0 - 1.0 (cosine similarity)
+- **Keyword (BM25)**: 0.0 - unbounded (typically 1-20+)
+- **Intent Taxonomy**: 1.0 - 2.0 (boolean match with boost)
+
+Without normalization, keyword strategies would always dominate regardless of weight configuration, making tuning impossible.
+
+**Solution**: Min-max normalization per strategy before combining results.
+
+Each strategy's scores are normalized to 0-1 scale using:
+```
+normalized_score = (score - min_score) / (max_score - min_score)
+```
+
+**Benefits:**
+- ✅ **Fair Comparison**: All strategies evaluated on same 0-1 scale
+- ✅ **Meaningful Weights**: Weight tuning actually affects result ranking
+- ✅ **Transparent**: Original scores preserved in metadata for debugging
+- ✅ **Strategy-Specific**: Each strategy normalized independently
+
+**Example:**
+```typescript
+// Before normalization:
+semantic_service: 0.81    // Already 0-1
+keyword_nouns: 11.69      // BM25 score, unbounded
+
+// After normalization (within each strategy's result set):
+semantic_service: 0.95    // (0.81 - 0.75) / (0.85 - 0.75) = 0.60 -> normalized to top of range
+keyword_nouns: 1.0        // (11.69 - 5.82) / (11.69 - 5.82) = 1.0 (highest in keyword results)
+
+// Now weights can be applied fairly:
+semantic_service: 0.95 * 1.0 = 0.95
+keyword_nouns: 1.0 * 0.95 = 0.95  // keyword_nouns weight is 0.95
 ```
 
 ### Enhanced Metadata for Result Traceability
@@ -282,12 +319,12 @@ Each result includes a `sources` array that breaks down exactly how the document
 sources: [
   {
     strategy: "semantic_service",
-    pre_weight_score: 0.8234,
+    pre_weight_score: 0.8234,  // Normalized 0-1 score
     strategy_weight: 1.0
   },
   {
     strategy: "keyword_original",
-    pre_weight_score: 2.4567,
+    pre_weight_score: 0.9156,  // Normalized 0-1 score (was 12.45 BM25 before normalization)
     strategy_weight: 1.0
   }
 ]

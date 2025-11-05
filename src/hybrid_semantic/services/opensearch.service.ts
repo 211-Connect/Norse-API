@@ -961,15 +961,22 @@ export class OpenSearchService {
 
   /**
    * Combine and deduplicate results from multiple search strategies
+   * Normalizes scores to 0-1 scale per strategy before combining
    * Keeps the best score for each unique document and tracks detailed source contributions
    */
   private combineSearchResults(
     responses: any[],
     strategyNames: string[],
   ): any[] {
+    // First pass: normalize scores within each strategy to 0-1 scale
+    const normalizedResponses = this.normalizeStrategyScores(
+      responses,
+      strategyNames,
+    );
+
     const resultMap = new Map<string, any>();
 
-    responses.forEach((response, index) => {
+    normalizedResponses.forEach((response, index) => {
       if (!response.hits?.hits) return;
 
       const strategyName = strategyNames[index];
@@ -977,22 +984,17 @@ export class OpenSearchService {
       response.hits.hits.forEach((hit: any) => {
         const existingHit = resultMap.get(hit._id);
 
-        // Extract pre-weight score and weight from the hit
-        // The hit._score already has the weight applied via the boost parameter
-        // We need to calculate the pre-weight score by dividing by the boost
-        const preWeightScore = this.extractPreWeightScore(hit);
-        const strategyWeight = this.extractStrategyWeight();
-
-        // Track detailed source contributions
+        // Track detailed source contributions with normalized scores
         const sourceContributions = existingHit?._source_contributions || [];
         sourceContributions.push({
           strategy: strategyName,
-          pre_weight_score: preWeightScore,
-          strategy_weight: strategyWeight,
-          weighted_score: hit._score, // Score after weight applied
+          pre_weight_score: hit._normalized_score, // Normalized 0-1 score
+          original_score: hit._original_score, // Original raw score for reference
+          strategy_weight: 1.0, // Placeholder, will be set in main service
+          weighted_score: hit._score, // Final weighted score
         });
 
-        // Keep the hit with the highest score
+        // Keep the hit with the highest weighted score
         if (!existingHit || hit._score > existingHit._score) {
           resultMap.set(hit._id, {
             ...hit,
@@ -1042,29 +1044,59 @@ export class OpenSearchService {
   }
 
   /**
-   * Extract pre-weight score from a hit
-   * The hit contains metadata about the query that can help us determine the original score
+   * Normalize scores within each strategy to 0-1 scale using min-max normalization
+   * This ensures all strategies (semantic KNN, keyword BM25, etc.) are comparable
    */
-  private extractPreWeightScore(hit: any): number {
-    // For OpenSearch function_score queries, the explanation contains the breakdown
-    // However, since we don't have access to the explanation here, we'll use the score
-    // and divide by the known weight for that strategy
-    // This is an approximation since geospatial scoring is also in the mix
+  private normalizeStrategyScores(
+    responses: any[],
+    strategyNames: string[],
+  ): any[] {
+    return responses.map((response, index) => {
+      if (!response.hits?.hits || response.hits.hits.length === 0) {
+        return response;
+      }
 
-    // For now, we'll store the weighted score and calculate pre-weight in the main service
-    // where we have access to the search request and can determine the exact weights
-    return hit._score; // Will be adjusted in the main service
-  }
+      const hits = response.hits.hits;
+      const strategyName = strategyNames[index];
 
-  /**
-   * Extract strategy weight that was applied
-   * Returns the weight multiplier used for this strategy
-   */
-  private extractStrategyWeight(): number {
-    // The weight is stored in the query boost parameter
-    // We'll need to pass this information through from the query building phase
-    // For now, return 1.0 as a placeholder - will be populated correctly in main service
-    return 1.0; // Will be adjusted in the main service
+      // Find min and max scores for this strategy
+      const scores = hits.map((hit: any) => hit._score);
+      const minScore = Math.min(...scores);
+      const maxScore = Math.max(...scores);
+      const scoreRange = maxScore - minScore;
+
+      // Normalize each hit's score to 0-1 range
+      const normalizedHits = hits.map((hit: any) => {
+        let normalizedScore: number;
+
+        if (scoreRange === 0) {
+          // All scores are the same, set to 1.0
+          normalizedScore = 1.0;
+        } else {
+          // Min-max normalization: (score - min) / (max - min)
+          normalizedScore = (hit._score - minScore) / scoreRange;
+        }
+
+        this.logger.debug(
+          `[${strategyName}] Normalized score: ${hit._score.toFixed(4)} -> ${normalizedScore.toFixed(4)} (range: ${minScore.toFixed(4)}-${maxScore.toFixed(4)})`,
+        );
+
+        return {
+          ...hit,
+          _original_score: hit._score, // Keep original for reference
+          _normalized_score: normalizedScore, // Normalized 0-1 score
+          _score: normalizedScore, // Use normalized score for ranking
+        };
+      });
+
+      return {
+        ...response,
+        hits: {
+          ...response.hits,
+          hits: normalizedHits,
+        },
+      };
+    });
   }
 
   /**

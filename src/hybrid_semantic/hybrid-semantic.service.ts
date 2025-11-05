@@ -291,8 +291,8 @@ export class HybridSemanticService {
   }
 
   /**
-   * Build detailed source contributions with accurate pre-weight scores
-   * Calculates the pre-weight score by dividing the weighted score by the strategy weight
+   * Build detailed source contributions with normalized scores
+   * Uses the pre-normalized scores from OpenSearch service (0-1 scale)
    */
   private buildSourceContributions(
     rawContributions: any[],
@@ -305,12 +305,9 @@ export class HybridSemanticService {
         searchRequest,
       );
 
-      // Calculate pre-weight score by dividing weighted score by the weight
-      // Note: This is an approximation since geospatial scoring is multiplicative
-      // For more accurate tracking, we'd need to store the raw semantic/keyword score
-      // before any function_score modifications
-      const preWeightScore =
-        actualWeight > 0 ? contribution.weighted_score / actualWeight : 0;
+      // Use the normalized score (0-1 scale) as the pre-weight score
+      // This ensures all strategies are comparable
+      const preWeightScore = contribution.pre_weight_score || 0;
 
       return {
         strategy: contribution.strategy,
