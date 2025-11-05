@@ -961,7 +961,7 @@ export class OpenSearchService {
 
   /**
    * Combine and deduplicate results from multiple search strategies
-   * Keeps the best score for each unique document
+   * Keeps the best score for each unique document and tracks detailed source contributions
    */
   private combineSearchResults(
     responses: any[],
@@ -977,21 +977,30 @@ export class OpenSearchService {
       response.hits.hits.forEach((hit: any) => {
         const existingHit = resultMap.get(hit._id);
 
-        // Track which strategies found this result
-        const sources = existingHit?._sources || [];
-        if (!sources.includes(strategyName)) {
-          sources.push(strategyName);
-        }
+        // Extract pre-weight score and weight from the hit
+        // The hit._score already has the weight applied via the boost parameter
+        // We need to calculate the pre-weight score by dividing by the boost
+        const preWeightScore = this.extractPreWeightScore(hit);
+        const strategyWeight = this.extractStrategyWeight();
+
+        // Track detailed source contributions
+        const sourceContributions = existingHit?._source_contributions || [];
+        sourceContributions.push({
+          strategy: strategyName,
+          pre_weight_score: preWeightScore,
+          strategy_weight: strategyWeight,
+          weighted_score: hit._score, // Score after weight applied
+        });
 
         // Keep the hit with the highest score
         if (!existingHit || hit._score > existingHit._score) {
           resultMap.set(hit._id, {
             ...hit,
-            _sources: sources,
+            _source_contributions: sourceContributions,
           });
         } else {
-          // Update sources even if we're not replacing the hit
-          existingHit._sources = sources;
+          // Update source contributions even if we're not replacing the hit
+          existingHit._source_contributions = sourceContributions;
         }
       });
     });
@@ -1030,6 +1039,32 @@ export class OpenSearchService {
    */
   private toRad(degrees: number): number {
     return (degrees * Math.PI) / 180;
+  }
+
+  /**
+   * Extract pre-weight score from a hit
+   * The hit contains metadata about the query that can help us determine the original score
+   */
+  private extractPreWeightScore(hit: any): number {
+    // For OpenSearch function_score queries, the explanation contains the breakdown
+    // However, since we don't have access to the explanation here, we'll use the score
+    // and divide by the known weight for that strategy
+    // This is an approximation since geospatial scoring is also in the mix
+
+    // For now, we'll store the weighted score and calculate pre-weight in the main service
+    // where we have access to the search request and can determine the exact weights
+    return hit._score; // Will be adjusted in the main service
+  }
+
+  /**
+   * Extract strategy weight that was applied
+   * Returns the weight multiplier used for this strategy
+   */
+  private extractStrategyWeight(): number {
+    // The weight is stored in the query boost parameter
+    // We'll need to pass this information through from the query building phase
+    // For now, return 1.0 as a placeholder - will be populated correctly in main service
+    return 1.0; // Will be adjusted in the main service
   }
 
   /**

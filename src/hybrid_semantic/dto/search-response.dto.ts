@@ -47,13 +47,29 @@ export interface GranularPhaseTimings {
   };
 }
 
+/**
+ * Detailed source contribution for a search result
+ * Tracks which strategy contributed and its scoring details
+ */
+export interface SourceContribution {
+  strategy: string; // Name of the search strategy (e.g., 'semantic_service', 'keyword_original')
+  pre_weight_score: number; // Score before strategy weight was applied
+  strategy_weight: number; // Weight multiplier applied to this strategy
+}
+
+/**
+ * Metadata for each top hit in search results
+ * Provides full traceability of scoring and document information
+ */
 export interface HitSource {
   id: string;
   organization_name?: string;
+  organization_description?: string;
   service_name?: string;
+  service_description?: string;
   rank: number;
-  sources: string[];
-  score: number;
+  total_document_relevance_score: number; // Final combined score
+  sources: SourceContribution[]; // Detailed breakdown of strategy contributions
 }
 
 export interface SearchMetadata {

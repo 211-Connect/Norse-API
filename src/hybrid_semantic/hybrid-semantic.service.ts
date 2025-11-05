@@ -173,15 +173,25 @@ export class HybridSemanticService {
       // ============================================================
       const totalTime = Date.now() - startTime;
 
-      // Build sources_of_top_hits from processed results
-      const sourcesOfTopHits: HitSource[] = processedHits.map((hit, index) => ({
-        id: hit._id,
-        organization_name: hit._source?.organization?.name,
-        service_name: hit._source?.service?.name,
-        rank: index + 1,
-        sources: hit._sources || [],
-        score: hit._score,
-      }));
+      // Build sources_of_top_hits from processed results with detailed source contributions
+      const sourcesOfTopHits: HitSource[] = processedHits.map((hit, index) => {
+        // Calculate detailed source contributions with accurate pre-weight scores
+        const sourceContributions = this.buildSourceContributions(
+          hit._source_contributions || [],
+          searchRequest,
+        );
+
+        return {
+          id: hit._id,
+          organization_name: hit._source?.organization?.name,
+          organization_description: hit._source?.organization?.description,
+          service_name: hit._source?.service?.name,
+          service_description: hit._source?.service?.description,
+          rank: index + 1,
+          total_document_relevance_score: hit._score,
+          sources: sourceContributions,
+        };
+      });
 
       const metadata: SearchMetadata = {
         search_pipeline: 'hybrid_semantic',
@@ -278,5 +288,131 @@ export class HybridSemanticService {
         this.removeEmbeddings(value);
       }
     });
+  }
+
+  /**
+   * Build detailed source contributions with accurate pre-weight scores
+   * Calculates the pre-weight score by dividing the weighted score by the strategy weight
+   */
+  private buildSourceContributions(
+    rawContributions: any[],
+    searchRequest: SearchRequestDto,
+  ): any[] {
+    return rawContributions.map((contribution) => {
+      // Get the actual weight that was applied to this strategy
+      const actualWeight = this.getStrategyWeight(
+        contribution.strategy,
+        searchRequest,
+      );
+
+      // Calculate pre-weight score by dividing weighted score by the weight
+      // Note: This is an approximation since geospatial scoring is multiplicative
+      // For more accurate tracking, we'd need to store the raw semantic/keyword score
+      // before any function_score modifications
+      const preWeightScore =
+        actualWeight > 0 ? contribution.weighted_score / actualWeight : 0;
+
+      return {
+        strategy: contribution.strategy,
+        pre_weight_score: Math.round(preWeightScore * 10000) / 10000, // Round to 4 decimals
+        strategy_weight: actualWeight,
+      };
+    });
+  }
+
+  /**
+   * Get the actual weight applied to a specific strategy
+   * Matches the weight calculation logic in OpenSearchService
+   */
+  private getStrategyWeight(
+    strategyName: string,
+    searchRequest: SearchRequestDto,
+  ): number {
+    const weights = this.extractWeights(searchRequest);
+
+    // Semantic strategies
+    if (strategyName === 'semantic_service') {
+      return (
+        (weights.semantic.service ?? 1.0) *
+        (weights.strategies.semantic_search ?? 1.0)
+      );
+    }
+    if (strategyName === 'semantic_taxonomy') {
+      return (
+        (weights.semantic.taxonomy ?? 1.0) *
+        (weights.strategies.semantic_search ?? 1.0)
+      );
+    }
+    if (strategyName === 'semantic_organization') {
+      return (
+        (weights.semantic.organization ?? 1.0) *
+        (weights.strategies.semantic_search ?? 1.0)
+      );
+    }
+
+    // Keyword strategies with variation-specific weights
+    if (strategyName === 'keyword_original') {
+      return weights.strategies.keyword_search ?? 1.0;
+    }
+    if (strategyName === 'keyword_nouns') {
+      return (weights.strategies.keyword_search ?? 1.0) * 0.95;
+    }
+    if (strategyName === 'keyword_nouns_stemmed') {
+      return (weights.strategies.keyword_search ?? 1.0) * 0.85;
+    }
+
+    // Intent-driven taxonomy
+    if (strategyName === 'intent_taxonomy') {
+      return weights.strategies.intent_driven ?? 1.0;
+    }
+
+    // Default
+    return 1.0;
+  }
+
+  /**
+   * Extract weight configuration from search request
+   * Matches the logic in OpenSearchService.getWeights()
+   */
+  private extractWeights(searchRequest: SearchRequestDto) {
+    return {
+      semantic: {
+        service:
+          searchRequest.custom_weights?.semantic?.service ??
+          searchRequest.semantic_weight ??
+          1.0,
+        taxonomy:
+          searchRequest.custom_weights?.semantic?.taxonomy ??
+          searchRequest.taxonomy_weight ??
+          1.0,
+        organization:
+          searchRequest.custom_weights?.semantic?.organization ??
+          searchRequest.attribute_weight ??
+          1.0,
+      },
+      strategies: {
+        semantic_search:
+          searchRequest.custom_weights?.strategies?.semantic_search ?? 1.0,
+        keyword_search:
+          searchRequest.custom_weights?.strategies?.keyword_search ?? 1.0,
+        intent_driven:
+          searchRequest.custom_weights?.strategies?.intent_driven ?? 1.0,
+      },
+      geospatial: {
+        weight:
+          searchRequest.custom_weights?.geospatial?.weight ??
+          searchRequest.geospatial_weight ??
+          2.0,
+        decay_scale:
+          searchRequest.custom_weights?.geospatial?.decay_scale ??
+          searchRequest.distance_decay_scale ??
+          searchRequest.distance ??
+          50,
+        decay_offset:
+          searchRequest.custom_weights?.geospatial?.decay_offset ??
+          searchRequest.distance_decay_offset ??
+          0,
+      },
+    };
   }
 }

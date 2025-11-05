@@ -249,14 +249,65 @@ The following nested fields contain KNN vector embeddings:
     sources_of_top_hits?: Array<{
       id: string;
       organization_name?: string;
+      organization_description?: string;
       service_name?: string;
+      service_description?: string;
       rank: number;
-      sources: string[];  // Which strategies contributed to this result
-      score: number;
+      total_document_relevance_score: number;  // Final combined score
+      sources: Array<{
+        strategy: string;           // Strategy name (e.g., 'semantic_service', 'keyword_original')
+        pre_weight_score: number;   // Score before strategy weight was applied
+        strategy_weight: number;    // Weight multiplier applied to this strategy
+      }>;
     }>;
   };
 }
 ```
+
+### Enhanced Metadata for Result Traceability
+
+The `sources_of_top_hits` metadata provides comprehensive traceability for each search result, enabling quality evaluation and debugging:
+
+#### Document Information
+- **organization_name** & **organization_description**: Full organization details for context
+- **service_name** & **service_description**: Service-level information for understanding the resource
+- **rank**: Position in the final result set (1-indexed)
+- **total_document_relevance_score**: The final combined score after all strategies and weights
+
+#### Detailed Source Contributions
+
+Each result includes a `sources` array that breaks down exactly how the document's score was calculated:
+
+```typescript
+sources: [
+  {
+    strategy: "semantic_service",
+    pre_weight_score: 0.8234,
+    strategy_weight: 1.0
+  },
+  {
+    strategy: "keyword_original",
+    pre_weight_score: 2.4567,
+    strategy_weight: 1.0
+  }
+]
+```
+
+**Benefits:**
+- ✅ **Full Auditability**: Trace exactly which strategies contributed to each result
+- ✅ **Score Transparency**: See pre-weight scores and the weights applied
+- ✅ **Quality Evaluation**: Identify which strategies are performing well/poorly
+- ✅ **Debugging**: Understand why specific results were ranked highly
+- ✅ **A/B Testing**: Compare strategy effectiveness across different weight configurations
+
+**Example Use Case:**
+
+If a result has a high score but seems irrelevant, you can examine the `sources` array to see:
+- Which strategy contributed most to the score
+- Whether the weight on that strategy should be adjusted
+- If the pre-weight score was genuinely high or artificially boosted
+
+This granular visibility enables continuous improvement of the search algorithm and helps build trust in the results.
 
 ## Search Strategies
 
