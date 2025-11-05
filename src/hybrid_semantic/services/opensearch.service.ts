@@ -231,11 +231,17 @@ export class OpenSearchService {
         searchRequest,
       );
 
-      this.logger.debug(
-        `Hybrid search returned ${resultsWithDistance.length} unique results`,
+      // Add relevant text snippets to help users understand why results were surfaced
+      const resultsWithRelevantText = this.addRelevantTextSnippets(
+        resultsWithDistance,
+        searchRequest.q,
       );
 
-      return { results: resultsWithDistance, queryTimings };
+      this.logger.debug(
+        `Hybrid search returned ${resultsWithRelevantText.length} unique results`,
+      );
+
+      return { results: resultsWithRelevantText, queryTimings };
     } catch (error) {
       this.logger.error(
         `OpenSearch query failed: ${error.message}`,
@@ -462,6 +468,34 @@ export class OpenSearchService {
   }
 
   /**
+   * Extract nouns from query using POS tagging
+   * Used for both keyword search variations and relevant text extraction
+   */
+  private extractNouns(query: string): string[] {
+    if (!query || query.trim().length === 0) {
+      return [];
+    }
+
+    const nouns: string[] = [];
+    try {
+      const doc = this.nlpEngine.readDoc(query);
+      doc
+        .tokens()
+        .filter(
+          (t: any) =>
+            !t.parentEntity() &&
+            (t.out(this.its.pos) === 'NOUN' || t.out(this.its.pos) === 'PROPN'),
+        )
+        .each((t: any) => nouns.push(t.out(this.its.normal)));
+    } catch (posError) {
+      this.logger.warn(
+        `POS tagging failed: ${posError.message}, skipping noun extraction`,
+      );
+    }
+    return nouns;
+  }
+
+  /**
    * Generate keyword search variations from the original query
    * Simplified strategy focusing on semantically meaningful searches:
    * - original: Full query preserving user intent and phrases
@@ -479,30 +513,8 @@ export class OpenSearchService {
 
     try {
       // Extract nouns using POS tagging (most semantically important)
-      const nouns: string[] = [];
-      const stemmedNouns: string[] = [];
-
-      try {
-        const doc = this.nlpEngine.readDoc(query);
-        doc
-          .tokens()
-          .filter(
-            (t: any) =>
-              !t.parentEntity() &&
-              (t.out(this.its.pos) === 'NOUN' ||
-                t.out(this.its.pos) === 'PROPN'),
-          )
-          .each((t: any) => {
-            const normalForm = t.out(this.its.normal);
-            nouns.push(normalForm);
-            // Also create stemmed version to catch corpus variations
-            stemmedNouns.push(nlp.string.stem(normalForm));
-          });
-      } catch (posError) {
-        this.logger.warn(
-          `POS tagging failed: ${posError.message}, skipping noun extraction`,
-        );
-      }
+      const nouns = this.extractNouns(query);
+      const stemmedNouns = nouns.map((noun) => nlp.string.stem(noun));
 
       this.logger.debug(
         `Keyword variations - Original: "${query}", Nouns: [${nouns.join(', ')}], Stemmed Nouns: [${stemmedNouns.join(', ')}]`,
@@ -788,90 +800,7 @@ export class OpenSearchService {
           decay: decay,
         },
       },
-      weight: weights.geospatial.weight,
     };
-  }
-
-  /**
-   * Build common filters (geospatial distance, facets, etc.)
-   * Note: Geospatial distance provides hard filtering, while scoring provides proximity weighting
-   */
-  private buildFilters(searchRequest: SearchRequestDto): any[] {
-    const filters: any[] = [];
-
-    // Geospatial distance filter (hard cutoff)
-    if (searchRequest.lat && searchRequest.lon && searchRequest.distance) {
-      filters.push({
-        nested: {
-          path: 'location',
-          query: {
-            geo_distance: {
-              distance: `${searchRequest.distance}mi`,
-              'location.point': {
-                lat: searchRequest.lat,
-                lon: searchRequest.lon,
-              },
-            },
-          },
-        },
-      });
-    }
-
-    // Location point only filter (ensure location exists)
-    if (searchRequest.location_point_only) {
-      filters.push({
-        nested: {
-          path: 'location',
-          query: {
-            exists: {
-              field: 'location.point',
-            },
-          },
-        },
-      });
-    }
-
-    // Facet filters (OR within field, AND across fields)
-    if (searchRequest.facets) {
-      Object.entries(searchRequest.facets).forEach(([facetField, values]) => {
-        if (values && values.length > 0) {
-          filters.push({
-            terms: {
-              [`facets.${facetField}`]: values,
-            },
-          });
-        }
-      });
-    }
-
-    return filters;
-  }
-
-  /**
-   * Calculate distance from user location to result location
-   * Uses Haversine formula for great-circle distance
-   */
-  private calculateDistance(
-    userLat: number,
-    userLon: number,
-    resultLat: number,
-    resultLon: number,
-  ): number {
-    const R = 3959; // Earth's radius in miles
-    const dLat = this.toRadians(resultLat - userLat);
-    const dLon = this.toRadians(resultLon - userLon);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRadians(userLat)) *
-        Math.cos(this.toRadians(resultLat)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private toRadians(degrees: number): number {
-    return degrees * (Math.PI / 180);
   }
 
   /**
@@ -906,178 +835,201 @@ export class OpenSearchService {
   }
 
   /**
+   * Add relevant text snippets to results to explain why they were surfaced
+   * Extracts sentences containing query nouns to help users understand relevance
+   */
+  private addRelevantTextSnippets(results: any[], query: string): any[] {
+    if (!query || results.length === 0) {
+      return results;
+    }
+
+    // Extract nouns from the query
+    const queryNouns = this.extractNouns(query);
+    if (queryNouns.length === 0) {
+      return results;
+    }
+
+    this.logger.debug(
+      `Extracting relevant text snippets for nouns: [${queryNouns.join(', ')}]`,
+    );
+
+    return results.map((result) => {
+      const relevantSnippets = this.findRelevantSnippets(
+        result._source,
+        queryNouns,
+      );
+
+      if (relevantSnippets.length > 0) {
+        return {
+          ...result,
+          relevant_text: relevantSnippets,
+        };
+      }
+
+      return result;
+    });
+  }
+
+  /**
+   * Find sentences in the document that contain query nouns
+   * Returns up to 3 most relevant snippets
+   */
+  private findRelevantSnippets(source: any, queryNouns: string[]): string[] {
+    const snippets: Array<{ text: string; score: number }> = [];
+
+    // Fields to search for relevant text (in priority order)
+    const fieldsToSearch = [
+      { path: 'description', weight: 3 },
+      { path: 'service.description', weight: 3 },
+      { path: 'summary', weight: 2 },
+      { path: 'service.summary', weight: 2 },
+      { path: 'schedule', weight: 1 },
+    ];
+
+    for (const field of fieldsToSearch) {
+      const text = this.getNestedValue(source, field.path);
+      if (!text || typeof text !== 'string') continue;
+
+      // Split into sentences (simple approach)
+      const sentences = text
+        .split(/[.!?]\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 20); // Filter out very short fragments
+
+      for (const sentence of sentences) {
+        const lowerSentence = sentence.toLowerCase();
+        let matchCount = 0;
+
+        // Count how many query nouns appear in this sentence
+        for (const noun of queryNouns) {
+          const lowerNoun = noun.toLowerCase();
+          // Check for exact match or stemmed match
+          if (
+            lowerSentence.includes(lowerNoun) ||
+            lowerSentence.includes(nlp.string.stem(lowerNoun))
+          ) {
+            matchCount++;
+          }
+        }
+
+        if (matchCount > 0) {
+          // Score based on match count and field weight
+          const score = matchCount * field.weight;
+          snippets.push({ text: sentence, score });
+        }
+      }
+    }
+
+    // Sort by score (descending) and return top 3 unique snippets
+    const sortedSnippets = snippets.sort((a, b) => b.score - a.score);
+    const uniqueSnippets = Array.from(
+      new Set(sortedSnippets.map((s) => s.text)),
+    ).slice(0, 3);
+
+    return uniqueSnippets;
+  }
+
+  /**
+   * Get nested value from object using dot notation path
+   */
+  private getNestedValue(obj: any, path: string): any {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }
+
+  /**
+   * Build filters for OpenSearch query
+   * Handles tenant, locale, and optional geospatial distance filtering
+   */
+  private buildFilters(searchRequest: SearchRequestDto): any[] {
+    const filters: any[] = [];
+
+    // Geospatial distance filter (hard filter)
+    if (searchRequest.lat && searchRequest.lon && searchRequest.distance) {
+      filters.push({
+        geo_distance: {
+          distance: `${searchRequest.distance}mi`,
+          'location.point': {
+            lat: searchRequest.lat,
+            lon: searchRequest.lon,
+          },
+        },
+      });
+    }
+
+    return filters;
+  }
+
+  /**
    * Combine and deduplicate results from multiple search strategies
-   * Enhanced to preserve the best scores from different strategies and track sources
+   * Keeps the best score for each unique document
    */
   private combineSearchResults(
     responses: any[],
     strategyNames: string[],
   ): any[] {
-    const seenIds = new Set<string>();
-    const idToBestHit = new Map<string, any>();
-    const idToSources = new Map<string, Set<string>>();
+    const resultMap = new Map<string, any>();
 
     responses.forEach((response, index) => {
+      if (!response.hits?.hits) return;
+
       const strategyName = strategyNames[index];
-      if (response.hits && response.hits.hits) {
-        response.hits.hits.forEach((hit: any) => {
-          // Track which strategies found this hit
-          if (!idToSources.has(hit._id)) {
-            idToSources.set(hit._id, new Set());
-          }
-          idToSources.get(hit._id).add(strategyName);
 
-          if (!seenIds.has(hit._id)) {
-            seenIds.add(hit._id);
-            idToBestHit.set(hit._id, hit);
-          } else {
-            // If we've seen this ID before, keep the hit with the higher score
-            const existingHit = idToBestHit.get(hit._id);
-            if (hit._score > existingHit._score) {
-              idToBestHit.set(hit._id, hit);
-            }
-          }
-        });
-      }
+      response.hits.hits.forEach((hit: any) => {
+        const existingHit = resultMap.get(hit._id);
+
+        // Track which strategies found this result
+        const sources = existingHit?._sources || [];
+        if (!sources.includes(strategyName)) {
+          sources.push(strategyName);
+        }
+
+        // Keep the hit with the highest score
+        if (!existingHit || hit._score > existingHit._score) {
+          resultMap.set(hit._id, {
+            ...hit,
+            _sources: sources,
+          });
+        } else {
+          // Update sources even if we're not replacing the hit
+          existingHit._sources = sources;
+        }
+      });
     });
 
-    // Convert map back to array, add sources metadata, and sort by score
-    const combinedHits = Array.from(idToBestHit.values()).map((hit) => ({
-      ...hit,
-      _sources: Array.from(idToSources.get(hit._id) || []),
-    }));
-    combinedHits.sort((a, b) => b._score - a._score);
-
-    return combinedHits;
+    // Convert map to array and sort by score
+    return Array.from(resultMap.values()).sort((a, b) => b._score - a._score);
   }
 
   /**
-   * Test method to verify custom weights and geospatial scoring functionality
+   * Calculate distance between two points using Haversine formula
+   * Returns distance in miles
    */
-  async testCustomWeights(): Promise<any> {
-    this.logger.log('Testing custom weights and geospatial scoring...');
+  private calculateDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    const R = 3959; // Earth's radius in miles
+    const dLat = this.toRad(lat2 - lat1);
+    const dLon = this.toRad(lon2 - lon1);
 
-    // Test distance calculation
-    const distance = this.calculateDistance(
-      47.6062,
-      -122.3321,
-      47.751076,
-      -120.740135,
-    ); // Seattle to Wenatchee
-    this.logger.log(`Test distance calculation: ${distance.toFixed(2)} miles`);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(this.toRad(lat1)) *
+        Math.cos(this.toRad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
 
-    // Test with custom_weights object
-    const testRequestWithCustomWeights: SearchRequestDto = {
-      q: 'food bank',
-      lat: 47.6062,
-      lon: -122.3321,
-      custom_weights: {
-        semantic: {
-          service: 2.0,
-          taxonomy: 1.5,
-          organization: 1.0,
-        },
-        strategies: {
-          semantic_search: 1.5,
-          keyword_search: 0.8,
-          intent_driven: 1.2,
-        },
-        geospatial: {
-          weight: 3.0,
-          decay_scale: 25,
-          decay_offset: 2,
-        },
-      },
-    };
-
-    const weights = this.getWeights(testRequestWithCustomWeights);
-    const geoScoreFunction = this.buildGeospatialScoreFunction(
-      testRequestWithCustomWeights,
-    );
-
-    this.logger.log('Extracted weights:', JSON.stringify(weights, null, 2));
-    this.logger.log(
-      'Geospatial score function:',
-      JSON.stringify(geoScoreFunction, null, 2),
-    );
-
-    return {
-      distance_calculation: distance,
-      extracted_weights: weights,
-      geospatial_function: geoScoreFunction,
-      status: 'success',
-    };
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 
   /**
-   * Check OpenSearch cluster health
+   * Convert degrees to radians
    */
-  async checkHealth(): Promise<any> {
-    try {
-      const health = await this.client.cluster.health();
-      return {
-        status: 'connected',
-        cluster: health.body,
-      };
-    } catch (error) {
-      this.logger.error(`OpenSearch health check failed: ${error.message}`);
-      return {
-        status: 'disconnected',
-        error: error.message,
-      };
-    }
-  }
-
-  /**
-   * Check if an index exists
-   */
-  async indexExists(indexName: string): Promise<boolean> {
-    try {
-      const response = await this.client.indices.exists({ index: indexName });
-      return response.body === true;
-    } catch (error) {
-      this.logger.error(`Failed to check index existence: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * Strip embedding vectors from search results to reduce payload size
-   * Removes embedding fields from service, organization, and taxonomies
-   */
-  stripEmbeddings(hits: any[]): any[] {
-    return hits.map((hit) => {
-      const source = { ...hit._source };
-
-      // Remove top-level embedding
-      if (source.embedding) {
-        delete source.embedding;
-      }
-
-      // Remove service embedding
-      if (source.service?.embedding) {
-        delete source.service.embedding;
-      }
-
-      // Remove organization embedding
-      if (source.organization?.embedding) {
-        delete source.organization.embedding;
-      }
-
-      // Remove taxonomy embeddings
-      if (source.taxonomies && Array.isArray(source.taxonomies)) {
-        source.taxonomies = source.taxonomies.map((taxonomy: any) => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { embedding, ...rest } = taxonomy;
-          return rest;
-        });
-      }
-
-      return {
-        ...hit,
-        _source: source,
-      };
-    });
+  private toRad(degrees: number): number {
+    return (degrees * Math.PI) / 180;
   }
 
   /**

@@ -205,6 +205,8 @@ The following nested fields contain KNN vector embeddings:
       _source: {
         // Document fields (embeddings removed)
       };
+      _sources?: string[];  // Which search strategies found this result
+      relevant_text?: string[];  // Sentences explaining why this result was surfaced
     }>;
   };
   search_after?: any[];
@@ -333,6 +335,46 @@ Uses AI-classified intent to automatically select relevant taxonomy codes:
 - Searches for services matching any of the taxonomy codes (OR logic)
 - Only executes if query is not classified as "low information"
 - Can be disabled with `disable_intent_classification: true`
+
+## Relevant Text Extraction
+
+Each search result includes a `relevant_text` field containing up to 3 sentences that explain **why the result was surfaced**. This helps users understand relevance, especially when the title doesn't obviously match their query.
+
+### How It Works
+
+1. **Extracts query nouns** using POS tagging (e.g., "laundry" from "I need help with laundry")
+2. **Searches document fields** for sentences containing those nouns:
+   - `description` (weight: 3)
+   - `service.description` (weight: 3)
+   - `summary` (weight: 2)
+   - `service.summary` (weight: 2)
+   - `schedule` (weight: 1)
+3. **Scores sentences** based on noun matches and field importance
+4. **Returns top 3** most relevant snippets
+
+### Example
+
+**Query**: `"I need help with laundry"`
+
+**Result**: "COFFEE HALL | WASHINGTON STREET MISSION"
+
+**relevant_text**:
+```json
+[
+  "Shower and laundry facilities are also available by appointment",
+  "Laundry is returned to the client the following day",
+  "Laundry dropped off on Friday is returned the following Monday"
+]
+```
+
+This allows the UI to display: *"Mentions that they offer: 'Shower and laundry facilities are also available by appointment.'"*
+
+### Benefits
+
+- ✅ **Builds user trust** - explains non-obvious matches
+- ✅ **Improves UX** - users understand why results are relevant
+- ✅ **Highlights key info** - surfaces the most important sentences
+- ✅ **Automatic** - no manual annotation required
 
 ## Geospatial Features
 
