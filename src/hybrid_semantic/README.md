@@ -5,7 +5,7 @@
 This module implements an advanced hybrid semantic search system that combines:
 
 - **Semantic search** using vector embeddings (KNN) across service, taxonomy, and organization fields
-- **Keyword search** with multiple query variations (original, stemmed, bigrams via wink-nlp-utils)
+- **Keyword search** with focused query variations (original query + POS-tagged nouns + stemmed nouns)
 - **Intent-driven taxonomy queries** based on AI classification
 - **Geospatial proximity scoring** with Gaussian decay functions
 - **AI-powered reranking** via the ai-utils microservice
@@ -35,7 +35,7 @@ The search process follows a 4-phase pipeline:
 │ └─────────────────┘ └─────────────────┘ └──────────────┘  │
 │ ┌─────────────────┐ ┌─────────────────┐ ┌──────────────┐  │
 │ │ Keyword         │ │ Keyword         │ │ Keyword      │  │
-│ │ Original        │ │ Stemmed         │ │ Bigrams      │  │
+│ │ Original        │ │ Nouns (POS)     │ │ Nouns Stem   │  │
 │ └─────────────────┘ └─────────────────┘ └──────────────┘  │
 │ ┌─────────────────┐                                        │
 │ │ Intent-Driven   │                                        │
@@ -232,8 +232,8 @@ The following nested fields contain KNN vector embeddings:
           semantic_taxonomy?: number;
           semantic_organization?: number;
           keyword_original?: number;
-          keyword_stemmed?: number;
-          keyword_bigrams?: number;
+          keyword_nouns?: number;
+          keyword_nouns_stemmed?: number;
           intent_taxonomy?: number;
         };
       };
@@ -270,37 +270,47 @@ Uses KNN on `taxonomies[].embedding` field to find semantically similar taxonomy
 
 Uses KNN on `organization.embedding` field for organization-level semantic matching.
 
-### 4. Keyword Search (Multi-Variation Strategy)
+### 4. Keyword Search (Simplified Noun-Focused Strategy)
 
-Executes **three parallel keyword searches** with different query processing strategies to maximize both precision and recall:
+Executes **three focused keyword searches** that eliminate low-quality query variations:
 
 #### 4a. Original Query Search (weight: 1.0x)
 - Preserves the full user query exactly as entered
-- Captures natural phrases like "utility bills", "food bank"
+- Captures natural phrases and complete user intent
 - Uses `multi_match` with `operator: and` for precise matching
-- **Best for**: Exact phrase matching and user intent preservation
+- **Best for**: Exact phrase matching and preserving full context
 
-**Example**: `"I need help with my grocery and utility bills"` → `"I need help with my grocery and utility bills"`
+**Example**: `"I need help with laundry"` → `"I need help with laundry"`
 
-#### 4b. Stemmed Content Words Search (weight: 0.8x)
-- Tokenization → Stop word removal → Stemming
-- Normalizes word forms for broader matching
+#### 4b. Nouns Search (weight: 0.95x)
+- Uses **POS (Part-of-Speech) tagging** via `wink-nlp` to extract only NOUN and PROPN tokens
+- Focuses on the most semantically important words (subjects/objects)
+- Filters out verbs, adjectives, and other less critical parts of speech
 - Uses `multi_match` with `operator: or` for flexible matching
-- **Best for**: Catching variations ("laundry", "laundries", "laundering")
+- **Best for**: Precise semantic matching on core concepts
 
 **Example transformations**:
-- `"I need help with my laundry"` → `"laundri"`
-- `"food bank assistance"` → `"food bank assist"`
-- `"I need help with my grocery and utility bills"` → `"groceri util bill"`
+- `"I need help with laundry"` → nouns: `["laundry"]` ✅
+- `"I need help with my grocery and utility bills"` → nouns: `["grocery", "utility", "bills"]`
+- `"food bank assistance"` → nouns: `["food", "bank", "assistance"]`
+- `"Where can I find housing"` → nouns: `["housing"]`
 
-#### 4c. Bigrams Search (weight: 0.9x)
-- Extracts 2-word phrases from content words (before stemming)
-- Uses `multi_match` with `type: phrase` for exact phrase matching
-- **Best for**: Important multi-word concepts like "utility bills", "food bank"
+#### 4c. Stemmed Nouns Search (weight: 0.85x)
+- Takes the extracted nouns and applies stemming
+- Catches corpus variations where documents use different word forms
+- Uses `multi_match` with `operator: or` for flexible matching
+- **Best for**: Matching "laundry" in query to "laundri" in corpus
 
-**Example**:
-- `"I need help with my grocery and utility bills"` → bigrams: `["grocery utility", "utility bills"]`
-- `"food bank assistance"` → bigrams: `["food bank", "bank assistance"]`
+**Example transformations**:
+- `"I need help with laundry"` → stemmed nouns: `["laundri"]`
+- `"I need help with my grocery and utility bills"` → stemmed nouns: `["groceri", "util", "bill"]`
+- `"food bank assistance"` → stemmed nouns: `["food", "bank", "assist"]`
+
+**Why this simplified approach?**
+- ❌ **Removed**: Stemmed content words (e.g., `"need help laundri"`) - includes non-semantic words
+- ❌ **Removed**: Bigrams (e.g., `"need help help laundry"`) - produces zero results due to corpus mismatch
+- ✅ **Kept**: Original query for full intent + Nouns for semantic focus + Stemmed nouns for variations
+- Focuses only on queries that produce meaningful results
 
 **Searched fields** (all variations, with boost factors):
 - `name^3` (highest priority)
@@ -312,12 +322,7 @@ Executes **three parallel keyword searches** with different query processing str
 - `taxonomies.name`
 - `taxonomies.description`
 
-**Why Multiple Variations?**
-
-A single preprocessed query loses important information:
-- ❌ Single stemmed query: `"groceri util bill"` - loses phrase "utility bills"
-- ✅ Three variations: Captures exact phrases, normalized terms, AND important bigrams
-- Results are deduplicated and combined with best scores preserved
+**Weight hierarchy**: Original (1.0x) > Nouns (0.95x) > Stemmed Nouns (0.85x)
 
 ### 5. Intent-Driven Taxonomy Search
 
@@ -488,7 +493,7 @@ AI_UTILS_URL=http://localhost:8000
 1. Install dependencies:
 
 ```bash
-npm install @opensearch-project/opensearch wink-nlp-utils
+npm install @opensearch-project/opensearch wink-nlp wink-eng-lite-web-model wink-nlp-utils
 ```
 
 2. Add environment variables to `.env`
@@ -509,15 +514,14 @@ npm install @opensearch-project/opensearch wink-nlp-utils
   - Service-level semantic search (KNN)
   - Taxonomy-level semantic search (KNN)
   - Organization-level semantic search (KNN)
-  - Multi-variation keyword search (original + stemmed + bigrams)
+  - Simplified keyword search (original + nouns + stemmed nouns via POS tagging)
   - Intent-driven taxonomy search
 
 - **NLP Features**:
-  - Multiple keyword query variations for better coverage
-  - Query tokenization and stop word removal
-  - Stemming for word normalization
-  - Bigram extraction for phrase matching
-  - Weighted variation strategies (original > bigrams > stemmed)
+  - Simplified keyword query variations focused on semantic meaning
+  - POS (Part-of-Speech) tagging for noun extraction (wink-nlp)
+  - Stemming applied only to extracted nouns for corpus variation matching
+  - Weighted variation strategies (original > nouns > stemmed nouns)
   - Graceful fallback for edge cases
 
 - **Geospatial Features**:
@@ -702,25 +706,25 @@ async function getAllResults(query: string, limit: number = 10) {
 
 The multi-variation approach significantly improves search quality:
 
-**Problem**: Single query processing loses important information:
-- Stemming only: `"utility bills"` → `"util bill"` (loses phrase)
-- Original only: Misses variations like "bill" vs "billing"
+**Problem**: Complex query processing can produce low-quality searches:
+- Stemmed content words: `"need help laundri"` (includes non-semantic words)
+- Bigrams: `"need help help laundry"` (zero results due to corpus mismatch)
 
-**Solution**: Three parallel searches capture different aspects:
-1. **Original**: Preserves exact phrases and user intent
-2. **Bigrams**: Captures important 2-word concepts
-3. **Stemmed**: Normalizes word variations
+**Solution**: Simplified noun-focused strategy:
+1. **Original**: Preserves complete user intent and phrases
+2. **Nouns**: POS-tagged extraction of core semantic concepts
+3. **Stemmed Nouns**: Catches corpus variations ("laundry" vs "laundri")
 
-**Example**: `"I need help with my grocery and utility bills"`
-- Original search: Matches "utility bills" as exact phrase
-- Bigram search: Finds "utility bills", "grocery utility"
-- Stemmed search: Catches "bill", "billing", "billed" variations
+**Example**: `"I need help with laundry"`
+- Original search: `"I need help with laundry"` - full context
+- Nouns search: `"laundry"` - core concept
+- Stemmed nouns search: `"laundri"` - catches corpus variations
 
 **Results**:
-- ✅ Better recall - captures more relevant results
-- ✅ Better precision - original query preserves intent
-- ✅ Phrase matching - bigrams capture multi-word concepts
-- ✅ Normalized forms - stemmed catches variations
+- ✅ Better precision - focuses only on semantically meaningful queries
+- ✅ Eliminates noise - removes queries that produce zero or irrelevant results
+- ✅ Semantic focus - POS-tagged nouns extract core meaning
+- ✅ Corpus variation matching - stemmed nouns catch different word forms
 - ✅ Deduplication - results combined with best scores
 
 ### Parallel Execution
@@ -728,7 +732,7 @@ The multi-variation approach significantly improves search quality:
 The pipeline maximizes performance through parallelization:
 
 - **Phase 1**: Embedding and classification run simultaneously
-- **Phase 2**: All 5 search strategies execute in a single _msearch call
+- **Phase 2**: All 5-6 search strategies execute in a single _msearch call (3 semantic + 3 keyword + 1 intent)
 - **Typical timing**: 200-400ms total for complex queries
 
 ### Response Optimization

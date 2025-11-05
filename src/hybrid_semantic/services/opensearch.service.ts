@@ -5,6 +5,8 @@ import { SearchRequestDto } from '../dto/search-request.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { getTenantShortCode } from 'src/common/config/tenant-mapping.config';
 import * as nlp from 'wink-nlp-utils';
+import winkNLP from 'wink-nlp';
+import model from 'wink-eng-lite-web-model';
 
 /**
  * Service for building and executing OpenSearch queries
@@ -14,6 +16,8 @@ import * as nlp from 'wink-nlp-utils';
 export class OpenSearchService {
   private readonly logger = new Logger(OpenSearchService.name);
   private readonly client: Client;
+  private readonly nlpEngine: any;
+  private readonly its: any;
 
   constructor(private readonly configService: ConfigService) {
     const node =
@@ -26,6 +30,11 @@ export class OpenSearchService {
       },
     });
     this.logger.log(`OpenSearch client initialized with node: ${node}`);
+
+    // Initialize wink-nlp for POS tagging
+    this.nlpEngine = winkNLP(model);
+    this.its = this.nlpEngine.its;
+    this.logger.log('wink-nlp initialized for POS tagging');
   }
 
   /**
@@ -108,14 +117,14 @@ export class OpenSearchService {
     );
 
     // Strategy 4: Keyword search variations (if enabled)
-    // Generate multiple keyword searches for better coverage:
-    // 4a. Original query (preserves phrases like "utility bills")
-    // 4b. Stemmed content words (normalized matching)
-    // 4c. Bigrams (captures important 2-word phrases)
+    // Simplified strategy focusing on semantically meaningful searches:
+    // 4a. Original query (preserves full user intent and phrases)
+    // 4b. Nouns (POS-tagged, original form - e.g., "laundry")
+    // 4c. Stemmed nouns (normalized form - e.g., "laundri" to catch corpus variations)
     if (!searchRequest.disable_intent_classification && searchRequest.q) {
       const keywordVariations = this.generateKeywordVariations(searchRequest.q);
 
-      // Original query search
+      // Original query search - preserves full user intent
       if (keywordVariations.original) {
         strategyNames.push('keyword_original');
         msearchBody.push({ index: indexName });
@@ -131,34 +140,37 @@ export class OpenSearchService {
         );
       }
 
-      // Stemmed tokens search
-      if (keywordVariations.stemmed) {
-        strategyNames.push('keyword_stemmed');
+      // Nouns-only search (original form) - focuses on core concepts
+      if (keywordVariations.nouns && keywordVariations.nouns.length > 0) {
+        strategyNames.push('keyword_nouns');
         msearchBody.push({ index: indexName });
         msearchBody.push(
           this.buildKeywordQuery(
-            keywordVariations.stemmed,
+            keywordVariations.nouns.join(' '),
             filters,
             candidatesPerStrategy,
             searchRequest.search_after,
             searchRequest,
-            'stemmed',
+            'nouns',
           ),
         );
       }
 
-      // Bigrams search (for phrases like "utility bills")
-      if (keywordVariations.bigrams && keywordVariations.bigrams.length > 0) {
-        strategyNames.push('keyword_bigrams');
+      // Stemmed nouns search - catches corpus variations ("laundry" vs "laundri")
+      if (
+        keywordVariations.stemmedNouns &&
+        keywordVariations.stemmedNouns.length > 0
+      ) {
+        strategyNames.push('keyword_nouns_stemmed');
         msearchBody.push({ index: indexName });
         msearchBody.push(
           this.buildKeywordQuery(
-            keywordVariations.bigrams.join(' '),
+            keywordVariations.stemmedNouns.join(' '),
             filters,
             candidatesPerStrategy,
             searchRequest.search_after,
             searchRequest,
-            'bigrams',
+            'nouns_stemmed',
           ),
         );
       }
@@ -451,58 +463,68 @@ export class OpenSearchService {
 
   /**
    * Generate keyword search variations from the original query
-   * Returns multiple query forms to maximize recall:
-   * - original: Full query preserving phrases
-   * - stemmed: Content words with stemming applied
-   * - bigrams: Important 2-word phrases extracted from content words
+   * Simplified strategy focusing on semantically meaningful searches:
+   * - original: Full query preserving user intent and phrases
+   * - nouns: POS-tagged nouns in original form (e.g., "laundry")
+   * - stemmedNouns: Stemmed nouns to catch corpus variations (e.g., "laundri")
    */
   private generateKeywordVariations(query: string): {
     original: string;
-    stemmed: string;
-    bigrams: string[];
+    nouns: string[];
+    stemmedNouns: string[];
   } {
     if (!query || query.trim().length === 0) {
-      return { original: query, stemmed: query, bigrams: [] };
+      return { original: query, nouns: [], stemmedNouns: [] };
     }
 
     try {
-      // Tokenize and remove stop words
-      const tokens = nlp.string.tokenize(query.toLowerCase());
-      const contentWords = nlp.tokens.removeWords(tokens);
+      // Extract nouns using POS tagging (most semantically important)
+      const nouns: string[] = [];
+      const stemmedNouns: string[] = [];
 
-      // Generate stemmed version
-      const stemmedWords = contentWords.map((word) => nlp.string.stem(word));
-      const stemmed = stemmedWords.join(' ');
-
-      // Generate bigrams from content words (before stemming for better matching)
-      const bigrams: string[] = [];
-      if (contentWords.length >= 2) {
-        for (let i = 0; i < contentWords.length - 1; i++) {
-          bigrams.push(`${contentWords[i]} ${contentWords[i + 1]}`);
-        }
+      try {
+        const doc = this.nlpEngine.readDoc(query);
+        doc
+          .tokens()
+          .filter(
+            (t: any) =>
+              !t.parentEntity() &&
+              (t.out(this.its.pos) === 'NOUN' ||
+                t.out(this.its.pos) === 'PROPN'),
+          )
+          .each((t: any) => {
+            const normalForm = t.out(this.its.normal);
+            nouns.push(normalForm);
+            // Also create stemmed version to catch corpus variations
+            stemmedNouns.push(nlp.string.stem(normalForm));
+          });
+      } catch (posError) {
+        this.logger.warn(
+          `POS tagging failed: ${posError.message}, skipping noun extraction`,
+        );
       }
 
       this.logger.debug(
-        `Keyword variations - Original: "${query}", Stemmed: "${stemmed}", Bigrams: [${bigrams.join(', ')}]`,
+        `Keyword variations - Original: "${query}", Nouns: [${nouns.join(', ')}], Stemmed Nouns: [${stemmedNouns.join(', ')}]`,
       );
 
       return {
         original: query,
-        stemmed: stemmed || query, // Fallback to original if all stop words
-        bigrams,
+        nouns,
+        stemmedNouns,
       };
     } catch (error) {
       this.logger.warn(
         `Keyword variation generation failed: ${error.message}, using original query`,
       );
-      return { original: query, stemmed: query, bigrams: [] };
+      return { original: query, nouns: [], stemmedNouns: [] };
     }
   }
 
   /**
    * Build keyword search query
    * Uses multi_match across text fields combined with geospatial scoring
-   * @param variationType - Type of keyword variation: 'original', 'stemmed', or 'bigrams'
+   * @param variationType - Type of keyword variation: 'original', 'nouns', or 'nouns_stemmed'
    */
   private buildKeywordQuery(
     query: string,
@@ -510,19 +532,19 @@ export class OpenSearchService {
     size: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
-    variationType: 'original' | 'stemmed' | 'bigrams' = 'original',
+    variationType: 'original' | 'nouns' | 'nouns_stemmed' = 'original',
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     let keywordWeight = weights?.strategies.keyword_search ?? 1.0;
 
     // Adjust weight based on variation type
-    // Original query gets highest weight (preserves user intent)
-    // Bigrams get medium weight (captures phrases)
-    // Stemmed gets lower weight (more aggressive normalization)
-    if (variationType === 'stemmed') {
-      keywordWeight *= 0.8; // Slightly lower weight for stemmed
-    } else if (variationType === 'bigrams') {
-      keywordWeight *= 0.9; // Medium weight for bigrams
+    // Original query gets highest weight (preserves full user intent)
+    // Nouns get high weight (semantically focused on core concepts)
+    // Stemmed nouns get slightly lower weight (catches variations but less precise)
+    if (variationType === 'nouns') {
+      keywordWeight *= 0.95; // High weight for nouns (very precise)
+    } else if (variationType === 'nouns_stemmed') {
+      keywordWeight *= 0.85; // Medium-high weight for stemmed nouns
     }
 
     this.logger.debug(
@@ -549,9 +571,12 @@ export class OpenSearchService {
                       'taxonomies.name',
                       'taxonomies.description',
                     ],
-                    type:
-                      variationType === 'bigrams' ? 'phrase' : 'best_fields',
-                    operator: variationType === 'stemmed' ? 'or' : 'and',
+                    type: 'best_fields',
+                    operator:
+                      variationType === 'nouns' ||
+                      variationType === 'nouns_stemmed'
+                        ? 'or'
+                        : 'and',
                   },
                 },
               ],
