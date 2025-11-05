@@ -4,6 +4,7 @@ import { Client } from '@opensearch-project/opensearch';
 import { SearchRequestDto } from '../dto/search-request.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { getTenantShortCode } from 'src/common/config/tenant-mapping.config';
+import { WeightsConfigService } from '../config/weights-config.service';
 import * as nlp from 'wink-nlp-utils';
 import winkNLP from 'wink-nlp';
 import model from 'wink-eng-lite-web-model';
@@ -19,7 +20,10 @@ export class OpenSearchService {
   private readonly nlpEngine: any;
   private readonly its: any;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly weightsConfigService: WeightsConfigService,
+  ) {
     const node =
       this.configService.get<string>('OPENSEARCH_NODE') ||
       'http://localhost:9200';
@@ -549,14 +553,16 @@ export class OpenSearchService {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     let keywordWeight = weights?.strategies.keyword_search ?? 1.0;
 
-    // Adjust weight based on variation type
+    // Adjust weight based on variation type using configured multipliers
     // Original query gets highest weight (preserves full user intent)
     // Nouns get high weight (semantically focused on core concepts)
     // Stemmed nouns get slightly lower weight (catches variations but less precise)
+    const multipliers =
+      this.weightsConfigService.getKeywordVariationMultipliers();
     if (variationType === 'nouns') {
-      keywordWeight *= 0.95; // High weight for nouns (very precise)
+      keywordWeight *= multipliers.nouns_multiplier;
     } else if (variationType === 'nouns_stemmed') {
-      keywordWeight *= 0.85; // Medium-high weight for stemmed nouns
+      keywordWeight *= multipliers.stemmed_nouns_multiplier;
     }
 
     this.logger.debug(
@@ -732,46 +738,54 @@ export class OpenSearchService {
 
   /**
    * Extract weight configuration from search request
-   * Supports both custom_weights object and legacy individual parameters
+   * Priority order:
+   * 1. Request custom_weights (highest priority - allows per-request tuning)
+   * 2. Legacy request parameters (backward compatibility)
+   * 3. Configuration file defaults (from weights-config.service)
    */
   private getWeights(searchRequest: SearchRequestDto) {
+    const configDefaults = this.weightsConfigService.getConfig();
+
     return {
       semantic: {
         service:
           searchRequest.custom_weights?.semantic?.service ??
           searchRequest.semantic_weight ??
-          1.0,
+          configDefaults.semantic.service,
         taxonomy:
           searchRequest.custom_weights?.semantic?.taxonomy ??
           searchRequest.taxonomy_weight ??
-          1.0,
+          configDefaults.semantic.taxonomy,
         organization:
           searchRequest.custom_weights?.semantic?.organization ??
           searchRequest.attribute_weight ??
-          1.0,
+          configDefaults.semantic.organization,
       },
       strategies: {
         semantic_search:
-          searchRequest.custom_weights?.strategies?.semantic_search ?? 1.0,
+          searchRequest.custom_weights?.strategies?.semantic_search ??
+          configDefaults.strategies.semantic_search,
         keyword_search:
-          searchRequest.custom_weights?.strategies?.keyword_search ?? 1.0,
+          searchRequest.custom_weights?.strategies?.keyword_search ??
+          configDefaults.strategies.keyword_search,
         intent_driven:
-          searchRequest.custom_weights?.strategies?.intent_driven ?? 1.0,
+          searchRequest.custom_weights?.strategies?.intent_driven ??
+          configDefaults.strategies.intent_driven,
       },
       geospatial: {
         weight:
           searchRequest.custom_weights?.geospatial?.weight ??
           searchRequest.geospatial_weight ??
-          2.0,
+          configDefaults.geospatial.weight,
         decay_scale:
           searchRequest.custom_weights?.geospatial?.decay_scale ??
           searchRequest.distance_decay_scale ??
           searchRequest.distance ??
-          50,
+          configDefaults.geospatial.decay_scale,
         decay_offset:
           searchRequest.custom_weights?.geospatial?.decay_offset ??
           searchRequest.distance_decay_offset ??
-          0,
+          configDefaults.geospatial.decay_offset,
       },
     };
   }

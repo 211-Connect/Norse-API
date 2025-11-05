@@ -3,6 +3,7 @@ import { HybridSemanticController } from './hybrid-semantic.controller';
 import { HybridSemanticService } from './hybrid-semantic.service';
 import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
+import { WeightsConfigService } from './config/weights-config.service';
 
 /**
  * Module for hybrid semantic search functionality
@@ -17,7 +18,12 @@ import { OpenSearchService } from './services/opensearch.service';
  */
 @Module({
   controllers: [HybridSemanticController],
-  providers: [HybridSemanticService, AiUtilsService, OpenSearchService],
-  exports: [HybridSemanticService],
+  providers: [
+    HybridSemanticService,
+    AiUtilsService,
+    OpenSearchService,
+    WeightsConfigService,
+  ],
+  exports: [HybridSemanticService, WeightsConfigService],
 })
 export class HybridSemanticModule {}

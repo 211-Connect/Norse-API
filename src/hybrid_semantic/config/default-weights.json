@@ -1,0 +1,33 @@
+{
+  "$schema": "./weights-schema.json",
+  "version": "1.0.0",
+  "description": "Default weight configuration for hybrid semantic search. These values can be tuned via hyperparameter optimization.",
+  "last_updated": "2025-01-04",
+  "semantic": {
+    "service": 1.0,
+    "taxonomy": 1.0,
+    "organization": 1.0
+  },
+  "strategies": {
+    "semantic_search": 1.0,
+    "keyword_search": 1.0,
+    "intent_driven": 1.0
+  },
+  "geospatial": {
+    "weight": 2.0,
+    "decay_scale": 50,
+    "decay_offset": 0
+  },
+  "keyword_variations": {
+    "nouns_multiplier": 0.95,
+    "stemmed_nouns_multiplier": 0.85
+  },
+  "metadata": {
+    "tuning_notes": "Baseline configuration. Adjust based on evaluation metrics.",
+    "evaluation_metrics": {
+      "ndcg": null,
+      "mrr": null,
+      "precision_at_10": null
+    }
+  }
+}

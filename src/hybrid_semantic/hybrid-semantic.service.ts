@@ -9,6 +9,7 @@ import {
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
+import { WeightsConfigService } from './config/weights-config.service';
 import { Request } from 'express';
 
 /**
@@ -27,6 +28,7 @@ export class HybridSemanticService {
   constructor(
     private readonly aiUtilsService: AiUtilsService,
     private readonly openSearchService: OpenSearchService,
+    private readonly weightsConfigService: WeightsConfigService,
   ) {}
 
   /**
@@ -369,46 +371,54 @@ export class HybridSemanticService {
 
   /**
    * Extract weight configuration from search request
-   * Matches the logic in OpenSearchService.getWeights()
+   * Priority order:
+   * 1. Request custom_weights (highest priority - allows per-request tuning)
+   * 2. Legacy request parameters (backward compatibility)
+   * 3. Configuration file defaults (from weights-config.service)
    */
   private extractWeights(searchRequest: SearchRequestDto) {
+    const configDefaults = this.weightsConfigService.getConfig();
+
     return {
       semantic: {
         service:
           searchRequest.custom_weights?.semantic?.service ??
           searchRequest.semantic_weight ??
-          1.0,
+          configDefaults.semantic.service,
         taxonomy:
           searchRequest.custom_weights?.semantic?.taxonomy ??
           searchRequest.taxonomy_weight ??
-          1.0,
+          configDefaults.semantic.taxonomy,
         organization:
           searchRequest.custom_weights?.semantic?.organization ??
           searchRequest.attribute_weight ??
-          1.0,
+          configDefaults.semantic.organization,
       },
       strategies: {
         semantic_search:
-          searchRequest.custom_weights?.strategies?.semantic_search ?? 1.0,
+          searchRequest.custom_weights?.strategies?.semantic_search ??
+          configDefaults.strategies.semantic_search,
         keyword_search:
-          searchRequest.custom_weights?.strategies?.keyword_search ?? 1.0,
+          searchRequest.custom_weights?.strategies?.keyword_search ??
+          configDefaults.strategies.keyword_search,
         intent_driven:
-          searchRequest.custom_weights?.strategies?.intent_driven ?? 1.0,
+          searchRequest.custom_weights?.strategies?.intent_driven ??
+          configDefaults.strategies.intent_driven,
       },
       geospatial: {
         weight:
           searchRequest.custom_weights?.geospatial?.weight ??
           searchRequest.geospatial_weight ??
-          2.0,
+          configDefaults.geospatial.weight,
         decay_scale:
           searchRequest.custom_weights?.geospatial?.decay_scale ??
           searchRequest.distance_decay_scale ??
           searchRequest.distance ??
-          50,
+          configDefaults.geospatial.decay_scale,
         decay_offset:
           searchRequest.custom_weights?.geospatial?.decay_offset ??
           searchRequest.distance_decay_offset ??
-          0,
+          configDefaults.geospatial.decay_offset,
       },
     };
   }

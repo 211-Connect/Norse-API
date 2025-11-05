@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hybrid Semantic Search Weights Configuration",
+  "description": "Schema for configuring search strategy weights and parameters",
+  "type": "object",
+  "required": ["version", "semantic", "strategies", "geospatial"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration version for tracking changes"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of this configuration"
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date",
+      "description": "Date when this configuration was last updated"
+    },
+    "semantic": {
+      "type": "object",
+      "description": "Weights for semantic search sub-strategies",
+      "required": ["service", "taxonomy", "organization"],
+      "properties": {
+        "service": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Weight for service-level semantic search"
+        },
+        "taxonomy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Weight for taxonomy-level semantic search"
+        },
+        "organization": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Weight for organization-level semantic search"
+        }
+      }
+    },
+    "strategies": {
+      "type": "object",
+      "description": "Weights for overall search strategies",
+      "required": ["semantic_search", "keyword_search", "intent_driven"],
+      "properties": {
+        "semantic_search": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Overall semantic search multiplier"
+        },
+        "keyword_search": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Keyword/text search weight"
+        },
+        "intent_driven": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Intent-driven taxonomy search weight"
+        }
+      }
+    },
+    "geospatial": {
+      "type": "object",
+      "description": "Geospatial proximity scoring configuration",
+      "required": ["weight", "decay_scale", "decay_offset"],
+      "properties": {
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Multiplier for geospatial score"
+        },
+        "decay_scale": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Distance (in miles) at which score decays to 50%"
+        },
+        "decay_offset": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "Distance (in miles) before decay starts"
+        }
+      }
+    },
+    "keyword_variations": {
+      "type": "object",
+      "description": "Multipliers for keyword search variations",
+      "properties": {
+        "nouns_multiplier": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Multiplier for nouns-only keyword search (applied to keyword_search weight)"
+        },
+        "stemmed_nouns_multiplier": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Multiplier for stemmed nouns keyword search (applied to keyword_search weight)"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Metadata about this configuration",
+      "properties": {
+        "tuning_notes": {
+          "type": "string",
+          "description": "Notes about how this configuration was tuned"
+        },
+        "evaluation_metrics": {
+          "type": "object",
+          "description": "Evaluation metrics for this configuration",
+          "properties": {
+            "ndcg": {
+              "type": ["number", "null"],
+              "description": "Normalized Discounted Cumulative Gain"
+            },
+            "mrr": {
+              "type": ["number", "null"],
+              "description": "Mean Reciprocal Rank"
+            },
+            "precision_at_10": {
+              "type": ["number", "null"],
+              "description": "Precision at top 10 results"
+            }
+          }
+        }
+      }
+    }
+  }
+}
