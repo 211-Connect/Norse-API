@@ -95,19 +95,19 @@
     },
     "keyword_variations": {
       "type": "object",
-      "description": "Multipliers for keyword search variations",
+      "description": "Multipliers for keyword search variations. Values > 1.0 boost the variation above the original query weight.",
       "properties": {
         "nouns_multiplier": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1,
-          "description": "Multiplier for nouns-only keyword search (applied to keyword_search weight)"
+          "maximum": 10,
+          "description": "Multiplier for nouns-only keyword search (applied to keyword_search weight). Values > 1.0 mean nouns-only queries are weighted higher than the original query."
         },
         "stemmed_nouns_multiplier": {
           "type": "number",
           "minimum": 0,
-          "maximum": 1,
-          "description": "Multiplier for stemmed nouns keyword search (applied to keyword_search weight)"
+          "maximum": 10,
+          "description": "Multiplier for stemmed nouns keyword search (applied to keyword_search weight). Values > 1.0 mean stemmed queries are weighted higher than the original query."
         }
       }
     },

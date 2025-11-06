@@ -71,10 +71,12 @@ Located in: `default-weights.json` → `keyword_variations`
 
 | Parameter | Range | Default | Location in Code |
 |-----------|-------|---------|------------------|
-| `nouns_multiplier` | 0-1 | 0.95 | `opensearch.service.ts:562-563` |
-| `stemmed_nouns_multiplier` | 0-1 | 0.85 | `opensearch.service.ts:564-565` |
+| `nouns_multiplier` | 0-10 | 0.95 | `opensearch.service.ts:562-563` |
+| `stemmed_nouns_multiplier` | 0-10 | 0.85 | `opensearch.service.ts:564-565` |
 
-**Effect:** Applied to `keyword_search` weight for different query variations.
+**Effect:** Multiplicative boosts applied to `keyword_search` weight for different query variations.
+
+**Important:** Values > 1.0 mean the variation is weighted MORE than the original query. This can be valid if noun-focused queries perform better than full queries in your domain.
 
 **Final weight calculation:**
 ```typescript
@@ -237,8 +239,8 @@ validateWeight(config.geospatial.decay_scale, 'geospatial.decay_scale', 1, 200);
 // Decay offset: 0-50 miles
 validateWeight(config.geospatial.decay_offset, 'geospatial.decay_offset', 0, 50);
 
-// Keyword multipliers: 0-1
-validateWeight(config.keyword_variations.nouns_multiplier, 'keyword_variations.nouns_multiplier', 0, 1);
+// Keyword multipliers: 0-10
+validateWeight(config.keyword_variations.nouns_multiplier, 'keyword_variations.nouns_multiplier', 0, 10);
 ```
 
 Invalid configurations fall back to hardcoded defaults and log errors.

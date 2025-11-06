@@ -78,11 +78,11 @@ Strategy weights are multiplied with semantic sub-weights. For example, the fina
 - **`geospatial.decay_scale`** (1-200 miles, default: 50) - Distance at which score decays to 50%
 - **`geospatial.decay_offset`** (0-50 miles, default: 0) - Distance before decay starts
 
-#### Keyword Variation Multipliers (0-1)
-- **`keyword_variations.nouns_multiplier`** (default: 0.95) - Applied to nouns-only keyword search
-- **`keyword_variations.stemmed_nouns_multiplier`** (default: 0.85) - Applied to stemmed nouns search
+#### Keyword Variation Multipliers (0-10)
+- **`keyword_variations.nouns_multiplier`** (default: 0.95) - Multiplier for nouns-only keyword search
+- **`keyword_variations.stemmed_nouns_multiplier`** (default: 0.85) - Multiplier for stemmed nouns search
 
-These multipliers are applied to the `strategies.keyword_search` weight.
+These multipliers are applied to the `strategies.keyword_search` weight. Values > 1.0 boost the variation above the original query weight, which can be valid if noun-focused queries perform better than full queries in your domain.
 
 ### Hot-Reloading
 
@@ -145,7 +145,7 @@ The configuration service validates all weights on load:
 - Geospatial weight must be 0-10
 - Decay scale must be 1-200
 - Decay offset must be 0-50
-- Keyword multipliers must be 0-1
+- Keyword multipliers must be 0-10
 
 Invalid configurations will fall back to hardcoded defaults and log an error.
 

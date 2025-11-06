@@ -157,18 +157,21 @@ export class WeightsConfigService implements OnModuleInit {
     );
 
     // Validate keyword variations if present
+    // Note: These are multiplicative boosts, not fractional reductions.
+    // Values > 1.0 mean the variation is weighted MORE than the original query.
+    // This can be valid if noun-focused queries perform better than full queries.
     if (config.keyword_variations) {
       this.validateWeight(
         config.keyword_variations.nouns_multiplier,
         'keyword_variations.nouns_multiplier',
         0,
-        1,
+        10,
       );
       this.validateWeight(
         config.keyword_variations.stemmed_nouns_multiplier,
         'keyword_variations.stemmed_nouns_multiplier',
         0,
-        1,
+        10,
       );
     }
   }

@@ -1,33 +1,41 @@
 {
   "$schema": "./weights-schema.json",
   "version": "1.0.0",
-  "description": "Default weight configuration for hybrid semantic search. These values can be tuned via hyperparameter optimization.",
-  "last_updated": "2025-01-04",
+  "description": "Optimized weight configuration from hyperparameter tuning",
+  "last_updated": "2025-11-06",
   "semantic": {
-    "service": 1.0,
-    "taxonomy": 1.0,
-    "organization": 1.0
+    "service": 7.6631058963653516,
+    "taxonomy": 9.29028302798551,
+    "organization": 6.188940609543635
   },
   "strategies": {
-    "semantic_search": 1.0,
-    "keyword_search": 1.0,
-    "intent_driven": 1.0
+    "semantic_search": 7.331735420505634,
+    "keyword_search": 3.559607284275528,
+    "intent_driven": 7.737183490429022
   },
   "geospatial": {
-    "weight": 2.0,
-    "decay_scale": 50,
-    "decay_offset": 0
+    "weight": 1.175190217895756,
+    "decay_scale": 62,
+    "decay_offset": 10
   },
   "keyword_variations": {
-    "nouns_multiplier": 0.95,
-    "stemmed_nouns_multiplier": 0.85
+    "nouns_multiplier": 9.707307117824445,
+    "stemmed_nouns_multiplier": 2.9528850706257566
   },
   "metadata": {
-    "tuning_notes": "Baseline configuration. Adjust based on evaluation metrics.",
+    "tuning_notes": "Optimized using 100 trials with LLM persona evaluation",
     "evaluation_metrics": {
-      "ndcg": null,
-      "mrr": null,
-      "precision_at_10": null
-    }
+      "combined_score": 0.7367444224372093,
+      "confidence_weighted_mrr": 0.7688492063492064,
+      "mrr": 0.7688492063492064,
+      "ndcg_at_10": 0.796817350281284,
+      "precision_at_10": 0.503968253968254,
+      "psr_at_1": 0.6746031746031746,
+      "psr_at_3": 0.8650793650793651,
+      "psr_at_5": 0.8888888888888888,
+      "recall_at_10": 1.0
+    },
+    "study_name": "norse_tuning_ai_eval",
+    "timestamp": "2025-11-06T06:56:40.516185"
   }
 }
