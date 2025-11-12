@@ -50,7 +50,7 @@ export const searchRequestSchema = z
     search_after: z.array(z.any()).optional(),
 
     // ADVANCED TAXONOMY QUERY FIELD
-    query: z
+    taxonomies: z
       .object({
         AND: z.array(z.string()).optional(),
         OR: z.array(z.string()).optional(),
@@ -75,8 +75,9 @@ export const searchRequestSchema = z
     // COMPREHENSIVE WEIGHT CUSTOMIZATION
     custom_weights: customWeightsSchema,
   })
-  .refine((data) => data.q || data.query, {
-    message: "Either 'q' (query) or 'query' (taxonomy) must be provided",
+  .refine((data) => data.q || data.taxonomies, {
+    message:
+      "Either 'q' (text query) or 'taxonomies' (taxonomy filters) must be provided",
   });
 
 export type SearchRequestDto = z.infer<typeof searchRequestSchema>;

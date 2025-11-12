@@ -35,8 +35,11 @@ export interface GranularPhaseTimings {
       semantic_service?: number;
       semantic_taxonomy?: number;
       semantic_organization?: number;
-      keyword?: number;
+      keyword_original?: number;
+      keyword_nouns?: number;
+      keyword_nouns_stemmed?: number;
       intent_taxonomy?: number;
+      match_all_filtered?: number; // For taxonomy-only searches
     };
   };
   phase_3_reranking?: {

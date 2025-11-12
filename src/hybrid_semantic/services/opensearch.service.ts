@@ -86,7 +86,7 @@ export class OpenSearchService {
     const strategyNames: string[] = [];
 
     // Check if this is a taxonomy-only search (no text query)
-    const isTaxonomyOnlySearch = !searchRequest.q && searchRequest.query;
+    const isTaxonomyOnlySearch = !searchRequest.q && searchRequest.taxonomies;
 
     if (isTaxonomyOnlySearch) {
       // For taxonomy-only searches, use a simple match_all query with filters
@@ -1062,13 +1062,15 @@ export class OpenSearchService {
     }
 
     // Taxonomy query filters (AND/OR logic)
-    if (searchRequest.query) {
-      const taxonomyFilters = this.buildTaxonomyFilters(searchRequest.query);
+    if (searchRequest.taxonomies) {
+      const taxonomyFilters = this.buildTaxonomyFilters(
+        searchRequest.taxonomies,
+      );
       filters.push(...taxonomyFilters);
 
       if (taxonomyFilters.length > 0) {
         this.logger.debug(
-          `Applied ${taxonomyFilters.length} taxonomy filter(s) from query field`,
+          `Applied ${taxonomyFilters.length} taxonomy filter(s) from taxonomies field`,
         );
       }
     }

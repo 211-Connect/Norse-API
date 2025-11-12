@@ -28,6 +28,8 @@ The search process follows a 4-phase pipeline:
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ PHASE 2: Multi-Strategy OpenSearch Query (_msearch)        │
+│                                                             │
+│ With Text Query (q):                                        │
 │ ┌─────────────────┐ ┌─────────────────┐ ┌──────────────┐  │
 │ │ Service         │ │ Taxonomy        │ │ Organization │  │
 │ │ Semantic        │ │ Semantic        │ │ Semantic     │  │
@@ -40,6 +42,12 @@ The search process follows a 4-phase pipeline:
 │ ┌─────────────────┐                                        │
 │ │ Intent-Driven   │                                        │
 │ │ Taxonomy        │                                        │
+│ └─────────────────┘                                        │
+│                                                             │
+│ Taxonomy-Only (no q):                                       │
+│ ┌─────────────────┐                                        │
+│ │ Match All       │                                        │
+│ │ + Filters       │                                        │
 │ └─────────────────┘                                        │
 └─────────────────────────────────────────────────────────────┘
                             ↓
@@ -139,8 +147,8 @@ The following nested fields contain KNN vector embeddings:
   distance?: number;      // Distance in miles
   location_point_only?: boolean;
 
-  // Advanced taxonomy query (AND/OR logic)
-  query?: {
+  // Advanced taxonomy filters (AND/OR logic)
+  taxonomies?: {
     AND?: string[];       // All codes must match
     OR?: string[];        // Any code can match
   };
@@ -202,6 +210,7 @@ The following nested fields contain KNN vector embeddings:
     }>;
   };
   search_after?: any[];
+  total_results?: number;  // Total number of unique documents that matched across all strategies
   metadata?: {
     search_pipeline: "hybrid_semantic";
     intent_classification?: {
@@ -340,6 +349,22 @@ This granular visibility enables continuous improvement of the search algorithm 
 
 ## Search Strategies
 
+The system uses different strategies depending on the request:
+
+### Strategy Selection
+
+**With Text Query (`q` provided):**
+- 3 Semantic strategies (service, taxonomy, organization)
+- Up to 3 Keyword strategies (original, nouns, stemmed nouns)
+- 1 Intent-driven taxonomy strategy (if not low-information query)
+- **Total**: Up to 7 strategies
+
+**Taxonomy-Only (no `q`, but `taxonomies` provided):**
+- 1 Match-all strategy with taxonomy filters
+- **Total**: 1 strategy
+
+**All strategies** respect the same hard filters (geospatial, taxonomy, facets).
+
 ### 1. Service Semantic Search
 
 Uses KNN on `service.embedding` field for semantic similarity at the service level.
@@ -416,10 +441,32 @@ Uses AI-classified intent to automatically select relevant taxonomy codes:
 - Only executes if query is not classified as "low information"
 - Can be disabled with `disable_intent_classification: true`
 
-**Note**: This is different from user-provided taxonomy filters (via the `query` field):
+**Note**: This is different from user-provided taxonomy filters (via the `taxonomies` field):
 - **Intent-driven**: AI automatically selects taxonomy codes based on query understanding
-- **User-provided filters**: Explicit taxonomy codes in `query.AND` or `query.OR` that act as hard filters
+- **User-provided filters**: Explicit taxonomy codes in `taxonomies.AND` or `taxonomies.OR` that act as hard filters
 - Both can be used together: user filters narrow the search space, then intent-driven search ranks within that space
+
+### 6. Match-All Filtered (Taxonomy-Only Searches)
+
+Used when no text query is provided but taxonomy filters are specified:
+
+- Executes a simple `match_all` query with taxonomy filters applied
+- Returns **ALL** documents matching the taxonomy requirements
+- No semantic or keyword search needed (no embedding generated)
+- No AI reranking performed
+- If geospatial coordinates provided, results ranked by proximity
+- If no coordinates, results returned in index order
+- **Best for**: Category browsing, location-based filtering by category
+
+**Example use case**: "Show me all food banks within 25 miles"
+```json
+{
+  "taxonomies": { "OR": ["BD-1800", "BD-1900"] },
+  "lat": 47.6062,
+  "lon": -122.3321,
+  "distance": 25
+}
+```
 
 ## Relevant Text Extraction
 
@@ -810,7 +857,7 @@ async function getAllResults(query: string, limit: number = 10) {
 
 ## Taxonomy Query Filters
 
-The `query` field allows you to filter results by taxonomy codes, augmenting the semantic search with explicit category requirements. This is useful when you want to combine natural language search with specific taxonomy constraints.
+The `taxonomies` field allows you to filter results by taxonomy codes, augmenting the semantic search with explicit category requirements. This is useful when you want to combine natural language search with specific taxonomy constraints.
 
 ### How It Works
 
@@ -824,7 +871,7 @@ Taxonomy filters are applied to **ALL search strategies** (semantic, keyword, an
 │ User Request                                                    │
 │ {                                                               │
 │   "q": "food assistance",                                       │
-│   "query": { "OR": ["BD-1800", "BD-1900"] }                    │
+│   "taxonomies": { "OR": ["BD-1800", "BD-1900"] }              │
 │ }                                                               │
 └─────────────────────────────────────────────────────────────────┘
                             ↓
@@ -832,7 +879,7 @@ Taxonomy filters are applied to **ALL search strategies** (semantic, keyword, an
 │ Filter Building (buildFilters)                                 │
 │ ┌─────────────────────┐  ┌──────────────────────────────────┐  │
 │ │ Geospatial Filters  │  │ Taxonomy Filters                 │  │
-│ │ (if lat/lon/dist)   │  │ (if query.AND or query.OR)       │  │
+│ │ (if lat/lon/dist)   │  │ (if taxonomies.AND or .OR)       │  │
 │ └─────────────────────┘  └──────────────────────────────────┘  │
 │                                                                 │
 │ Combined Filters: [geo_distance, nested_taxonomy_terms]        │
@@ -870,7 +917,7 @@ All specified taxonomy codes must be present in the result:
 ```typescript
 {
   "q": "emergency assistance",
-  "query": {
+  "taxonomies": {
     "AND": ["BD-1800", "LR-8500"]  // Must have BOTH food AND legal services
   }
 }
@@ -883,7 +930,7 @@ Any of the specified taxonomy codes can match:
 ```typescript
 {
   "q": "food help",
-  "query": {
+  "taxonomies": {
     "OR": ["BD-1800", "BD-1900", "BD-2000"]  // Food banks OR pantries OR meal programs
   }
 }
@@ -896,7 +943,7 @@ You can use both simultaneously:
 ```typescript
 {
   "q": "family support",
-  "query": {
+  "taxonomies": {
     "AND": ["LR-8500"],           // Must have legal services
     "OR": ["BD-1800", "BH-3000"]  // AND (food OR material goods)
   }
@@ -909,7 +956,7 @@ You can omit the `q` parameter to search purely by taxonomy codes. This returns 
 
 ```typescript
 {
-  "query": {
+  "taxonomies": {
     "OR": ["BD-1800", "BD-1900"]
   },
   "lat": 47.751076,
@@ -938,7 +985,7 @@ You can omit the `q` parameter to search purely by taxonomy codes. This returns 
   "lon": -120.740135,
   "distance": 10,
   "limit": 10,
-  "query": {
+  "taxonomies": {
     "OR": ["BD-1800", "BD-1900"]  // Food banks or food pantries
   },
   "facets": {
@@ -952,7 +999,7 @@ You can omit the `q` parameter to search purely by taxonomy codes. This returns 
 ```typescript
 // POST /hybrid-semantic/search
 {
-  "query": {
+  "taxonomies": {
     "OR": ["BD-1800", "BD-1900", "BD-2000"]
   },
   "lat": 47.6062,
@@ -974,7 +1021,7 @@ You can omit the `q` parameter to search purely by taxonomy codes. This returns 
 // POST /hybrid-semantic/search
 {
   "q": "help with bills and food",
-  "query": {
+  "taxonomies": {
     "AND": ["BD-1800"],              // Must provide food
     "OR": ["LR-8500", "BM-6500"]     // AND (legal OR financial assistance)
   },
@@ -1013,9 +1060,11 @@ The multi-variation approach significantly improves search quality:
 
 The pipeline maximizes performance through parallelization:
 
-- **Phase 1**: Embedding and classification run simultaneously
-- **Phase 2**: All 5-6 search strategies execute in a single _msearch call (3 semantic + 3 keyword + 1 intent)
-- **Typical timing**: 200-400ms total for complex queries
+- **Phase 1**: Embedding and classification run simultaneously (if text query provided)
+- **Phase 2**: All search strategies execute in a single _msearch call:
+  - **With text query**: Up to 7 strategies (3 semantic + 3 keyword + 1 intent-driven)
+  - **Taxonomy-only**: 1 strategy (match_all with filters)
+- **Typical timing**: 200-400ms total for complex queries with text, <100ms for taxonomy-only
 
 ### Response Optimization
 
