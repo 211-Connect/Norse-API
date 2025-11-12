@@ -96,7 +96,12 @@ export interface SearchResponse {
   took: number;
   timed_out: boolean;
   hits: SearchResponseHits;
-  search_after?: any[];
+  search_after?: any[]; // Cursor for next page (cursor-based pagination)
   total_results?: number; // Total number of matching results across all pages
   metadata?: SearchMetadata;
+  // Legacy offset pagination metadata
+  page?: number; // Current page number (1-indexed)
+  total_pages?: number; // Total number of pages
+  has_next_page?: boolean; // Whether there is a next page
+  has_previous_page?: boolean; // Whether there is a previous page
 }

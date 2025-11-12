@@ -92,9 +92,25 @@ export class HybridSemanticController {
         },
         search_after: {
           type: 'array',
-          description: 'Cursor for pagination (from previous response)',
+          description:
+            'Cursor for pagination (from previous response) - used for cursor-based pagination',
           items: { type: 'any' },
           example: [0.95, 'resource-123'],
+        },
+        legacy_offset_pagination: {
+          type: 'boolean',
+          description:
+            'Enable legacy offset-based pagination using LIMIT/OFFSET instead of cursor-based pagination',
+          default: false,
+          example: true,
+        },
+        page: {
+          type: 'integer',
+          description:
+            'Page number for offset-based pagination (1-indexed). Only used when legacy_offset_pagination=true',
+          default: 1,
+          minimum: 1,
+          example: 2,
         },
         query: {
           type: 'object',
@@ -290,6 +306,8 @@ export class HybridSemanticController {
         lon: -122.3321,
         distance: 50,
         limit: 20,
+        legacy_offset_pagination: false,
+        page: 1,
         search_after: [0.95, 'resource-123'],
         custom_weights: {
           semantic: {
@@ -338,11 +356,21 @@ export class HybridSemanticController {
       - Configure decay via custom_weights.geospatial (decay_scale, decay_offset, weight)
       - Example: distance=50 filters to 50mi, decay_scale=25 means score drops to 50% at 25mi
       
-      Pagination:
-      - Use the 'limit' parameter to control page size (max 100)
-      - Use 'search_after' from the response to fetch the next page
-      - The 'search_after' array contains [score, id] for cursor-based pagination
-      - Maintain the same query parameters across paginated requests
+      Pagination (Two Modes):
+      
+      1. Cursor-based (default, recommended):
+         - Use the 'limit' parameter to control page size (max 100)
+         - Use 'search_after' from the response to fetch the next page
+         - The 'search_after' array contains [score, id] for cursor-based pagination
+         - Maintain the same query parameters across paginated requests
+         - More efficient for deep pagination
+      
+      2. Legacy offset-based:
+         - Set 'legacy_offset_pagination: true' in the request body
+         - Use 'page' parameter to specify which page (1-indexed)
+         - Response includes: page, total_pages, has_next_page, has_previous_page
+         - Example: { "legacy_offset_pagination": true, "page": 2, "limit": 10 }
+         - Note: Less efficient for deep pagination (page > 100)
     `,
   })
   @ApiResponse({
@@ -393,6 +421,12 @@ export class HybridSemanticController {
           ],
         },
         search_after: [0.95, 'resource-123'],
+        total_results: 150,
+        // Legacy offset pagination fields (only present when legacy_offset_pagination=true)
+        page: 2,
+        total_pages: 15,
+        has_next_page: true,
+        has_previous_page: true,
         metadata: {
           search_pipeline: 'hybrid_semantic',
           intent_classification: {

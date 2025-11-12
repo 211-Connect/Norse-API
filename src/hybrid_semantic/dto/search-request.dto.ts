@@ -47,7 +47,11 @@ export const searchRequestSchema = z
     lat: z.number().optional(),
     lon: z.number().optional(),
     distance: z.number().int().optional(),
-    search_after: z.array(z.any()).optional(),
+
+    // PAGINATION OPTIONS
+    search_after: z.array(z.any()).optional(), // Cursor-based pagination
+    legacy_offset_pagination: z.boolean().default(false), // Enable offset-based pagination
+    page: z.number().int().min(1).default(1), // Page number for offset pagination (1-indexed)
 
     // ADVANCED TAXONOMY QUERY FIELD
     taxonomies: z

@@ -81,6 +81,12 @@ export class OpenSearchService {
     const candidatesPerStrategy = 50; // Configurable
     const queryTimings: Record<string, number> = {};
 
+    // Determine pagination mode and calculate offset if needed
+    const useOffsetPagination = searchRequest.legacy_offset_pagination;
+    const offset = useOffsetPagination
+      ? (searchRequest.page - 1) * searchRequest.limit
+      : undefined;
+
     // Build multi-search body
     const msearchBody = [];
     const strategyNames: string[] = [];
@@ -101,6 +107,8 @@ export class OpenSearchService {
           candidatesPerStrategy,
           searchRequest.search_after,
           searchRequest,
+          useOffsetPagination,
+          offset,
         ),
       );
     } else if (searchRequest.q && queryEmbedding.length > 0) {
@@ -115,6 +123,8 @@ export class OpenSearchService {
           candidatesPerStrategy,
           searchRequest.search_after,
           searchRequest,
+          useOffsetPagination,
+          offset,
         ),
       );
 
@@ -128,6 +138,8 @@ export class OpenSearchService {
           candidatesPerStrategy,
           searchRequest.search_after,
           searchRequest,
+          useOffsetPagination,
+          offset,
         ),
       );
 
@@ -141,6 +153,8 @@ export class OpenSearchService {
           candidatesPerStrategy,
           searchRequest.search_after,
           searchRequest,
+          useOffsetPagination,
+          offset,
         ),
       );
     }
@@ -165,6 +179,8 @@ export class OpenSearchService {
             searchRequest.search_after,
             searchRequest,
             'original',
+            useOffsetPagination,
+            offset,
           ),
         );
       }
@@ -181,6 +197,8 @@ export class OpenSearchService {
             searchRequest.search_after,
             searchRequest,
             'nouns',
+            useOffsetPagination,
+            offset,
           ),
         );
       }
@@ -200,6 +218,8 @@ export class OpenSearchService {
             searchRequest.search_after,
             searchRequest,
             'nouns_stemmed',
+            useOffsetPagination,
+            offset,
           ),
         );
       }
@@ -225,6 +245,8 @@ export class OpenSearchService {
           candidatesPerStrategy,
           searchRequest.search_after,
           searchRequest,
+          useOffsetPagination,
+          offset,
         ),
       );
     } else if (intentClassification?.is_low_information_query) {
@@ -288,6 +310,8 @@ export class OpenSearchService {
     k: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     const semanticWeight =
@@ -332,8 +356,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      query.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       query.search_after = searchAfter;
     }
 
@@ -360,6 +386,8 @@ export class OpenSearchService {
     k: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     const semanticWeight =
@@ -404,8 +432,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      query.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       query.search_after = searchAfter;
     }
 
@@ -432,6 +462,8 @@ export class OpenSearchService {
     k: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     const semanticWeight =
@@ -476,8 +508,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      query.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       query.search_after = searchAfter;
     }
 
@@ -572,6 +606,8 @@ export class OpenSearchService {
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
     variationType: 'original' | 'nouns' | 'nouns_stemmed' = 'original',
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     let keywordWeight = weights?.strategies.keyword_search ?? 1.0;
@@ -644,8 +680,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      queryBody.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       queryBody.search_after = searchAfter;
     }
 
@@ -665,6 +703,8 @@ export class OpenSearchService {
     size: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const weights = searchRequest ? this.getWeights(searchRequest) : null;
     const intentWeight = weights?.strategies.intent_driven ?? 1.0;
@@ -711,8 +751,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      queryBody.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       queryBody.search_after = searchAfter;
     }
 
@@ -735,6 +777,8 @@ export class OpenSearchService {
     size: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
   ): any {
     const query: any = {
       size: size,
@@ -767,8 +811,10 @@ export class OpenSearchService {
       }
     }
 
-    // Add search_after for cursor-based pagination
-    if (searchAfter && searchAfter.length > 0) {
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      query.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
       query.search_after = searchAfter;
     }
 

@@ -222,12 +222,22 @@ export class HybridSemanticService {
         metadata,
       };
 
-      // Add search_after cursor for next page if there are results
-      if (processedHits.length > 0) {
-        const lastHit = processedHits[processedHits.length - 1];
-        // Return sort values for cursor-based pagination
-        if (lastHit?.sort) {
-          response.search_after = lastHit.sort;
+      // Add pagination metadata based on mode
+      if (searchRequest.legacy_offset_pagination) {
+        // Legacy offset pagination metadata
+        const totalPages = Math.ceil(totalResults / searchRequest.limit);
+        response.page = searchRequest.page;
+        response.total_pages = totalPages;
+        response.has_next_page = searchRequest.page < totalPages;
+        response.has_previous_page = searchRequest.page > 1;
+      } else {
+        // Cursor-based pagination: Add search_after cursor for next page if there are results
+        if (processedHits.length > 0) {
+          const lastHit = processedHits[processedHits.length - 1];
+          // Return sort values for cursor-based pagination
+          if (lastHit?.sort) {
+            response.search_after = lastHit.sort;
+          }
         }
       }
 
