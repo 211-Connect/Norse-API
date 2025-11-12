@@ -175,14 +175,6 @@ The following nested fields contain KNN vector embeddings:
       decay_offset?: number;     // Distance before decay starts (default: 0 miles)
     };
   };
-
-  // DEPRECATED - Use custom_weights instead (kept for backward compatibility)
-  semantic_weight?: number;
-  attribute_weight?: number;
-  taxonomy_weight?: number;
-  geospatial_weight?: number;
-  distance_decay_scale?: number;
-  distance_decay_offset?: number;
 }
 ```
 

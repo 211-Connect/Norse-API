@@ -419,15 +419,6 @@ Weights are centralized:
 - `config/weights-config.service.ts` - Loader with validation
 - Both services use `WeightsConfigService` for defaults
 
-### Backward Compatibility
-✅ Maintained - Legacy request parameters still work:
-- `semantic_weight`
-- `taxonomy_weight`
-- `attribute_weight`
-- `geospatial_weight`
-- `distance_decay_scale`
-- `distance_decay_offset`
-
 ## Quick Reference
 
 | Task | Command |

@@ -836,11 +836,9 @@ export class OpenSearchService {
   }
 
   /**
-   * Extract weight configuration from search request
-   * Priority order:
-   * 1. Request custom_weights (highest priority - allows per-request tuning)
-   * 2. Legacy request parameters (backward compatibility)
-   * 3. Configuration file defaults (from weights-config.service)
+   * Extract and merge weights from multiple sources with priority:
+   * 1. Request-level custom_weights (highest priority)
+   * 2. Configuration file defaults (from weights-config.service)
    */
   private getWeights(searchRequest: SearchRequestDto) {
     const configDefaults = this.weightsConfigService.getConfig();
@@ -849,15 +847,12 @@ export class OpenSearchService {
       semantic: {
         service:
           searchRequest.custom_weights?.semantic?.service ??
-          searchRequest.semantic_weight ??
           configDefaults.semantic.service,
         taxonomy:
           searchRequest.custom_weights?.semantic?.taxonomy ??
-          searchRequest.taxonomy_weight ??
           configDefaults.semantic.taxonomy,
         organization:
           searchRequest.custom_weights?.semantic?.organization ??
-          searchRequest.attribute_weight ??
           configDefaults.semantic.organization,
       },
       strategies: {
@@ -874,16 +869,13 @@ export class OpenSearchService {
       geospatial: {
         weight:
           searchRequest.custom_weights?.geospatial?.weight ??
-          searchRequest.geospatial_weight ??
           configDefaults.geospatial.weight,
         decay_scale:
           searchRequest.custom_weights?.geospatial?.decay_scale ??
-          searchRequest.distance_decay_scale ??
           searchRequest.distance ??
           configDefaults.geospatial.decay_scale,
         decay_offset:
           searchRequest.custom_weights?.geospatial?.decay_offset ??
-          searchRequest.distance_decay_offset ??
           configDefaults.geospatial.decay_offset,
       },
     };

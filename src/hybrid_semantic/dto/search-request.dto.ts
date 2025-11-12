@@ -74,14 +74,6 @@ export const searchRequestSchema = z
 
     // COMPREHENSIVE WEIGHT CUSTOMIZATION
     custom_weights: customWeightsSchema,
-
-    // DEPRECATED - Use custom_weights instead (kept for backward compatibility)
-    semantic_weight: z.number().min(0).max(1).optional(),
-    attribute_weight: z.number().min(0).max(1).optional(),
-    taxonomy_weight: z.number().min(0).max(1).optional(),
-    geospatial_weight: z.number().min(0).max(5).optional(),
-    distance_decay_scale: z.number().min(1).max(200).optional(),
-    distance_decay_offset: z.number().min(0).max(50).optional(),
   })
   .refine((data) => data.q || data.query, {
     message: "Either 'q' (query) or 'query' (taxonomy) must be provided",
