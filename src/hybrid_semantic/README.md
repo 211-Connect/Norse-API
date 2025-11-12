@@ -424,6 +424,11 @@ Uses AI-classified intent to automatically select relevant taxonomy codes:
 - Only executes if query is not classified as "low information"
 - Can be disabled with `disable_intent_classification: true`
 
+**Note**: This is different from user-provided taxonomy filters (via the `query` field):
+- **Intent-driven**: AI automatically selects taxonomy codes based on query understanding
+- **User-provided filters**: Explicit taxonomy codes in `query.AND` or `query.OR` that act as hard filters
+- Both can be used together: user filters narrow the search space, then intent-driven search ranks within that space
+
 ## Relevant Text Extraction
 
 Each search result includes a `relevant_text` field containing up to 3 sentences that explain **why the result was surfaced**. This helps users understand relevance, especially when the title doesn't obviously match their query.
@@ -811,7 +816,127 @@ async function getAllResults(query: string, limit: number = 10) {
 }
 ```
 
-## Usage Example
+## Taxonomy Query Filters
+
+The `query` field allows you to filter results by taxonomy codes, augmenting the semantic search with explicit category requirements. This is useful when you want to combine natural language search with specific taxonomy constraints.
+
+### How It Works
+
+Taxonomy filters are applied to **ALL search strategies** (semantic, keyword, and intent-driven) as hard filters. This means:
+- Results MUST match the taxonomy requirements AND be relevant to the search query
+- The taxonomy filter narrows down the candidate pool before scoring
+- All strategies operate on the filtered set, ensuring consistent taxonomy matching
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ User Request                                                    │
+│ {                                                               │
+│   "q": "food assistance",                                       │
+│   "query": { "OR": ["BD-1800", "BD-1900"] }                    │
+│ }                                                               │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Filter Building (buildFilters)                                 │
+│ ┌─────────────────────┐  ┌──────────────────────────────────┐  │
+│ │ Geospatial Filters  │  │ Taxonomy Filters                 │  │
+│ │ (if lat/lon/dist)   │  │ (if query.AND or query.OR)       │  │
+│ └─────────────────────┘  └──────────────────────────────────┘  │
+│                                                                 │
+│ Combined Filters: [geo_distance, nested_taxonomy_terms]        │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Applied to ALL Search Strategies                                │
+│ ┌───────────────┐ ┌───────────────┐ ┌───────────────────────┐  │
+│ │ Semantic      │ │ Keyword       │ │ Intent-Driven         │  │
+│ │ (3 queries)   │ │ (3 queries)   │ │ (1 query)             │  │
+│ │               │ │               │ │                       │  │
+│ │ + filters     │ │ + filters     │ │ + filters             │  │
+│ └───────────────┘ └───────────────┘ └───────────────────────┘  │
+│                                                                 │
+│ All queries include: filter: [geo, taxonomy]                   │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ OpenSearch Execution                                            │
+│ 1. Apply filters (hard constraints)                            │
+│ 2. Score remaining documents                                   │
+│ 3. Return top candidates per strategy                          │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Results: Only documents with BD-1800 OR BD-1900                 │
+│          that are semantically relevant to "food assistance"    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### AND Logic
+
+All specified taxonomy codes must be present in the result:
+
+```typescript
+{
+  "q": "emergency assistance",
+  "query": {
+    "AND": ["BD-1800", "LR-8500"]  // Must have BOTH food AND legal services
+  }
+}
+```
+
+### OR Logic
+
+Any of the specified taxonomy codes can match:
+
+```typescript
+{
+  "q": "food help",
+  "query": {
+    "OR": ["BD-1800", "BD-1900", "BD-2000"]  // Food banks OR pantries OR meal programs
+  }
+}
+```
+
+### Combined AND/OR Logic
+
+You can use both simultaneously:
+
+```typescript
+{
+  "q": "family support",
+  "query": {
+    "AND": ["LR-8500"],           // Must have legal services
+    "OR": ["BD-1800", "BH-3000"]  // AND (food OR material goods)
+  }
+}
+```
+
+### Taxonomy-Only Search
+
+You can omit the `q` parameter to search purely by taxonomy codes. This returns **all resources** matching the taxonomy requirements:
+
+```typescript
+{
+  "query": {
+    "OR": ["BD-1800", "BD-1900"]
+  },
+  "lat": 47.751076,
+  "lon": -120.740135,
+  "distance": 25
+}
+```
+
+**How it works:**
+- Uses a `match_all` query with taxonomy filters
+- Returns ALL documents with the specified taxonomy codes
+- If geospatial coordinates provided, results ranked by proximity
+- If no coordinates, results returned in index order
+- No semantic or keyword search strategies are executed
+- No AI reranking is performed (not needed without a text query)
+
+## Usage Examples
+
+### Example 1: Semantic Search with Taxonomy Filter
 
 ```typescript
 // POST /hybrid-semantic/search
@@ -827,6 +952,41 @@ async function getAllResults(query: string, limit: number = 10) {
   "facets": {
     "cost": ["free"]
   }
+}
+```
+
+### Example 2: Taxonomy-Only Geographic Search
+
+```typescript
+// POST /hybrid-semantic/search
+{
+  "query": {
+    "OR": ["BD-1800", "BD-1900", "BD-2000"]
+  },
+  "lat": 47.6062,
+  "lon": -122.3321,
+  "distance": 50,
+  "limit": 20,
+  "custom_weights": {
+    "geospatial": {
+      "weight": 5.0,      // Heavily prioritize proximity
+      "decay_scale": 10   // Strong preference for nearby results
+    }
+  }
+}
+```
+
+### Example 3: Complex Taxonomy Requirements
+
+```typescript
+// POST /hybrid-semantic/search
+{
+  "q": "help with bills and food",
+  "query": {
+    "AND": ["BD-1800"],              // Must provide food
+    "OR": ["LR-8500", "BM-6500"]     // AND (legal OR financial assistance)
+  },
+  "limit": 15
 }
 ```
 

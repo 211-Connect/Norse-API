@@ -94,5 +94,6 @@ export interface SearchResponse {
   timed_out: boolean;
   hits: SearchResponseHits;
   search_after?: any[];
+  total_results?: number; // Total number of matching results across all pages
   metadata?: SearchMetadata;
 }

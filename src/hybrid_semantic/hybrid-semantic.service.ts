@@ -111,14 +111,17 @@ export class HybridSemanticService {
       // ============================================================
       const phase2Start = Date.now();
 
-      const { results: rawResults, queryTimings } =
-        await this.openSearchService.executeHybridSearch(
-          queryEmbedding,
-          searchRequest,
-          headers,
-          tenant.name,
-          intentClassification,
-        );
+      const {
+        results: rawResults,
+        queryTimings,
+        totalResults,
+      } = await this.openSearchService.executeHybridSearch(
+        queryEmbedding,
+        searchRequest,
+        headers,
+        tenant.name,
+        intentClassification,
+      );
 
       const phase2Time = Date.now() - phase2Start;
       granularTimings.phase_2_opensearch = {
@@ -127,7 +130,7 @@ export class HybridSemanticService {
       };
 
       this.logger.debug(
-        `Retrieved ${rawResults.length} candidates from OpenSearch`,
+        `Retrieved ${rawResults.length} candidates from OpenSearch (${totalResults} total matches)`,
       );
 
       // ============================================================
@@ -215,6 +218,7 @@ export class HybridSemanticService {
           max_score: processedHits[0]?._score || null,
           hits: processedHits,
         },
+        total_results: totalResults,
         metadata,
       };
 

@@ -67,7 +67,11 @@ export class OpenSearchService {
     headers: HeadersDto,
     tenant: string,
     intentClassification?: any,
-  ): Promise<{ results: any[]; queryTimings: Record<string, number> }> {
+  ): Promise<{
+    results: any[];
+    queryTimings: Record<string, number>;
+    totalResults: number;
+  }> {
     // Map tenant name to short code (e.g., "Illinois 211" -> "il211")
     const tenantShortCode = getTenantShortCode(tenant);
     const indexName = this.getIndexName(tenantShortCode, searchRequest.lang);
@@ -81,44 +85,65 @@ export class OpenSearchService {
     const msearchBody = [];
     const strategyNames: string[] = [];
 
-    // Strategy 1: Service-level semantic search
-    strategyNames.push('semantic_service');
-    msearchBody.push({ index: indexName });
-    msearchBody.push(
-      this.buildServiceSemanticQuery(
-        queryEmbedding,
-        filters,
-        candidatesPerStrategy,
-        searchRequest.search_after,
-        searchRequest,
-      ),
-    );
+    // Check if this is a taxonomy-only search (no text query)
+    const isTaxonomyOnlySearch = !searchRequest.q && searchRequest.query;
 
-    // Strategy 2: Taxonomy-level semantic search
-    strategyNames.push('semantic_taxonomy');
-    msearchBody.push({ index: indexName });
-    msearchBody.push(
-      this.buildTaxonomySemanticQuery(
-        queryEmbedding,
-        filters,
-        candidatesPerStrategy,
-        searchRequest.search_after,
-        searchRequest,
-      ),
-    );
+    if (isTaxonomyOnlySearch) {
+      // For taxonomy-only searches, use a simple match_all query with filters
+      this.logger.debug(
+        'Taxonomy-only search detected - using match_all strategy',
+      );
+      strategyNames.push('match_all_filtered');
+      msearchBody.push({ index: indexName });
+      msearchBody.push(
+        this.buildMatchAllQuery(
+          filters,
+          candidatesPerStrategy,
+          searchRequest.search_after,
+          searchRequest,
+        ),
+      );
+    } else if (searchRequest.q && queryEmbedding.length > 0) {
+      // Only run semantic strategies if we have a query and embedding
+      // Strategy 1: Service-level semantic search
+      strategyNames.push('semantic_service');
+      msearchBody.push({ index: indexName });
+      msearchBody.push(
+        this.buildServiceSemanticQuery(
+          queryEmbedding,
+          filters,
+          candidatesPerStrategy,
+          searchRequest.search_after,
+          searchRequest,
+        ),
+      );
 
-    // Strategy 3: Organization-level semantic search
-    strategyNames.push('semantic_organization');
-    msearchBody.push({ index: indexName });
-    msearchBody.push(
-      this.buildOrganizationSemanticQuery(
-        queryEmbedding,
-        filters,
-        candidatesPerStrategy,
-        searchRequest.search_after,
-        searchRequest,
-      ),
-    );
+      // Strategy 2: Taxonomy-level semantic search
+      strategyNames.push('semantic_taxonomy');
+      msearchBody.push({ index: indexName });
+      msearchBody.push(
+        this.buildTaxonomySemanticQuery(
+          queryEmbedding,
+          filters,
+          candidatesPerStrategy,
+          searchRequest.search_after,
+          searchRequest,
+        ),
+      );
+
+      // Strategy 3: Organization-level semantic search
+      strategyNames.push('semantic_organization');
+      msearchBody.push({ index: indexName });
+      msearchBody.push(
+        this.buildOrganizationSemanticQuery(
+          queryEmbedding,
+          filters,
+          candidatesPerStrategy,
+          searchRequest.search_after,
+          searchRequest,
+        ),
+      );
+    }
 
     // Strategy 4: Keyword search variations (if enabled)
     // Simplified strategy focusing on semantically meaningful searches:
@@ -224,10 +249,8 @@ export class OpenSearchService {
       });
 
       // Combine and deduplicate results from all strategies
-      const combinedResults = this.combineSearchResults(
-        response.body.responses,
-        strategyNames,
-      );
+      const { results: combinedResults, totalResults } =
+        this.combineSearchResults(response.body.responses, strategyNames);
 
       // Add distance information to results
       const resultsWithDistance = this.addDistanceInfo(
@@ -242,10 +265,10 @@ export class OpenSearchService {
       );
 
       this.logger.debug(
-        `Hybrid search returned ${resultsWithRelevantText.length} unique results`,
+        `Hybrid search returned ${resultsWithRelevantText.length} unique results out of ${totalResults} total matches`,
       );
 
-      return { results: resultsWithRelevantText, queryTimings };
+      return { results: resultsWithRelevantText, queryTimings, totalResults };
     } catch (error) {
       this.logger.error(
         `OpenSearch query failed: ${error.message}`,
@@ -697,14 +720,81 @@ export class OpenSearchService {
   }
 
   /**
+   * Build match_all query for taxonomy-only searches
+   * Used when no text query is provided but taxonomy filters are specified
+   * Returns all documents matching the filters, scored by geospatial proximity if provided
+   *
+   * @param filters - Array of filter objects (taxonomy, geospatial, etc.)
+   * @param size - Number of results to return
+   * @param searchAfter - Cursor for pagination
+   * @param searchRequest - Full search request for geospatial scoring
+   * @returns OpenSearch query object
+   */
+  private buildMatchAllQuery(
+    filters: any[],
+    size: number,
+    searchAfter?: any[],
+    searchRequest?: SearchRequestDto,
+  ): any {
+    const query: any = {
+      size: size,
+      query: {
+        bool: {
+          must: {
+            match_all: {},
+          },
+          filter: filters,
+        },
+      },
+      sort: [
+        { _score: 'desc' },
+        { _id: 'asc' }, // Tiebreaker for consistent pagination
+      ],
+    };
+
+    // If geospatial location is provided, add function_score for proximity ranking
+    if (searchRequest?.lat && searchRequest?.lon) {
+      const geoScoreFunction = this.buildGeospatialScoreFunction(searchRequest);
+      if (geoScoreFunction) {
+        query.query = {
+          function_score: {
+            query: query.query,
+            functions: [geoScoreFunction],
+            score_mode: 'multiply',
+            boost_mode: 'replace',
+          },
+        };
+      }
+    }
+
+    // Add search_after for cursor-based pagination
+    if (searchAfter && searchAfter.length > 0) {
+      query.search_after = searchAfter;
+    }
+
+    return query;
+  }
+
+  /**
    * Build taxonomy filters from AND/OR query structure
    * Used for explicit taxonomy queries from the search request
+   *
+   * Supports two modes:
+   * - AND: All specified taxonomy codes must match (each code becomes a separate filter)
+   * - OR: Any of the specified taxonomy codes can match (single filter with terms query)
+   *
+   * These filters are applied to ALL search strategies (semantic, keyword, intent-driven)
+   * to ensure results match the user's taxonomy requirements
+   *
+   * @param taxonomyQuery - Object with AND and/OR arrays of taxonomy codes
+   * @returns Array of OpenSearch filter objects
    */
   private buildTaxonomyFilters(taxonomyQuery: any): any[] {
     const filters: any[] = [];
 
     if (taxonomyQuery.AND && taxonomyQuery.AND.length > 0) {
       // All taxonomy codes must match
+      // Each code becomes a separate filter (AND logic at the bool level)
       taxonomyQuery.AND.forEach((code: string) => {
         filters.push({
           nested: {
@@ -717,10 +807,15 @@ export class OpenSearchService {
           },
         });
       });
+
+      this.logger.debug(
+        `Built ${taxonomyQuery.AND.length} AND taxonomy filters: [${taxonomyQuery.AND.join(', ')}]`,
+      );
     }
 
     if (taxonomyQuery.OR && taxonomyQuery.OR.length > 0) {
       // Any taxonomy code can match
+      // Single filter with terms query (OR logic within the filter)
       filters.push({
         nested: {
           path: 'taxonomies',
@@ -731,6 +826,10 @@ export class OpenSearchService {
           },
         },
       });
+
+      this.logger.debug(
+        `Built OR taxonomy filter with ${taxonomyQuery.OR.length} codes: [${taxonomyQuery.OR.join(', ')}]`,
+      );
     }
 
     return filters;
@@ -952,7 +1051,7 @@ export class OpenSearchService {
 
   /**
    * Build filters for OpenSearch query
-   * Handles tenant, locale, and optional geospatial distance filtering
+   * Handles tenant, locale, optional geospatial distance filtering, and taxonomy queries
    */
   private buildFilters(searchRequest: SearchRequestDto): any[] {
     const filters: any[] = [];
@@ -970,6 +1069,18 @@ export class OpenSearchService {
       });
     }
 
+    // Taxonomy query filters (AND/OR logic)
+    if (searchRequest.query) {
+      const taxonomyFilters = this.buildTaxonomyFilters(searchRequest.query);
+      filters.push(...taxonomyFilters);
+
+      if (taxonomyFilters.length > 0) {
+        this.logger.debug(
+          `Applied ${taxonomyFilters.length} taxonomy filter(s) from query field`,
+        );
+      }
+    }
+
     return filters;
   }
 
@@ -977,11 +1088,12 @@ export class OpenSearchService {
    * Combine and deduplicate results from multiple search strategies
    * Normalizes scores to 0-1 scale per strategy before combining
    * Keeps the best score for each unique document and tracks detailed source contributions
+   * Returns both the combined results and the total count of unique matching documents
    */
   private combineSearchResults(
     responses: any[],
     strategyNames: string[],
-  ): any[] {
+  ): { results: any[]; totalResults: number } {
     // First pass: normalize scores within each strategy to 0-1 scale
     const normalizedResponses = this.normalizeStrategyScores(
       responses,
@@ -1022,7 +1134,14 @@ export class OpenSearchService {
     });
 
     // Convert map to array and sort by score
-    return Array.from(resultMap.values()).sort((a, b) => b._score - a._score);
+    const results = Array.from(resultMap.values()).sort(
+      (a, b) => b._score - a._score,
+    );
+
+    // The total is the number of unique documents that matched across all strategies
+    const totalResults = resultMap.size;
+
+    return { results, totalResults };
   }
 
   /**
