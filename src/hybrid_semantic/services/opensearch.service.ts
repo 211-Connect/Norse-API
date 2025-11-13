@@ -41,7 +41,6 @@ export class OpenSearchService {
         ? {
             ca: caCert,
             rejectUnauthorized: true,
-            requestCert: true,
           }
         : {
             rejectUnauthorized: false,
