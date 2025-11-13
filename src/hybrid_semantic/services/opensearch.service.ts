@@ -27,13 +27,27 @@ export class OpenSearchService {
     const node =
       this.configService.get<string>('OPENSEARCH_NODE') ||
       'http://localhost:9200';
+    const nodeEnv = this.configService.get<string>('NODE_ENV') || 'development';
+    const caCert = this.configService.get<string>('CA_CERT_DB_OPENSEARCH');
+
+    // Configure SSL based on environment
+    const sslConfig =
+      nodeEnv === 'production' && caCert
+        ? {
+            ca: caCert,
+            rejectUnauthorized: true,
+          }
+        : {
+            rejectUnauthorized: false,
+          };
+
     this.client = new Client({
       node,
-      ssl: {
-        rejectUnauthorized: false, // For development; configure properly for production
-      },
+      ssl: sslConfig,
     });
-    this.logger.log(`OpenSearch client initialized with node: ${node}`);
+    this.logger.log(
+      `OpenSearch client initialized with node: ${node} (env: ${nodeEnv})`,
+    );
 
     // Initialize wink-nlp for POS tagging
     this.nlpEngine = winkNLP(model);

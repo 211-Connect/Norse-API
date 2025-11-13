@@ -1,6 +1,6 @@
 {
   "name": "norse-api",
-  "version": "0.0.1",
+  "version": "2.0.0-beta.1",
   "description": "A RESTful API for NORSE.",
   "author": "Connect211",
   "private": true,
