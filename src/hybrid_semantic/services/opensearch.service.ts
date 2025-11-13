@@ -8,8 +8,6 @@ import { WeightsConfigService } from '../config/weights-config.service';
 import * as nlp from 'wink-nlp-utils';
 import winkNLP from 'wink-nlp';
 import model from 'wink-eng-lite-web-model';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 
 /**
  * Service for building and executing OpenSearch queries
@@ -30,16 +28,12 @@ export class OpenSearchService {
       this.configService.get<string>('OPENSEARCH_NODE') ||
       'http://localhost:9200';
     const nodeEnv = this.configService.get<string>('NODE_ENV') || 'development';
-    // const caCert = this.configService.get<string>('CA_CERT_DB_OPENSEARCH');
-    const caCert = readFileSync(
-      join(__dirname, '../../../certs/ca-cert-do-opensearch.pem'),
-    );
 
     // Configure SSL based on environment
     const sslConfig =
-      nodeEnv === 'production' && caCert
+      nodeEnv === 'production'
         ? {
-            ca: caCert,
+            requestCert: true,
             rejectUnauthorized: true,
           }
         : {
