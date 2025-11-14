@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Version } from '@nestjs/common';
+import { Controller, Post, Body, Version, HttpCode } from '@nestjs/common';
 import {
   ApiTags,
   ApiHeader,
@@ -48,6 +48,7 @@ export class HybridSemanticController {
   constructor(private readonly hybridSemanticService: HybridSemanticService) {}
 
   @Post('search')
+  @HttpCode(200)
   @Version('1')
   @ApiBody({
     description: 'Search request with optional custom weights for fine-tuning',
