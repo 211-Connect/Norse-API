@@ -13,15 +13,26 @@ import { IntentClassificationResult } from 'src/common/services/ai-utils.service
  *    - embedding: Individual embedding time
  *    - classification: Individual classification time
  *
- * 2. Phase 2 (PARALLEL): Multiple OpenSearch queries via _msearch
- *    - total_parallel_time: Total _msearch execution time
- *    - individual_queries: Time each query took within OpenSearch
+ * 2. Phase 2: OpenSearch interaction (pure search execution)
+ *    - total_time: Overall wall-clock for Phase 2
+ *    - request_build_time: Building filters, pagination, and all strategy queries
+ *    - opensearch_call: Network + OpenSearch execution
+ *      - total_time: _msearch round-trip time
+ *      - network_overhead_estimate: Estimated network/serialization overhead
+ *      - subqueries: Per-strategy execution times from OpenSearch
+ *        - Individual strategy times (semantic_service, keyword_original, etc.)
+ *        - max_subquery_took: Slowest individual query
  *
- * 3. Phase 3 (SEQUENTIAL): Reranking
- *    - total_time: Time for reranking operation
+ * 3. Phase 3: Reranking & Post-Processing (all result manipulation)
+ *    - total_time: Overall wall-clock for Phase 3
+ *    - ai_reranking: AI-utils reranking or simple top-N selection
+ *    - combine_and_dedupe: Merging strategies and deduplication
+ *    - sorting_and_pagination: Sorting and pagination logic
+ *    - distance_calculation: Adding distance information
+ *    - snippet_extraction: Adding relevant text snippets
  *
- * 4. Phase 4 (SEQUENTIAL): Post-processing
- *    - total_time: Time for post-processing
+ * 4. Phase 4: Final response preparation
+ *    - total_time: Time for final response formatting
  */
 export interface GranularPhaseTimings {
   phase_1_embedding_and_classification?: {
@@ -30,20 +41,31 @@ export interface GranularPhaseTimings {
     classification: number;
   };
   phase_2_opensearch?: {
-    total_parallel_time: number;
-    individual_queries: {
-      semantic_service?: number;
-      semantic_taxonomy?: number;
-      semantic_organization?: number;
-      keyword_original?: number;
-      keyword_nouns?: number;
-      keyword_nouns_stemmed?: number;
-      intent_taxonomy?: number;
-      match_all_filtered?: number; // For taxonomy-only searches
+    total_time: number;
+    request_build_time: number;
+    opensearch_call: {
+      total_time: number;
+      network_overhead_estimate?: number;
+      subqueries: {
+        semantic_service?: number;
+        semantic_taxonomy?: number;
+        semantic_organization?: number;
+        keyword_original?: number;
+        keyword_nouns?: number;
+        keyword_nouns_stemmed?: number;
+        intent_taxonomy?: number;
+        match_all_filtered?: number;
+        max_subquery_took: number;
+      };
     };
   };
-  phase_3_reranking?: {
+  phase_3_reranking_and_processing?: {
     total_time: number;
+    ai_reranking: number;
+    combine_and_dedupe: number;
+    sorting_and_pagination: number;
+    distance_calculation: number;
+    snippet_extraction: number;
   };
   phase_4_post_processing?: {
     total_time: number;

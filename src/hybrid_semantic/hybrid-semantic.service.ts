@@ -107,14 +107,12 @@ export class HybridSemanticService {
       }
 
       // ============================================================
-      // PHASE 2: Multi-Strategy OpenSearch Query
+      // PHASE 2: OpenSearch Interaction (Pure Search Execution)
       // ============================================================
-      const phase2Start = Date.now();
-
       const {
-        results: rawResults,
-        queryTimings,
-        totalResults,
+        responses: opensearchResponses,
+        strategyNames,
+        timings: phase2Timings,
       } = await this.openSearchService.executeHybridSearch(
         queryEmbedding,
         searchRequest,
@@ -123,48 +121,91 @@ export class HybridSemanticService {
         intentClassification,
       );
 
-      const phase2Time = Date.now() - phase2Start;
-      granularTimings.phase_2_opensearch = {
-        total_parallel_time: phase2Time,
-        individual_queries: queryTimings,
-      };
+      granularTimings.phase_2_opensearch = phase2Timings;
 
       this.logger.debug(
-        `Retrieved ${rawResults.length} candidates from OpenSearch (${totalResults} total matches)`,
+        `Phase 2 complete: received ${opensearchResponses.length} strategy responses`,
       );
 
       // ============================================================
-      // PHASE 3: Reranking via ai-utils
+      // PHASE 3: Reranking & Post-Processing (All Result Manipulation)
       // ============================================================
       const phase3Start = Date.now();
 
-      let rerankedResults = rawResults;
+      // 3a. Combine and deduplicate results from all strategies
+      const combineStart = Date.now();
+      const { results: combinedResults, totalResults } =
+        this.openSearchService.combineSearchResults(
+          opensearchResponses,
+          strategyNames,
+        );
+      const combineTime = Date.now() - combineStart;
 
-      if (searchRequest.q && rawResults.length > 0) {
+      this.logger.debug(
+        `Combined ${combinedResults.length} unique results from ${totalResults} total matches`,
+      );
+
+      // 3b. AI Reranking or simple top-N selection
+      const rerankStart = Date.now();
+      let rerankedResults = combinedResults;
+
+      if (searchRequest.q && combinedResults.length > 0) {
         rerankedResults = await this.aiUtilsService.rerankResults(
           searchRequest.q,
-          rawResults,
+          combinedResults,
           searchRequest.limit,
         );
       } else {
         // No query or no results - just take top N
-        rerankedResults = rawResults.slice(0, searchRequest.limit);
+        rerankedResults = combinedResults.slice(0, searchRequest.limit);
       }
-
-      const phase3Time = Date.now() - phase3Start;
-      granularTimings.phase_3_reranking = {
-        total_time: phase3Time,
-      };
+      const rerankTime = Date.now() - rerankStart;
 
       this.logger.debug(`Reranked to ${rerankedResults.length} final results`);
 
+      // 3c. Sorting and pagination (currently minimal, but tracked for future)
+      const sortStart = Date.now();
+      // Results are already sorted by reranking, but track this for completeness
+      const sortedResults = rerankedResults;
+      const sortTime = Date.now() - sortStart;
+
+      // 3d. Add distance information
+      const distanceStart = Date.now();
+      const resultsWithDistance = this.openSearchService.addDistanceInfo(
+        sortedResults,
+        searchRequest,
+      );
+      const distanceTime = Date.now() - distanceStart;
+
+      // 3e. Add relevant text snippets
+      const snippetStart = Date.now();
+      const finalResults = this.openSearchService.addRelevantTextSnippets(
+        resultsWithDistance,
+        searchRequest.q,
+      );
+      const snippetTime = Date.now() - snippetStart;
+
+      const phase3Time = Date.now() - phase3Start;
+      granularTimings.phase_3_reranking_and_processing = {
+        total_time: phase3Time,
+        ai_reranking: rerankTime,
+        combine_and_dedupe: combineTime,
+        sorting_and_pagination: sortTime,
+        distance_calculation: distanceTime,
+        snippet_extraction: snippetTime,
+      };
+
+      this.logger.debug(
+        `Phase 3 complete: combine=${combineTime}ms, rerank=${rerankTime}ms, distance=${distanceTime}ms, snippets=${snippetTime}ms`,
+      );
+
       // ============================================================
-      // PHASE 4: Post-Processing & Response Preparation
+      // PHASE 4: Final Response Preparation
       // ============================================================
       const phase4Start = Date.now();
 
       const processedHits = this.postProcessResults(
-        rerankedResults,
+        finalResults,
         searchRequest,
       );
 

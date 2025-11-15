@@ -91,18 +91,31 @@ export class OpenSearchService {
     tenant: string,
     intentClassification?: any,
   ): Promise<{
-    results: any[];
-    queryTimings: Record<string, number>;
-    totalResults: number;
+    responses: any[];
+    strategyNames: string[];
+    timings: {
+      total_time: number;
+      request_build_time: number;
+      opensearch_call: {
+        total_time: number;
+        network_overhead_estimate?: number;
+        subqueries: Record<string, number> & { max_subquery_took: number };
+      };
+    };
   }> {
     // Map tenant name to short code (e.g., "Illinois 211" -> "il211")
     const tenantShortCode = getTenantShortCode(tenant);
     const indexName = this.getIndexName(tenantShortCode, searchRequest.lang);
     this.logger.debug(`Executing hybrid search on index: ${indexName}`);
 
+    // Track overall phase timing
+    const phaseStart = Date.now();
+
+    // Track request building time
+    const buildStart = Date.now();
+
     const filters = this.buildFilters(searchRequest);
     const candidatesPerStrategy = 50; // Configurable
-    const queryTimings: Record<string, number> = {};
 
     // Determine pagination mode and calculate offset if needed
     const useOffsetPagination = searchRequest.legacy_offset_pagination;
@@ -278,42 +291,53 @@ export class OpenSearchService {
       );
     }
 
+    const requestBuildTime = Date.now() - buildStart;
+
     try {
       // Execute multi-search and track timing
       const msearchStart = Date.now();
       const response = await this.client.msearch({
         body: msearchBody,
       });
-      queryTimings.total = Date.now() - msearchStart;
+      const msearchTime = Date.now() - msearchStart;
 
       // Track individual query timings from OpenSearch response
+      const subqueryTimings: Record<string, number> = {};
+      let maxSubqueryTook = 0;
+
       response.body.responses.forEach((resp: any, index: number) => {
         if (resp.took !== undefined && strategyNames[index]) {
-          queryTimings[strategyNames[index]] = resp.took;
+          subqueryTimings[strategyNames[index]] = resp.took;
+          maxSubqueryTook = Math.max(maxSubqueryTook, resp.took);
         }
       });
 
-      // Combine and deduplicate results from all strategies
-      const { results: combinedResults, totalResults } =
-        this.combineSearchResults(response.body.responses, strategyNames);
+      // Calculate network overhead estimate
+      const networkOverhead =
+        maxSubqueryTook > 0 ? msearchTime - maxSubqueryTook : undefined;
 
-      // Add distance information to results
-      const resultsWithDistance = this.addDistanceInfo(
-        combinedResults,
-        searchRequest,
-      );
-
-      // Add relevant text snippets to help users understand why results were surfaced
-      const resultsWithRelevantText = this.addRelevantTextSnippets(
-        resultsWithDistance,
-        searchRequest.q,
-      );
+      const totalTime = Date.now() - phaseStart;
 
       this.logger.debug(
-        `Hybrid search returned ${resultsWithRelevantText.length} unique results out of ${totalResults} total matches`,
+        `OpenSearch phase complete: ${response.body.responses.length} strategy responses received`,
       );
 
-      return { results: resultsWithRelevantText, queryTimings, totalResults };
+      return {
+        responses: response.body.responses,
+        strategyNames,
+        timings: {
+          total_time: totalTime,
+          request_build_time: requestBuildTime,
+          opensearch_call: {
+            total_time: msearchTime,
+            network_overhead_estimate: networkOverhead,
+            subqueries: {
+              ...subqueryTimings,
+              max_subquery_took: maxSubqueryTook,
+            },
+          },
+        },
+      };
     } catch (error) {
       this.logger.error(
         `OpenSearch query failed: ${error.message}`,
@@ -980,7 +1004,7 @@ export class OpenSearchService {
   /**
    * Add distance information to search results if location is provided
    */
-  private addDistanceInfo(hits: any[], searchRequest: SearchRequestDto): any[] {
+  public addDistanceInfo(hits: any[], searchRequest: SearchRequestDto): any[] {
     if (!searchRequest.lat || !searchRequest.lon) {
       return hits;
     }
@@ -1012,7 +1036,7 @@ export class OpenSearchService {
    * Add relevant text snippets to results to explain why they were surfaced
    * Extracts sentences containing query nouns to help users understand relevance
    */
-  private addRelevantTextSnippets(results: any[], query: string): any[] {
+  public addRelevantTextSnippets(results: any[], query: string): any[] {
     if (!query || results.length === 0) {
       return results;
     }
@@ -1148,12 +1172,11 @@ export class OpenSearchService {
   }
 
   /**
-   * Combine and deduplicate results from multiple search strategies
-   * Normalizes scores to 0-1 scale per strategy before combining
+   * Combine and deduplicate results from all search strategies
    * Keeps the best score for each unique document and tracks detailed source contributions
    * Returns both the combined results and the total count of unique matching documents
    */
-  private combineSearchResults(
+  public combineSearchResults(
     responses: any[],
     strategyNames: string[],
   ): { results: any[]; totalResults: number } {
