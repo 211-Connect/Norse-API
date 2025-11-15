@@ -16,12 +16,17 @@ import { IntentClassificationResult } from 'src/common/services/ai-utils.service
  * 2. Phase 2: OpenSearch interaction (pure search execution)
  *    - total_time: Overall wall-clock for Phase 2
  *    - request_build_time: Building filters, pagination, and all strategy queries
- *    - opensearch_call: Network + OpenSearch execution
- *      - total_time: _msearch round-trip time
- *      - network_overhead_estimate: Estimated network/serialization overhead
+ *    - opensearch_call: Network + OpenSearch execution with detailed breakdown
+ *      - total_time: _msearch round-trip time (from before await to after)
+ *      - opensearch_reported_took: OpenSearch's own reported timing for _msearch
+ *      - client_breakdown: Client-side timing details
+ *        - http_round_trip_ms: Time in HTTP call (DNS + TCP + TLS + OS compute + transfer)
+ *        - response_deserialize_ms: Time deserializing and iterating response
  *      - subqueries: Per-strategy execution times from OpenSearch
  *        - Individual strategy times (semantic_service, keyword_original, etc.)
  *        - max_subquery_took: Slowest individual query
+ *      - network_and_client_overhead_estimate: Total overhead beyond OS compute
+ *    - diagnostics (optional): Debug metrics like health check RTT
  *
  * 3. Phase 3: Reranking & Post-Processing (all result manipulation)
  *    - total_time: Overall wall-clock for Phase 3
@@ -45,7 +50,11 @@ export interface GranularPhaseTimings {
     request_build_time: number;
     opensearch_call: {
       total_time: number;
-      network_overhead_estimate?: number;
+      opensearch_reported_took?: number;
+      client_breakdown: {
+        http_round_trip_ms: number;
+        response_deserialize_ms: number;
+      };
       subqueries: {
         semantic_service?: number;
         semantic_taxonomy?: number;
@@ -57,6 +66,10 @@ export interface GranularPhaseTimings {
         match_all_filtered?: number;
         max_subquery_took: number;
       };
+      network_and_client_overhead_estimate: number;
+    };
+    diagnostics?: {
+      health_check_rtt_ms?: number;
     };
   };
   phase_3_reranking_and_processing?: {

@@ -4,6 +4,10 @@ import { Client } from '@opensearch-project/opensearch';
 import { SearchRequestDto } from '../dto/search-request.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { getTenantShortCode } from 'src/common/config/tenant-mapping.config';
+import {
+  OpenSearchProfiler,
+  OpenSearchCallProfile,
+} from 'src/common/profiling/opensearch-profiler';
 import { WeightsConfigService } from '../config/weights-config.service';
 import * as nlp from 'wink-nlp-utils';
 import winkNLP from 'wink-nlp';
@@ -96,10 +100,9 @@ export class OpenSearchService {
     timings: {
       total_time: number;
       request_build_time: number;
-      opensearch_call: {
-        total_time: number;
-        network_overhead_estimate?: number;
-        subqueries: Record<string, number> & { max_subquery_took: number };
+      opensearch_call: OpenSearchCallProfile;
+      diagnostics?: {
+        health_check_rtt_ms?: number;
       };
     };
   }> {
@@ -294,27 +297,22 @@ export class OpenSearchService {
     const requestBuildTime = Date.now() - buildStart;
 
     try {
-      // Execute multi-search and track timing
-      const msearchStart = Date.now();
+      // Initialize profiler for detailed timing breakdown
+      const profiler = new OpenSearchProfiler();
+      profiler.startMsearch();
+
+      // Execute multi-search with detailed profiling
+      profiler.startHttpRoundTrip();
       const response = await this.client.msearch({
         body: msearchBody,
       });
-      const msearchTime = Date.now() - msearchStart;
+      profiler.startDeserialization();
 
-      // Track individual query timings from OpenSearch response
-      const subqueryTimings: Record<string, number> = {};
-      let maxSubqueryTook = 0;
-
-      response.body.responses.forEach((resp: any, index: number) => {
-        if (resp.took !== undefined && strategyNames[index]) {
-          subqueryTimings[strategyNames[index]] = resp.took;
-          maxSubqueryTook = Math.max(maxSubqueryTook, resp.took);
-        }
-      });
-
-      // Calculate network overhead estimate
-      const networkOverhead =
-        maxSubqueryTook > 0 ? msearchTime - maxSubqueryTook : undefined;
+      // Complete profiling and get detailed breakdown
+      const opensearchCallProfile = profiler.completeProfile(
+        response,
+        strategyNames,
+      );
 
       const totalTime = Date.now() - phaseStart;
 
@@ -328,14 +326,7 @@ export class OpenSearchService {
         timings: {
           total_time: totalTime,
           request_build_time: requestBuildTime,
-          opensearch_call: {
-            total_time: msearchTime,
-            network_overhead_estimate: networkOverhead,
-            subqueries: {
-              ...subqueryTimings,
-              max_subquery_took: maxSubqueryTook,
-            },
-          },
+          opensearch_call: opensearchCallProfile,
         },
       };
     } catch (error) {
