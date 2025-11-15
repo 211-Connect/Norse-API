@@ -77,8 +77,6 @@ export interface HitSource {
 
 export interface SearchMetadata {
   search_pipeline: string;
-  intent_classification?: IntentClassificationResult;
-  is_low_information_query?: boolean;
   granular_phase_timings?: GranularPhaseTimings;
   sources_of_top_hits?: HitSource[];
 }
@@ -98,7 +96,9 @@ export interface SearchResponse {
   hits: SearchResponseHits;
   search_after?: any[]; // Cursor for next page (cursor-based pagination)
   total_results?: number; // Total number of matching results across all pages
-  metadata?: SearchMetadata;
+  intent_classification?: IntentClassificationResult; // Always included for frontend features
+  is_low_information_query?: boolean; // Always included for frontend features
+  metadata?: SearchMetadata; // Only included when DEV_MODE=True
   // Legacy offset pagination metadata
   page?: number; // Current page number (1-indexed)
   total_pages?: number; // Total number of pages

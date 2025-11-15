@@ -198,14 +198,8 @@ export class HybridSemanticService {
         };
       });
 
-      const metadata: SearchMetadata = {
-        search_pipeline: 'hybrid_semantic',
-        intent_classification: intentClassification,
-        is_low_information_query:
-          intentClassification?.is_low_information_query || false,
-        granular_phase_timings: granularTimings,
-        sources_of_top_hits: sourcesOfTopHits,
-      };
+      // Check DEV_MODE environment variable
+      const isDevMode = process.env.DEV_MODE === 'True';
 
       const response: SearchResponse = {
         took: totalTime,
@@ -219,8 +213,20 @@ export class HybridSemanticService {
           hits: processedHits,
         },
         total_results: totalResults,
-        metadata,
+        intent_classification: intentClassification,
+        is_low_information_query:
+          intentClassification?.is_low_information_query || false,
       };
+
+      // Only include metadata when DEV_MODE=True
+      if (isDevMode) {
+        const metadata: SearchMetadata = {
+          search_pipeline: 'hybrid_semantic',
+          granular_phase_timings: granularTimings,
+          sources_of_top_hits: sourcesOfTopHits,
+        };
+        response.metadata = metadata;
+      }
 
       // Add pagination metadata based on mode
       if (searchRequest.legacy_offset_pagination) {
