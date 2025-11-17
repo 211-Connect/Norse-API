@@ -19,6 +19,7 @@ export class SuggestionController {
   @Version('1')
   @ApiResponse({
     status: 200,
+    description: 'V1: Original suggestion logic without stemming',
   })
   @ApiQuery({ name: 'query', required: false })
   @ApiQuery({ name: 'code', required: false, deprecated: true })
@@ -30,14 +31,47 @@ export class SuggestionController {
       default: 'en',
     },
   })
-  getTaxonomies(
+  getTaxonomiesV1(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ) {
-    return this.suggestionService.searchTaxonomies({
-      headers,
-      query,
-    });
+    return this.suggestionService.searchTaxonomies(
+      {
+        headers,
+        query,
+      },
+      '1',
+    );
+  }
+
+  @Get()
+  @Version('2')
+  @ApiResponse({
+    status: 200,
+    description:
+      'V2: Enhanced suggestion logic with POS tagging and stemming for improved relevance',
+  })
+  @ApiQuery({ name: 'query', required: false })
+  @ApiQuery({ name: 'code', required: false, deprecated: true })
+  @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  getTaxonomiesV2(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+  ) {
+    return this.suggestionService.searchTaxonomies(
+      {
+        headers,
+        query,
+      },
+      '2',
+    );
   }
 
   @Get('term')

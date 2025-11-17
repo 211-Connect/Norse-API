@@ -4,6 +4,7 @@ import { HybridSemanticService } from './hybrid-semantic.service';
 import { AiUtilsService } from 'src/common/services/ai-utils.service';
 import { OpenSearchService } from './services/opensearch.service';
 import { WeightsConfigService } from './config/weights-config.service';
+import { NlpUtilsService } from 'src/common/services/nlp-utils.service';
 
 /**
  * Module for hybrid semantic search functionality
@@ -11,7 +12,7 @@ import { WeightsConfigService } from './config/weights-config.service';
  * Provides:
  * - Semantic search using embeddings
  * - Intent-driven taxonomy queries
- * - Keyword search
+ * - Keyword search with POS tagging and stemming
  * - AI-powered reranking
  * - Integration with ai-utils microservice
  * - Integration with OpenSearch cluster
@@ -23,6 +24,7 @@ import { WeightsConfigService } from './config/weights-config.service';
     AiUtilsService,
     OpenSearchService,
     WeightsConfigService,
+    NlpUtilsService,
   ],
   exports: [HybridSemanticService, WeightsConfigService],
 })

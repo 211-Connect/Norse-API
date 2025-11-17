@@ -9,9 +9,8 @@ import {
   OpenSearchCallProfile,
 } from 'src/common/profiling/opensearch-profiler';
 import { WeightsConfigService } from '../config/weights-config.service';
+import { NlpUtilsService } from 'src/common/services/nlp-utils.service';
 import * as nlp from 'wink-nlp-utils';
-import winkNLP from 'wink-nlp';
-import model from 'wink-eng-lite-web-model';
 
 /**
  * Service for building and executing OpenSearch queries
@@ -21,12 +20,11 @@ import model from 'wink-eng-lite-web-model';
 export class OpenSearchService {
   private readonly logger = new Logger(OpenSearchService.name);
   private readonly client: Client;
-  private readonly nlpEngine: any;
-  private readonly its: any;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly weightsConfigService: WeightsConfigService,
+    private readonly nlpUtilsService: NlpUtilsService,
   ) {
     const node =
       this.configService.get<string>('OPENSEARCH_NODE') ||
@@ -61,11 +59,6 @@ export class OpenSearchService {
     this.logger.log(
       `OpenSearch client initialized with node: ${node} (env: ${nodeEnv})`,
     );
-
-    // Initialize wink-nlp for POS tagging
-    this.nlpEngine = winkNLP(model);
-    this.its = this.nlpEngine.its;
-    this.logger.log('wink-nlp initialized for POS tagging');
   }
 
   /**
@@ -569,29 +562,10 @@ export class OpenSearchService {
   /**
    * Extract nouns from query using POS tagging
    * Used for both keyword search variations and relevant text extraction
+   * Delegates to shared NlpUtilsService
    */
   private extractNouns(query: string): string[] {
-    if (!query || query.trim().length === 0) {
-      return [];
-    }
-
-    const nouns: string[] = [];
-    try {
-      const doc = this.nlpEngine.readDoc(query);
-      doc
-        .tokens()
-        .filter(
-          (t: any) =>
-            !t.parentEntity() &&
-            (t.out(this.its.pos) === 'NOUN' || t.out(this.its.pos) === 'PROPN'),
-        )
-        .each((t: any) => nouns.push(t.out(this.its.normal)));
-    } catch (posError) {
-      this.logger.warn(
-        `POS tagging failed: ${posError.message}, skipping noun extraction`,
-      );
-    }
-    return nouns;
+    return this.nlpUtilsService.extractNouns(query);
   }
 
   /**
@@ -613,7 +587,7 @@ export class OpenSearchService {
     try {
       // Extract nouns using POS tagging (most semantically important)
       const nouns = this.extractNouns(query);
-      const stemmedNouns = nouns.map((noun) => nlp.string.stem(noun));
+      const stemmedNouns = this.nlpUtilsService.stemWords(nouns);
 
       this.logger.debug(
         `Keyword variations - Original: "${query}", Nouns: [${nouns.join(', ')}], Stemmed Nouns: [${stemmedNouns.join(', ')}]`,
