@@ -125,12 +125,15 @@ export class NlpUtilsService {
 
   /**
    * Stem a query for suggestion/autocomplete purposes
+   * For longer queries (sentences), extracts nouns first then stems them
+   * For short queries (single words), stems the word directly
    * Handles partial words gracefully - if stemming fails, returns original
    */
   stemQueryForSuggestion(query: string): {
     original: string;
     stemmed: string;
     shouldUseStemmed: boolean;
+    extractedNouns?: string[];
   } {
     if (!query || query.trim().length === 0) {
       return { original: query, stemmed: query, shouldUseStemmed: false };
@@ -142,8 +145,33 @@ export class NlpUtilsService {
         return { original: query, stemmed: query, shouldUseStemmed: false };
       }
 
-      // Split into words and stem each
-      const words = query.toLowerCase().trim().split(/\s+/);
+      const words = query.trim().split(/\s+/);
+
+      // If query has multiple words (likely a sentence), extract nouns first
+      if (words.length > 2) {
+        const nouns = this.extractNouns(query);
+
+        if (nouns.length > 0) {
+          // Stem the extracted nouns
+          const stemmedNouns = this.stemWords(nouns);
+          const stemmed = stemmedNouns.join(' ');
+
+          this.logger.debug(
+            `Extracted nouns from "${query}": [${nouns.join(', ')}] -> stemmed: [${stemmedNouns.join(', ')}]`,
+          );
+
+          return {
+            original: query,
+            stemmed,
+            shouldUseStemmed: stemmed.length >= 3,
+            extractedNouns: nouns,
+          };
+        }
+
+        // No nouns found, fall through to word-by-word stemming
+      }
+
+      // For short queries or when no nouns found, stem all words
       const stemmedWords = words.map((word) => {
         try {
           // Only stem if the word is reasonably complete (>= 3 chars)

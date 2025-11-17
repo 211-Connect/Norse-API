@@ -68,43 +68,31 @@ export class SuggestionService {
         const stemResult =
           this.nlpUtilsService.stemQueryForSuggestion(searchQuery);
 
-        // V2 uses a "should" clause to search for BOTH original and stemmed versions
-        // This helps match "laundries" -> finds both "laundries" AND "laundry" (via stem)
+        // V2 strategy: Use ONLY the stemmed nouns for search
+        // This focuses on the semantically important parts of the query
+        // For "I need help with laundry" -> searches only "laundr"
         if (stemResult.shouldUseStemmed) {
           this.logger.debug(
-            `[v2] Using hybrid query: original="${searchQuery}" + stemmed="${stemResult.stemmed}"`,
+            `[v2] Using stemmed nouns only: "${stemResult.stemmed}" (extracted from: "${searchQuery}")`,
           );
 
           queryBuilder.query = {
             bool: {
-              should: [
-                // Original query (higher boost for exact matches)
-                {
-                  multi_match: {
-                    query: searchQuery,
-                    type: 'bool_prefix',
-                    fields: fields,
-                    boost: 2.0,
-                  },
+              must: {
+                multi_match: {
+                  query: stemResult.stemmed,
+                  type: 'bool_prefix',
+                  fields: fields,
                 },
-                // Stemmed query (helps find variations)
-                {
-                  multi_match: {
-                    query: stemResult.stemmed,
-                    type: 'bool_prefix',
-                    fields: fields,
-                    boost: 1.0,
-                  },
-                },
-              ],
-              minimum_should_match: 1,
+              },
               filter: [],
             },
           };
         } else {
           // Stemming didn't produce a different result, use original
+          // This handles single-word queries like "laundry" or "food"
           this.logger.debug(
-            `[v2] Stemming not beneficial, using original: "${searchQuery}"`,
+            `[v2] Using original query (no nouns extracted or stemming not beneficial): "${searchQuery}"`,
           );
           queryBuilder.query = {
             bool: {
