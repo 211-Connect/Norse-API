@@ -29,8 +29,6 @@ export class OpenSearchService {
     const node =
       this.configService.get<string>('OPENSEARCH_NODE') ||
       'http://localhost:9200';
-    const username = this.configService.get<string>('OPENSEARCH_USERNAME');
-    const password = this.configService.get<string>('OPENSEARCH_PASSWORD');
     const nodeEnv = this.configService.get<string>('NODE_ENV') || 'development';
 
     // Configure SSL based on environment
@@ -47,14 +45,6 @@ export class OpenSearchService {
     this.client = new Client({
       node,
       ssl: sslConfig,
-      ...(username && password
-        ? {
-            auth: {
-              username,
-              password,
-            },
-          }
-        : {}),
     });
     this.logger.log(
       `OpenSearch client initialized with node: ${node} (env: ${nodeEnv})`,
