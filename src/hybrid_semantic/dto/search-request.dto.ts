@@ -37,52 +37,47 @@ export const customWeightsSchema = z
 /**
  * Enhanced search request supporting intent-driven search parameters and advanced taxonomy queries.
  */
-export const searchRequestSchema = z
-  .object({
-    // Query can be optional for taxonomy-only searches
-    q: z.string().optional(),
+export const searchRequestSchema = z.object({
+  // Query can be optional for taxonomy-only searches
+  q: z.string().optional(),
 
-    lang: z.string().default('en'),
-    limit: z.number().int().min(1).max(100).default(10),
-    lat: z.number().optional(),
-    lon: z.number().optional(),
-    distance: z.number().int().optional(),
+  lang: z.string().default('en'),
+  limit: z.number().int().min(1).max(100).default(10),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  distance: z.number().int().optional(),
 
-    // PAGINATION OPTIONS
-    search_after: z.array(z.any()).optional(), // Cursor-based pagination
-    legacy_offset_pagination: z.boolean().default(false), // Enable offset-based pagination
-    page: z.number().int().min(1).default(1), // Page number for offset pagination (1-indexed)
+  // PAGINATION OPTIONS
+  search_after: z.array(z.any()).optional(), // Cursor-based pagination
+  legacy_offset_pagination: z.boolean().default(false), // Enable offset-based pagination
+  page: z.number().int().min(1).default(1), // Page number for offset pagination (1-indexed)
 
-    // ADVANCED TAXONOMY QUERY FIELD
-    taxonomies: z
-      .object({
-        AND: z.array(z.string()).optional(),
-        OR: z.array(z.string()).optional(),
-      })
-      .optional(),
+  // ADVANCED TAXONOMY QUERY FIELD
+  taxonomies: z
+    .object({
+      AND: z.array(z.string()).optional(),
+      OR: z.array(z.string()).optional(),
+    })
+    .optional(),
 
-    // SEARCH ENHANCEMENT FIELDS
-    facets: z.record(z.array(z.string())).optional(),
-    location_point_only: z.boolean().default(false),
+  // SEARCH ENHANCEMENT FIELDS
+  facets: z.record(z.array(z.string())).optional(),
+  location_point_only: z.boolean().default(false),
 
-    // KEYWORD SEARCH COMPATIBILITY
-    keyword_search_only: z.boolean().default(false),
-    search_operator: z.enum(['AND', 'OR']).default('AND'),
+  // KEYWORD SEARCH COMPATIBILITY
+  keyword_search_only: z.boolean().default(false),
+  search_operator: z.enum(['AND', 'OR']).default('AND'),
 
-    // RESPONSE CUSTOMIZATION
-    exclude_service_area: z.boolean().default(false),
+  // RESPONSE CUSTOMIZATION
+  exclude_service_area: z.boolean().default(false),
 
-    // INTENT-DRIVEN SEARCH PARAMETERS
-    intent_override: z.string().optional(),
-    disable_intent_classification: z.boolean().default(false),
+  // INTENT-DRIVEN SEARCH PARAMETERS
+  intent_override: z.string().optional(),
+  disable_intent_classification: z.boolean().default(false),
 
-    // COMPREHENSIVE WEIGHT CUSTOMIZATION
-    custom_weights: customWeightsSchema,
-  })
-  .refine((data) => data.q || data.taxonomies, {
-    message:
-      "Either 'q' (text query) or 'taxonomies' (taxonomy filters) must be provided",
-  });
+  // COMPREHENSIVE WEIGHT CUSTOMIZATION
+  custom_weights: customWeightsSchema,
+});
 
 export type SearchRequestDto = z.infer<typeof searchRequestSchema>;
 

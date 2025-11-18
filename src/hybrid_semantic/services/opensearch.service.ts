@@ -113,10 +113,40 @@ export class OpenSearchService {
     const msearchBody = [];
     const strategyNames: string[] = [];
 
-    // Check if this is a taxonomy-only search (no text query)
-    const isTaxonomyOnlySearch = !searchRequest.q && searchRequest.taxonomies;
+    // Normalize query and detect search mode
+    const normalizedQuery = searchRequest.q?.trim();
+    const hasTaxonomies =
+      searchRequest.taxonomies &&
+      ((searchRequest.taxonomies.AND?.length || 0) > 0 ||
+        (searchRequest.taxonomies.OR?.length || 0) > 0);
 
-    if (isTaxonomyOnlySearch) {
+    // Browse mode: no query and no taxonomies - return all resources sorted by distance (if geo params) or alphabetically
+    const isBrowseMode = !normalizedQuery && !hasTaxonomies;
+    // Taxonomy-only search: no query but has taxonomies
+    const isTaxonomyOnlySearch = !normalizedQuery && hasTaxonomies;
+
+    if (isBrowseMode) {
+      // Browse mode: match_all with distance or alphabetical sorting
+      const hasGeoParams =
+        searchRequest.lat !== undefined && searchRequest.lon !== undefined;
+      this.logger.debug(
+        hasGeoParams
+          ? 'Browse mode detected - returning all resources sorted by distance'
+          : 'Browse mode detected - returning all resources in alphabetical order',
+      );
+      strategyNames.push('browse_match_all');
+      msearchBody.push({ index: indexName });
+      msearchBody.push(
+        this.buildBrowseQuery(
+          filters,
+          candidatesPerStrategy,
+          searchRequest.search_after,
+          searchRequest,
+          useOffsetPagination,
+          offset,
+        ),
+      );
+    } else if (isTaxonomyOnlySearch) {
       // For taxonomy-only searches, use a simple match_all query with filters
       this.logger.debug(
         'Taxonomy-only search detected - using match_all strategy',
@@ -133,7 +163,7 @@ export class OpenSearchService {
           offset,
         ),
       );
-    } else if (searchRequest.q && queryEmbedding.length > 0) {
+    } else if (normalizedQuery && queryEmbedding.length > 0) {
       // Only run semantic strategies if we have a query and embedding
       // Strategy 1: Service-level semantic search
       strategyNames.push('semantic_service');
@@ -186,7 +216,7 @@ export class OpenSearchService {
     // 4a. Original query (preserves full user intent and phrases)
     // 4b. Nouns (POS-tagged, original form - e.g., "laundry")
     // 4c. Stemmed nouns (normalized form - e.g., "laundri" to catch corpus variations)
-    if (!searchRequest.disable_intent_classification && searchRequest.q) {
+    if (!searchRequest.disable_intent_classification && normalizedQuery) {
       const keywordVariations = this.generateKeywordVariations(searchRequest.q);
 
       // Original query search - preserves full user intent
@@ -824,6 +854,81 @@ export class OpenSearchService {
   }
 
   /**
+   * Build browse query for returning all resources
+   * Used when no query text and no taxonomy filters are provided
+   *
+   * Sorting behavior:
+   * - With geo filters (lat/lon): Sort by distance (closest first)
+   * - Without geo filters: Sort alphabetically by service name
+   *
+   * @param filters - Array of filter clauses (geo, facets, etc.)
+   * @param size - Number of results to return
+   * @param searchAfter - Cursor for pagination
+   * @param searchRequest - Full search request for geospatial filtering
+   * @param useOffsetPagination - Whether to use offset-based pagination
+   * @param offset - Offset for pagination
+   * @returns OpenSearch query object with appropriate sorting
+   */
+  private buildBrowseQuery(
+    filters: any[],
+    size: number,
+    searchAfter?: any[],
+    searchRequest?: SearchRequestDto,
+    useOffsetPagination?: boolean,
+    offset?: number,
+  ): any {
+    // Determine if geospatial sorting should be applied
+    const hasGeoParams =
+      searchRequest?.lat !== undefined && searchRequest?.lon !== undefined;
+
+    const query: any = {
+      size: size,
+      query: {
+        bool: {
+          must: {
+            match_all: {},
+          },
+          filter: filters,
+        },
+      },
+    };
+
+    // Set sort order based on whether geo parameters are provided
+    if (hasGeoParams) {
+      // Sort by distance from user location (closest first)
+      query.sort = [
+        {
+          _geo_distance: {
+            'location.point': {
+              lat: searchRequest.lat,
+              lon: searchRequest.lon,
+            },
+            order: 'asc',
+            unit: 'mi',
+            distance_type: 'arc',
+          },
+        },
+        { _id: 'asc' }, // Tiebreaker for consistent pagination
+      ];
+    } else {
+      // Sort alphabetically by service name
+      query.sort = [
+        { 'service.name.keyword': 'asc' },
+        { _id: 'asc' }, // Tiebreaker for consistent pagination
+      ];
+    }
+
+    // Add pagination: either cursor-based (search_after) or offset-based (from)
+    if (useOffsetPagination && offset !== undefined) {
+      query.from = offset;
+    } else if (searchAfter && searchAfter.length > 0) {
+      query.search_after = searchAfter;
+    }
+
+    return query;
+  }
+
+  /**
    * Build taxonomy filters from AND/OR query structure
    * Used for explicit taxonomy queries from the search request
    *
@@ -1239,6 +1344,33 @@ export class OpenSearchService {
 
       const hits = response.hits.hits;
       const strategyName = strategyNames[index];
+
+      // Check if this is browse mode (scores are null or all equal to 1.0)
+      const hasNullScores = hits.some(
+        (hit: any) => hit._score === null || hit._score === undefined,
+      );
+
+      if (hasNullScores || strategyName === 'browse_match_all') {
+        // Browse mode: no score normalization needed, assign uniform scores
+        const normalizedHits = hits.map((hit: any) => ({
+          ...hit,
+          _original_score: hit._score ?? 1.0,
+          _normalized_score: 1.0,
+          _score: 1.0, // All results have equal score in browse mode
+        }));
+
+        this.logger.debug(
+          `[${strategyName}] Browse mode - skipping score normalization, all scores set to 1.0`,
+        );
+
+        return {
+          ...response,
+          hits: {
+            ...response.hits,
+            hits: normalizedHits,
+          },
+        };
+      }
 
       // Find min and max scores for this strategy
       const scores = hits.map((hit: any) => hit._score);

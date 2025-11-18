@@ -54,11 +54,11 @@ export class HybridSemanticController {
     description: 'Search request with optional custom weights for fine-tuning',
     schema: {
       type: 'object',
-      required: ['q'],
       properties: {
         q: {
           type: 'string',
-          description: 'Search query text',
+          description:
+            'Search query text (optional - if omitted along with taxonomies, returns all resources in alphabetical order)',
           example: 'food assistance near me',
         },
         lang: {
@@ -113,9 +113,10 @@ export class HybridSemanticController {
           minimum: 1,
           example: 2,
         },
-        query: {
+        taxonomies: {
           type: 'object',
-          description: 'Advanced taxonomy query with AND/OR logic',
+          description:
+            'Advanced taxonomy query with AND/OR logic (optional - if omitted along with q, returns all resources in alphabetical order)',
           properties: {
             AND: {
               type: 'array',
@@ -336,6 +337,16 @@ export class HybridSemanticController {
       - Geospatial proximity weighting (distance decay scoring)
       - AI-powered reranking
       - Cursor-based pagination via search_after
+      - Browse mode: When no 'q' and no 'taxonomies' provided, returns all resources alphabetically sorted
+      
+      Browse Mode:
+      - Triggered when both 'q' and 'taxonomies' are omitted
+      - Sorting behavior:
+        * With geo filters (lat/lon): Returns results sorted by distance (closest first)
+        * Without geo filters: Returns results sorted alphabetically by service name
+      - Geographic distance filter still applies as hard constraint
+      - No semantic/keyword scoring - pure distance or alphabetical ordering
+      - Useful for browsing all services in a region or entire catalog
       
       The search pipeline:
       1. Query embedding and intent classification (parallel)
