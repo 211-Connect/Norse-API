@@ -1196,7 +1196,7 @@ export class OpenSearchService {
 
   /**
    * Build filters for OpenSearch query
-   * Handles tenant, locale, optional geospatial distance filtering, and taxonomy queries
+   * Handles tenant, locale, optional geospatial distance filtering, service area filtering, and taxonomy queries
    */
   private buildFilters(searchRequest: SearchRequestDto): any[] {
     const filters: any[] = [];
@@ -1212,6 +1212,46 @@ export class OpenSearchService {
           },
         },
       });
+    }
+
+    // Service area filter (geo-shape query)
+    // Only apply when lat/lon are provided (geospatial query)
+    // Filters to services where user location is within the service area boundary
+    // OR services with no service area defined (null handling)
+    if (searchRequest.lat && searchRequest.lon) {
+      filters.push({
+        bool: {
+          should: [
+            {
+              // User location is within the service area polygon
+              geo_shape: {
+                'serviceArea.extent': {
+                  shape: {
+                    type: 'point',
+                    coordinates: [searchRequest.lon, searchRequest.lat], // GeoJSON order: [lon, lat]
+                  },
+                  relation: 'contains', // Service area must contain the user's point
+                },
+              },
+            },
+            {
+              // Service has no service area defined (no geographic restrictions)
+              bool: {
+                must_not: {
+                  exists: {
+                    field: 'serviceArea.extent',
+                  },
+                },
+              },
+            },
+          ],
+          minimum_should_match: 1, // At least one condition must be true
+        },
+      });
+
+      this.logger.debug(
+        `Applied service area filter for location: [${searchRequest.lon}, ${searchRequest.lat}]`,
+      );
     }
 
     // Taxonomy query filters (AND/OR logic)
