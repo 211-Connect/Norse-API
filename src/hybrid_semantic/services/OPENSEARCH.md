@@ -10,16 +10,21 @@ The `OpenSearchService` provides a complete interface to the OpenSearch cluster 
 
 Set the following in your `.env` file:
 
+**For local development (no authentication):**
 ```env
 OPENSEARCH_NODE=http://localhost:9200
 ```
 
-For production with authentication:
-
+**For production with authentication (connection string format):**
 ```env
-OPENSEARCH_NODE=https://your-opensearch-cluster.com:9200
-OPENSEARCH_USERNAME=admin
-OPENSEARCH_PASSWORD=your-password
+OPENSEARCH_NODE=https://username:password@your-opensearch-cluster.com:9200
+```
+
+The OpenSearch client supports embedding credentials directly in the connection URL. Special characters in the password should be URL-encoded if necessary.
+
+**Example with credentials:**
+```env
+OPENSEARCH_NODE=https://admin:123Abcdefghijklmnopqrstuv!@localhost:9200
 ```
 
 ## Index Structure
