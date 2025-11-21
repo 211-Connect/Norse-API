@@ -275,6 +275,24 @@ export class OpenSearchService {
           ),
         );
       }
+
+      // Topics search - highly specific entities
+      if (keywordVariations.topics && keywordVariations.topics.length > 0) {
+        strategyNames.push('keyword_topics');
+        msearchBody.push({ index: indexName });
+        msearchBody.push(
+          this.buildKeywordQuery(
+            keywordVariations.topics.join(' '),
+            filters,
+            candidatesPerStrategy,
+            searchRequest.search_after,
+            searchRequest,
+            'topics',
+            useOffsetPagination,
+            offset,
+          ),
+        );
+      }
     }
 
     // Strategy 5: Intent-driven taxonomy search using combined_taxonomy_codes
@@ -591,38 +609,59 @@ export class OpenSearchService {
   /**
    * Generate keyword search variations from the original query
    * Simplified strategy focusing on semantically meaningful searches:
-   * - original: Full query preserving user intent and phrases
-   * - nouns: POS-tagged nouns in original form (e.g., "laundry")
-   * - stemmedNouns: Stemmed nouns to catch corpus variations (e.g., "laundri")
+   * - original: Full query preserving user intent and phrases (contractions expanded)
+   * - nouns: POS-tagged nouns in original form (singular and plural)
+   * - stemmedNouns: Stemmed nouns to catch corpus variations
+   * - topics: High-value entities like People, Places, Organizations
    */
   private generateKeywordVariations(query: string): {
     original: string;
     nouns: string[];
     stemmedNouns: string[];
+    topics: string[];
   } {
     if (!query || query.trim().length === 0) {
-      return { original: query, nouns: [], stemmedNouns: [] };
+      return { original: query, nouns: [], stemmedNouns: [], topics: [] };
     }
 
     try {
-      // Extract nouns using POS tagging (most semantically important)
-      const nouns = this.extractNouns(query);
+      // 1. Expand contractions in the original query
+      const expandedQuery = this.nlpUtilsService.expandContractions(query);
+
+      // 2. Extract nouns using POS tagging
+      const rawNouns = this.extractNouns(expandedQuery);
+
+      // 3. Expand nouns to include singular and plural forms
+      const allNouns = rawNouns.flatMap((noun) =>
+        this.nlpUtilsService.getSingularAndPluralForms(noun),
+      );
+
+      // 4. Filter out generic nouns (e.g., "day", "time")
+      const nouns = allNouns.filter(
+        (noun) => !this.nlpUtilsService.isGenericNoun(noun),
+      );
+
+      // 5. Stem the filtered nouns
       const stemmedNouns = this.nlpUtilsService.stemWords(nouns);
 
+      // 6. Extract topics (high-value entities)
+      const topics = this.nlpUtilsService.extractTopics(expandedQuery);
+
       this.logger.debug(
-        `Keyword variations - Original: "${query}", Nouns: [${nouns.join(', ')}], Stemmed Nouns: [${stemmedNouns.join(', ')}]`,
+        `Keyword variations - Original: "${expandedQuery}", Nouns: [${nouns.join(', ')}], Stemmed: [${stemmedNouns.join(', ')}], Topics: [${topics.join(', ')}]`,
       );
 
       return {
-        original: query,
+        original: expandedQuery,
         nouns,
         stemmedNouns,
+        topics,
       };
     } catch (error) {
       this.logger.warn(
         `Keyword variation generation failed: ${error.message}, using original query`,
       );
-      return { original: query, nouns: [], stemmedNouns: [] };
+      return { original: query, nouns: [], stemmedNouns: [], topics: [] };
     }
   }
 
@@ -637,7 +676,11 @@ export class OpenSearchService {
     size: number,
     searchAfter?: any[],
     searchRequest?: SearchRequestDto,
-    variationType: 'original' | 'nouns' | 'nouns_stemmed' = 'original',
+    variationType:
+      | 'original'
+      | 'nouns'
+      | 'nouns_stemmed'
+      | 'topics' = 'original',
     useOffsetPagination?: boolean,
     offset?: number,
   ): any {
@@ -654,6 +697,9 @@ export class OpenSearchService {
       keywordWeight *= multipliers.nouns_multiplier;
     } else if (variationType === 'nouns_stemmed') {
       keywordWeight *= multipliers.stemmed_nouns_multiplier;
+    } else if (variationType === 'topics') {
+      // Topics are high value, give them a boost similar to or higher than nouns
+      keywordWeight *= multipliers.nouns_multiplier * 1.1;
     }
 
     this.logger.debug(
@@ -683,7 +729,8 @@ export class OpenSearchService {
                     type: 'best_fields',
                     operator:
                       variationType === 'nouns' ||
-                      variationType === 'nouns_stemmed'
+                      variationType === 'nouns_stemmed' ||
+                      variationType === 'topics'
                         ? 'or'
                         : 'and',
                   },

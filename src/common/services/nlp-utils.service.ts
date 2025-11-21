@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nlp from 'wink-nlp-utils';
 import nlpCompromise from 'compromise';
-import * as genericNounsConfig from '../../suggestion/generic-nouns.json';
+import * as genericNounsConfig from '../config/generic-nouns.json';
 
 /**
  * Shared NLP utility service for POS tagging, noun extraction, and stemming
@@ -21,6 +21,27 @@ export class NlpUtilsService {
     this.logger.log(
       `NLP utility service initialized with compromise (${this.genericNounsStemmed.size} generic nouns loaded)`,
     );
+  }
+
+  /**
+   * Check if a word is a generic noun
+   * Checks both the word itself and its stemmed form against the generic list
+   */
+  isGenericNoun(word: string): boolean {
+    if (!word) return false;
+
+    // Check stemmed form (most reliable as config is stemmed)
+    const stemmed = this.stemWord(word);
+    if (this.genericNounsStemmed.has(stemmed)) {
+      return true;
+    }
+
+    // Check original form just in case (though config is stemmed)
+    if (this.genericNounsStemmed.has(word.toLowerCase())) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -52,7 +73,7 @@ export class NlpUtilsService {
       //
       // If I use doc.nouns().out('array'), I get ["half day preschool"].
       // If I want individual nouns, I should probably iterate terms and check tags.
-      
+
       const nouns: string[] = [];
       doc.terms().forEach((term) => {
         const tags = term.out('tags')[0]; // tags for the term
@@ -62,18 +83,92 @@ export class NlpUtilsService {
         // Actually doc.terms() returns a View of all terms.
         // term.tags is a Set in internal model, but via API:
         // term.has('#Noun') is the way.
-        
+
         if (term.has('#Noun')) {
-           nouns.push(term.text('normal')); // 'normal' gives lowercase, trimmed, etc.
+          nouns.push(term.text('normal')); // 'normal' gives lowercase, trimmed, etc.
         }
       });
-      
+
       return nouns;
     } catch (error) {
       this.logger.warn(
         `POS tagging failed: ${error.message}, skipping noun extraction`,
       );
       return [];
+    }
+  }
+
+  /**
+   * Expand contractions in text (e.g., "I'm" -> "I am")
+   */
+  expandContractions(text: string): string {
+    if (!text || text.trim().length === 0) {
+      return text;
+    }
+    try {
+      const doc = nlpCompromise(text);
+      doc.contractions().expand();
+      return doc.text();
+    } catch (error) {
+      this.logger.warn(
+        `Contraction expansion failed: ${error.message}, returning original text`,
+      );
+      return text;
+    }
+  }
+
+  /**
+   * Extract high-value topics (People, Places, Organizations)
+   */
+  extractTopics(text: string): string[] {
+    if (!text || text.trim().length === 0) {
+      return [];
+    }
+    try {
+      const doc = nlpCompromise(text);
+      return doc.topics().out('array');
+    } catch (error) {
+      this.logger.warn(
+        `Topic extraction failed: ${error.message}, returning empty list`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Get both singular and plural forms of a noun
+   * e.g., "shelter" -> ["shelter", "shelters"]
+   */
+  getSingularAndPluralForms(word: string): string[] {
+    if (!word || word.trim().length === 0) {
+      return [];
+    }
+    try {
+      const forms = new Set<string>();
+
+      // Original form
+      forms.add(word);
+
+      // Singular form
+      const docSingular = nlpCompromise(word);
+      docSingular.tag('Noun');
+      docSingular.nouns().toSingular();
+      const singular = docSingular.text();
+      if (singular) forms.add(singular);
+
+      // Plural form
+      const docPlural = nlpCompromise(word);
+      docPlural.tag('Noun');
+      docPlural.nouns().toPlural();
+      const plural = docPlural.text();
+      if (plural) forms.add(plural);
+
+      return Array.from(forms);
+    } catch (error) {
+      this.logger.warn(
+        `Singular/Plural generation failed: ${error.message}, returning original word`,
+      );
+      return [word];
     }
   }
 
