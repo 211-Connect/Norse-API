@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nlp from 'wink-nlp-utils';
-import winkNLP from 'wink-nlp';
-import model from 'wink-eng-lite-web-model';
+import nlpCompromise from 'compromise';
 import * as genericNounsConfig from '../../suggestion/generic-nouns.json';
 
 /**
@@ -11,22 +10,16 @@ import * as genericNounsConfig from '../../suggestion/generic-nouns.json';
 @Injectable()
 export class NlpUtilsService {
   private readonly logger = new Logger(NlpUtilsService.name);
-  private readonly nlpEngine: any;
-  private readonly its: any;
   private readonly genericNounsStemmed: Set<string>;
 
   constructor() {
-    // Initialize wink-nlp for POS tagging
-    this.nlpEngine = winkNLP(model);
-    this.its = this.nlpEngine.its;
-    
     // Load stemmed generic nouns for filtering
     this.genericNounsStemmed = new Set(
       genericNounsConfig.stemmed_generic_nouns,
     );
-    
+
     this.logger.log(
-      `NLP utility service initialized with wink-nlp (${this.genericNounsStemmed.size} generic nouns loaded)`,
+      `NLP utility service initialized with compromise (${this.genericNounsStemmed.size} generic nouns loaded)`,
     );
   }
 
@@ -39,23 +32,49 @@ export class NlpUtilsService {
       return [];
     }
 
-    const nouns: string[] = [];
     try {
-      const doc = this.nlpEngine.readDoc(text);
-      doc
-        .tokens()
-        .filter(
-          (t: any) =>
-            !t.parentEntity() &&
-            (t.out(this.its.pos) === 'NOUN' || t.out(this.its.pos) === 'PROPN'),
-        )
-        .each((t: any) => nouns.push(t.out(this.its.normal)));
-    } catch (posError) {
+      const doc = nlpCompromise(text);
+      // Get nouns and normalize them (lowercase, etc.)
+      // compromise's .nouns() returns a View of just the nouns
+      // .out('array') returns an array of strings
+      // We use .normalize() to handle punctuation/case if needed, but .out('array') usually gives clean text
+      // However, we might want to ensure we get individual terms.
+      // Let's use .terms() on the nouns view to be safe if it returns phrases.
+      // Actually doc.nouns().out('array') returns noun phrases like "half day preschool".
+      // We probably want individual nouns if that's what the previous one did.
+      // The previous one: t.out(this.its.normal) on tokens filtered by POS=NOUN/PROPN.
+      // So it returned individual words.
+      // compromise .nouns() returns "preschool" or "half day preschool" (if it sees it as a compound).
+      // Let's check the test output:
+      // Text: half day preschool
+      // Nouns: ["half day preschool"]
+      // Tags: [{"half":["Adjective"],"day":["Date","Noun","Duration","Singular"],"preschool":["Noun","Singular"]}]
+      //
+      // If I use doc.nouns().out('array'), I get ["half day preschool"].
+      // If I want individual nouns, I should probably iterate terms and check tags.
+      
+      const nouns: string[] = [];
+      doc.terms().forEach((term) => {
+        const tags = term.out('tags')[0]; // tags for the term
+        // Check if any of the tags for this term include 'Noun'
+        // term.out('tags') returns an array of sets of tags, one for each term in the phrase.
+        // But here we are iterating terms.
+        // Actually doc.terms() returns a View of all terms.
+        // term.tags is a Set in internal model, but via API:
+        // term.has('#Noun') is the way.
+        
+        if (term.has('#Noun')) {
+           nouns.push(term.text('normal')); // 'normal' gives lowercase, trimmed, etc.
+        }
+      });
+      
+      return nouns;
+    } catch (error) {
       this.logger.warn(
-        `POS tagging failed: ${posError.message}, skipping noun extraction`,
+        `POS tagging failed: ${error.message}, skipping noun extraction`,
       );
+      return [];
     }
-    return nouns;
   }
 
   /**
@@ -188,10 +207,10 @@ export class NlpUtilsService {
         if (nouns.length > 0) {
           // Stem the extracted nouns
           const stemmedNouns = this.stemWords(nouns);
-          
+
           // Filter out generic nouns
           const filteredNouns = this.filterGenericNouns(stemmedNouns);
-          
+
           // If all nouns were filtered out, return empty stemmed result
           if (filteredNouns.length === 0) {
             this.logger.debug(
@@ -204,7 +223,7 @@ export class NlpUtilsService {
               extractedNouns: nouns,
             };
           }
-          
+
           const stemmed = filteredNouns.join(' ');
 
           this.logger.debug(

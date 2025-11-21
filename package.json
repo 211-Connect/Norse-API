@@ -39,6 +39,7 @@
     "axios": "^1.11.0",
     "cache-manager": "^5.7.6",
     "cache-manager-redis-store": "^3.0.1",
+    "compromise": "^14.14.4",
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.11",
@@ -47,8 +48,6 @@
     "redis": "^3.1.2",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.2",
-    "wink-eng-lite-web-model": "^1.6.1",
-    "wink-nlp": "^2.4.0",
     "wink-nlp-utils": "^2.1.0",
     "zod": "^3.25.76"
   },
