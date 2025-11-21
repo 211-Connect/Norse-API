@@ -81,7 +81,12 @@
     "father",
     "woman",
     "women",
-    "kid"
+    "kid",
+    "i",
+    "my",
+    "mie",
+    "me",
+    "support"
   ],
   "notes": [
     "Terms are stemmed using wink-nlp-utils stemming algorithm",

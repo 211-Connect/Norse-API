@@ -217,7 +217,9 @@ export class OpenSearchService {
     // 4b. Nouns (POS-tagged, original form - e.g., "laundry")
     // 4c. Stemmed nouns (normalized form - e.g., "laundri" to catch corpus variations)
     if (!searchRequest.disable_intent_classification && normalizedQuery) {
-      const keywordVariations = this.generateKeywordVariations(searchRequest.q);
+      const keywordVariations = await this.generateKeywordVariations(
+        searchRequest.q,
+      );
 
       // Original query search - preserves full user intent
       if (keywordVariations.original) {
@@ -270,6 +272,27 @@ export class OpenSearchService {
             searchRequest.search_after,
             searchRequest,
             'nouns_stemmed',
+            useOffsetPagination,
+            offset,
+          ),
+        );
+      }
+
+      // Synonyms search - catches alternative phrasings
+      if (
+        keywordVariations.synonyms &&
+        keywordVariations.synonyms.length > 0
+      ) {
+        strategyNames.push('keyword_synonyms');
+        msearchBody.push({ index: indexName });
+        msearchBody.push(
+          this.buildKeywordQuery(
+            keywordVariations.synonyms.join(' '),
+            filters,
+            candidatesPerStrategy,
+            searchRequest.search_after,
+            searchRequest,
+            'synonyms',
             useOffsetPagination,
             offset,
           ),
@@ -612,16 +635,24 @@ export class OpenSearchService {
    * - original: Full query preserving user intent and phrases (contractions expanded)
    * - nouns: POS-tagged nouns in original form (singular and plural)
    * - stemmedNouns: Stemmed nouns to catch corpus variations
+   * - synonyms: Stemmed synonyms from WordNet
    * - topics: High-value entities like People, Places, Organizations
    */
-  private generateKeywordVariations(query: string): {
+  private async generateKeywordVariations(query: string): Promise<{
     original: string;
     nouns: string[];
     stemmedNouns: string[];
+    synonyms: string[];
     topics: string[];
-  } {
+  }> {
     if (!query || query.trim().length === 0) {
-      return { original: query, nouns: [], stemmedNouns: [], topics: [] };
+      return {
+        original: query,
+        nouns: [],
+        stemmedNouns: [],
+        synonyms: [],
+        topics: [],
+      };
     }
 
     try {
@@ -632,36 +663,58 @@ export class OpenSearchService {
       const rawNouns = this.extractNouns(expandedQuery);
 
       // 3. Expand nouns to include singular and plural forms
-      const allNouns = rawNouns.flatMap((noun) =>
-        this.nlpUtilsService.getSingularAndPluralForms(noun),
-      );
+    const allNouns = rawNouns.flatMap((noun) =>
+      this.nlpUtilsService.getSingularAndPluralForms(noun),
+    );
 
-      // 4. Filter out generic nouns (e.g., "day", "time")
-      const nouns = allNouns.filter(
-        (noun) => !this.nlpUtilsService.isGenericNoun(noun),
-      );
+    // 4. Filter out generic nouns (e.g., "day", "time") and deduplicate
+    const nounsSet = new Set(
+      allNouns.filter((noun) => !this.nlpUtilsService.isGenericNoun(noun)),
+    );
+    const nouns = Array.from(nounsSet);
 
-      // 5. Stem the filtered nouns
-      const stemmedNouns = this.nlpUtilsService.stemWords(nouns);
+    // 5. Stem the filtered nouns and deduplicate
+    // (e.g., "rent" and "rents" both stem to "rent")
+    const stemmedNounsSet = new Set(this.nlpUtilsService.stemWords(nouns));
+    const stemmedNouns = Array.from(stemmedNounsSet);
 
-      // 6. Extract topics (high-value entities)
+    // 6. Get synonyms for filtered nouns
+    const synonymPromises = nouns.map((noun) =>
+      this.nlpUtilsService.getSynonyms(noun),
+    );
+    const synonymsArrays = await Promise.all(synonymPromises);
+    
+    // Deduplicate synonyms and remove any that overlap with stemmed nouns
+    const synonymsSet = new Set(synonymsArrays.flat());
+    const synonyms = Array.from(synonymsSet).filter(
+      (syn) => !stemmedNounsSet.has(syn),
+    );
+
+      // 7. Extract topics (high-value entities)
       const topics = this.nlpUtilsService.extractTopics(expandedQuery);
 
       this.logger.debug(
-        `Keyword variations - Original: "${expandedQuery}", Nouns: [${nouns.join(', ')}], Stemmed: [${stemmedNouns.join(', ')}], Topics: [${topics.join(', ')}]`,
+        `Keyword variations - Original: "${expandedQuery}", Nouns: [${nouns.join(', ')}], Stemmed: [${stemmedNouns.join(', ')}], Synonyms: [${synonyms.join(', ')}], Topics: [${topics.join(', ')}]`,
       );
 
       return {
         original: expandedQuery,
         nouns,
         stemmedNouns,
+        synonyms,
         topics,
       };
     } catch (error) {
       this.logger.warn(
         `Keyword variation generation failed: ${error.message}, using original query`,
       );
-      return { original: query, nouns: [], stemmedNouns: [], topics: [] };
+      return {
+        original: query,
+        nouns: [],
+        stemmedNouns: [],
+        synonyms: [],
+        topics: [],
+      };
     }
   }
 
@@ -680,6 +733,7 @@ export class OpenSearchService {
       | 'original'
       | 'nouns'
       | 'nouns_stemmed'
+      | 'synonyms'
       | 'topics' = 'original',
     useOffsetPagination?: boolean,
     offset?: number,
@@ -696,6 +750,9 @@ export class OpenSearchService {
     if (variationType === 'nouns') {
       keywordWeight *= multipliers.nouns_multiplier;
     } else if (variationType === 'nouns_stemmed') {
+      keywordWeight *= multipliers.stemmed_nouns_multiplier;
+    } else if (variationType === 'synonyms') {
+      // Synonyms get same weight as stemmed nouns, or slightly lower
       keywordWeight *= multipliers.stemmed_nouns_multiplier;
     } else if (variationType === 'topics') {
       // Topics are high value, give them a boost similar to or higher than nouns
@@ -730,6 +787,7 @@ export class OpenSearchService {
                     operator:
                       variationType === 'nouns' ||
                       variationType === 'nouns_stemmed' ||
+                      variationType === 'synonyms' ||
                       variationType === 'topics'
                         ? 'or'
                         : 'and',

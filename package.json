@@ -49,6 +49,7 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.2",
     "wink-nlp-utils": "^2.1.0",
+    "wordnetjs": "^0.3.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

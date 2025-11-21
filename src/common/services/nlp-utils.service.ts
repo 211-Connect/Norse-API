@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nlp from 'wink-nlp-utils';
 import nlpCompromise from 'compromise';
 import * as genericNounsConfig from '../config/generic-nouns.json';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const wordnet = require('wordnetjs');
 
 /**
  * Shared NLP utility service for POS tagging, noun extraction, and stemming
@@ -360,6 +362,81 @@ export class NlpUtilsService {
         `Query stemming failed: ${error.message}, using original query`,
       );
       return { original: query, stemmed: query, shouldUseStemmed: false };
+    }
+  }
+  /**
+   * Get synonyms for a noun using WordNet
+   * Returns stemmed synonyms that are not generic
+   */
+  async getSynonyms(word: string): Promise<string[]> {
+    if (!word || word.trim().length === 0) {
+      return [];
+    }
+
+    // If the word itself is generic, don't look for synonyms
+    if (this.isGenericNoun(word)) {
+      return [];
+    }
+
+    try {
+      // Lookup noun synsets
+      // wordnetjs operations might be async (file I/O)
+      const synsets = await wordnet.noun(word);
+
+      if (!synsets || !Array.isArray(synsets)) {
+        return [];
+      }
+
+      const synonyms = new Set<string>();
+
+      // Only use the first synset (most common/frequent sense)
+      // This prevents collecting synonyms from less common word senses
+      // e.g., "rent" (payment) vs "rent" (tear/rip)
+      const primarySynset = synsets[0];
+      
+      if (primarySynset?.words && Array.isArray(primarySynset.words)) {
+        primarySynset.words.forEach((w: string) => {
+          // Normalize: lowercase, replace underscores with spaces
+          const cleanWord = w.toLowerCase().replace(/_/g, ' ');
+
+          // Don't include the word itself
+          if (cleanWord !== word.toLowerCase()) {
+            synonyms.add(cleanWord);
+          }
+        });
+      }
+
+      // Process synonyms: stem and filter
+      const processedSynonyms = new Set<string>();
+
+      for (const synonym of synonyms) {
+        // Stem the synonym
+        // Use stemQueryForSuggestion to handle phrases and stemming logic
+        const stemResult = this.stemQueryForSuggestion(synonym);
+
+        const candidate =
+          stemResult.shouldUseStemmed && stemResult.stemmed.length > 0
+            ? stemResult.stemmed
+            : synonym;
+
+        // Filter out if the candidate is generic
+        if (
+          candidate &&
+          candidate.length > 0 &&
+          !this.isGenericNoun(candidate)
+        ) {
+          processedSynonyms.add(candidate);
+        }
+      }
+
+      const result = Array.from(processedSynonyms);
+      if (result.length > 0) {
+        this.logger.debug(`Synonyms for "${word}": [${result.join(', ')}]`);
+      }
+      return result;
+    } catch (error) {
+      this.logger.warn(`Synonym lookup failed for "${word}": ${error.message}`);
+      return [];
     }
   }
 }

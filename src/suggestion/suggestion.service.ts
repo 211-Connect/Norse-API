@@ -74,15 +74,42 @@ export class SuggestionService {
         // This focuses on the semantically important parts of the query
         // For "I need help with laundry" -> searches only "laundr"
         if (stemResult.shouldUseStemmed) {
-          this.logger.debug(
-            `[v2] Using stemmed nouns only: "${stemResult.stemmed}" (extracted from: "${searchQuery}")`,
-          );
+          let queryToUse = stemResult.stemmed;
+
+          // Expand with synonyms
+          if (
+            stemResult.extractedNouns &&
+            stemResult.extractedNouns.length > 0
+          ) {
+            const synonymPromises = stemResult.extractedNouns.map((noun) =>
+              this.nlpUtilsService.getSynonyms(noun),
+            );
+            const synonymsArrays = await Promise.all(synonymPromises);
+            const allSynonyms = synonymsArrays.flat();
+
+            if (allSynonyms.length > 0) {
+              // Append unique synonyms
+              const uniqueSynonyms = [...new Set(allSynonyms)];
+              queryToUse = `${queryToUse} ${uniqueSynonyms.join(' ')}`;
+              this.logger.debug(
+                `[v2] Expanded query with synonyms: "${queryToUse}" (synonyms: [${uniqueSynonyms.join(', ')}])`,
+              );
+            } else {
+              this.logger.debug(
+                `[v2] Using stemmed nouns only: "${stemResult.stemmed}" (extracted from: "${searchQuery}")`,
+              );
+            }
+          } else {
+            this.logger.debug(
+              `[v2] Using stemmed nouns only: "${stemResult.stemmed}" (extracted from: "${searchQuery}")`,
+            );
+          }
 
           queryBuilder.query = {
             bool: {
               must: {
                 multi_match: {
-                  query: stemResult.stemmed,
+                  query: queryToUse,
                   type: 'bool_prefix',
                   fields: fields,
                   fuzziness: 'AUTO',
@@ -208,9 +235,30 @@ export class SuggestionService {
                 this.nlpUtilsService.stemQueryForSuggestion(searchQuery);
 
               // Check if user query has meaningful terms after filtering
-              const hasUserQuery =
+              let userQueryToUse = userStemResult.stemmed;
+
+              if (
                 userStemResult.shouldUseStemmed &&
-                userStemResult.stemmed.length > 0;
+                userStemResult.extractedNouns &&
+                userStemResult.extractedNouns.length > 0
+              ) {
+                const synonymPromises = userStemResult.extractedNouns.map(
+                  (noun) => this.nlpUtilsService.getSynonyms(noun),
+                );
+                const synonymsArrays = await Promise.all(synonymPromises);
+                const allSynonyms = synonymsArrays.flat();
+
+                if (allSynonyms.length > 0) {
+                  const uniqueSynonyms = [...new Set(allSynonyms)];
+                  userQueryToUse = `${userQueryToUse} ${uniqueSynonyms.join(' ')}`;
+                  this.logger.debug(
+                    `[v3] Expanded user query with synonyms: "${userQueryToUse}"`,
+                  );
+                }
+              }
+
+              const hasUserQuery =
+                userStemResult.shouldUseStemmed && userQueryToUse.length > 0;
 
               if (!hasUserQuery) {
                 this.logger.debug(
@@ -224,7 +272,7 @@ export class SuggestionService {
               );
 
               this.logger.debug(
-                `[v3] Executing multi-query search: user="${hasUserQuery ? userStemResult.stemmed : '(skipped)'}", intent_terms=[${intentSearchTerms.join(', ')}]`,
+                `[v3] Executing multi-query search: user="${hasUserQuery ? userQueryToUse : '(skipped)'}", intent_terms=[${intentSearchTerms.join(', ')}]`,
               );
 
               // Execute searches: user query (if meaningful) + all intent term searches in parallel
@@ -240,7 +288,7 @@ export class SuggestionService {
                     bool: {
                       must: {
                         multi_match: {
-                          query: userStemResult.stemmed,
+                          query: userQueryToUse,
                           type: 'bool_prefix',
                           fields: fields,
                           fuzziness: 'AUTO',
@@ -284,9 +332,7 @@ export class SuggestionService {
                 ...combinedData,
                 intent_classification: classification,
                 search_queries_used: {
-                  user_query_stemmed: hasUserQuery
-                    ? userStemResult.stemmed
-                    : null,
+                  user_query_stemmed: hasUserQuery ? userQueryToUse : null,
                   intent_queries_stemmed: intentSearchTerms,
                 },
               };
@@ -314,6 +360,7 @@ export class SuggestionService {
   /**
    * Extract and preprocess intent name into individual search terms
    * Applies same NLP preprocessing as user queries (POS tagging + stemming)
+   * Filters out generic nouns to improve search relevance
    * Returns array of individual stemmed nouns for separate searches
    */
   private extractIntentSearchTerms(intentName: string): string[] {
@@ -324,15 +371,27 @@ export class SuggestionService {
       // Split stemmed result into individual terms
       const terms = stemResult.stemmed.split(/\s+/).filter((t) => t.length > 0);
 
+      // Filter out generic nouns from intent terms
+      const filteredTerms = this.nlpUtilsService.filterGenericNouns(terms);
+
       this.logger.debug(
-        `[v3] Intent preprocessing: "${intentName}" -> [${terms.join(', ')}]`,
+        `[v3] Intent preprocessing: "${intentName}" -> [${terms.join(', ')}] -> filtered: [${filteredTerms.join(', ')}]`,
       );
 
-      return terms;
+      return filteredTerms;
     }
 
     // If no stemming benefit, return lowercase version as single term
-    return [intentName.toLowerCase()];
+    // But still check if it's generic
+    const lowercaseTerm = intentName.toLowerCase();
+    if (this.nlpUtilsService.isGenericNoun(lowercaseTerm)) {
+      this.logger.debug(
+        `[v3] Intent term "${intentName}" is generic, filtering out`,
+      );
+      return [];
+    }
+
+    return [lowercaseTerm];
   }
 
   /**
