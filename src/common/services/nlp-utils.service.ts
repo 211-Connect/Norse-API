@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nlp from 'wink-nlp-utils';
 import winkNLP from 'wink-nlp';
 import model from 'wink-eng-lite-web-model';
+import * as genericNounsConfig from '../../suggestion/generic-nouns.json';
 
 /**
  * Shared NLP utility service for POS tagging, noun extraction, and stemming
@@ -12,12 +13,21 @@ export class NlpUtilsService {
   private readonly logger = new Logger(NlpUtilsService.name);
   private readonly nlpEngine: any;
   private readonly its: any;
+  private readonly genericNounsStemmed: Set<string>;
 
   constructor() {
     // Initialize wink-nlp for POS tagging
     this.nlpEngine = winkNLP(model);
     this.its = this.nlpEngine.its;
-    this.logger.log('NLP utility service initialized with wink-nlp');
+    
+    // Load stemmed generic nouns for filtering
+    this.genericNounsStemmed = new Set(
+      genericNounsConfig.stemmed_generic_nouns,
+    );
+    
+    this.logger.log(
+      `NLP utility service initialized with wink-nlp (${this.genericNounsStemmed.size} generic nouns loaded)`,
+    );
   }
 
   /**
@@ -81,6 +91,29 @@ export class NlpUtilsService {
   }
 
   /**
+   * Filter out generic nouns from a stemmed noun array
+   * Uses the pre-loaded list of stemmed generic nouns
+   * @param stemmedNouns - Array of stemmed nouns to filter
+   * @returns Filtered array with generic nouns removed
+   */
+  filterGenericNouns(stemmedNouns: string[]): string[] {
+    const filtered = stemmedNouns.filter(
+      (noun) => !this.genericNounsStemmed.has(noun),
+    );
+
+    if (filtered.length < stemmedNouns.length) {
+      const removed = stemmedNouns.filter((noun) =>
+        this.genericNounsStemmed.has(noun),
+      );
+      this.logger.debug(
+        `Filtered generic nouns: [${removed.join(', ')}] -> kept: [${filtered.join(', ')}]`,
+      );
+    }
+
+    return filtered;
+  }
+
+  /**
    * Process text for search: extract nouns and stem them
    * Returns both original nouns and stemmed versions
    */
@@ -128,6 +161,7 @@ export class NlpUtilsService {
    * For longer queries (sentences), extracts nouns first then stems them
    * For short queries (single words), stems the word directly
    * Handles partial words gracefully - if stemming fails, returns original
+   * Filters out generic nouns to improve search relevance
    */
   stemQueryForSuggestion(query: string): {
     original: string;
@@ -154,10 +188,27 @@ export class NlpUtilsService {
         if (nouns.length > 0) {
           // Stem the extracted nouns
           const stemmedNouns = this.stemWords(nouns);
-          const stemmed = stemmedNouns.join(' ');
+          
+          // Filter out generic nouns
+          const filteredNouns = this.filterGenericNouns(stemmedNouns);
+          
+          // If all nouns were filtered out, return empty stemmed result
+          if (filteredNouns.length === 0) {
+            this.logger.debug(
+              `All nouns from "${query}" were generic, returning empty stemmed result`,
+            );
+            return {
+              original: query,
+              stemmed: '',
+              shouldUseStemmed: false,
+              extractedNouns: nouns,
+            };
+          }
+          
+          const stemmed = filteredNouns.join(' ');
 
           this.logger.debug(
-            `Extracted nouns from "${query}": [${nouns.join(', ')}] -> stemmed: [${stemmedNouns.join(', ')}]`,
+            `Extracted nouns from "${query}": [${nouns.join(', ')}] -> stemmed: [${stemmedNouns.join(', ')}] -> filtered: [${filteredNouns.join(', ')}]`,
           );
 
           return {
