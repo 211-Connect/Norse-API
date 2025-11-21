@@ -31,6 +31,11 @@ export const TENANT_MAPPINGS: Record<string, TenantMapping> = {
     shortCode: 'il211',
     description: 'Illinois 211 - Statewide information and referral service',
   },
+  'Washington 211': {
+    name: 'Washington 211',
+    shortCode: 'wa211',
+    description: 'Washington 211 - Statewide information and referral service',
+  },
   // Add additional tenant mappings below:
   // 'California 211': {
   //   name: 'California 211',
