@@ -298,7 +298,7 @@ export class NlpUtilsService {
       const words = query.trim().split(/\s+/);
 
       // If query has multiple words (likely a sentence), extract nouns first
-      if (words.length > 2) {
+      if (words.length >= 2) {
         const nouns = this.extractNouns(query);
 
         if (nouns.length > 0) {
@@ -367,8 +367,17 @@ export class NlpUtilsService {
   /**
    * Get synonyms for a noun using WordNet
    * Returns stemmed synonyms that are not generic
+   * 
+   * TEMPORARILY DISABLED: WordNet returns irrelevant word senses
+   * (e.g., "phone" → "sound, speech sound" instead of "telephone")
+   * TODO: Implement word sense disambiguation or use a better synonym source
    */
   async getSynonyms(word: string): Promise<string[]> {
+    // Disabled synonym expansion - returning empty array
+    // WordNet was adding noise rather than value
+    return [];
+
+    /* ORIGINAL CODE - COMMENTED OUT
     if (!word || word.trim().length === 0) {
       return [];
     }
@@ -438,5 +447,6 @@ export class NlpUtilsService {
       this.logger.warn(`Synonym lookup failed for "${word}": ${error.message}`);
       return [];
     }
+    */
   }
 }

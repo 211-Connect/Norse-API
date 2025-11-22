@@ -19,7 +19,7 @@ export class SuggestionController {
   @Version('1')
   @ApiResponse({
     status: 200,
-    description: 'V1: Original suggestion logic without stemming',
+    description: 'V1: Original simple suggestion with bool_prefix matching (no NLP)',
   })
   @ApiQuery({ name: 'query', required: false })
   @ApiQuery({ name: 'code', required: false, deprecated: true })
@@ -49,7 +49,7 @@ export class SuggestionController {
   @ApiResponse({
     status: 200,
     description:
-      'V2: Enhanced suggestion logic with POS tagging and stemming for improved relevance',
+      'V2: Advanced suggestion with stemming, synonyms, intent classification, and generic noun filtering',
   })
   @ApiQuery({ name: 'query', required: false })
   @ApiQuery({ name: 'code', required: false, deprecated: true })
@@ -74,40 +74,6 @@ export class SuggestionController {
     );
   }
 
-  @Get()
-  @Version('3')
-  @ApiResponse({
-    status: 200,
-    description:
-      'V3: Intent-enhanced suggestion with dual-query search (user nouns + intent nouns)',
-  })
-  @ApiQuery({ name: 'query', required: false })
-  @ApiQuery({ name: 'code', required: false, deprecated: true })
-  @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
-  @ApiQuery({
-    name: 'disable_intent_classification',
-    required: false,
-    schema: { default: false },
-  })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
-  @ApiHeader({
-    name: 'accept-language',
-    schema: {
-      default: 'en',
-    },
-  })
-  getTaxonomiesV3(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
-  ) {
-    return this.suggestionService.searchTaxonomies(
-      {
-        headers,
-        query,
-      },
-      '3',
-    );
-  }
 
   @Get('term')
   @Version('1')
