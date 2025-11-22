@@ -279,10 +279,7 @@ export class OpenSearchService {
       }
 
       // Synonyms search - catches alternative phrasings
-      if (
-        keywordVariations.synonyms &&
-        keywordVariations.synonyms.length > 0
-      ) {
+      if (keywordVariations.synonyms && keywordVariations.synonyms.length > 0) {
         strategyNames.push('keyword_synonyms');
         msearchBody.push({ index: indexName });
         msearchBody.push(
@@ -663,32 +660,32 @@ export class OpenSearchService {
       const rawNouns = this.extractNouns(expandedQuery);
 
       // 3. Expand nouns to include singular and plural forms
-    const allNouns = rawNouns.flatMap((noun) =>
-      this.nlpUtilsService.getSingularAndPluralForms(noun),
-    );
+      const allNouns = rawNouns.flatMap((noun) =>
+        this.nlpUtilsService.getSingularAndPluralForms(noun),
+      );
 
-    // 4. Filter out generic nouns (e.g., "day", "time") and deduplicate
-    const nounsSet = new Set(
-      allNouns.filter((noun) => !this.nlpUtilsService.isGenericNoun(noun)),
-    );
-    const nouns = Array.from(nounsSet);
+      // 4. Filter out generic nouns (e.g., "day", "time") and deduplicate
+      const nounsSet = new Set(
+        allNouns.filter((noun) => !this.nlpUtilsService.isGenericNoun(noun)),
+      );
+      const nouns = Array.from(nounsSet);
 
-    // 5. Stem the filtered nouns and deduplicate
-    // (e.g., "rent" and "rents" both stem to "rent")
-    const stemmedNounsSet = new Set(this.nlpUtilsService.stemWords(nouns));
-    const stemmedNouns = Array.from(stemmedNounsSet);
+      // 5. Stem the filtered nouns and deduplicate
+      // (e.g., "rent" and "rents" both stem to "rent")
+      const stemmedNounsSet = new Set(this.nlpUtilsService.stemWords(nouns));
+      const stemmedNouns = Array.from(stemmedNounsSet);
 
-    // 6. Get synonyms for filtered nouns
-    const synonymPromises = nouns.map((noun) =>
-      this.nlpUtilsService.getSynonyms(noun),
-    );
-    const synonymsArrays = await Promise.all(synonymPromises);
-    
-    // Deduplicate synonyms and remove any that overlap with stemmed nouns
-    const synonymsSet = new Set(synonymsArrays.flat());
-    const synonyms = Array.from(synonymsSet).filter(
-      (syn) => !stemmedNounsSet.has(syn),
-    );
+      // 6. Get synonyms for filtered nouns
+      const synonymPromises = nouns.map((noun) =>
+        this.nlpUtilsService.getSynonyms(noun),
+      );
+      const synonymsArrays = await Promise.all(synonymPromises);
+
+      // Deduplicate synonyms and remove any that overlap with stemmed nouns
+      const synonymsSet = new Set(synonymsArrays.flat());
+      const synonyms = Array.from(synonymsSet).filter(
+        (syn) => !stemmedNounsSet.has(syn),
+      );
 
       // 7. Extract topics (high-value entities)
       const topics = this.nlpUtilsService.extractTopics(expandedQuery);

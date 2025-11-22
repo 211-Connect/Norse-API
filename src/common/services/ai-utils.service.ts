@@ -36,7 +36,7 @@ export class AiUtilsService {
 
     try {
       const response = await axios.post(
-        `${this.ollamaBaseUrl}/embeddings`,
+        `${this.ollamaBaseUrl}/v1/embeddings`,
         {
           model: this.embeddingModel,
           input: query,
