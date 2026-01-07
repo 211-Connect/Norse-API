@@ -21,6 +21,8 @@ type ComplexQuery = {
   AND?: any[];
 };
 
+const FACETS_LIMIT = 100;
+
 @Injectable()
 export class SearchService {
   private readonly logger: Logger;
@@ -112,7 +114,7 @@ export class SearchService {
       aggs[data.facet] = {
         terms: {
           field: `facets.${data.facet}.keyword`,
-          size: 10,
+          size: FACETS_LIMIT,
         },
       };
     });
