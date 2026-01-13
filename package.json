@@ -1,6 +1,6 @@
 {
   "name": "norse-api",
-  "version": "0.0.1",
+  "version": "2.0.0-beta.1",
   "description": "A RESTful API for NORSE.",
   "author": "Connect211",
   "private": true,
@@ -35,9 +35,11 @@
     "@nestjs/mongoose": "^10.1.0",
     "@nestjs/platform-express": "^10.4.20",
     "@nestjs/swagger": "^7.4.2",
+    "@opensearch-project/opensearch": "^3.5.1",
     "axios": "^1.11.0",
     "cache-manager": "^5.7.6",
     "cache-manager-redis-store": "^3.0.1",
+    "compromise": "^14.14.4",
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.11",
@@ -46,6 +48,8 @@
     "redis": "^3.1.2",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.2",
+    "wink-nlp-utils": "^2.1.0",
+    "wordnetjs": "^0.3.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -88,6 +92,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
+    }
   }
 }

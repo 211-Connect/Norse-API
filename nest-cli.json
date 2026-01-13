@@ -4,6 +4,13 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "builder": "swc"
+    "builder": "swc",
+    "assets": [
+      {
+        "include": "**/*.json",
+        "exclude": "**/tsconfig*.json",
+        "watchAssets": true
+      }
+    ]
   }
 }

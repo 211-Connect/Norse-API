@@ -7,6 +7,14 @@ import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 
 @ApiTags('Resource')
 @Controller('resource')
+@ApiHeader({
+  name: 'x-api-version',
+  description: 'API version',
+  required: true,
+  schema: {
+    default: '1',
+  },
+})
 export class ResourceController {
   constructor(private readonly resourceService: ResourceService) {}
 
