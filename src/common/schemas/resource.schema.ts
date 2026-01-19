@@ -22,6 +22,24 @@ class ServiceArea {
   };
 }
 
+@Schema({ _id: false })
+class Taxonomy {
+  @Prop()
+  code: string;
+  @Prop()
+  name: string;
+}
+
+@Schema({ _id: false })
+class Facet {
+  @Prop()
+  code: string;
+  @Prop()
+  taxonomyName: string;
+  @Prop()
+  termName: string;
+}
+
 @Schema({ timestamps: true })
 export class Resource {
   @Prop({ index: true })
@@ -104,12 +122,17 @@ export class Resource {
 
   @Prop()
   translations: {
+    displayName: string;
+    fees?: string;
+    hours?: string;
     locale: string;
+    taxonomies: Taxonomy[];
     serviceName: string;
     serviceDescription: string;
     organizationDescription: string;
     accessibility?: string;
     transportation?: string;
+    facets?: Facet[];
   }[];
 
   @Prop()
