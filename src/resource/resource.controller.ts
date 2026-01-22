@@ -97,6 +97,18 @@ export class ResourceController {
           'We are a nonprofit community based volunteer organizations with goals to alleviate poverty and homelessness, encourage self-sufficiency, to allocate funds and resources efficiently, and to provide a "hands-up" to those in need.',
         languages: ['English', 'Spanish'],
       },
+      facetsEn: [
+        {
+          code: 'Benton County',
+          taxonomyName: 'Area Served by County',
+          termName: 'Benton County',
+        },
+        {
+          code: 'People with low income',
+          taxonomyName: 'Specialization',
+          termName: 'People with low income',
+        },
+      ],
     },
   })
   getResourceById(
@@ -195,6 +207,18 @@ export class ResourceController {
           'We are a nonprofit community based volunteer organizations with goals to alleviate poverty and homelessness, encourage self-sufficiency, to allocate funds and resources efficiently, and to provide a "hands-up" to those in need.',
         languages: ['English', 'Spanish'],
       },
+      facetsEn: [
+        {
+          code: 'Benton County',
+          taxonomyName: 'Area Served by County',
+          termName: 'Benton County',
+        },
+        {
+          code: 'People with low income',
+          taxonomyName: 'Specialization',
+          termName: 'People with low income',
+        },
+      ],
     },
   })
   getResourceByOriginalId(
