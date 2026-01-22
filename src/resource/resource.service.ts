@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Resource, ResourceDocument } from 'src/common/schemas/resource.schema';
-import { Model } from 'mongoose';
+import { Model, FilterQuery } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
 
 @Injectable()
@@ -22,32 +22,55 @@ export class ResourceService {
   }
 
   async findById(id: string, options: { headers: HeadersDto }) {
-    let resource: ResourceDocument | null;
+    return this.findResourceAndTransform({ _id: id }, id, options);
+  }
+
+  async findByOriginalId(id: string, options: { headers: HeadersDto }) {
+    return this.findResourceAndTransform({ originalId: id }, id, options);
+  }
+  /**
+   * Centralized logic for finding, filtering, and transforming the resource.
+   */
+  private async findResourceAndTransform(
+    matchQuery: FilterQuery<Resource>,
+    lookupId: string,
+    options: { headers: HeadersDto },
+  ) {
     const locale = options.headers['accept-language'];
 
-    try {
-      resource = await this.resourceModel
-        .findById(id, {
-          noop: 0,
-          translations: {
-            $elemMatch: {
-              locale: locale,
+    // Perform Aggregation
+    // Fetch the document and filter the translations array in the DB
+    // to only return the user's locale and 'en' (for facets).
+    const results = await this.resourceModel
+      .aggregate([
+        { $match: matchQuery },
+        {
+          $addFields: {
+            translations: {
+              $filter: {
+                input: '$translations',
+                as: 't',
+                cond: {
+                  $or: [
+                    { $eq: ['$$t.locale', locale] },
+                    { $eq: ['$$t.locale', 'en'] },
+                  ],
+                },
+              },
             },
           },
-        })
-        .exec();
-    } catch (e) {
-      this.logger.error(e);
-      throw new BadRequestException();
-    }
+        },
+      ])
+      .exec();
 
-    this.logger.debug(`Resource id=${id}, data=${resource}`);
+    const resource = results[0] as ResourceDocument & { _id: string };
 
-    // If the resource wasn't found, we should check to see if a redirect exists
-    // for this resource. If it does, we should redirect the user to the new
-    // resource.
+    this.logger.debug(`Resource lookupId=${lookupId}, found=${!!resource}`);
+
+    // Handle Not Found & Redirects
     if (!resource) {
-      const redirect = await this.redirectModel.findById(id).exec();
+      // Check for redirects using the ID passed (works for both _id and originalId contexts)
+      const redirect = await this.redirectModel.findById(lookupId).exec();
 
       if (redirect) {
         throw new NotFoundException({
@@ -58,71 +81,31 @@ export class ResourceService {
       throw new NotFoundException();
     }
 
-    // If the resource wasn't found, or if there are no translations for the
-    // resource, we should return a 404.
-    if (!resource.translations || resource.translations.length === 0) {
-      this.logger.debug(`Resource id=${id} has no translations`);
+    // Extract specific translations from the filtered result
+    const userTranslation = resource.translations.find(
+      (t: any) => t.locale === locale,
+    );
+    const enTranslation = resource.translations.find(
+      (t: any) => t.locale === 'en',
+    );
+
+    if (!userTranslation) {
+      this.logger.debug(
+        `Resource lookupId=${lookupId} has no translation for ${locale}`,
+      );
       throw new BadRequestException();
     }
 
-    const newV = resource.toJSON() as any;
-    newV.translation = resource.translations[0];
-    delete newV.translations;
+    // Construct Response
+    // Destructure to separate 'translations' (to be removed)
+    // from 'resourceData' (the rest of the document fields).
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { translations, ...resourceData } = resource;
 
-    return newV;
-  }
-
-  async findByOriginalId(id: string, options: { headers: HeadersDto }) {
-    let resource: ResourceDocument | null;
-    const locale = options.headers['accept-language'];
-
-    try {
-      resource = await this.resourceModel
-        .findOne(
-          { originalId: id },
-          {
-            noop: 0,
-            translations: {
-              $elemMatch: {
-                locale: locale,
-              },
-            },
-          },
-        )
-        .exec();
-    } catch (e) {
-      this.logger.error(e);
-      throw new BadRequestException();
-    }
-
-    this.logger.debug(`Resource originalId=${id}, data=${resource}`);
-
-    // If the resource wasn't found, we should check to see if a redirect exists
-    // for this resource. If it does, we should redirect the user to the new
-    // resource.  This is a crucial step!
-    if (!resource) {
-      const redirect = await this.redirectModel.findById(id).exec(); // check for redirects using the original ID
-
-      if (redirect) {
-        throw new NotFoundException({
-          redirect: `/search/${redirect.newId}`, // redirect the user to the resource that the "normal" id links to
-        });
-      }
-
-      throw new NotFoundException();
-    }
-
-    // If the resource wasn't found, or if there are no translations for the
-    // resource, we should return a 404.
-    if (!resource.translations || resource.translations.length === 0) {
-      this.logger.debug(`Resource originalId=${id} has no translations`);
-      throw new BadRequestException();
-    }
-
-    const newV = resource.toJSON() as any;
-    newV.translation = resource.translations[0];
-    delete newV.translations;
-
-    return newV;
+    return {
+      ...resourceData,
+      translation: userTranslation,
+      facetsEn: enTranslation?.facets || [],
+    };
   }
 }
