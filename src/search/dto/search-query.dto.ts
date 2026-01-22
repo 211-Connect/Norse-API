@@ -43,6 +43,32 @@ export const searchQuerySchema = z.object({
   filters: z.record(z.string().or(z.array(z.string()))).default({}),
   distance: z.coerce.number().int().nonnegative().default(0),
   limit: z.coerce.number().int().positive().max(300).min(25).default(25),
-});
+  geo_type: z.enum(['bbox', 'radius']).optional(),
+  bbox: z
+    .string()
+    .transform((val) => {
+      const parts = val.split(',');
+      if (parts.length !== 4) return undefined;
+      const numbers = parts.map(parseFloat);
+      if (numbers.some(isNaN)) return undefined;
+      return numbers as [number, number, number, number];
+    })
+    .optional(),
+}).refine(
+  (data) => {
+    if (data.geo_type === 'bbox') {
+      return !!data.bbox;
+    }
+    if (data.geo_type === 'radius') {
+      return !!data.coords && data.distance > 0;
+    }
+    return true;
+  },
+  {
+    message:
+      "Invalid geo parameters: 'bbox' requires 'bbox' param; 'radius' requires 'coords' and 'distance'",
+    path: ['geo_type'],
+  },
+);
 
 export type SearchQueryDto = z.infer<typeof searchQuerySchema>;

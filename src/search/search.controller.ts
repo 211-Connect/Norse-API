@@ -149,6 +149,18 @@ export class SearchController {
       example: '-120.740135,47.751076',
     },
   })
+  @ApiQuery({
+    name: 'geo_type',
+    required: false,
+    enum: ['bbox', 'radius'],
+    description: 'Type of geographic filtering',
+  })
+  @ApiQuery({
+    name: 'bbox',
+    required: false,
+    description: 'Bounding box for search: min_lon,min_lat,max_lon,max_lat',
+    schema: { example: '-97.238218,43.499476,-89.498952,49.384458' },
+  })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({
     name: 'query_type',

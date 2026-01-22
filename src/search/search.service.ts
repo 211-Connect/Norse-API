@@ -3,7 +3,7 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
-import r from 'radash';
+import * as r from 'radash';
 import {
   AggregationsAggregate,
   SearchRequest,
@@ -124,10 +124,10 @@ export class SearchService {
       from: skip,
       size: limit,
       _source_excludes: ['service_area'],
-      sort: this.getSort(q.coords),
+      sort: this.getSort(q),
       aggs,
     };
-    const filters = this.getFilters(q.filters, q.coords, q.distance);
+    const filters = this.getFilters(q);
     const queryType: QueryType = this.getQueryType(q.query, q.query_type);
 
     this.logger.debug(`query = ${query}`);
@@ -331,7 +331,8 @@ export class SearchService {
     }
   }
 
-  private getFilters(facets, coords, distance) {
+  private getFilters(query: SearchQueryDto) {
+    const { filters: facets, coords, distance, geo_type, bbox } = query;
     const filters: any[] = [];
 
     for (const key in facets) {
@@ -352,7 +353,34 @@ export class SearchService {
       }
     }
 
-    if (coords) {
+    if (geo_type === 'bbox' && bbox) {
+      filters.push({
+        geo_shape: {
+          service_area: {
+            shape: {
+              type: 'envelope',
+              coordinates: [
+                [bbox[0], bbox[3]], // Top Left: [min_lon, max_lat]
+                [bbox[2], bbox[1]], // Bottom Right: [max_lon, min_lat]
+              ],
+            },
+            relation: 'intersects',
+          },
+        },
+      });
+    } else if (geo_type === 'radius' && coords) {
+      // New explicit radius search: coords are [lat, lon]
+      filters.push({
+        geo_distance: {
+          distance: `${distance}miles`,
+          location: {
+            lat: coords[0],
+            lon: coords[1],
+          },
+        },
+      });
+    } else if (coords) {
+      // Legacy behavior: coords are [lon, lat]
       filters.push({
         geo_shape: {
           service_area: {
@@ -407,11 +435,20 @@ export class SearchService {
     return filters;
   }
 
-  private getSort(coords) {
+  private getSort(query: SearchQueryDto) {
     const baseSort: Sort = [{ priority: 'desc' }];
+    const { coords, geo_type } = query;
 
     if (coords) {
-      const [lon, lat] = coords;
+      let lon, lat;
+
+      if (geo_type === 'radius') {
+        // New explicit radius search: coords are [lat, lon]
+        [lat, lon] = coords;
+      } else {
+        // Legacy or implicit: coords are [lon, lat]
+        [lon, lat] = coords;
+      }
 
       return baseSort.concat([
         {
