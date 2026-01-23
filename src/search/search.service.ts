@@ -1,15 +1,16 @@
-import { Injectable, NotImplementedException, Logger } from '@nestjs/common';
+import { Injectable, NotImplementedException, Logger, BadRequestException } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
-import { HeadersDto } from 'src/common/dto/headers.dto';
+import { SearchBodyDto } from './dto/search-body.dto';
+import { HeadersDto } from '../common/dto/headers.dto';
 import { Request } from 'express';
-import r from 'radash';
+import * as r from 'radash';
 import {
   AggregationsAggregate,
   SearchRequest,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
-import { getIndexName } from 'src/common/lib/utils';
+import { getIndexName } from '../common/lib/utils';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -86,12 +87,14 @@ export class SearchService {
   async searchResources(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
+    body?: SearchBodyDto;
     tenant: Request['tenant'];
   }) {
     this.logger.debug('Searching for resources');
 
     const { tenant, headers } = options;
     const { query } = options.query;
+    const { geometry } = options.body || {};
 
     const indexName = getIndexName(headers, 'resources');
     this.logger.debug(`searchResources - index name = ${indexName}`);
@@ -127,7 +130,13 @@ export class SearchService {
       sort: this.getSort(q.coords),
       aggs,
     };
-    const filters = this.getFilters(q.filters, q.coords, q.distance);
+    const filters = this.getFilters(
+      q.filters,
+      q.coords,
+      q.distance,
+      q.geo_type,
+      geometry,
+    );
     const queryType: QueryType = this.getQueryType(q.query, q.query_type);
 
     this.logger.debug(`query = ${query}`);
@@ -331,7 +340,7 @@ export class SearchService {
     }
   }
 
-  private getFilters(facets, coords, distance) {
+  private getFilters(facets, coords, distance, geo_type, geometry) {
     const filters: any[] = [];
 
     for (const key in facets) {
@@ -352,7 +361,28 @@ export class SearchService {
       }
     }
 
+    // Boundary Search Mode
+    if (geo_type === 'boundary') {
+      if (!geometry) {
+        throw new BadRequestException('Geometry is required for boundary search');
+      }
+
+      filters.push({
+        geo_shape: {
+          service_area: {
+            shape: geometry,
+            relation: 'intersects',
+          },
+        },
+      });
+
+      return filters;
+    }
+
+    // Proximity Search Mode (default)
     if (coords) {
+      // Filter 1: Service Area Check (Eligibility)
+      // "service_area field CONTAINS user's point"
       filters.push({
         geo_shape: {
           service_area: {
@@ -360,11 +390,13 @@ export class SearchService {
               type: 'point',
               coordinates: [coords[0], coords[1]],
             },
-            relation: 'intersects',
+            relation: 'contains',
           },
         },
       });
 
+      // Filter 2: Proximity Check (Accessibility)
+      // Only apply if distance > 0
       if (distance > 0) {
         filters.push({
           bool: {
