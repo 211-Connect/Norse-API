@@ -6,7 +6,8 @@ import {
 } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
-import { HeadersDto } from 'src/common/dto/headers.dto';
+import { SearchBodyDto } from './dto/search-body.dto';
+import { HeadersDto } from '../common/dto/headers.dto';
 import { Request } from 'express';
 import {
   AggregationsStringTermsAggregate,
@@ -108,12 +109,15 @@ export class SearchService {
   async searchResources(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
+    body?: SearchBodyDto;
     tenant: Request['tenant'];
   }): Promise<SearchResponse> {
     this.logger.debug('Searching for resources');
 
-    const { tenant, headers, query: q } = options;
-    const { query } = q;
+    const { tenant, headers } = options;
+    const q = options.query;
+    const { geometry } = options.body || {};
+
     const indexName = getIndexName(headers, 'resources');
 
     // Determine requested locale, default to 'en'
@@ -131,14 +135,15 @@ export class SearchService {
 
     // Build the raw Elasticsearch aggregations
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);
-
-    // Prepare Filters
-    const filters = this.getFilters(q.filters, q.coords, q.distance);
-    // Determine Query Logic
-    const queryType = this.getQueryType(
-      query as string | string[],
-      q.query_type,
+    const filters = this.getFilters(
+      q.filters,
+      q.coords,
+      q.distance,
+      q.geo_type,
+      geometry,
     );
+    const queryType: QueryType = this.getQueryType(q.query, q.query_type);
+    const query = q.query;
 
     let parsedComplexQuery = null;
     if (this.isComplexQuery(query)) {
@@ -417,11 +422,7 @@ export class SearchService {
     }
   }
 
-  private getFilters(
-    facets: Record<string, any>,
-    coords: number[],
-    distance: number,
-  ) {
+  private getFilters(facets, coords, distance, geo_type, geometry) {
     const filters: any[] = [];
 
     for (const [key, value] of Object.entries(facets || {})) {
@@ -440,6 +441,27 @@ export class SearchService {
       }
     }
 
+    // Boundary Search Mode
+    if (geo_type === 'boundary') {
+      if (!geometry) {
+        throw new BadRequestException(
+          'Geometry is required for boundary search',
+        );
+      }
+
+      filters.push({
+        geo_shape: {
+          service_area: {
+            shape: geometry,
+            relation: 'intersects',
+          },
+        },
+      });
+
+      return filters;
+    }
+
+    // Proximity Search Mode (default)
     if (coords) {
       const [lon, lat] = coords.map(Number); // Ensure coords are numbers
 
@@ -450,11 +472,13 @@ export class SearchService {
               type: 'point',
               coordinates: [lon, lat],
             },
-            relation: 'intersects',
+            relation: 'contains',
           },
         },
       });
 
+      // Filter 2: Proximity Check (Accessibility)
+      // Only apply if distance > 0
       if (distance > 0) {
         filters.push({
           bool: {

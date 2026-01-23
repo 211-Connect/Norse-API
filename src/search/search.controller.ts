@@ -1,10 +1,11 @@
-import { Controller, Get, Query, Req, Version } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, Req, Version, BadRequestException } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { ApiHeader, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
 import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
+import { SearchBodyDto, searchBodySchema } from './dto/search-body.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
-import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
+import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
@@ -186,5 +187,43 @@ export class SearchController {
         error?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Post()
+  @Version('1')
+  @ApiResponse({
+    status: 200,
+    description: 'Search resources (POST)',
+    // Reuse the same example/schema as GET if possible, or duplicate the ApiResponse from GET
+  })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({ name: 'Content-Type', required: true, description: 'application/json' })
+  @ApiQueryForComplexSearch()
+  getResourcesPost(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
+    @Req() req,
+  ) {
+    // Validate Content-Type
+    const contentType = req.headers['content-type'];
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new BadRequestException(
+        'Content-Type must be application/json',
+      );
+    }
+
+    return this.searchService.searchResources({
+      headers,
+      query,
+      body,
+      tenant: req.tenant,
+    });
   }
 }
