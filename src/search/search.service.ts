@@ -41,7 +41,6 @@ export class SearchService {
 
   // Define fields as constants
   private static readonly ES_FIELDS = {
-    TAXONOMY_CODE: 'taxonomies.code',
     TAXONOMY_RAW: 'taxonomies.code.raw',
     ORG_NAME: 'organization.name',
     ORG_NAME_KEYWORD: 'organization.name.keyword',
@@ -368,7 +367,7 @@ export class SearchService {
                     path: 'taxonomies',
                     query: {
                       terms: {
-                        [SearchService.ES_FIELDS.TAXONOMY_CODE]: codes,
+                        [SearchService.ES_FIELDS.TAXONOMY_RAW]: codes,
                       },
                     },
                   },
