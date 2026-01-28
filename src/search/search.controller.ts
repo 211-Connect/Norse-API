@@ -6,7 +6,6 @@ import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
-import { SearchResponse } from './dto/search-response.dto';
 
 @ApiTags('Search')
 @Controller('search')
@@ -111,11 +110,7 @@ export class SearchController {
                 days_open: null,
                 service_provided: null,
                 need_within: null,
-                facets: {
-                  area_served_by_county: {
-                    en: ['Dakota County', 'Hennepin County'],
-                  },
-                },
+                facets: {},
                 created_at: null,
                 updated_at: null,
                 priority: 0,
@@ -125,11 +120,7 @@ export class SearchController {
           ],
         },
       },
-      facets: {
-        area_served_by_county: {
-          en: ['Dakota County', 'Hennepin County'],
-        },
-      },
+      facets: {},
     },
   })
   @ApiHeader({
@@ -170,7 +161,7 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
     @Req() req,
-  ): Promise<SearchResponse> {
+  ) {
     return this.searchService.searchResources({
       headers,
       query,

@@ -5,6 +5,7 @@ import {
   ForbiddenException, // If a user is authenticated but not allowed
   NotFoundException, // If a required resource (like tenant config) is missing
 } from '@nestjs/common';
+import axios, { isAxiosError } from 'axios';
 import { Request } from 'express';
 import qs from 'qs';
 import * as jwt from 'jsonwebtoken';
@@ -53,31 +54,24 @@ export async function fetchTenantById(
     },
   });
 
-  const url = `${req.configService.get('STRAPI_URL')}/api/tenants?filters[tenantId][$eq]=${id}&${strapiPopulateQuery}`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${req.configService.get('STRAPI_TOKEN')}`,
+  const res = await axios.get(
+    `${req.configService.get('STRAPI_URL')}/api/tenants?filters[tenantId][$eq]=${id}&${strapiPopulateQuery}`,
+    {
+      headers: {
+        Authorization: `Bearer ${req.configService.get('STRAPI_TOKEN')}`,
+      },
     },
-  });
+  );
 
-  if (!response.ok) {
-    logger.error(
-      `Failed to fetch tenant from Strapi. Status: ${response.status}`,
-    );
+  const initialData = res?.data?.data?.[0]?.attributes;
 
-    throw new InternalServerErrorException(
-      `Failed to fetch tenant configuration from Strapi (Status: ${response.status}).`,
-    );
-  }
-
-  const res = await response.json();
-  const initialData = res?.data?.[0]?.attributes;
   if (!initialData) {
     throw 'Tenant data not found in Strapi';
   }
 
   const { app_config, ...rest } = initialData;
   const appConfig = app_config?.data?.attributes;
+
   if (!initialData) {
     throw 'AppConfig data not found in Strapi';
   }
@@ -112,19 +106,12 @@ async function getKeycloakCerts(
   logger.log(`Fetching Keycloak certs from: ${certsUrl}`);
 
   try {
-    const response = await fetch(certsUrl);
-    if (!response.ok) {
-      logger.error(
-        `Failed to fetch Keycloak certs. Status: ${response.status} ${response.statusText}`,
-      );
-      throw new InternalServerErrorException(
-        `Failed to retrieve Keycloak certificates for realm ${tenantKeycloakRealmId}. Service may be temporarily unavailable (Status: ${response.status}).`,
-      );
-    }
-
-    const data: KeycloakCertsResponse = await response.json();
-
-    if (!data || !data.keys || data.keys.length === 0) {
+    const response = await axios.get<KeycloakCertsResponse>(certsUrl);
+    if (
+      !response.data ||
+      !response.data.keys ||
+      response.data.keys.length === 0
+    ) {
       logger.error(
         `No Keycloak certs found at ${certsUrl} for realm ${tenantKeycloakRealmId}`,
       );
@@ -134,19 +121,22 @@ async function getKeycloakCerts(
     }
 
     // TODO: Cache with TTL 0 (never expire) - consider if this is appropriate or if a shorter TTL is needed
-    await cacheService.set(cacheKey, data.keys, 0);
+    await cacheService.set(cacheKey, response.data.keys, 0);
     logger.log(
       `Successfully fetched and cached Keycloak certs for realm: ${tenantKeycloakRealmId}`,
     );
-    return data.keys;
+    return response.data.keys;
   } catch (error) {
-    if (error instanceof InternalServerErrorException) {
-      throw error;
+    if (isAxiosError(error)) {
+      logger.error(
+        `Axios error fetching Keycloak certs for realm ${tenantKeycloakRealmId} from ${certsUrl}: ${error.message} (Status: ${error.response?.status})`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to retrieve Keycloak certificates for realm ${tenantKeycloakRealmId}. Service may be temporarily unavailable.`,
+      );
     }
-
-    // Handle network errors or json parsing errors
     logger.error(
-      `Unexpected error fetching Keycloak certs for realm ${tenantKeycloakRealmId}: ${error instanceof Error ? error.message : String(error)}`,
+      `Unexpected error fetching Keycloak certs for realm ${tenantKeycloakRealmId}: ${error.message}`,
     );
     throw new InternalServerErrorException(
       `An unexpected error occurred while fetching Keycloak certificates for realm ${tenantKeycloakRealmId}.`,
@@ -269,7 +259,6 @@ export async function isAuthorized(request: Request): Promise<boolean> {
         `Token verification failed: ${error.message}`,
       );
     }
-
     if (
       error instanceof UnauthorizedException ||
       error instanceof InternalServerErrorException ||
@@ -279,12 +268,10 @@ export async function isAuthorized(request: Request): Promise<boolean> {
       // If it's already one of our specific HTTP exceptions, re-throw it
       throw error;
     }
-
     logger.error(
       `Unexpected error during token verification for realm ${tenant.keycloakRealmId}: ${error.message}`,
       error.stack,
     );
-
     throw new InternalServerErrorException(
       'An unexpected error occurred during token verification.',
     );
