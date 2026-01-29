@@ -6,6 +6,7 @@ import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 @ApiTags('Search')
 @Controller('search')
@@ -162,10 +163,20 @@ export class SearchController {
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
     @Req() req,
   ) {
-    return this.searchService.searchResources({
-      headers,
-      query,
-      tenant: req.tenant,
-    });
+    try {
+      return this.searchService.searchResources({
+        headers,
+        query,
+        tenant: req.tenant,
+      });
+    } catch (error) {
+      // Attach minimal context and rethrow a controlled HTTP exception
+      const message = error?.message ?? 'Search failed';
+      const meta = { tenant: req.tenant?.id, query };
+      throw new HttpException(
+        { message, meta },
+        error?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
