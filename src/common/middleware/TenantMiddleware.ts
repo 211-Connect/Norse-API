@@ -11,7 +11,7 @@ import { Cache } from 'cache-manager';
 import { Request, Response, NextFunction } from 'express';
 import { xTenantIdSchema } from '../dto/headers.dto';
 import { fetchTenantById } from '../lib/utils';
-import { ZodError } from 'zod';
+import * as z from 'zod';
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -25,29 +25,23 @@ export class TenantMiddleware implements NestMiddleware {
   }
 
   async use(req: Request, res: Response, next: NextFunction) {
-    try {
-      const tenantHeader = await xTenantIdSchema.parseAsync(
-        req.headers['x-tenant-id'],
-      );
+    const rawHeader = req.headers['x-tenant-id'];
 
-      const tenantData = await fetchTenantById(tenantHeader, { req });
+    const validation = xTenantIdSchema.safeParse(rawHeader);
+    if (!validation.success) {
+      const flattened = z.flattenError(validation.error);
+      this.logger.warn(`Invalid Tenant Header: ${JSON.stringify(flattened)}`);
+      throw new BadRequestException('Missing or invalid x-tenant-id header.');
+    }
+
+    try {
+      const tenantData = await fetchTenantById(validation.data, { req });
       req.tenant = tenantData;
 
       next();
     } catch (error) {
-      if (error instanceof ZodError) {
-        this.logger.error(
-          `Zod validation error for tenant on path: ${req.originalUrl}, method: ${req.method}`,
-        );
-        this.logger.error(JSON.stringify(error.errors, null, 2));
-
-        // Throw a BadRequestException with a user-friendly message
-        throw new BadRequestException('Missing or invalid x-tenant-id header.');
-      }
-
-      // Re-throw other unexpected errors
       this.logger.error(
-        `Unexpected error in TenantMiddleware on path: ${req.originalUrl}`,
+        `Error loading tenant for ID ${validation.data} on ${req.originalUrl}`,
         error,
       );
       throw error;

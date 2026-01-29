@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { VersioningType, LogLevel } from '@nestjs/common';
+import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 
 async function bootstrap() {
   const nodeEnv = process.env.NODE_ENV;
@@ -17,6 +18,8 @@ async function bootstrap() {
     logger: loggerLevels,
   });
   const config = app.get(ConfigService);
+
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   app.use(helmet());
   app.enableCors();
