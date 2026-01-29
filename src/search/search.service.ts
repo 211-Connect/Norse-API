@@ -128,7 +128,11 @@ export class SearchService {
       aggs,
     };
     const filters = this.getFilters(q.filters, q.coords, q.distance);
-    const queryType: QueryType = this.getQueryType(q.query, q.query_type);
+
+    const queryType: QueryType = this.getQueryType(
+      q.query as string | string[],
+      q.query_type,
+    );
 
     this.logger.debug(`query = ${query}`);
     this.logger.debug(`index name = ${indexName}`);

@@ -40,7 +40,7 @@ export const searchQuerySchema = z.object({
       return numbers;
     })
     .optional(),
-  filters: z.record(z.string().or(z.array(z.string()))).default({}),
+  filters: z.record(z.string(), z.string().or(z.array(z.string()))).default({}),
   distance: z.coerce.number().int().nonnegative().default(0),
   limit: z.coerce.number().int().positive().max(300).min(25).default(25),
 });

@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import mongoose, { HydratedDocument } from 'mongoose';
-// import { Resource } from './resource.schema';
 
 export type FavoriteListDocument = HydratedDocument<FavoriteList>;
 
