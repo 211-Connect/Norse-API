@@ -7,7 +7,7 @@ import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
-
+import { SearchResponse } from './dto/search-response.dto';
 @ApiTags('Search')
 @Controller('search')
 @ApiHeader({
@@ -111,7 +111,11 @@ export class SearchController {
                 days_open: null,
                 service_provided: null,
                 need_within: null,
-                facets: {},
+                facets: {
+                  area_served_by_county: {
+                    en: ['Dakota County', 'Hennepin County'],
+                  },
+                },
                 created_at: null,
                 updated_at: null,
                 priority: 0,
@@ -121,7 +125,11 @@ export class SearchController {
           ],
         },
       },
-      facets: {},
+      facets: {
+        area_served_by_county: {
+          en: ['Dakota County', 'Hennepin County'],
+        },
+      },
     },
   })
   @ApiHeader({
@@ -162,7 +170,7 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
     @Req() req,
-  ) {
+  ): Promise<SearchResponse> {
     try {
       return this.searchService.searchResources({
         headers,
