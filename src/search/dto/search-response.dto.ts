@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Geometry } from 'geojson';
 
 // Top-level facets mapping (facet key -> human-readable name object)
 export type SearchFacets = Record<string, Record<string, string>>;
@@ -114,9 +115,8 @@ export class SearchSource {
   @ApiProperty({ nullable: true })
   schedule?: string | null;
 
-  // Using simple object for geo_shape as it can be complex
   @ApiProperty({ nullable: true })
-  service_area?: any | null;
+  service_area?: Geometry | null;
 
   @ApiProperty({ type: ServiceDto })
   service: ServiceDto;
