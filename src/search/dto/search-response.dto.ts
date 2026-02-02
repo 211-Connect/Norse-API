@@ -148,16 +148,18 @@ export class SearchHit {
   _index: string;
 
   @ApiProperty()
-  _id: string;
+  @ApiProperty({ required: false })
+  _id?: string;
 
   @ApiProperty({ nullable: true })
-  _score: number | null;
+  @ApiProperty({ nullable: true, required: false })
+  _score?: number | null;
 
   @ApiProperty({ nullable: true })
   _routing?: string | null;
 
-  @ApiProperty({ type: SearchSource })
-  _source: SearchSource;
+  @ApiProperty({ type: SearchSource, required: false })
+  _source?: SearchSource;
 
   @ApiProperty({ type: [Number], nullable: true })
   sort?: number[] | null;
@@ -165,10 +167,10 @@ export class SearchHit {
 
 export class SearchHitsContainer {
   @ApiProperty({ example: { value: 100, relation: 'eq' } })
-  total: { value: number; relation: string };
+  total?: { value: number; relation: string } | number;
 
   @ApiProperty({ nullable: true })
-  max_score: number | null;
+  max_score?: number | null;
 
   @ApiProperty({ type: [SearchHit] })
   hits: SearchHit[];
@@ -182,7 +184,7 @@ export class SearchResponseDto {
     _shards: {
       total: number;
       successful: number;
-      skipped: number;
+      skipped?: number;
       failed: number;
     };
     hits: SearchHitsContainer;

@@ -15,7 +15,7 @@ import {
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { getIndexName } from 'src/common/lib/utils';
-import { SearchResponse } from './dto/search-response.dto';
+import { SearchResponse, SearchSource } from './dto/search-response.dto';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -179,7 +179,8 @@ export class SearchService {
       ...specificQuery,
     };
 
-    const data = await this.elasticsearchService.search(finalQuery);
+    const data =
+      await this.elasticsearchService.search<SearchSource>(finalQuery);
 
     // Normalize document-level facets
     if (data.hits?.hits) {
@@ -187,7 +188,7 @@ export class SearchService {
         if (hit._source) {
           const src = hit._source as ResourceDocument;
           src.facets = this.normalizeDocFacets(src, locale);
-          hit._source = src;
+          hit._source = src as SearchSource;
         }
         return hit;
       });
