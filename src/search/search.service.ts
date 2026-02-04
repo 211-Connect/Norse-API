@@ -355,7 +355,7 @@ export class SearchService {
         };
 
       case 'taxonomy':
-        const codes = Array.isArray(query)
+        const queryForSearch = Array.isArray(query)
           ? query
           : typeof query === 'string'
             ? query.split(',')
@@ -369,8 +369,15 @@ export class SearchService {
                   nested: {
                     path: 'taxonomies',
                     query: {
-                      terms: {
-                        [SearchService.ES_FIELDS.TAXONOMY_RAW]: codes,
+                      bool: {
+                        should: queryForSearch.map((el: string) => ({
+                          match_phrase_prefix: {
+                            'taxonomies.code': {
+                              query: el,
+                            },
+                          },
+                        })),
+                        minimum_should_match: 1,
                       },
                     },
                   },
