@@ -88,7 +88,8 @@ export async function fetchTenantById(
     appConfig,
   };
 
-  await req.cacheService.set(`tenant:${id}`, tenantData, 0);
+  // Cache tenant config for 1 minute to allow automatic propagation of configuration changes
+  await req.cacheService.set(`tenant:${id}`, tenantData, 60);
 
   return tenantData;
 }
