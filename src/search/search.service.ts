@@ -114,8 +114,17 @@ export class SearchService {
   }): Promise<SearchResponse> {
     this.logger.debug('Searching for resources');
 
-    const { tenant, headers } = options;
-    const q = options.query;
+    const { tenant, headers, query: q } = options;
+    const {
+      query,
+      query_type,
+      page,
+      limit,
+      filters,
+      coords,
+      distance,
+      geo_type,
+    } = q;
     const { geometry } = options.body || {};
 
     const indexName = getIndexName(headers, 'resources');
@@ -135,15 +144,21 @@ export class SearchService {
 
     // Build the raw Elasticsearch aggregations
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);
-    const filters = this.getFilters(
-      q.filters,
-      q.coords,
-      q.distance,
-      q.geo_type,
+
+    // Prepare Filters
+    const queryFilters = this.getFilters(
+      filters,
+      coords,
+      distance,
+      geo_type,
       geometry,
     );
-    const queryType: QueryType = this.getQueryType(q.query, q.query_type);
-    const query = q.query;
+
+    // Determine Query Logic
+    const queryType: QueryType = this.getQueryType(
+      query as string | string[],
+      query_type,
+    );
 
     let parsedComplexQuery = null;
     if (this.isComplexQuery(query)) {
@@ -158,7 +173,10 @@ export class SearchService {
 
       try {
         this.validateComplexQuery(parsedComplexQuery);
-        specificQuery = this.getComplexQueryObject(parsedComplexQuery, filters);
+        specificQuery = this.getComplexQueryObject(
+          parsedComplexQuery,
+          queryFilters,
+        );
       } catch (error) {
         throw new BadRequestException(
           `Invalid query structure: ${error.message}`,
@@ -166,15 +184,15 @@ export class SearchService {
       }
     } else {
       this.logger.debug('Using simple query logic');
-      specificQuery = this.getQueryObject(queryType, query, filters);
+      specificQuery = this.getQueryObject(queryType, query, queryFilters);
     }
 
     const finalQuery: SearchRequest = {
       index: indexName,
-      from: (q.page - 1) * 25,
-      size: q.limit || 25,
+      from: (page - 1) * 25,
+      size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: this.getSort(q.coords),
+      sort: this.getSort(coords),
       aggs: aggregations,
       ...specificQuery,
     };
@@ -348,7 +366,7 @@ export class SearchService {
             bool: {
               ...baseBool,
               must: {
-                // FIX: Changed from 'term' to 'match' for text fields, or use .keyword for term
+                // Changed from 'term' to 'match' for text fields, or use .keyword for term
                 match: {
                   [SearchService.ES_FIELDS.ORG_NAME]: {
                     query: query,
@@ -361,7 +379,7 @@ export class SearchService {
         };
 
       case 'taxonomy':
-        const codes = Array.isArray(query)
+        const queryForSearch = Array.isArray(query)
           ? query
           : typeof query === 'string'
             ? query.split(',')
@@ -375,8 +393,15 @@ export class SearchService {
                   nested: {
                     path: 'taxonomies',
                     query: {
-                      terms: {
-                        [SearchService.ES_FIELDS.TAXONOMY_RAW]: codes,
+                      bool: {
+                        should: queryForSearch.map((el: string) => ({
+                          match_phrase_prefix: {
+                            'taxonomies.code': {
+                              query: el,
+                            },
+                          },
+                        })),
+                        minimum_should_match: 1,
                       },
                     },
                   },
@@ -423,7 +448,13 @@ export class SearchService {
     }
   }
 
-  private getFilters(facets, coords, distance, geo_type, geometry) {
+  private getFilters(
+    facets: Record<string, any>,
+    coords: number[],
+    distance: number,
+    geo_type: string,
+    geometry: any,
+  ) {
     const filters: any[] = [];
 
     for (const [key, value] of Object.entries(facets || {})) {

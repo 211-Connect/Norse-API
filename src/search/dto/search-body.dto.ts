@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-const positionSchema = z.number().array().min(2);
+// GeoJSON spec requires at least 2 numbers (lon, lat), optionally 3 (altitude).
+const positionSchema = z.number().array().min(2).max(3);
 
 const pointSchema = z.object({
   type: z.literal('Point'),
@@ -32,7 +33,9 @@ const multiPolygonSchema = z.object({
   coordinates: z.array(z.array(z.array(positionSchema))),
 });
 
-const geometrySchema = z.union([
+// Discriminated union tells Zod to use the 'type' field to
+// switch between schemas efficiently.
+const geometrySchema = z.discriminatedUnion('type', [
   pointSchema,
   multiPointSchema,
   lineStringSchema,
