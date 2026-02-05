@@ -11,7 +11,6 @@ import { Cache } from 'cache-manager';
 import { Request, Response, NextFunction } from 'express';
 import { xTenantIdSchema } from '../dto/headers.dto';
 import { fetchTenantById } from '../lib/utils';
-import * as z from 'zod';
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -29,7 +28,7 @@ export class TenantMiddleware implements NestMiddleware {
 
     const validation = xTenantIdSchema.safeParse(rawHeader);
     if (!validation.success) {
-      const flattened = z.flattenError(validation.error);
+      const flattened = validation.error.flatten();
       this.logger.warn(`Invalid Tenant Header: ${JSON.stringify(flattened)}`);
       throw new BadRequestException('Missing or invalid x-tenant-id header.');
     }

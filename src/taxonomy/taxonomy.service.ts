@@ -3,6 +3,10 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
+import {
+  TaxonomyDocument,
+  TaxonomySearchResponse,
+} from './dto/taxonomy-response.dto';
 import { getIndexName } from 'src/common/lib/utils';
 
 const isTaxonomyCode = new RegExp(
@@ -20,7 +24,7 @@ export class TaxonomyService {
   async searchTaxonomies(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
-  }) {
+  }): Promise<TaxonomySearchResponse> {
     try {
       const q = options.query;
       const { headers } = options;
@@ -82,7 +86,8 @@ export class TaxonomyService {
         `queryBuilder = ${JSON.stringify(queryBuilder, null, 2)}`,
       );
 
-      const data = await this.elasticsearchService.search(queryBuilder);
+      const data =
+        await this.elasticsearchService.search<TaxonomyDocument>(queryBuilder);
 
       return data;
     } catch (err) {
@@ -93,7 +98,7 @@ export class TaxonomyService {
   async getTaxonomyTermsForCodes(options: {
     headers: HeadersDto;
     query: TaxonomyTermsQueryDto;
-  }) {
+  }): Promise<TaxonomySearchResponse> {
     const q = options.query;
     const { headers } = options;
 
@@ -112,7 +117,8 @@ export class TaxonomyService {
 
     let data;
     try {
-      data = await this.elasticsearchService.search(queryBuilder);
+      data =
+        await this.elasticsearchService.search<TaxonomyDocument>(queryBuilder);
       this.logger.debug(
         `Data for code=${q?.terms}, data=${JSON.stringify(data, null, 2)}`,
       );
