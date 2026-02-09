@@ -16,6 +16,7 @@ import {
   taxonomyTermsQuerySchema,
 } from './dto/taxonomy-terms-query.dto';
 import { TaxonomySearchResponse } from './dto/taxonomy-response.dto';
+import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
 
 @ApiTags('Taxonomy')
 @Controller('taxonomy')
@@ -140,6 +141,54 @@ export class TaxonomyController {
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ): Promise<TaxonomySearchResponse> {
     return this.taxonomyService.searchTaxonomies({
+      headers,
+      query,
+    });
+  }
+
+  @Get()
+  @Version('2')
+  @ApiResponse({
+    status: 200,
+    description:
+      'Returns simplified taxonomy data with only id, name, and code',
+    type: TaxonomyResponseDto,
+  })
+  @ApiQuery({
+    name: 'query',
+    required: false,
+    description: 'Search query for taxonomy name or code',
+  })
+  @ApiQuery({
+    name: 'code',
+    required: false,
+    deprecated: true,
+    description: 'Taxonomy code (deprecated, use query instead)',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    schema: { default: 1 },
+    description: 'Page number for pagination',
+  })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  @ApiHeader({
+    name: 'x-api-version',
+    schema: {
+      default: '2',
+    },
+  })
+  getTaxonomiesV2(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+  ): Promise<TaxonomyResponseDto> {
+    return this.taxonomyService.searchTaxonomiesV2({
       headers,
       query,
     });
