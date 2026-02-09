@@ -1,3 +1,5 @@
+import { ApiProperty } from '@nestjs/swagger';
+
 /**
  * Represents a taxonomy document from the taxonomies_v2 Elasticsearch index
  */
@@ -64,4 +66,44 @@ export interface TaxonomySearchResponse {
     failed: number;
   };
   aggregations?: Record<string, any>;
+}
+
+export class TaxonomyItemDto {
+  @ApiProperty({
+    description: 'Unique identifier of the taxonomy term',
+    example: 'ee9dd652-19d7-5226-bd7c-3c01f8144f2a',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Taxonomy code',
+    example: 'FT-2700.9500',
+  })
+  code: string;
+
+  @ApiProperty({
+    description: 'Taxonomy term name',
+    example: 'Will Preparation Assistance',
+  })
+  name: string;
+}
+
+export class TaxonomyResponseDto {
+  @ApiProperty({
+    description: 'Total number of matching results',
+    example: 69,
+  })
+  total: number;
+
+  @ApiProperty({
+    description: 'Array of taxonomy items',
+    type: [TaxonomyItemDto],
+  })
+  items: TaxonomyItemDto[];
+
+  @ApiProperty({
+    description: 'Current page number',
+    example: 1,
+  })
+  page: number;
 }

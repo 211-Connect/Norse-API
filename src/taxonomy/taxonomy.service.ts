@@ -8,6 +8,8 @@ import {
   TaxonomySearchResponse,
 } from './dto/taxonomy-response.dto';
 import { getIndexName } from 'src/common/lib/utils';
+import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
+import { SearchHit } from '@elastic/elasticsearch/lib/api/types';
 
 const isTaxonomyCode = new RegExp(
   /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
@@ -93,6 +95,30 @@ export class TaxonomyService {
     } catch (err) {
       throw new BadRequestException(err.message);
     }
+  }
+
+  async searchTaxonomiesV2(options: {
+    headers: HeadersDto;
+    query: SearchQueryDto;
+  }): Promise<TaxonomyResponseDto> {
+    const data = await this.searchTaxonomies(options);
+
+    const response: TaxonomyResponseDto = {
+      total:
+        typeof data.hits.total === 'number'
+          ? data.hits.total
+          : data.hits.total.value,
+      page: options.query.page,
+      items: data.hits.hits.map(
+        (hit: SearchHit<{ id: string; code: string; name: string }>) => ({
+          id: hit._source.id,
+          code: hit._source.code,
+          name: hit._source.name,
+        }),
+      ),
+    };
+
+    return response;
   }
 
   async getTaxonomyTermsForCodes(options: {
