@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -17,6 +18,8 @@ import configuration from './common/config/configuration';
 import type { RedisClientOptions } from 'redis';
 import { redisStore } from 'cache-manager-redis-store';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -30,6 +33,7 @@ import { FavoriteListController } from './favorite-list/favorite-list.controller
 import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
+import { CustomThrottlerGuard } from './common/guards/throttler.guard';
 
 @Module({
   imports: [
@@ -51,6 +55,21 @@ import { GeocodingModule } from './geocoding/geocoding.module';
       }),
       inject: [ConfigService],
     }),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: configService.get('rateLimit.ttl'),
+            limit: configService.get('rateLimit.limit'),
+          },
+        ],
+        storage: new ThrottlerStorageRedisService(
+          configService.get('REDIS_URL'),
+        ),
+      }),
+      inject: [ConfigService],
+    }),
     TaxonomyModule,
     SearchModule,
     ShortUrlModule,
@@ -62,7 +81,13 @@ import { GeocodingModule } from './geocoding/geocoding.module';
     GeocodingModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: CustomThrottlerGuard,
+    },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

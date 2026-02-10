@@ -28,6 +28,7 @@ export const acceptLanguageSchema = z.string().transform((val) => {
 export const headersSchema = z.object({
   'x-tenant-id': xTenantIdSchema,
   'accept-language': acceptLanguageSchema,
+  'x-api-key': z.string().optional(),
 });
 
 export type XTenantIdDto = z.infer<typeof xTenantIdSchema>;
