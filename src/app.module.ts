@@ -29,6 +29,7 @@ import { FavoriteController } from './favorite/favorite.controller';
 import { FavoriteListController } from './favorite-list/favorite-list.controller';
 import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
+import { GeocodingModule } from './geocoding/geocoding.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { SuggestionController } from './suggestion/suggestion.controller';
     FavoriteListModule,
     ResourceModule,
     SuggestionModule,
+    GeocodingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
