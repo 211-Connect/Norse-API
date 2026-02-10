@@ -60,7 +60,7 @@ import { CustomThrottlerGuard } from './common/guards/throttler.guard';
       useFactory: async (configService: ConfigService) => ({
         throttlers: [
           {
-            ttl: configService.get('rateLimit.ttl'),
+            ttl: 1_000 * configService.get('rateLimit.ttl'), // Convert seconds to milliseconds
             limit: configService.get('rateLimit.limit'),
           },
         ],
