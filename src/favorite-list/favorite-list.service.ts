@@ -13,6 +13,8 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
 import { isAuthorized } from 'src/common/lib/utils';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
+import { PaginationDto } from './dto/pagination.dto';
+import { FavoriteListV2ResponseDto } from './dto/favorite-list-v2.response.dto';
 
 interface User {
   id: string;
@@ -62,6 +64,32 @@ export class FavoriteListService {
     }
   }
 
+  async findAllV2(
+    pagination: PaginationDto,
+    options: { user: User },
+  ): Promise<FavoriteListV2ResponseDto> {
+    if (pagination.search) {
+      return this.searchV2({ name: pagination.search }, pagination, options);
+    }
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const query = { ownerId: options.user.id };
+
+    const [data, total] = await Promise.all([
+      this.favoriteListModel
+        .find(query)
+        .select('name description privacy ownerId')
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.favoriteListModel.countDocuments(query).exec(),
+    ]);
+
+    return this.mapToV2Response(data, total);
+  }
+
   findAll(options: { user: User }) {
     return this.favoriteListModel
       .find({
@@ -69,6 +97,35 @@ export class FavoriteListService {
       })
       .select('name description privacy')
       .limit(20);
+  }
+
+  async searchV2(
+    searchFavoriteListDto: SearchFavoriteListDto,
+    pagination: PaginationDto,
+    options: { user: User },
+  ): Promise<FavoriteListV2ResponseDto> {
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const mongoQuery: any = {
+      ownerId: options.user.id,
+      favorites: { $nin: searchFavoriteListDto.exclude },
+    };
+
+    if (searchFavoriteListDto.name)
+      mongoQuery.name = { $regex: searchFavoriteListDto.name, $options: 'i' };
+
+    const [data, total] = await Promise.all([
+      this.favoriteListModel
+        .find(mongoQuery)
+        .select('name description privacy ownerId')
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.favoriteListModel.countDocuments(mongoQuery).exec(),
+    ]);
+
+    return this.mapToV2Response(data, total);
   }
 
   search(
@@ -87,6 +144,43 @@ export class FavoriteListService {
       .find(mongoQuery)
       .select('name description privacy')
       .limit(20);
+  }
+
+  private mapToV2Response(
+    data: any[],
+    total: number,
+  ): FavoriteListV2ResponseDto {
+    return {
+      search: {
+        took: 0, // Mocked as we are not using ES
+        timed_out: false,
+        _shards: {
+          total: 1,
+          successful: 1,
+          skipped: 0,
+          failed: 0,
+        },
+        hits: {
+          total: {
+            value: total,
+            relation: 'eq',
+          },
+          max_score: null,
+          hits: data.map((item) => ({
+            _index: 'favorite_lists', // Mock index name
+            _id: item._id.toString(),
+            _score: 1, // Mock score
+            _source: {
+              id: item._id.toString(),
+              name: item.name,
+              description: item.description,
+              privacy: item.privacy,
+              ownerId: item.ownerId,
+            },
+          })),
+        },
+      },
+    };
   }
 
   async findOne(
