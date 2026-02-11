@@ -91,7 +91,7 @@ export class TaxonomyItemDto {
 export class TaxonomyResponseDto {
   @ApiProperty({
     description: 'Total number of matching results',
-    example: 69,
+    example: 40,
   })
   total: number;
 
