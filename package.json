@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.19.1",
+    "@mapbox/mapbox-sdk": "^0.16.2",
     "@nestjs/cache-manager": "^2.3.0",
     "@nestjs/common": "^10.4.22",
     "@nestjs/config": "^3.3.0",
@@ -52,9 +53,9 @@
     "@swc/cli": "^0.4.0",
     "@swc/core": "^1.13.3",
     "@types/express": "^4.17.25",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/geojson": "^7946.0.16",
     "@types/jest": "^29.5.14",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.9",
     "@types/supertest": "^6.0.3",
     "@typescript-eslint/eslint-plugin": "^8.39.0",
