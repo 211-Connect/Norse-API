@@ -8,11 +8,13 @@ import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
-import { Model } from 'mongoose';
+import { Model, FilterQuery } from 'mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
 import { isAuthorized } from 'src/common/lib/utils';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
+import { PaginationDto } from './dto/pagination.dto';
+import { FavoriteListResponseDto } from './dto/favorite-list.response.dto';
 
 interface User {
   id: string;
@@ -62,31 +64,81 @@ export class FavoriteListService {
     }
   }
 
-  findAll(options: { user: User }) {
-    return this.favoriteListModel
-      .find({
-        ownerId: options.user.id,
-      })
-      .select('name description privacy')
-      .limit(20);
+  async findAll(
+    pagination: PaginationDto,
+    options: { user: User },
+  ): Promise<FavoriteListResponseDto> {
+    if (pagination.search) {
+      return this.search({ name: pagination.search }, pagination, options);
+    }
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const query = { ownerId: options.user.id };
+
+    const [data, total] = await Promise.all([
+      this.favoriteListModel
+        .find(query)
+        .select('name description privacy ownerId')
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.favoriteListModel.countDocuments(query).exec(),
+    ]);
+
+    return this.mapToResponse(data, total, page);
   }
 
-  search(
+  async search(
     searchFavoriteListDto: SearchFavoriteListDto,
+    pagination: PaginationDto,
     options: { user: User },
-  ) {
-    const mongoQuery: any = {
+  ): Promise<FavoriteListResponseDto> {
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const mongoQuery: FilterQuery<FavoriteList> = {
       ownerId: options.user.id,
-      favorites: { $nin: searchFavoriteListDto.exclude },
     };
 
-    if (searchFavoriteListDto.name)
-      mongoQuery.name = { $regex: searchFavoriteListDto.name, $options: 'i' };
+    if (searchFavoriteListDto.exclude) {
+      mongoQuery.favorites = { $nin: [searchFavoriteListDto.exclude] };
+    }
 
-    return this.favoriteListModel
-      .find(mongoQuery)
-      .select('name description privacy')
-      .limit(20);
+    if (searchFavoriteListDto.name) {
+      mongoQuery.name = { $regex: searchFavoriteListDto.name, $options: 'i' };
+    }
+
+    const [data, total] = await Promise.all([
+      this.favoriteListModel
+        .find(mongoQuery)
+        .select('name description privacy ownerId')
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.favoriteListModel.countDocuments(mongoQuery).exec(),
+    ]);
+
+    return this.mapToResponse(data, total, page);
+  }
+
+  private mapToResponse(
+    data: any[],
+    total: number,
+    page: number,
+  ): FavoriteListResponseDto {
+    return {
+      total,
+      page,
+      items: data.map((item) => ({
+        id: item._id.toString(),
+        name: item.name,
+        description: item.description,
+        privacy: item.privacy,
+        ownerId: item.ownerId,
+      })),
+    };
   }
 
   async findOne(
