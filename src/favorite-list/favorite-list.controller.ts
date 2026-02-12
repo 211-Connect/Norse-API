@@ -9,7 +9,6 @@ import {
   Req,
   Query,
   Put,
-  Version,
 } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
@@ -22,59 +21,41 @@ import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto, paginationSchema } from './dto/pagination.dto';
-import { FavoriteListV2ResponseDto } from './dto/favorite-list-v2.response.dto';
+import { FavoriteListResponseDto } from './dto/favorite-list.response.dto';
 
 @ApiTags('Favorite List')
-@Controller('favorite-list')
+@Controller({
+  path: 'favorite-list',
+  version: '1',
+})
 export class FavoriteListController {
   constructor(private readonly favoriteListService: FavoriteListService) {}
 
   @Post()
-  @Version('1')
-  @UseGuards(KeycloakGuard)
   create(@Body() createFavoriteListDto: CreateFavoriteListDto, @User() user) {
     return this.favoriteListService.create(createFavoriteListDto, { user });
   }
 
   @Get()
-  @Version('2')
-  @UseGuards(KeycloakGuard)
-  @ApiResponse({ type: FavoriteListV2ResponseDto })
-  findAllV2(
+  @ApiResponse({ type: FavoriteListResponseDto })
+  findAll(
     @Query(new ZodValidationPipe(paginationSchema)) pagination: PaginationDto,
     @User() user,
   ) {
-    return this.favoriteListService.findAllV2(pagination, { user });
-  }
-
-  @Get()
-  @Version('1')
-  @UseGuards(KeycloakGuard)
-  findAll(@User() user) {
-    return this.favoriteListService.findAll({ user });
+    return this.favoriteListService.findAll(pagination, { user });
   }
 
   @Get('search')
-  @Version('2')
-  @UseGuards(KeycloakGuard)
-  @ApiResponse({ type: FavoriteListV2ResponseDto })
-  searchV2(
+  @ApiResponse({ type: FavoriteListResponseDto })
+  search(
     @Query() query: SearchFavoriteListDto,
     @Query(new ZodValidationPipe(paginationSchema)) pagination: PaginationDto,
     @User() user,
-  ) {
-    return this.favoriteListService.searchV2(query, pagination, { user });
-  }
-
-  @Get('search')
-  @Version('1')
-  @UseGuards(KeycloakGuard)
-  search(@Query() query: SearchFavoriteListDto, @User() user) {
-    return this.favoriteListService.search(query, { user });
+  ): Promise<FavoriteListResponseDto> {
+    return this.favoriteListService.search(query, pagination, { user });
   }
 
   @Get(':id')
-  @Version('1')
   findOne(
     @Param('id') id: string,
     @Req() request,
@@ -87,7 +68,6 @@ export class FavoriteListController {
   }
 
   @Put(':id')
-  @Version('1')
   @UseGuards(KeycloakGuard)
   update(
     @Param('id') id: string,
@@ -98,7 +78,6 @@ export class FavoriteListController {
   }
 
   @Delete(':id')
-  @Version('1')
   @UseGuards(KeycloakGuard)
   remove(@Param('id') id: string, @User() user: User) {
     return this.favoriteListService.remove(id, { user });

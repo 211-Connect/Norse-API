@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { z } from 'zod';
 
 export const paginationSchema = z.object({
@@ -8,11 +8,11 @@ export const paginationSchema = z.object({
 });
 
 export class PaginationDto {
-  @ApiProperty({ required: false, default: 1 })
-  page: number;
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  page?: number;
 
-  @ApiProperty({ required: false, default: 25 })
-  limit: number;
+  @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 300 })
+  limit?: number;
 
   @ApiPropertyOptional()
   search?: string;

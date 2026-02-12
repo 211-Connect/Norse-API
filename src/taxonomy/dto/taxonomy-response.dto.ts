@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PaginationResponseDto } from '../../common/dto/pagination-response.dto';
 
 /**
  * Represents a taxonomy document from the taxonomies_v2 Elasticsearch index
@@ -88,22 +89,10 @@ export class TaxonomyItemDto {
   name: string;
 }
 
-export class TaxonomyResponseDto {
-  @ApiProperty({
-    description: 'Total number of matching results',
-    example: 40,
-  })
-  total: number;
-
+export class TaxonomyResponseDto extends PaginationResponseDto {
   @ApiProperty({
     description: 'Array of taxonomy items',
     type: [TaxonomyItemDto],
   })
   items: TaxonomyItemDto[];
-
-  @ApiProperty({
-    description: 'Current page number',
-    example: 1,
-  })
-  page: number;
 }
