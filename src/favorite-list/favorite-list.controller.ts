@@ -21,7 +21,10 @@ import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto, paginationSchema } from './dto/pagination.dto';
-import { FavoriteListResponseDto } from './dto/favorite-list.response.dto';
+import {
+  FavoriteListResponseDto,
+  FavoriteListDetailResponseDto,
+} from './dto/favorite-list.response.dto';
 
 @ApiTags('Favorite List')
 @Controller({
@@ -32,11 +35,13 @@ export class FavoriteListController {
   constructor(private readonly favoriteListService: FavoriteListService) {}
 
   @Post()
+  @UseGuards(KeycloakGuard)
   create(@Body() createFavoriteListDto: CreateFavoriteListDto, @User() user) {
     return this.favoriteListService.create(createFavoriteListDto, { user });
   }
 
   @Get()
+  @UseGuards(KeycloakGuard)
   @ApiResponse({ type: FavoriteListResponseDto })
   findAll(
     @Query(new ZodValidationPipe(paginationSchema)) pagination: PaginationDto,
@@ -46,6 +51,7 @@ export class FavoriteListController {
   }
 
   @Get('search')
+  @UseGuards(KeycloakGuard)
   @ApiResponse({ type: FavoriteListResponseDto })
   search(
     @Query() query: SearchFavoriteListDto,
@@ -56,11 +62,13 @@ export class FavoriteListController {
   }
 
   @Get(':id')
+  @UseGuards(KeycloakGuard)
+  @ApiResponse({ type: FavoriteListDetailResponseDto })
   findOne(
     @Param('id') id: string,
     @Req() request,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-  ) {
+  ): Promise<FavoriteListDetailResponseDto> {
     return this.favoriteListService.findOne(id, {
       request,
       headers,

@@ -14,7 +14,10 @@ import { Request } from 'express';
 import { isAuthorized } from 'src/common/lib/utils';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto } from './dto/pagination.dto';
-import { FavoriteListResponseDto } from './dto/favorite-list.response.dto';
+import {
+  FavoriteListResponseDto,
+  FavoriteListDetailResponseDto,
+} from './dto/favorite-list.response.dto';
 
 interface User {
   id: string;
@@ -144,7 +147,7 @@ export class FavoriteListService {
   async findOne(
     id: string,
     options: { headers: HeadersDto; request: Request },
-  ) {
+  ): Promise<FavoriteListDetailResponseDto> {
     const favoriteList = await this.favoriteListModel.findById(id).populate({
       path: 'favorites',
       model: 'Resource',
@@ -180,7 +183,14 @@ export class FavoriteListService {
         throw new UnauthorizedException();
     }
 
-    return favoriteList;
+    return {
+      id: favoriteList._id.toString(),
+      name: favoriteList.name,
+      description: favoriteList.description,
+      privacy: favoriteList.privacy,
+      ownerId: favoriteList.ownerId,
+      favorites: favoriteList.favorites,
+    };
   }
 
   async update(

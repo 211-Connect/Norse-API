@@ -18,6 +18,14 @@ export class FavoriteListItemDto {
   ownerId: string;
 }
 
+export class FavoriteListDetailResponseDto extends FavoriteListItemDto {
+  @ApiProperty({
+    type: [Object],
+    description: 'Populated favorites (resources)',
+  })
+  favorites: any[];
+}
+
 export class FavoriteListResponseDto extends PaginationResponseDto {
   @ApiProperty({ type: [FavoriteListItemDto] })
   items: FavoriteListItemDto[];
