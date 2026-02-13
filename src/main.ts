@@ -23,8 +23,9 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: false, // should be set to `true` when all DTOs are decorated with validation decorators
+      // `whitelist` and `forbidNonWhitelisted` should be set to `true` when zod is replaced by class-validator and all DTOs are decorated with validation decorators
+      whitelist: false,
+      forbidNonWhitelisted: false,
     }),
   );
 
