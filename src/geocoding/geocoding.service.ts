@@ -210,4 +210,41 @@ export class GeocodingService {
       );
     }
   }
+
+  /**
+   * Clear all geocoding cache
+   */
+  async clearCache(): Promise<{ cleared: boolean; message: string }> {
+    try {
+      const store = this.cacheManager.store;
+
+      if (!store) {
+        throw new InternalServerErrorException('Cache store not available');
+      }
+
+      const keys = await store.keys('geocode:*');
+      const totalKeys = keys.length;
+
+      if (totalKeys > 0) {
+        // Process keys in batches to avoid memory issues with large datasets
+        const batchSize = 1000;
+        for (let i = 0; i < totalKeys; i += batchSize) {
+          const batch = keys.slice(i, i + batchSize);
+          await store.mdel(...batch);
+        }
+      }
+
+      this.logger.log(
+        `Geocoding cache cleared successfully. Deleted ${totalKeys} keys.`,
+      );
+
+      return {
+        cleared: true,
+        message: `Geocoding cache cleared successfully. Deleted ${totalKeys} keys.`,
+      };
+    } catch (error) {
+      this.logger.error('Failed to clear geocoding cache', error.stack);
+      throw new InternalServerErrorException('Failed to clear cache');
+    }
+  }
 }
