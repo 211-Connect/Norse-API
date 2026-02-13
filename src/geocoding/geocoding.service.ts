@@ -9,20 +9,18 @@ import { ConfigService } from '@nestjs/config';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import mbxGeocoding from '@mapbox/mapbox-sdk/services/geocoding';
-import { GeoccodingService } from '@mapbox/mapbox-sdk/services/geocoding';
+import { GeocodeService } from '@mapbox/mapbox-sdk/services/geocoding';
 import {
   ForwardGeocodeQueryDto,
   ForwardGeocodeResponseDto,
-} from './dto/forward-geocode.dto';
-import {
   ReverseGeocodeQueryDto,
   ReverseGeocodeResponseDto,
-} from './dto/reverse-geocode.dto';
+} from './dto/geocoding.dto';
 
 @Injectable()
 export class GeocodingService {
   private readonly logger = new Logger(GeocodingService.name);
-  private readonly geocodingClient: GeoccodingService;
+  private readonly geocodingClient: GeocodeService;
   private readonly cacheTTL = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 
   constructor(
@@ -49,10 +47,8 @@ export class GeocodingService {
   ): Promise<ForwardGeocodeResponseDto[]> {
     const { address, locale = 'en', limit = 5 } = query;
 
-    // Generate cache key
     const cacheKey = `geocode:forward:${address}:${locale}:${limit}`;
 
-    // Try to get from cache
     const cachedResult =
       await this.cacheManager.get<ForwardGeocodeResponseDto[]>(cacheKey);
     if (cachedResult) {
@@ -80,6 +76,8 @@ export class GeocodingService {
             address:
               feature?.[`place_name_${locale}`] ?? feature?.place_name ?? '',
             coordinates: feature?.center as [number, number],
+            place_type: feature?.place_type,
+            bbox: feature?.bbox,
           };
 
           // Add detailed location information from context
@@ -164,9 +162,12 @@ export class GeocodingService {
       if (response.body?.features && response.body.features.length > 0) {
         for (const feature of response.body.features) {
           results.push({
+            type: 'coordinates',
             address:
               feature?.[`place_name_${locale}`] ?? feature?.place_name ?? '',
             coordinates: feature?.center as [number, number],
+            place_type: feature?.place_type,
+            bbox: feature?.bbox,
           });
         }
 

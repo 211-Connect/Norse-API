@@ -7,19 +7,12 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { GeocodingService } from './geocoding.service';
-import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
 import {
   ForwardGeocodeQueryDto,
-  forwardGeocodeQuerySchema,
-  ForwardGeocodeQuerySwagger,
   ForwardGeocodeResponseDto,
-} from './dto/forward-geocode.dto';
-import {
   ReverseGeocodeQueryDto,
-  reverseGeocodeQuerySchema,
-  ReverseGeocodeQuerySwagger,
   ReverseGeocodeResponseDto,
-} from './dto/reverse-geocode.dto';
+} from './dto/geocoding.dto';
 
 @ApiTags('Geocoding')
 @Controller('geocoding')
@@ -41,7 +34,7 @@ export class GeocodingController {
     description:
       'Converts a human-readable address into geographic coordinates (longitude, latitude). This endpoint acts as a proxy to Mapbox API and includes caching to improve performance.',
   })
-  @ApiQuery({ type: ForwardGeocodeQuerySwagger })
+  @ApiQuery({ type: ForwardGeocodeQueryDto })
   @ApiResponse({
     status: 200,
     description: 'Successfully geocoded address',
@@ -56,8 +49,7 @@ export class GeocodingController {
     description: 'Internal server error',
   })
   async forwardGeocode(
-    @Query(new ZodValidationPipe(forwardGeocodeQuerySchema))
-    query: ForwardGeocodeQueryDto,
+    @Query() query: ForwardGeocodeQueryDto,
   ): Promise<ForwardGeocodeResponseDto[]> {
     return this.geocodingService.forwardGeocode(query);
   }
@@ -69,7 +61,7 @@ export class GeocodingController {
     description:
       'Converts geographic coordinates (longitude, latitude) into a human-readable address. This endpoint acts as a proxy to Mapbox API and includes caching to improve performance.',
   })
-  @ApiQuery({ type: ReverseGeocodeQuerySwagger })
+  @ApiQuery({ type: ReverseGeocodeQueryDto })
   @ApiResponse({
     status: 200,
     description: 'Successfully reverse geocoded coordinates',
@@ -84,8 +76,7 @@ export class GeocodingController {
     description: 'Internal server error',
   })
   async reverseGeocode(
-    @Query(new ZodValidationPipe(reverseGeocodeQuerySchema))
-    query: ReverseGeocodeQueryDto,
+    @Query() query: ReverseGeocodeQueryDto,
   ): Promise<ReverseGeocodeResponseDto[]> {
     return this.geocodingService.reverseGeocode(query);
   }

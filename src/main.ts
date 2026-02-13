@@ -4,7 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { VersioningType, LogLevel } from '@nestjs/common';
+import { VersioningType, LogLevel, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 
 async function bootstrap() {
@@ -20,6 +20,13 @@ async function bootstrap() {
   const config = app.get(ConfigService);
 
   app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
 
   app.use(helmet());
   app.enableCors();
