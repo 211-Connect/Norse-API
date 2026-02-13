@@ -24,7 +24,7 @@ async function bootstrap() {
     new ValidationPipe({
       transform: true,
       whitelist: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false, // should be set to `true` when all DTOs are decorated with validation decorators
     }),
   );
 
