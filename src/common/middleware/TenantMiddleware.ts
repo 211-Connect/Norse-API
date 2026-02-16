@@ -29,7 +29,9 @@ export class TenantMiddleware implements NestMiddleware {
     const validation = xTenantIdSchema.safeParse(rawHeader);
     if (!validation.success) {
       const flattened = validation.error.flatten();
-      this.logger.warn(`Invalid Tenant Header: ${JSON.stringify(flattened)}`);
+      this.logger.warn(
+        `Invalid Tenant Header on ${req.originalUrl}: ${JSON.stringify(flattened)}`,
+      );
       throw new BadRequestException('Missing or invalid x-tenant-id header.');
     }
 
