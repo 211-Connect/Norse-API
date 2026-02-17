@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient } from 'redis';
-import type { RedisClientType } from 'redis';
+import { createClient, RedisClientType } from 'redis';
 import { stringify } from 'csv-stringify/sync';
 import { CustomAttribute } from './types/custom-attribute';
 import { CustomAttributeCsvRow } from './types/custom-attribute-csv-row';
