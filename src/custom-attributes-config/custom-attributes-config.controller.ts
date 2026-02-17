@@ -10,7 +10,7 @@ import { ApiTags, ApiResponse, ApiQuery, ApiSecurity } from '@nestjs/swagger';
 export class CustomAttributesConfigController {
   constructor(private readonly configService: CustomAttributesConfigService) {}
 
-  @Get('custom-attributes')
+  @Get()
   @Header('Content-Type', 'text/csv')
   @ApiQuery({
     name: 'tenantId',
