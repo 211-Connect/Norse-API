@@ -34,6 +34,7 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CustomThrottlerGuard } from './common/guards/throttler.guard';
+import { CustomAttributesConfigModule } from './custom-attributes-config/custom-attributes-config.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { CustomThrottlerGuard } from './common/guards/throttler.guard';
     ResourceModule,
     SuggestionModule,
     GeocodingModule,
+    CustomAttributesConfigModule,
   ],
   controllers: [AppController],
   providers: [
