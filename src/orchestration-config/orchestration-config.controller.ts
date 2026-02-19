@@ -27,7 +27,7 @@ export class OrchestrationConfigController {
     content: {
       'text/csv': {
         example:
-          'source_column,link_entity,label,provenance\nservicecustom_keyword,service,Service Keywords,VisionLink',
+          'source_column,link_entity,label,origin\nservicecustom_keyword,service,Service Keywords,VisionLink',
       },
     },
   })

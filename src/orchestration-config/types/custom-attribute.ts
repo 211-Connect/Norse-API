@@ -7,7 +7,7 @@ export interface CustomAttribute {
   label: {
     [locale: string]: string;
   };
-  provenance: string | null;
+  origin: string | null;
   searchable: boolean | null;
   id: string | null;
 }
