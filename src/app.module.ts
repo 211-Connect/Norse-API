@@ -33,7 +33,7 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CustomThrottlerGuard } from './common/guards/throttler.guard';
-import { CustomAttributesConfigModule } from './custom-attributes-config/custom-attributes-config.module';
+import { OrchestrationConfigModule } from './orchestration-config/orchestration-config.module';
 
 @Module({
   imports: [
@@ -79,7 +79,7 @@ import { CustomAttributesConfigModule } from './custom-attributes-config/custom-
     ResourceModule,
     SuggestionModule,
     GeocodingModule,
-    CustomAttributesConfigModule,
+    OrchestrationConfigModule,
   ],
   controllers: [AppController],
   providers: [
