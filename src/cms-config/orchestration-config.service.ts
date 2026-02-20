@@ -25,7 +25,7 @@ export class OrchestrationConfigService {
           source_column: string;
           link_entity: string;
           label: string;
-          origin: string;
+          provenance: string;
         }
       >();
 
@@ -85,7 +85,7 @@ export class OrchestrationConfigService {
                         source_column: attr.source_column,
                         link_entity: attr.link_entity,
                         label: attr.label?.en || attr.source_column,
-                        origin: attr.origin ?? '',
+                        provenance: attr.provenance ?? '',
                       });
                     }
                   }
@@ -112,7 +112,7 @@ export class OrchestrationConfigService {
       const csvRows = Array.from(attributesMap.values());
       const csv = stringify(csvRows, {
         header: true,
-        columns: ['source_column', 'link_entity', 'label', 'origin'],
+        columns: ['source_column', 'link_entity', 'label', 'provenance'],
       });
 
       return csv;
