@@ -33,11 +33,12 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CustomThrottlerGuard } from './common/guards/throttler.guard';
-import { OrchestrationConfigModule } from './orchestration-config/orchestration-config.module';
+import { CmsConfigModule } from './cms-config/cms-config.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
+    CmsConfigModule,
     CacheModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -79,7 +80,6 @@ import { OrchestrationConfigModule } from './orchestration-config/orchestration-
     ResourceModule,
     SuggestionModule,
     GeocodingModule,
-    OrchestrationConfigModule,
   ],
   controllers: [AppController],
   providers: [

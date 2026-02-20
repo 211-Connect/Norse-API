@@ -1,7 +1,4 @@
-/**
- * Custom attribute definition with localized labels
- */
-export interface CustomAttribute {
+export type CustomAttribute = {
   source_column: string;
   link_entity: 'organization' | 'service' | 'location';
   label: {
@@ -10,4 +7,4 @@ export interface CustomAttribute {
   origin: string | null;
   searchable: boolean | null;
   id: string | null;
-}
+};

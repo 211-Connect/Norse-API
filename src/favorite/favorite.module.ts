@@ -6,9 +6,11 @@ import {
   FavoriteList,
   FavoriteListSchema,
 } from 'src/common/schemas/favorite-list.schema';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
   imports: [
+    AuthModule,
     MongooseModule.forFeature([
       { name: FavoriteList.name, schema: FavoriteListSchema },
     ]),

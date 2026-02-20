@@ -10,7 +10,7 @@ import {
 import { FavoriteService } from './favorite.service';
 import { CreateFavoriteDto } from './dto/create-favorite.dto';
 import { ApiTags } from '@nestjs/swagger';
-import { KeycloakGuard } from 'src/common/guards/keycloak.guard';
+import { KeycloakGuard } from 'src/auth/guards/keycloak.guard';
 import { User } from 'src/common/decorators/User';
 
 @ApiTags('Favorite')

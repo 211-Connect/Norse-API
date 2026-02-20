@@ -8,7 +8,6 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
-import { Request } from 'express';
 import {
   AggregationsStringTermsAggregate,
   SearchRequest,
@@ -16,6 +15,7 @@ import {
 } from '@elastic/elasticsearch/lib/api/types';
 import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -50,7 +50,10 @@ export class SearchService {
     TAXONOMY_NAMES_PREFIX: 'taxonomy_names.',
   };
 
-  constructor(private readonly elasticsearchService: ElasticsearchService) {
+  constructor(
+    private readonly elasticsearchService: ElasticsearchService,
+    private readonly tenantConfigService: TenantConfigService,
+  ) {
     this.logger = new Logger(SearchService.name);
   }
 
@@ -110,11 +113,10 @@ export class SearchService {
     headers: HeadersDto;
     query: SearchQueryDto;
     body?: SearchBodyDto;
-    tenant: Request['tenant'];
   }): Promise<SearchResponse> {
     this.logger.debug('Searching for resources');
 
-    const { tenant, headers, query: q } = options;
+    const { headers, query: q } = options;
     const {
       query,
       query_type,
@@ -126,6 +128,7 @@ export class SearchService {
       geo_type,
     } = q;
     const { geometry } = options.body || {};
+    const tenantId = headers['x-tenant-id'];
 
     const indexName = getIndexName(headers, 'resources');
 
@@ -136,11 +139,7 @@ export class SearchService {
       `searchResources - index name = ${indexName}, locale = ${locale}`,
     );
 
-    // Prepare Facets (Aggregations)
-    const tenantFacets = (tenant?.facets || []) as {
-      facet: string;
-      name: string;
-    }[];
+    const tenantFacets = await this.tenantConfigService.getFacets(tenantId);
 
     // Build the raw Elasticsearch aggregations
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);

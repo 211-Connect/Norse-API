@@ -42,7 +42,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message,
       path: req?.originalUrl,
       method: req?.method,
-      tenant: req?.tenant?.id,
+      tenant: req?.tenantId,
     };
 
     res.status(status).json(payload);

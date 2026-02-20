@@ -87,12 +87,11 @@ export class SearchController {
       return this.searchService.searchResources({
         headers,
         query,
-        tenant: req.tenant,
       });
     } catch (error) {
       // Attach minimal context and rethrow a controlled HTTP exception
       const message = error?.message ?? 'Search failed';
-      const meta = { tenant: req.tenant?.id, query };
+      const meta = { tenant: req.tenantId, query };
       throw new HttpException(
         { message, meta },
         error?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
@@ -173,7 +172,6 @@ export class SearchController {
       headers,
       query,
       body,
-      tenant: req.tenant,
     });
   }
 }

@@ -3,33 +3,15 @@ import {
   Logger,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { createClient, RedisClientType } from 'redis';
 import { stringify } from 'csv-stringify/sync';
 import { OrchestrationConfigCache } from './types';
+import { CmsRedisService } from './cms-redis.service';
 
 @Injectable()
 export class OrchestrationConfigService {
   private readonly logger = new Logger(OrchestrationConfigService.name);
-  private redisClient: RedisClientType;
 
-  constructor(private configService: ConfigService) {}
-
-  async onModuleInit() {
-    const redisUrl = this.configService.get<string>('REDIS_URL');
-    this.redisClient = createClient({
-      url: redisUrl,
-      database: 2,
-    });
-
-    await this.redisClient.connect();
-  }
-
-  async onModuleDestroy() {
-    if (this.redisClient) {
-      this.redisClient.destroy();
-    }
-  }
+  constructor(private readonly cmsRedisService: CmsRedisService) {}
 
   async getCustomAttributes(schemaName?: string): Promise<string> {
     this.logger.debug(
@@ -63,10 +45,11 @@ export class OrchestrationConfigService {
           );
         }
 
-        const { cursor: newCursor, keys } = await this.redisClient.scan(
+        const { cursor: newCursor, keys } = await this.cmsRedisService.scan({
+          count: 100,
           cursor,
-          { MATCH: 'orchestration_config:*', COUNT: 100 },
-        );
+          match: 'orchestration_config:*',
+        });
 
         cursor = newCursor;
 
@@ -76,7 +59,7 @@ export class OrchestrationConfigService {
 
         if (keys.length > 0) {
           const values = await Promise.all(
-            keys.map((key) => this.redisClient.get(key)),
+            keys.map((key) => this.cmsRedisService.get(key)),
           );
 
           for (let i = 0; i < values.length; i++) {
