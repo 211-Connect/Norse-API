@@ -14,7 +14,7 @@ import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
 import { ApiTags, ApiResponse } from '@nestjs/swagger';
-import { KeycloakGuard } from 'src/common/guards/keycloak.guard';
+import { KeycloakGuard } from 'src/auth/guards/keycloak.guard';
 import { User } from 'src/common/decorators/User';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';

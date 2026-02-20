@@ -11,13 +11,13 @@ import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Request } from 'express';
-import { isAuthorized } from 'src/common/lib/utils';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
 } from './dto/favorite-list.response.dto';
+import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 
 interface User {
   id: string;
@@ -30,6 +30,7 @@ export class FavoriteListService {
   constructor(
     @InjectModel(FavoriteList.name)
     private favoriteListModel: Model<FavoriteList>,
+    private readonly keycloakAuthService: KeycloakAuthService,
   ) {}
 
   async create(
@@ -177,7 +178,9 @@ export class FavoriteListService {
     );
 
     if (favoriteList.privacy === 'PRIVATE') {
-      const authorized = await isAuthorized(options.request);
+      const authorized = await this.keycloakAuthService.isAuthorized(
+        options.request,
+      );
 
       if (!authorized || options.request.user.id !== favoriteList.ownerId)
         throw new UnauthorizedException();

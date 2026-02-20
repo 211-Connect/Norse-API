@@ -15,7 +15,6 @@ import { SearchModule } from './search/search.module';
 import { ShortUrlModule } from './short-url/short-url.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import configuration from './common/config/configuration';
-import type { RedisClientOptions } from 'redis';
 import { redisStore } from 'cache-manager-redis-store';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -34,11 +33,13 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CustomThrottlerGuard } from './common/guards/throttler.guard';
+import { CmsConfigModule } from './cms-config/cms-config.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
-    CacheModule.registerAsync<RedisClientOptions>({
+    CmsConfigModule,
+    CacheModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         store: redisStore,
