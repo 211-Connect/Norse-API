@@ -26,7 +26,7 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {}
 
   async onModuleInit(): Promise<void> {
-    const redisUrl = this.configService.get<string>('REDIS_URL');
+    const redisUrl = this.configService.get<string>('CMS_REDIS_URL');
     this.client = createClient({
       url: redisUrl,
       database: 2,
