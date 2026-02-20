@@ -26,10 +26,45 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {}
 
   async onModuleInit(): Promise<void> {
+    await this.initializeClient();
+  }
+
+  private async initializeClient(): Promise<void> {
     const redisUrl = this.configService.get<string>('CMS_REDIS_URL');
     this.client = createClient({
       url: redisUrl,
       database: 2,
+      socket: {
+        reconnectStrategy: (retries) => {
+          if (retries > 10) {
+            this.logger.error(
+              'Redis (DB 2): Max reconnection attempts reached',
+            );
+            return new Error('Max reconnection attempts reached');
+          }
+          const delay = Math.min(retries * 100, 3000);
+          this.logger.warn(
+            `Redis (DB 2): Reconnecting in ${delay}ms (attempt ${retries})`,
+          );
+          return delay;
+        },
+      },
+    });
+
+    this.client.on('error', (err) => {
+      this.logger.error(`Redis (DB 2) client error: ${err.message}`, err.stack);
+    });
+
+    this.client.on('reconnecting', () => {
+      this.logger.warn('Redis (DB 2): Reconnecting...');
+    });
+
+    this.client.on('ready', () => {
+      this.logger.log('Redis (DB 2): Connection ready');
+    });
+
+    this.client.on('end', () => {
+      this.logger.warn('Redis (DB 2): Connection ended');
     });
 
     await this.client.connect();
@@ -44,8 +79,8 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getClient(): RedisClientType {
-    if (!this.client) {
-      throw new Error('Redis client not initialized');
+    if (!this.client || !this.client.isReady) {
+      throw new Error('Redis client not ready');
     }
     return this.client;
   }
