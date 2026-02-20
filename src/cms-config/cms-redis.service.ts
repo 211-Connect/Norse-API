@@ -35,6 +35,7 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
       url: redisUrl,
       database: 2,
       socket: {
+        keepAlive: true,
         reconnectStrategy: (retries) => {
           if (retries > 10) {
             this.logger.error(
