@@ -74,7 +74,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this'],
+    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQueryForComplexSearch()
@@ -141,7 +141,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this'],
+    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQueryForComplexSearch()

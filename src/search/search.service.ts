@@ -11,12 +11,13 @@ import { HeadersDto } from '../common/dto/headers.dto';
 import {
   AggregationsStringTermsAggregate,
   SearchRequest,
-  Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
+import { buildFilters, buildSort } from './search-query.utils';
+import { HybridSearchService } from './hybrid-search.service';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -55,6 +56,7 @@ export class SearchService {
     private readonly elasticsearchService: ElasticsearchService,
     private readonly tenantConfigService: TenantConfigService,
     private readonly orchestrationConfigService: OrchestrationConfigService,
+    private readonly hybridSearchService: HybridSearchService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -83,6 +85,7 @@ export class SearchService {
     TAXONOMY: 'taxonomy',
     MORE_LIKE_THIS: 'more_like_this',
     ORGANIZATION: 'organization',
+    HYBRID: 'hybrid',
   } as const;
 
   private static readonly nestedFieldsToQuery = [
@@ -132,6 +135,11 @@ export class SearchService {
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
 
+    // Delegate hybrid queries to HybridSearchService
+    if (query_type === 'hybrid') {
+      return this.hybridSearchService.searchHybrid(options);
+    }
+
     const indexName = getIndexName(headers, 'resources');
 
     // Determine requested locale, default to 'en'
@@ -165,7 +173,7 @@ export class SearchService {
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);
 
     // Prepare Filters
-    const queryFilters = this.getFilters(
+    const queryFilters = buildFilters(
       filters,
       coords,
       distance,
@@ -216,7 +224,7 @@ export class SearchService {
       from: (page - 1) * 25,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: this.getSort(coords),
+      sort: buildSort(coords),
       aggs: aggregations,
       ...specificQuery,
     };
@@ -336,6 +344,8 @@ export class SearchService {
         return SearchService.QUERY_TYPE.ORGANIZATION;
       case 'more_like_this':
         return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
+      case 'hybrid':
+        return SearchService.QUERY_TYPE.HYBRID;
       default:
         this.logger.warn(
           `Rejected invalid query_type (possible injection attempt): ${queryType}`,
@@ -476,135 +486,6 @@ export class SearchService {
           `Query for "${queryType}" not implemented`,
         );
     }
-  }
-
-  private getFilters(
-    facets: Record<string, any>,
-    coords: number[],
-    distance: number,
-    geo_type: string,
-    geometry: any,
-  ) {
-    const filters: any[] = [];
-
-    for (const [key, value] of Object.entries(facets || {})) {
-      const field = `${SearchService.ES_FIELDS.FACETS_PREFIX}${key}.keyword`;
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          filters.push({
-            term: {
-              [field]: item,
-            },
-          });
-        }
-      } else {
-        filters.push({ term: { [field]: value } });
-      }
-    }
-
-    // Boundary Search Mode
-    if (geo_type === 'boundary') {
-      if (!geometry) {
-        throw new BadRequestException(
-          'Geometry is required for boundary search',
-        );
-      }
-
-      filters.push({
-        geo_shape: {
-          service_area: {
-            shape: geometry,
-            relation: 'intersects',
-          },
-        },
-      });
-
-      return filters;
-    }
-
-    // Proximity Search Mode (default)
-    if (coords) {
-      const [lon, lat] = coords.map(Number); // Ensure coords are numbers
-
-      filters.push({
-        geo_shape: {
-          service_area: {
-            shape: {
-              type: 'point',
-              coordinates: [lon, lat],
-            },
-            relation: 'contains',
-          },
-        },
-      });
-
-      // Filter 2: Proximity Check (Accessibility)
-      // Only apply if distance > 0
-      if (distance > 0) {
-        filters.push({
-          bool: {
-            should: [
-              {
-                bool: {
-                  must: [
-                    {
-                      exists: {
-                        field: 'location.point',
-                      },
-                    },
-                    {
-                      geo_distance: {
-                        distance: `${distance}miles`,
-                        'location.point': {
-                          lon: coords[0],
-                          lat: coords[1],
-                        },
-                      },
-                    },
-                  ],
-                },
-              },
-              {
-                bool: {
-                  must_not: {
-                    exists: {
-                      field: 'location.point',
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        });
-      }
-    }
-
-    return filters;
-  }
-
-  private getSort(coords: number[]): Sort {
-    const baseSort: Sort = [{ priority: 'desc' }];
-
-    if (coords) {
-      const [lon, lat] = coords;
-
-      return baseSort.concat([
-        {
-          _geo_distance: {
-            'location.point': {
-              lon,
-              lat,
-            },
-            order: 'asc',
-            unit: 'm',
-            mode: 'min',
-          },
-        },
-      ]);
-    }
-
-    return baseSort;
   }
 
   // Build facet aggregations for tenant facets. For non-en locales also add an

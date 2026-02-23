@@ -9,4 +9,6 @@ export default () => ({
     limit: parseInt(process.env.RATE_LIMIT_MAX, 10) || 60, // 60 request per minute
   },
   internalApiKey: process.env.INTERNAL_API_KEY || '',
+  EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
+  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
 });
