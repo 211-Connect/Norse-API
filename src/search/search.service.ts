@@ -9,31 +9,32 @@ import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
+  AggregationsAggregationContainer,
   AggregationsStringTermsAggregate,
+  AggregationsStringTermsBucketKeys,
+  QueryDslQueryContainer,
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
 import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
-import { buildFilters, buildSort } from './search-query.utils';
+import { SearchUtilsService } from './search-utils.service';
 import { HybridSearchService } from './hybrid-search.service';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
 
-type Aggregations = Record<string, any>;
+type Aggregations = Record<string, AggregationsAggregationContainer>;
 
-type ComplexQuery = {
-  OR?: any[];
-  AND?: any[];
-};
+interface ComplexQuery {
+  OR?: (string | ComplexQuery)[];
+  AND?: (string | ComplexQuery)[];
+}
 
-// Interface for the source of a document in Elasticsearch
 interface ResourceDocument {
-  facets?: Record<string, any>;
-  facets_en?: Record<string, any>;
-  [key: string]: any; // Allow other properties
+  facets?: Record<string, string | string[]>;
+  facets_en?: Record<string, string | string[]>;
 }
 
 const FACETS_LIMIT = 100;
@@ -42,7 +43,6 @@ const FACETS_LIMIT = 100;
 export class SearchService {
   private readonly logger: Logger;
 
-  // Define fields as constants
   private static readonly ES_FIELDS = {
     TAXONOMY_RAW: 'taxonomies.code.raw',
     ORG_NAME: 'organization.name',
@@ -61,24 +61,6 @@ export class SearchService {
     this.logger = new Logger(SearchService.name);
   }
 
-  private static readonly fieldsToQuery = [
-    'name',
-    'description',
-    'summary',
-    'service.name',
-    'service.alternate_name',
-    'service.description',
-    'service.summary',
-    'location.name',
-    'location.alternate_name',
-    'location.description',
-    'location.summary',
-    'organization.name',
-    'organization.alternate_name',
-    'organization.description',
-    'organization.summary',
-  ];
-
   static readonly QUERY_TYPE = {
     MATCH_ALL: 'match_all',
     KEYWORD: 'keyword',
@@ -88,13 +70,7 @@ export class SearchService {
     HYBRID: 'hybrid',
   } as const;
 
-  private static readonly nestedFieldsToQuery = [
-    'taxonomies.name',
-    'taxonomies.description',
-  ];
-
-  // Checks whether the query is an object, and has OR or AND properties of type array.
-  private isComplexQuery(query: any): query is ComplexQuery {
+  private isComplexQuery(query: unknown): query is ComplexQuery {
     try {
       if (query != null && typeof query === 'string') {
         const parsed = JSON.parse(query);
@@ -104,10 +80,11 @@ export class SearchService {
         );
       }
 
+      const obj = query as Record<string, unknown>;
       return (
         query != null &&
         typeof query === 'object' &&
-        (Array.isArray(query.OR) || Array.isArray(query.AND))
+        (Array.isArray(obj.OR) || Array.isArray(obj.AND))
       );
     } catch {
       return false;
@@ -135,14 +112,12 @@ export class SearchService {
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
 
-    // Delegate hybrid queries to HybridSearchService
     if (query_type === 'hybrid') {
       return this.hybridSearchService.searchHybrid(options);
     }
 
     const indexName = getIndexName(headers, 'resources');
 
-    // Determine requested locale, default to 'en'
     const locale = headers['accept-language'] || 'en';
 
     this.logger.debug(
@@ -169,11 +144,9 @@ export class SearchService {
       `Found ${searchableCustomAttributeFields.length} searchable custom attribute fields`,
     );
 
-    // Build the raw Elasticsearch aggregations
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);
 
-    // Prepare Filters
-    const queryFilters = buildFilters(
+    const queryFilters = SearchUtilsService.buildFilters(
       filters,
       coords,
       distance,
@@ -181,7 +154,6 @@ export class SearchService {
       geometry,
     );
 
-    // Determine Query Logic
     const queryType: QueryType = this.getQueryType(
       query as string | string[],
       query_type,
@@ -224,7 +196,7 @@ export class SearchService {
       from: (page - 1) * 25,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: buildSort(coords),
+      sort: SearchUtilsService.buildSort(coords),
       aggs: aggregations,
       ...specificQuery,
     };
@@ -232,31 +204,29 @@ export class SearchService {
     const data =
       await this.elasticsearchService.search<SearchSource>(finalQuery);
 
-    // Normalize document-level facets
     if (data.hits?.hits) {
       data.hits.hits = data.hits.hits.map((hit) => {
         if (hit._source) {
-          const src = hit._source as ResourceDocument;
-          src.facets = this.normalizeDocFacets(src, locale);
-          hit._source = src as SearchSource;
+          const src = hit._source as unknown as ResourceDocument;
+          const normalizedFacets = this.normalizeDocFacets(src, locale);
+          (hit._source as unknown as Record<string, unknown>).facets =
+            normalizedFacets;
         }
         return hit;
       });
     }
 
-    // Transform Aggregations (Bottom Facets) into { en: [], es: [] } structure
-    const transformedAggregations: Record<string, any> = {};
-    // Transform Facet Labels into { en: "...", es: "..." }
-    const transformedFacetLabels: Record<string, any> = {};
+    const transformedAggregations: Record<
+      string,
+      Record<string, string[]>
+    > = {};
+    const transformedFacetLabels: Record<string, Record<string, string>> = {};
 
-    // Helper to extract label from the new label aggregations
     const getLabelFromAgg = (aggName: string, fallback: string): string => {
       const agg = data.aggregations?.[
         aggName
       ] as AggregationsStringTermsAggregate;
-      // Safely access the first bucket of the terms aggregation
       const bucket = Array.isArray(agg?.buckets) ? agg.buckets[0] : null;
-      // Return the key from ES if found, otherwise fallback to config name
       return bucket?.key ? String(bucket.key) : fallback;
     };
 
@@ -264,13 +234,10 @@ export class SearchService {
       const key = f.facet;
       const configNameEn = f.name;
 
-      // Fetch English Label from ES 'taxonomy_names', fallback to config
       const labelEn = getLabelFromAgg(`label_${key}_en`, configNameEn);
-      // Fetch Localized Label from ES 'taxonomy_names', fallback to English Label
-      let labelLocale = labelEn; // Default to English if no specific locale agg needed
+      let labelLocale = labelEn;
 
       if (locale !== 'en') {
-        // Try to get the specific locale label from ES, fallback to English label
         labelLocale = getLabelFromAgg(`label_${key}_${locale}`, labelEn);
       }
 
@@ -279,8 +246,6 @@ export class SearchService {
         [locale]: labelLocale,
       };
 
-      // --- Handle Aggregations (Values) ---
-      // Helper to extract bucket keys
       const getKeys = (aggName: string): string[] => {
         const agg = data.aggregations?.[aggName] as
           | AggregationsStringTermsAggregate
@@ -288,15 +253,14 @@ export class SearchService {
         const buckets = agg?.buckets;
         if (!buckets) return [];
         if (Array.isArray(buckets)) {
-          return buckets.map((b) => (b as any).key as string);
+          return buckets.map((b) => String(b.key));
         }
-        // Handle object-shaped buckets (non-array form)
-        return Object.values(buckets as Record<string, any>).map(
-          (b) => b.key as string,
-        );
+        return Object.values(
+          buckets as Record<string, AggregationsStringTermsBucketKeys>,
+        ).map((b) => String(b.key));
       };
 
-      const aggPayload: any = {};
+      const aggPayload: Record<string, string[]> = {};
 
       if (locale === 'en') {
         const enValues = getKeys(key);
@@ -311,7 +275,6 @@ export class SearchService {
         }
       }
 
-      // Only add to aggregations if we have data
       if (Object.keys(aggPayload).length > 0) {
         transformedAggregations[key] = aggPayload;
       }
@@ -319,7 +282,7 @@ export class SearchService {
 
     return {
       search: data,
-      facets: transformedFacetLabels, // Contains labels from taxonomy_names
+      facets: transformedFacetLabels,
       facets_values: transformedAggregations,
     };
   }
@@ -356,8 +319,8 @@ export class SearchService {
 
   private getQueryObject(
     queryType: QueryType,
-    query: any,
-    filters: any[],
+    query: string | string[],
+    filters: QueryDslQueryContainer[],
     customAttributeFields: string[],
   ): Partial<SearchRequest> {
     const baseBool = { filter: filters };
@@ -388,7 +351,7 @@ export class SearchService {
                       multi_match: {
                         analyzer: 'standard',
                         operator: 'AND',
-                        fields: SearchService.nestedFieldsToQuery,
+                        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
                         query,
                       },
                     },
@@ -406,10 +369,9 @@ export class SearchService {
             bool: {
               ...baseBool,
               must: {
-                // Changed from 'term' to 'match' for text fields, or use .keyword for term
                 match: {
                   [SearchService.ES_FIELDS.ORG_NAME]: {
-                    query: query,
+                    query: query as string,
                     operator: 'AND',
                   },
                 },
@@ -488,8 +450,6 @@ export class SearchService {
     }
   }
 
-  // Build facet aggregations for tenant facets. For non-en locales also add an
-  // English aggregation reading from `facets_en`.
   private buildFacetAggregations(
     tenantFacets: { facet: string; name: string }[],
     locale: string,
@@ -499,7 +459,6 @@ export class SearchService {
     tenantFacets.forEach((f) => {
       const key = f.facet;
 
-      // 1. Values Aggregation (Existing logic)
       aggregations[key] = {
         terms: {
           field: `${SearchService.ES_FIELDS.FACETS_PREFIX}${key}.keyword`,
@@ -516,15 +475,12 @@ export class SearchService {
         };
       }
 
-      // 2. Labels Aggregation (New logic)
-      // Fetch the label name from the document's taxonomy_names field
-      // e.g., taxonomy_names.payment.en
       const labelFieldBase = `${SearchService.ES_FIELDS.TAXONOMY_NAMES_PREFIX}${key}`;
 
       aggregations[`label_${key}_en`] = {
         terms: {
           field: `${labelFieldBase}.en.keyword`,
-          size: 1, // We only need the top (unique) label
+          size: 1,
         },
       };
 
@@ -541,11 +497,10 @@ export class SearchService {
     return aggregations;
   }
 
-  // Normalize a single document's facets into the bilingual shape.
   private normalizeDocFacets(
-    source: any,
+    source: ResourceDocument,
     locale: string,
-  ): Record<string, string[]> | Record<string, Record<string, string[]>> {
+  ): Record<string, Record<string, string[]>> {
     const localized = source?.facets || {};
     const en = source?.facets_en || {};
 
@@ -554,21 +509,18 @@ export class SearchService {
       ...Object.keys(en || {}),
     ]);
 
-    const out: Record<string, any> = {};
+    const out: Record<string, Record<string, string[]>> = {};
 
     keys.forEach((k) => {
       const locVal = localized[k];
       const enVal = en[k];
 
-      // Helper to ensure array type
-      const toArray = (v: any): string[] => {
+      const toArray = (v: string | string[] | null | undefined): string[] => {
         if (v == null) return [];
         return Array.isArray(v) ? v.map(String) : [String(v)];
       };
 
       if (locale === 'en') {
-        // For English queries, return values under `en` only. Prefer localized
-        // (which in an English index contains English) and fall back to facets_en.
         const vals = locVal ? toArray(locVal) : enVal ? toArray(enVal) : [];
 
         if (vals.length > 0) {
@@ -577,12 +529,10 @@ export class SearchService {
       } else {
         const entry: Record<string, string[]> = {};
 
-        // Add English if exists
         if (enVal) {
           const arr = toArray(enVal);
           if (arr.length > 0) entry.en = arr;
         }
-        // Add Localized if exists
         if (locVal) {
           const arr = toArray(locVal);
           if (arr.length > 0) entry[locale] = arr;
@@ -597,9 +547,8 @@ export class SearchService {
     return out;
   }
 
-  // Helper method to validate complex queries before processing
-  private validateComplexQuery(query: any): void {
-    const validateNode = (node: any, depth = 1) => {
+  private validateComplexQuery(query: ComplexQuery): void {
+    const validateNode = (node: string | ComplexQuery, depth = 1) => {
       if (depth > 5) {
         throw new Error(
           'Query nesting depth exceeds maximum allowed (5 levels)',
@@ -631,12 +580,11 @@ export class SearchService {
 
   private getComplexQueryObject(
     query: ComplexQuery,
-    filters: any[],
+    filters: QueryDslQueryContainer[],
   ): Partial<SearchRequest> {
-    // Parse the query if it's a string
     const parsedQuery = typeof query === 'string' ? JSON.parse(query) : query;
 
-    const buildTermQuery = (code: string) => ({
+    const buildTermQuery = (code: string): QueryDslQueryContainer => ({
       nested: {
         path: 'taxonomies',
         query: {
@@ -647,9 +595,14 @@ export class SearchService {
       },
     });
 
-    const processBoolQuery = (expression: any): any => {
-      // Handle OR conditions
-      if (Array.isArray(expression.OR)) {
+    const processBoolQuery = (
+      expression: string | ComplexQuery,
+    ): QueryDslQueryContainer => {
+      if (
+        typeof expression === 'object' &&
+        'OR' in expression &&
+        Array.isArray(expression.OR)
+      ) {
         return {
           bool: {
             should: expression.OR.map((item) => {
@@ -663,8 +616,11 @@ export class SearchService {
         };
       }
 
-      // Handle AND conditions
-      if (Array.isArray(expression.AND)) {
+      if (
+        typeof expression === 'object' &&
+        'AND' in expression &&
+        Array.isArray(expression.AND)
+      ) {
         return {
           bool: {
             must: expression.AND.map((item) => {
@@ -677,7 +633,6 @@ export class SearchService {
         };
       }
 
-      // Handle single string
       if (typeof expression === 'string') {
         return buildTermQuery(expression);
       }

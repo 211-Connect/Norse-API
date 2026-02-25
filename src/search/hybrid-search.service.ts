@@ -5,86 +5,43 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { SearchHit as EsSearchHit } from '@elastic/elasticsearch/lib/api/types';
+import {
+  SearchHit as EsSearchHit,
+  QueryDslQueryContainer,
+  QueryDslFunctionScoreContainer,
+  MsearchMultisearchBody,
+} from '@elastic/elasticsearch/lib/api/types';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
-import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import {
-  buildFilters,
-  haversineDistanceMiles,
-  parseLocationPoint,
-} from './search-query.utils';
+  SearchHit,
+  SearchResponse,
+  SearchSource,
+} from './dto/search-response.dto';
+import { SearchUtilsService } from './search-utils.service';
+import { FusedHit } from './types/fused-hit';
+import { EmbeddingResponse } from './types/embedding-response';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface FusedHit {
-  _id: string;
-  _index: string;
-  _source: SearchSource;
-  rrfScore: number;
-  /** Original BM25 score (if present) */
-  bm25Score?: number;
-  /** Original kNN score (if present) */
-  knnScore?: number;
-}
-
-interface EmbeddingResponse {
-  data: { embedding: number[]; index: number }[];
-  model: string;
-  usage: { prompt_tokens: number; total_tokens: number };
-}
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Fields queried in the BM25 general-intent multi_match (mirrors SearchService). */
-const FIELDS_TO_QUERY = [
-  'name',
-  'description',
-  'summary',
-  'service.name',
-  'service.alternate_name',
-  'service.description',
-  'service.summary',
-  'location.name',
-  'location.alternate_name',
-  'location.description',
-  'location.summary',
-  'organization.name',
-  'organization.alternate_name',
-  'organization.description',
-  'organization.summary',
-];
-
-const NESTED_FIELDS_TO_QUERY = ['taxonomies.name', 'taxonomies.description'];
-
-/** RRF fusion parameters */
 const RRF_RANK_CONSTANT = 60;
 const RRF_LEXICAL_WEIGHT = 1.0;
 const RRF_KNN_WEIGHT = 0.8;
 
-/** Candidate set sizes */
 const RETRIEVAL_SIZE = 100;
 const KNN_NUM_CANDIDATES = 400;
 const TAXONOMY_K = 5;
 const TAXONOMY_NUM_CANDIDATES = 100;
 
-/** Rerank bonus weights */
 const RERANK_NAME_EXACT = 50;
 const RERANK_NAME_PREFIX = 30;
-const RERANK_NAME_CONTAINS = 10;
-const RERANK_TAXONOMY_BASE = 20;
-const RERANK_GEO_MAX = 15;
+const RERANK_NAME_CONTAINS = 20;
+const RERANK_TAXONOMY_BASE = 50;
+const RERANK_GEO_MAX = 10;
 const RERANK_PINNED = 100;
 const RERANK_PRIORITY_FACTOR = 2;
 
-// ---------------------------------------------------------------------------
-// Service
-// ---------------------------------------------------------------------------
+const BM25_NAME_BOOST = 15;
+const BM25_TAXONOMY_BOOST = 10;
 
 @Injectable()
 export class HybridSearchService {
@@ -100,10 +57,6 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
   }
-
-  // =========================================================================
-  // Public entry point
-  // =========================================================================
 
   async searchHybrid(options: {
     headers: HeadersDto;
@@ -123,24 +76,20 @@ export class HybridSearchService {
       `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
     );
 
-    // Phase 1a: embed query
     const queryVector = await this.embedQuery(queryStr);
 
-    // Phase 1b: taxonomy code candidates
     const predictedCodes = await this.getTaxonomyCodes(queryVector, tenantId);
     this.logger.debug(`Predicted taxonomy codes: ${predictedCodes.join(', ')}`);
 
-    // Phase 2: build shared filter set (tenant + geo + facets)
-    const baseFilters = this.buildHybridFilters(
-      tenantId,
+    const baseFilters = SearchUtilsService.buildFilters(
       filters,
       coords,
       distance,
       geo_type,
       geometry,
     );
+    baseFilters.unshift({ term: { tenant_id: tenantId } });
 
-    // Phase 2: retrieve BM25 + kNN candidates via _msearch
     const { bm25Hits, knnHits } = await this.retrieveCandidates(
       index,
       queryStr,
@@ -151,10 +100,8 @@ export class HybridSearchService {
       distance,
     );
 
-    // Phase 3: client-side RRF fusion
     const fused = this.fuseRRF(bm25Hits, knnHits);
 
-    // Phase 4: lightweight rerank
     const reranked = this.rerank(
       fused,
       queryStr,
@@ -163,12 +110,10 @@ export class HybridSearchService {
       distance ?? 0,
     );
 
-    // Paginate
     const pageSize = limit || 25;
     const start = (page - 1) * pageSize;
     const pageHits = reranked.slice(start, start + pageSize);
 
-    // Build response in the same shape as the standard search
     const hits = pageHits.map((h) => ({
       _index: h._index,
       _id: h._id,
@@ -184,17 +129,13 @@ export class HybridSearchService {
         hits: {
           total: { value: reranked.length, relation: 'eq' },
           max_score: hits[0]?._score ?? null,
-          hits: hits as any,
+          hits: hits as SearchHit[],
         },
       },
       facets: {},
       facets_values: {},
     };
   }
-
-  // =========================================================================
-  // Phase 1a: embed query
-  // =========================================================================
 
   async embedQuery(query: string): Promise<number[]> {
     this.logger.debug(
@@ -232,16 +173,15 @@ export class HybridSearchService {
     }
   }
 
-  // =========================================================================
-  // Phase 1b: taxonomy code candidates
-  // =========================================================================
-
   private async getTaxonomyCodes(
     queryVector: number[],
     tenantId: string,
   ): Promise<string[]> {
     try {
-      const result = await this.elasticsearchService.search({
+      const result = await this.elasticsearchService.search<{
+        code: string;
+        name: string;
+      }>({
         index: 'hybrid_taxonomies',
         size: TAXONOMY_K,
         track_total_hits: false,
@@ -255,11 +195,9 @@ export class HybridSearchService {
         },
       });
 
-      return (
-        result.hits.hits
-          .map((h: any) => h._source?.code as string)
-          .filter(Boolean) ?? []
-      );
+      return result.hits.hits
+        .map((h) => h._source?.code)
+        .filter((code): code is string => Boolean(code));
     } catch (error) {
       this.logger.warn(
         `Taxonomy code lookup failed, continuing without boost: ${error.message}`,
@@ -268,55 +206,29 @@ export class HybridSearchService {
     }
   }
 
-  // =========================================================================
-  // Phase 2: hybrid retrieval via _msearch
-  // =========================================================================
-
-  private buildHybridFilters(
-    tenantId: string,
-    facets: Record<string, any>,
-    coords: number[] | undefined,
-    distance: number,
-    geoType: string | undefined,
-    geometry: any,
-  ): any[] {
-    // Shared filters from the utility (geo + facets)
-    const filters = buildFilters(facets, coords, distance, geoType, geometry);
-
-    // Always prepend tenant_id filter (hybrid indices are multi-tenant)
-    filters.unshift({ term: { tenant_id: tenantId } });
-
-    return filters;
-  }
-
-  /**
-   * Build the BM25 (lexical) query body with function_score for pinned,
-   * priority, geo decay, name booster pack, and taxonomy boost.
-   */
   private buildBM25Body(
     query: string,
     predictedCodes: string[],
-    filters: any[],
+    filters: QueryDslQueryContainer[],
     coords: number[] | undefined,
     distance: number,
-  ): Record<string, any> {
+  ): MsearchMultisearchBody {
     const queryLower = query.toLowerCase();
+    this.logger.debug('BM25 query body', JSON.stringify({ filters }, null, 2));
 
-    // Name booster pack (top-level name.* only)
-    const nameShould: any[] = [
-      { term: { 'name.lc': { value: queryLower, boost: 15 } } },
-      { prefix: { 'name.lc': { value: queryLower, boost: 10 } } },
-      { match: { 'name.edge': { query, boost: 8 } } },
-      { match_phrase: { name: { query, boost: 12 } } },
+    const nameShould: QueryDslQueryContainer[] = [
+      { term: { 'name.lc': { value: queryLower, boost: BM25_NAME_BOOST } } },
+      { prefix: { 'name.lc': { value: queryLower, boost: BM25_NAME_BOOST } } },
+      { match: { 'name.edge': { query, boost: BM25_NAME_BOOST } } },
+      { match_phrase: { name: { query, boost: BM25_NAME_BOOST } } },
     ];
 
-    // General intent multi_match (same fields as standard keyword search)
-    const intentShould: any[] = [
+    const intentShould: QueryDslQueryContainer[] = [
       {
         multi_match: {
-          analyzer: 'standard',
-          operator: 'AND',
-          fields: FIELDS_TO_QUERY,
+          operator: 'or',
+          minimum_should_match: '2<75%',
+          fields: SearchUtilsService.FIELDS_TO_QUERY,
           query,
         },
       },
@@ -326,8 +238,9 @@ export class HybridSearchService {
           query: {
             multi_match: {
               analyzer: 'standard',
-              operator: 'AND',
-              fields: NESTED_FIELDS_TO_QUERY,
+              operator: 'or',
+              minimum_should_match: '2<75%',
+              fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
               query,
             },
           },
@@ -335,8 +248,7 @@ export class HybridSearchService {
       },
     ];
 
-    // Taxonomy code boost (only if we have predictions)
-    const taxonomyShould: any[] =
+    const taxonomyShould: QueryDslQueryContainer[] =
       predictedCodes.length > 0
         ? [
             {
@@ -346,7 +258,7 @@ export class HybridSearchService {
                   terms: { 'taxonomies.code': predictedCodes },
                 },
                 score_mode: 'max',
-                boost: 6,
+                boost: BM25_TAXONOMY_BOOST,
               },
             },
           ]
@@ -354,8 +266,7 @@ export class HybridSearchService {
 
     const should = [...nameShould, ...intentShould, ...taxonomyShould];
 
-    // function_score functions
-    const functions: any[] = [
+    const functions: QueryDslFunctionScoreContainer[] = [
       { filter: { term: { pinned: true } }, weight: 2.0 },
       {
         field_value_factor: {
@@ -367,7 +278,6 @@ export class HybridSearchService {
       },
     ];
 
-    // Geo distance decay (optional)
     if (coords) {
       const [lon, lat] = coords;
       const scale = distance > 0 ? `${distance}mi` : '5mi';
@@ -405,13 +315,11 @@ export class HybridSearchService {
     };
   }
 
-  /**
-   * Build the kNN query body.
-   */
   private buildKnnBody(
     queryVector: number[],
-    filters: any[],
-  ): Record<string, any> {
+    filters: QueryDslQueryContainer[],
+  ): MsearchMultisearchBody {
+    this.logger.debug('kNN query body', JSON.stringify({ filters }, null, 2));
     return {
       size: RETRIEVAL_SIZE,
       track_total_hits: false,
@@ -426,15 +334,12 @@ export class HybridSearchService {
     };
   }
 
-  /**
-   * Execute BM25 + kNN retrieval in a single _msearch call.
-   */
   private async retrieveCandidates(
     index: string,
     query: string,
     queryVector: number[],
     predictedCodes: string[],
-    filters: any[],
+    filters: QueryDslQueryContainer[],
     coords: number[] | undefined,
     distance: number,
   ): Promise<{
@@ -449,6 +354,8 @@ export class HybridSearchService {
       distance,
     );
     const knnBody = this.buildKnnBody(queryVector, filters);
+
+    this.logger.debug('BM25 body', JSON.stringify(bm25Body, null, 2));
 
     const result = await this.elasticsearchService.msearch<SearchSource>({
       searches: [{ index }, bm25Body, { index }, knnBody],
@@ -467,7 +374,6 @@ export class HybridSearchService {
         ? (knnResp.hits.hits as EsSearchHit<SearchSource>[])
         : [];
 
-    // Log errors from individual responses if any
     if ('error' in bm25Resp) {
       this.logger.error(
         `BM25 msearch error: ${JSON.stringify(bm25Resp.error)}`,
@@ -484,17 +390,12 @@ export class HybridSearchService {
     return { bm25Hits, knnHits };
   }
 
-  // =========================================================================
-  // Phase 3: client-side RRF fusion
-  // =========================================================================
-
   fuseRRF(
     bm25Hits: EsSearchHit<SearchSource>[],
     knnHits: EsSearchHit<SearchSource>[],
   ): FusedHit[] {
     const map = new Map<string, FusedHit>();
 
-    // Process BM25 hits
     bm25Hits.forEach((hit, idx) => {
       const id = hit._id!;
       const rank = idx + 1;
@@ -509,7 +410,6 @@ export class HybridSearchService {
       });
     });
 
-    // Process kNN hits
     knnHits.forEach((hit, idx) => {
       const id = hit._id!;
       const rank = idx + 1;
@@ -530,15 +430,10 @@ export class HybridSearchService {
       }
     });
 
-    // Sort by RRF score descending and take top RETRIEVAL_SIZE
     return Array.from(map.values())
       .sort((a, b) => b.rrfScore - a.rrfScore)
       .slice(0, RETRIEVAL_SIZE);
   }
-
-  // =========================================================================
-  // Phase 4: deterministic reranking
-  // =========================================================================
 
   rerank(
     candidates: FusedHit[],
@@ -554,17 +449,20 @@ export class HybridSearchService {
         let bonus = 0;
         const src = hit._source;
 
-        // 1. Name strength
         const nameLower = (src.name ?? '').toLowerCase();
         if (nameLower === queryLower) {
           bonus += RERANK_NAME_EXACT;
-        } else if (nameLower.startsWith(queryLower)) {
-          bonus += RERANK_NAME_PREFIX;
-        } else if (nameLower.includes(queryLower)) {
-          bonus += RERANK_NAME_CONTAINS;
+        } else {
+          const queryWords = queryLower.split(/\s+/).filter(Boolean);
+          for (const word of queryWords) {
+            if (nameLower.startsWith(word)) {
+              bonus += RERANK_NAME_PREFIX;
+            } else if (nameLower.includes(word)) {
+              bonus += RERANK_NAME_CONTAINS;
+            }
+          }
         }
 
-        // 2. Taxonomy match (decreasing bonus by prediction rank)
         if (src.taxonomies?.length && predictedCodes.length) {
           const docCodes = new Set(src.taxonomies.map((t) => t.code));
           for (let i = 0; i < predictedCodes.length; i++) {
@@ -574,26 +472,33 @@ export class HybridSearchService {
           }
         }
 
-        // 3. Geo distance bonus
         if (coords) {
-          const point = parseLocationPoint(src.location?.point);
+          const point = SearchUtilsService.parseLocationPoint(
+            src.location?.point,
+          );
           if (point) {
-            const d = haversineDistanceMiles(
+            const d = SearchUtilsService.haversineDistanceMiles(
               coords[1],
               coords[0],
               point.lat,
               point.lon,
             );
             const maxDist = distance > 0 ? distance : 50;
-            // Closer => higher bonus (linear decay, capped)
             const geoBonus = Math.max(0, RERANK_GEO_MAX * (1 - d / maxDist));
             bonus += geoBonus;
           }
         }
 
-        // 4. Business rules
         if (src.pinned) bonus += RERANK_PINNED;
         if (src.priority) bonus += src.priority * RERANK_PRIORITY_FACTOR;
+
+        this.logger.debug(
+          `Rerank bonus for ${src.service_at_location_id}: ${bonus.toFixed(2)} (name: ${nameLower}, predictedCodes: ${predictedCodes.join(
+            ',',
+          )}, docCodes: ${src.taxonomies
+            ?.map((t) => t.code)
+            .join(',')}, distanceBonus: ${coords ? bonus.toFixed(2) : 'N/A'})`,
+        );
 
         return {
           ...hit,
@@ -603,13 +508,8 @@ export class HybridSearchService {
       .sort((a, b) => b.rrfScore - a.rrfScore);
   }
 
-  // =========================================================================
-  // Helpers
-  // =========================================================================
-
   /**
-   * Sanitize an accept-language value into a safe index suffix.
-   * Mirrors the logic in src/common/lib/utils.ts getIndexName — but only
+   * Mirrors the logic in src/common/lib/utils.ts getIndexName but only
    * returns the language portion since hybrid indices are not tenant-prefixed.
    */
   private sanitizeLang(lang: string): string {
