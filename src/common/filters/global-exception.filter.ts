@@ -10,6 +10,19 @@ import {
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
+  private readonly securityLogger = new Logger('SecurityMonitor');
+
+  private detectSuspiciousPatterns(url: string): boolean {
+    const suspiciousPatterns = [
+      /(\bSELECT\b|\bUNION\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b)/i,
+      /(\bCAST\b.*\bAS\b|\bEXEC\b|\bEXECUTE\b)/i,
+      /(--|\/\*|\*\/|;)/,
+      /(\bOR\b.*=.*|\bAND\b.*=.*)/i,
+      /(\|\|.*\(.*\))/,
+    ];
+
+    return suspiciousPatterns.some((pattern) => pattern.test(url));
+  }
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -25,6 +38,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
       exception instanceof HttpException
         ? ((exception.getResponse() as any)?.message ?? exception.message)
         : 'Internal server error';
+
+    const url = req?.originalUrl || '';
+    if (this.detectSuspiciousPatterns(url)) {
+      this.securityLogger.warn(
+        `Potential injection attempt detected: ${req?.method} ${req?.ip || 'unknown IP'} - Status: ${status}`,
+        {
+          tenant: req?.tenantId,
+          method: req?.method,
+          userAgent: req?.headers?.['user-agent'],
+          urlLength: url.length,
+        },
+      );
+    }
 
     if (status >= 500) {
       this.logger.error(

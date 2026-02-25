@@ -312,9 +312,10 @@ export class SearchService {
       case 'more_like_this':
         return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
       default:
-        throw new NotImplementedException(
-          `Query type "${queryType}" not supported for query "${query}"`,
+        this.logger.warn(
+          `Rejected invalid query_type (possible injection attempt): ${queryType}`,
         );
+        throw new BadRequestException('Invalid query type specified');
     }
   }
 
