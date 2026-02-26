@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import {
+  AggregationsStringTermsAggregate,
   SearchHit as EsSearchHit,
   QueryDslQueryContainer,
   QueryDslFunctionScoreContainer,
@@ -20,8 +21,14 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { SearchUtilsService } from './search-utils.service';
-import { FusedHit } from './types/fused-hit';
-import { EmbeddingResponse } from './types/embedding-response';
+import {
+  FusedHit,
+  EmbeddingResponse,
+  Aggregations,
+  RetrievalResult,
+  ShardsInfo,
+} from './types';
+import { TenantConfigService } from '../cms-config/tenant-config.service';
 
 const RRF_RANK_CONSTANT = 60;
 const RRF_LEXICAL_WEIGHT = 1.0;
@@ -51,6 +58,7 @@ export class HybridSearchService {
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly configService: ConfigService,
+    private readonly tenantConfigService: TenantConfigService,
   ) {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
@@ -75,7 +83,10 @@ export class HybridSearchService {
       `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
     );
 
-    const queryVector = await this.embedQuery(queryStr);
+    const [queryVector, tenantFacets] = await Promise.all([
+      this.embedQuery(queryStr),
+      this.tenantConfigService.getFacets(tenantId),
+    ]);
 
     const predictedCodes = await this.getTaxonomyCodes(queryVector, tenantId);
     this.logger.debug(`Predicted taxonomy codes: ${predictedCodes.join(', ')}`);
@@ -89,7 +100,9 @@ export class HybridSearchService {
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
-    const { bm25Hits, knnHits } = await this.retrieveCandidates(
+    const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
+
+    const { bm25Hits, knnHits, metadata } = await this.retrieveCandidates(
       index,
       queryStr,
       queryVector,
@@ -97,6 +110,7 @@ export class HybridSearchService {
       baseFilters,
       coords,
       distance,
+      aggs,
     );
 
     const fused = this.fuseRRF(bm25Hits, knnHits);
@@ -113,26 +127,38 @@ export class HybridSearchService {
     const start = (page - 1) * pageSize;
     const pageHits = reranked.slice(start, start + pageSize);
 
-    const hits = pageHits.map((h) => ({
-      _index: h._index,
-      _id: h._id,
-      _score: h.rrfScore,
-      _source: h._source,
-    }));
+    const hits: SearchHit[] = pageHits.map((h) => {
+      const normalizedFacets = SearchUtilsService.normalizeDocFacets(
+        h._source,
+        lang,
+      );
+      return {
+        _index: h._index,
+        _id: h._id,
+        _score: h.rrfScore,
+        _source: { ...h._source, facets: normalizedFacets },
+      };
+    });
+
+    const { facets, facetsValues } = SearchUtilsService.transformAggregations(
+      tenantFacets,
+      metadata.aggregations,
+      lang,
+    );
 
     return {
       search: {
-        took: 0, // placeholder — combined latency is not tracked
-        timed_out: false,
-        _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+        took: metadata.took,
+        timed_out: metadata.timedOut,
+        _shards: metadata.shards,
         hits: {
           total: { value: reranked.length, relation: 'eq' },
           max_score: hits[0]?._score ?? null,
-          hits: hits as SearchHit[],
+          hits,
         },
       },
-      facets: {},
-      facets_values: {},
+      facets,
+      facets_values: facetsValues,
     };
   }
 
@@ -211,6 +237,7 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[],
     coords: number[] | undefined,
     distance: number,
+    aggs: Aggregations,
   ): MsearchMultisearchBody {
     const queryLower = query.toLowerCase();
     this.logger.debug('BM25 query body', JSON.stringify({ filters }, null, 2));
@@ -297,6 +324,7 @@ export class HybridSearchService {
       size: RETRIEVAL_SIZE,
       track_total_hits: false,
       _source: { excludes: ['embedding', 'service_area'] },
+      aggs,
       query: {
         function_score: {
           query: {
@@ -341,16 +369,15 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[],
     coords: number[] | undefined,
     distance: number,
-  ): Promise<{
-    bm25Hits: EsSearchHit<SearchSource>[];
-    knnHits: EsSearchHit<SearchSource>[];
-  }> {
+    aggs: Aggregations,
+  ): Promise<RetrievalResult> {
     const bm25Body = this.buildBM25Body(
       query,
       predictedCodes,
       filters,
       coords,
       distance,
+      aggs,
     );
     const knnBody = this.buildKnnBody(queryVector, filters);
 
@@ -386,7 +413,49 @@ export class HybridSearchService {
       `Retrieved ${bm25Hits.length} BM25 hits, ${knnHits.length} kNN hits`,
     );
 
-    return { bm25Hits, knnHits };
+    const DEFAULT_SHARDS: ShardsInfo = {
+      total: 0,
+      successful: 0,
+      skipped: 0,
+      failed: 0,
+    };
+
+    const extractShards = (resp: typeof bm25Resp): ShardsInfo =>
+      'hits' in resp && resp._shards
+        ? {
+            total: resp._shards.total,
+            successful: resp._shards.successful,
+            skipped: resp._shards.skipped ?? 0,
+            failed: resp._shards.failed,
+          }
+        : DEFAULT_SHARDS;
+
+    const shards = SearchUtilsService.mergeShardsInfo(
+      extractShards(bm25Resp),
+      extractShards(knnResp),
+    );
+
+    const took = Math.max(
+      'hits' in bm25Resp ? (bm25Resp.took ?? 0) : 0,
+      'hits' in knnResp ? (knnResp.took ?? 0) : 0,
+    );
+
+    const timedOut =
+      ('hits' in bm25Resp && bm25Resp.timed_out === true) ||
+      ('hits' in knnResp && knnResp.timed_out === true);
+
+    const aggregations =
+      'hits' in bm25Resp
+        ? (bm25Resp.aggregations as
+            | Record<string, AggregationsStringTermsAggregate>
+            | undefined)
+        : undefined;
+
+    return {
+      bm25Hits,
+      knnHits,
+      metadata: { took, timedOut, shards, aggregations },
+    };
   }
 
   fuseRRF(

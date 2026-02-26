@@ -9,9 +9,6 @@ import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
-  AggregationsAggregationContainer,
-  AggregationsStringTermsAggregate,
-  AggregationsStringTermsBucketKeys,
   QueryDslQueryContainer,
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
@@ -25,19 +22,10 @@ import { HybridSearchService } from './hybrid-search.service';
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
 
-type Aggregations = Record<string, AggregationsAggregationContainer>;
-
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
   AND?: (string | ComplexQuery)[];
 }
-
-interface ResourceDocument {
-  facets?: Record<string, string | string[]>;
-  facets_en?: Record<string, string | string[]>;
-}
-
-const FACETS_LIMIT = 100;
 
 @Injectable()
 export class SearchService {
@@ -47,9 +35,6 @@ export class SearchService {
     TAXONOMY_RAW: 'taxonomies.code.raw',
     ORG_NAME: 'organization.name',
     ORG_NAME_KEYWORD: 'organization.name.keyword',
-    FACETS_PREFIX: 'facets.',
-    FACETS_EN_PREFIX: 'facets_en.',
-    TAXONOMY_NAMES_PREFIX: 'taxonomy_names.',
   };
 
   constructor(
@@ -144,7 +129,10 @@ export class SearchService {
       `Found ${searchableCustomAttributeFields.length} searchable custom attribute fields`,
     );
 
-    const aggregations = this.buildFacetAggregations(tenantFacets, locale);
+    const aggregations = SearchUtilsService.buildFacetAggregations(
+      tenantFacets,
+      locale,
+    );
 
     const queryFilters = SearchUtilsService.buildFilters(
       filters,
@@ -207,83 +195,41 @@ export class SearchService {
     if (data.hits?.hits) {
       data.hits.hits = data.hits.hits.map((hit) => {
         if (hit._source) {
-          const src = hit._source as unknown as ResourceDocument;
-          const normalizedFacets = this.normalizeDocFacets(src, locale);
-          (hit._source as unknown as Record<string, unknown>).facets =
-            normalizedFacets;
+          const normalizedFacets = SearchUtilsService.normalizeDocFacets(
+            hit._source,
+            locale,
+          );
+          hit._source = { ...hit._source, facets: normalizedFacets };
         }
         return hit;
       });
     }
 
-    const transformedAggregations: Record<
-      string,
-      Record<string, string[]>
-    > = {};
-    const transformedFacetLabels: Record<string, Record<string, string>> = {};
-
-    const getLabelFromAgg = (aggName: string, fallback: string): string => {
-      const agg = data.aggregations?.[
-        aggName
-      ] as AggregationsStringTermsAggregate;
-      const bucket = Array.isArray(agg?.buckets) ? agg.buckets[0] : null;
-      return bucket?.key ? String(bucket.key) : fallback;
-    };
-
-    for (const f of tenantFacets) {
-      const key = f.facet;
-      const configNameEn = f.name;
-
-      const labelEn = getLabelFromAgg(`label_${key}_en`, configNameEn);
-      let labelLocale = labelEn;
-
-      if (locale !== 'en') {
-        labelLocale = getLabelFromAgg(`label_${key}_${locale}`, labelEn);
-      }
-
-      transformedFacetLabels[key] = {
-        en: labelEn,
-        [locale]: labelLocale,
-      };
-
-      const getKeys = (aggName: string): string[] => {
-        const agg = data.aggregations?.[aggName] as
-          | AggregationsStringTermsAggregate
-          | undefined;
-        const buckets = agg?.buckets;
-        if (!buckets) return [];
-        if (Array.isArray(buckets)) {
-          return buckets.map((b) => String(b.key));
-        }
-        return Object.values(
-          buckets as Record<string, AggregationsStringTermsBucketKeys>,
-        ).map((b) => String(b.key));
-      };
-
-      const aggPayload: Record<string, string[]> = {};
-
-      if (locale === 'en') {
-        const enValues = getKeys(key);
-        if (enValues.length > 0) aggPayload.en = enValues;
-      } else {
-        const localeValues = getKeys(key);
-        const enValues = getKeys(`${key}_en`);
-
-        if (localeValues.length > 0 || enValues.length > 0) {
-          aggPayload.en = enValues;
-          aggPayload[locale] = localeValues;
-        }
-      }
-
-      if (Object.keys(aggPayload).length > 0) {
-        transformedAggregations[key] = aggPayload;
-      }
-    }
+    const { facets, facetsValues } = SearchUtilsService.transformAggregations(
+      tenantFacets,
+      data.aggregations as
+        | Record<
+            string,
+            import('@elastic/elasticsearch/lib/api/types').AggregationsStringTermsAggregate
+          >
+        | undefined,
+      locale,
+    );
 
     return {
-      search: data,
-      facets: transformedFacetLabels,
-      facets_values: transformedAggregations,
+      search: {
+        took: data.took,
+        timed_out: data.timed_out,
+        _shards: {
+          total: data._shards.total,
+          successful: data._shards.successful,
+          skipped: data._shards.skipped ?? 0,
+          failed: data._shards.failed,
+        },
+        hits: data.hits,
+      },
+      facets,
+      facets_values: facetsValues,
     };
   }
 
@@ -448,103 +394,6 @@ export class SearchService {
           `Query for "${queryType}" not implemented`,
         );
     }
-  }
-
-  private buildFacetAggregations(
-    tenantFacets: { facet: string; name: string }[],
-    locale: string,
-  ): Aggregations {
-    const aggregations: Aggregations = {};
-
-    tenantFacets.forEach((f) => {
-      const key = f.facet;
-
-      aggregations[key] = {
-        terms: {
-          field: `${SearchService.ES_FIELDS.FACETS_PREFIX}${key}.keyword`,
-          size: FACETS_LIMIT,
-        },
-      };
-
-      if (locale !== 'en') {
-        aggregations[`${key}_en`] = {
-          terms: {
-            field: `${SearchService.ES_FIELDS.FACETS_EN_PREFIX}${key}.keyword`,
-            size: FACETS_LIMIT,
-          },
-        };
-      }
-
-      const labelFieldBase = `${SearchService.ES_FIELDS.TAXONOMY_NAMES_PREFIX}${key}`;
-
-      aggregations[`label_${key}_en`] = {
-        terms: {
-          field: `${labelFieldBase}.en.keyword`,
-          size: 1,
-        },
-      };
-
-      if (locale !== 'en') {
-        aggregations[`label_${key}_${locale}`] = {
-          terms: {
-            field: `${labelFieldBase}.${locale}.keyword`,
-            size: 1,
-          },
-        };
-      }
-    });
-
-    return aggregations;
-  }
-
-  private normalizeDocFacets(
-    source: ResourceDocument,
-    locale: string,
-  ): Record<string, Record<string, string[]>> {
-    const localized = source?.facets || {};
-    const en = source?.facets_en || {};
-
-    const keys = new Set<string>([
-      ...Object.keys(localized || {}),
-      ...Object.keys(en || {}),
-    ]);
-
-    const out: Record<string, Record<string, string[]>> = {};
-
-    keys.forEach((k) => {
-      const locVal = localized[k];
-      const enVal = en[k];
-
-      const toArray = (v: string | string[] | null | undefined): string[] => {
-        if (v == null) return [];
-        return Array.isArray(v) ? v.map(String) : [String(v)];
-      };
-
-      if (locale === 'en') {
-        const vals = locVal ? toArray(locVal) : enVal ? toArray(enVal) : [];
-
-        if (vals.length > 0) {
-          out[k] = { en: vals };
-        }
-      } else {
-        const entry: Record<string, string[]> = {};
-
-        if (enVal) {
-          const arr = toArray(enVal);
-          if (arr.length > 0) entry.en = arr;
-        }
-        if (locVal) {
-          const arr = toArray(locVal);
-          if (arr.length > 0) entry[locale] = arr;
-        }
-
-        if (Object.keys(entry).length > 0) {
-          out[k] = entry;
-        }
-      }
-    });
-
-    return out;
   }
 
   private validateComplexQuery(query: ComplexQuery): void {

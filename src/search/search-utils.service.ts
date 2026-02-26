@@ -1,10 +1,19 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  AggregationsStringTermsAggregate,
+  AggregationsStringTermsBucketKeys,
   QueryDslQueryContainer,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchBodyDto } from './dto/search-body.dto';
-import { LocationPointInput } from './types';
+import { DocumentFacets, SearchFacets } from './dto/search-response.dto';
+import {
+  Aggregations,
+  LocationPointInput,
+  RawResourceDocument,
+  ShardsInfo,
+} from './types';
+import { FacetConfig } from '../cms-config/types';
 
 export class SearchUtilsService {
   static readonly FIELDS_TO_QUERY: string[] = [
@@ -31,6 +40,9 @@ export class SearchUtilsService {
   ];
 
   private static readonly FACETS_FIELD_PREFIX = 'facets.';
+  private static readonly FACETS_EN_FIELD_PREFIX = 'facets_en.';
+  private static readonly TAXONOMY_NAMES_PREFIX = 'taxonomy_names.';
+  private static readonly FACETS_LIMIT = 100;
 
   static buildFilters(
     facets: Record<string, string | string[]>,
@@ -193,5 +205,201 @@ export class SearchUtilsService {
     }
 
     return null;
+  }
+
+  static buildFacetAggregations(
+    tenantFacets: FacetConfig[],
+    locale: string,
+  ): Aggregations {
+    const aggregations: Aggregations = {};
+
+    for (const f of tenantFacets) {
+      const key = f.facet;
+
+      aggregations[key] = {
+        terms: {
+          field: `${SearchUtilsService.FACETS_FIELD_PREFIX}${key}.keyword`,
+          size: SearchUtilsService.FACETS_LIMIT,
+        },
+      };
+
+      if (locale !== 'en') {
+        aggregations[`${key}_en`] = {
+          terms: {
+            field: `${SearchUtilsService.FACETS_EN_FIELD_PREFIX}${key}.keyword`,
+            size: SearchUtilsService.FACETS_LIMIT,
+          },
+        };
+      }
+
+      const labelFieldBase = `${SearchUtilsService.TAXONOMY_NAMES_PREFIX}${key}`;
+
+      aggregations[`label_${key}_en`] = {
+        terms: {
+          field: `${labelFieldBase}.en.keyword`,
+          size: 1,
+        },
+      };
+
+      if (locale !== 'en') {
+        aggregations[`label_${key}_${locale}`] = {
+          terms: {
+            field: `${labelFieldBase}.${locale}.keyword`,
+            size: 1,
+          },
+        };
+      }
+    }
+
+    return aggregations;
+  }
+
+  static normalizeDocFacets(
+    source: RawResourceDocument,
+    locale: string,
+  ): DocumentFacets {
+    const rawFacets = source?.facets ?? {};
+    const en = source?.facets_en ?? {};
+
+    const localized: Record<string, string | string[]> = {};
+    for (const [k, v] of Object.entries(rawFacets)) {
+      if (typeof v === 'string' || Array.isArray(v)) {
+        localized[k] = v;
+      }
+    }
+
+    const keys = new Set<string>([
+      ...Object.keys(localized),
+      ...Object.keys(en),
+    ]);
+
+    const out: DocumentFacets = {};
+
+    const toArray = (v: string | string[] | null | undefined): string[] => {
+      if (v == null) return [];
+      return Array.isArray(v) ? v.map(String) : [String(v)];
+    };
+
+    for (const k of keys) {
+      const locVal = localized[k];
+      const enVal = en[k];
+
+      if (locale === 'en') {
+        const vals = locVal ? toArray(locVal) : enVal ? toArray(enVal) : [];
+        if (vals.length > 0) {
+          out[k] = { en: vals };
+        }
+      } else {
+        const entry: Record<string, string[]> = {};
+        if (enVal) {
+          const arr = toArray(enVal);
+          if (arr.length > 0) entry.en = arr;
+        }
+        if (locVal) {
+          const arr = toArray(locVal);
+          if (arr.length > 0) entry[locale] = arr;
+        }
+        if (Object.keys(entry).length > 0) {
+          out[k] = entry;
+        }
+      }
+    }
+
+    return out;
+  }
+
+  static transformAggregations(
+    tenantFacets: FacetConfig[],
+    aggregations: Record<string, AggregationsStringTermsAggregate> | undefined,
+    locale: string,
+  ): { facets: SearchFacets; facetsValues: DocumentFacets } {
+    const facets: SearchFacets = {};
+    const facetsValues: DocumentFacets = {};
+
+    for (const f of tenantFacets) {
+      const key = f.facet;
+      const configNameEn = f.name;
+
+      const labelEn = SearchUtilsService.getLabelFromAgg(
+        aggregations,
+        `label_${key}_en`,
+        configNameEn,
+      );
+      let labelLocale = labelEn;
+
+      if (locale !== 'en') {
+        labelLocale = SearchUtilsService.getLabelFromAgg(
+          aggregations,
+          `label_${key}_${locale}`,
+          labelEn,
+        );
+      }
+
+      facets[key] = {
+        en: labelEn,
+        [locale]: labelLocale,
+      };
+
+      const aggPayload: Record<string, string[]> = {};
+
+      if (locale === 'en') {
+        const enValues = SearchUtilsService.getBucketKeys(aggregations, key);
+        if (enValues.length > 0) aggPayload.en = enValues;
+      } else {
+        const localeValues = SearchUtilsService.getBucketKeys(
+          aggregations,
+          key,
+        );
+        const enValues = SearchUtilsService.getBucketKeys(
+          aggregations,
+          `${key}_en`,
+        );
+
+        if (localeValues.length > 0 || enValues.length > 0) {
+          aggPayload.en = enValues;
+          aggPayload[locale] = localeValues;
+        }
+      }
+
+      if (Object.keys(aggPayload).length > 0) {
+        facetsValues[key] = aggPayload;
+      }
+    }
+
+    return { facets, facetsValues };
+  }
+
+  static mergeShardsInfo(a: ShardsInfo, b: ShardsInfo): ShardsInfo {
+    return {
+      total: a.total + b.total,
+      successful: a.successful + b.successful,
+      skipped: a.skipped + b.skipped,
+      failed: a.failed + b.failed,
+    };
+  }
+
+  private static getLabelFromAgg(
+    aggregations: Record<string, AggregationsStringTermsAggregate> | undefined,
+    aggName: string,
+    fallback: string,
+  ): string {
+    const agg = aggregations?.[aggName];
+    const bucket = Array.isArray(agg?.buckets) ? agg.buckets[0] : null;
+    return bucket?.key ? String(bucket.key) : fallback;
+  }
+
+  private static getBucketKeys(
+    aggregations: Record<string, AggregationsStringTermsAggregate> | undefined,
+    aggName: string,
+  ): string[] {
+    const agg = aggregations?.[aggName];
+    const buckets = agg?.buckets;
+    if (!buckets) return [];
+    if (Array.isArray(buckets)) {
+      return buckets.map((b) => String(b.key));
+    }
+    return Object.values(
+      buckets as Record<string, AggregationsStringTermsBucketKeys>,
+    ).map((b) => String(b.key));
   }
 }
