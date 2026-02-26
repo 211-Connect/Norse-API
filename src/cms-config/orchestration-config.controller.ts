@@ -27,7 +27,7 @@ export class OrchestrationConfigController {
     content: {
       'text/csv': {
         example:
-          'source_column,link_entity,label,origin\nservicecustom_keyword,service,Service Keywords,VisionLink',
+          'source_column,link_entity,label,provenance\nservicecustom_keyword,service,Service Keywords,VisionLink',
       },
     },
   })
@@ -42,6 +42,8 @@ export class OrchestrationConfigController {
   async getCustomAttributes(
     @Query('schema') schemaName?: string,
   ): Promise<string> {
-    return this.orchestrationConfigService.getCustomAttributes(schemaName);
+    return this.orchestrationConfigService.getCustomAttributesBySchemaNameAsCsv(
+      schemaName,
+    );
   }
 }

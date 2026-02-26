@@ -4,7 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { stringify } from 'csv-stringify/sync';
-import { OrchestrationConfigCache } from './types';
+import { OrchestrationConfigCache, CustomAttribute } from './types';
 import { CmsRedisService } from './cms-redis.service';
 
 @Injectable()
@@ -13,7 +13,50 @@ export class OrchestrationConfigService {
 
   constructor(private readonly cmsRedisService: CmsRedisService) {}
 
-  async getCustomAttributes(schemaName?: string): Promise<string> {
+  async getCustomAttributesByTenantId(
+    tenantId: string,
+  ): Promise<CustomAttribute[]> {
+    this.logger.debug(`Getting custom attributes for tenant ID: ${tenantId}`);
+
+    try {
+      const redisKey = `orchestration_config:${tenantId}`;
+      const value = await this.cmsRedisService.get(redisKey);
+
+      if (!value) {
+        this.logger.warn(
+          `No orchestration config found for tenant ID: ${tenantId}`,
+        );
+        return [];
+      }
+
+      const config: OrchestrationConfigCache = JSON.parse(value as string);
+      const allAttributes: CustomAttribute[] = [];
+
+      for (const schema of config.schemas) {
+        if (schema.customAttributes) {
+          allAttributes.push(...schema.customAttributes);
+        }
+      }
+
+      this.logger.debug(
+        `Found ${allAttributes.length} custom attributes for tenant ${tenantId}`,
+      );
+
+      return allAttributes;
+    } catch (error) {
+      this.logger.error(
+        `Error getting custom attributes for tenant ${tenantId}:`,
+        error instanceof Error ? error.stack : error,
+      );
+      throw new InternalServerErrorException(
+        'Failed to retrieve custom attributes by tenant ID',
+      );
+    }
+  }
+
+  async getCustomAttributesBySchemaNameAsCsv(
+    schemaName?: string,
+  ): Promise<string> {
     this.logger.debug(
       `Getting custom attributes${schemaName ? ` for schema: ${schemaName}` : ' (all schemas)'}`,
     );
@@ -25,7 +68,7 @@ export class OrchestrationConfigService {
           source_column: string;
           link_entity: string;
           label: string;
-          origin: string;
+          provenance: string;
         }
       >();
 
@@ -85,7 +128,7 @@ export class OrchestrationConfigService {
                         source_column: attr.source_column,
                         link_entity: attr.link_entity,
                         label: attr.label?.en || attr.source_column,
-                        origin: attr.origin ?? '',
+                        provenance: attr.provenance ?? '',
                       });
                     }
                   }
@@ -112,7 +155,7 @@ export class OrchestrationConfigService {
       const csvRows = Array.from(attributesMap.values());
       const csv = stringify(csvRows, {
         header: true,
-        columns: ['source_column', 'link_entity', 'label', 'origin'],
+        columns: ['source_column', 'link_entity', 'label', 'provenance'],
       });
 
       return csv;

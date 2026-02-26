@@ -16,6 +16,7 @@ import {
 import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -53,6 +54,7 @@ export class SearchService {
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly tenantConfigService: TenantConfigService,
+    private readonly orchestrationConfigService: OrchestrationConfigService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -139,7 +141,25 @@ export class SearchService {
       `searchResources - index name = ${indexName}, locale = ${locale}`,
     );
 
-    const tenantFacets = await this.tenantConfigService.getFacets(tenantId);
+    const [tenantFacets, customAttributes] = await Promise.all([
+      this.tenantConfigService.getFacets(tenantId),
+      this.orchestrationConfigService
+        .getCustomAttributesByTenantId(tenantId)
+        // if an error occurs, just skip custom attributes
+        // error is logged in OrchestrationConfigService
+        .catch(() => []),
+    ]);
+
+    const searchableCustomAttributeFields = customAttributes
+      .filter((attr) => attr.searchable === true)
+      .flatMap((attr) => [
+        `attribute_values.${attr.source_column}.value`,
+        `attribute_values.${attr.source_column}.label`,
+      ]);
+
+    this.logger.debug(
+      `Found ${searchableCustomAttributeFields.length} searchable custom attribute fields`,
+    );
 
     // Build the raw Elasticsearch aggregations
     const aggregations = this.buildFacetAggregations(tenantFacets, locale);
@@ -183,7 +203,12 @@ export class SearchService {
       }
     } else {
       this.logger.debug('Using simple query logic');
-      specificQuery = this.getQueryObject(queryType, query, queryFilters);
+      specificQuery = this.getQueryObject(
+        queryType,
+        query,
+        queryFilters,
+        searchableCustomAttributeFields,
+      );
     }
 
     const finalQuery: SearchRequest = {
@@ -323,8 +348,13 @@ export class SearchService {
     queryType: QueryType,
     query: any,
     filters: any[],
+    customAttributeFields: string[],
   ): Partial<SearchRequest> {
     const baseBool = { filter: filters };
+    const fieldsWithCustomAttributes = [
+      ...SearchService.fieldsToQuery,
+      ...customAttributeFields,
+    ];
 
     switch (queryType) {
       case 'keyword':
@@ -337,7 +367,7 @@ export class SearchService {
                   multi_match: {
                     analyzer: 'standard',
                     operator: 'AND',
-                    fields: SearchService.fieldsToQuery,
+                    fields: fieldsWithCustomAttributes,
                     query,
                   },
                 },
@@ -418,7 +448,7 @@ export class SearchService {
               must: [
                 {
                   more_like_this: {
-                    fields: SearchService.fieldsToQuery,
+                    fields: fieldsWithCustomAttributes,
                     like: query,
                     min_term_freq: 1,
                     max_query_terms: 12,

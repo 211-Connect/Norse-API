@@ -4,7 +4,7 @@ export type CustomAttribute = {
   label: {
     [locale: string]: string;
   };
-  origin: string | null;
+  provenance: string | null;
   searchable: boolean | null;
   id: string | null;
 };
