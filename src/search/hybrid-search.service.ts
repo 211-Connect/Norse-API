@@ -78,18 +78,27 @@ export class HybridSearchService {
     const queryStr = typeof query === 'string' ? query : String(query);
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const t0 = performance.now();
 
     this.logger.debug(
       `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
     );
 
+    const tEmbedStart = performance.now();
     const [queryVector, tenantFacets] = await Promise.all([
       this.embedQuery(queryStr),
       this.tenantConfigService.getFacets(tenantId),
     ]);
+    const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
-    const predictedCodes = await this.getTaxonomyCodes(queryVector, tenantId);
-    this.logger.debug(`Predicted taxonomy codes: ${predictedCodes.join(', ')}`);
+    const tTaxonomyStart = performance.now();
+    const predictedTaxonomies = await this.getTaxonomyCodes(queryVector, tenantId);
+    const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
+
+    const predictedCodes = predictedTaxonomies.map((t) => t.code);
+    this.logger.log(
+      `[Hybrid search] - query="${queryStr}" | predicted codes: [${predictedCodes.join(', ')}] | names: [${predictedTaxonomies.map((t) => t.name).join(', ')}]`,
+    );
 
     const baseFilters = SearchUtilsService.buildFilters(
       filters,
@@ -102,6 +111,7 @@ export class HybridSearchService {
 
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
+    const tRetrievalStart = performance.now();
     const { bm25Hits, knnHits, metadata } = await this.retrieveCandidates(
       index,
       queryStr,
@@ -112,6 +122,7 @@ export class HybridSearchService {
       distance,
       aggs,
     );
+    const tRetrievalMs = Math.round(performance.now() - tRetrievalStart);
 
     const fused = this.fuseRRF(bm25Hits, knnHits);
 
@@ -144,6 +155,11 @@ export class HybridSearchService {
       tenantFacets,
       metadata.aggregations,
       lang,
+    );
+
+    const totalMs = Math.round(performance.now() - t0);
+    this.logger.log(
+      `[Hybrid search] timings - embedding: ${tEmbedMs}ms | taxonomy lookup: ${tTaxonomyMs}ms | BM25+kNN retrieval: ${tRetrievalMs}ms | total: ${totalMs}ms`,
     );
 
     return {
@@ -201,7 +217,7 @@ export class HybridSearchService {
   private async getTaxonomyCodes(
     queryVector: number[],
     tenantId: string,
-  ): Promise<string[]> {
+  ): Promise<Array<{ code: string; name: string }>> {
     try {
       const result = await this.elasticsearchService.search<{
         code: string;
@@ -221,8 +237,8 @@ export class HybridSearchService {
       });
 
       return result.hits.hits
-        .map((h) => h._source?.code)
-        .filter((code): code is string => Boolean(code));
+        .filter((h) => Boolean(h._source?.code))
+        .map((h) => ({ code: h._source!.code, name: h._source!.name ?? '' }));
     } catch (error) {
       this.logger.warn(
         `Taxonomy code lookup failed, continuing without boost: ${error.message}`,
@@ -240,7 +256,6 @@ export class HybridSearchService {
     aggs: Aggregations,
   ): MsearchMultisearchBody {
     const queryLower = query.toLowerCase();
-    this.logger.debug('BM25 query body', JSON.stringify({ filters }, null, 2));
 
     const nameShould: QueryDslQueryContainer[] = [
       { term: { 'name.lc': { value: queryLower, boost: BM25_NAME_BOOST } } },
@@ -346,7 +361,6 @@ export class HybridSearchService {
     queryVector: number[],
     filters: QueryDslQueryContainer[],
   ): MsearchMultisearchBody {
-    this.logger.debug('kNN query body', JSON.stringify({ filters }, null, 2));
     return {
       size: RETRIEVAL_SIZE,
       track_total_hits: false,
@@ -380,8 +394,6 @@ export class HybridSearchService {
       aggs,
     );
     const knnBody = this.buildKnnBody(queryVector, filters);
-
-    this.logger.debug('BM25 body', JSON.stringify(bm25Body, null, 2));
 
     const result = await this.elasticsearchService.msearch<SearchSource>({
       searches: [{ index }, bm25Body, { index }, knnBody],
