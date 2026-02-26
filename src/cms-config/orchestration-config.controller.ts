@@ -42,6 +42,8 @@ export class OrchestrationConfigController {
   async getCustomAttributes(
     @Query('schema') schemaName?: string,
   ): Promise<string> {
-    return this.orchestrationConfigService.getCustomAttributes(schemaName);
+    return this.orchestrationConfigService.getCustomAttributesBySchemaNameAsCsv(
+      schemaName,
+    );
   }
 }

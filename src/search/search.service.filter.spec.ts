@@ -4,6 +4,8 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { BadRequestException } from '@nestjs/common';
 import { SearchBodyDto } from './dto/search-body.dto';
+import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 
 describe('SearchService Logic', () => {
   let service: SearchService;
@@ -15,6 +17,14 @@ describe('SearchService Logic', () => {
     }),
   };
 
+  const mockTenantConfigService = {
+    getFacets: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockOrchestrationConfigService = {
+    getCustomAttributesByTenantId: jest.fn().mockResolvedValue([]),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -22,6 +32,14 @@ describe('SearchService Logic', () => {
         {
           provide: ElasticsearchService,
           useValue: mockEsService,
+        },
+        {
+          provide: TenantConfigService,
+          useValue: mockTenantConfigService,
+        },
+        {
+          provide: OrchestrationConfigService,
+          useValue: mockOrchestrationConfigService,
         },
       ],
     }).compile();
@@ -62,10 +80,9 @@ describe('SearchService Logic', () => {
     const body: SearchBodyDto = { geometry };
 
     await service.searchResources({
-      headers: {} as any,
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
       query,
       body,
-      tenant: {} as any,
     });
 
     const filters = getFiltersFromLastCall();
@@ -81,7 +98,10 @@ describe('SearchService Logic', () => {
     const query: SearchQueryDto = { ...baseQuery, geo_type: 'boundary' };
 
     await expect(
-      service.searchResources({ headers: {} as any, query, tenant: {} as any }),
+      service.searchResources({
+        headers: { 'x-tenant-id': 'test-tenant' } as any,
+        query,
+      }),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -93,9 +113,8 @@ describe('SearchService Logic', () => {
     };
 
     await service.searchResources({
-      headers: {} as any,
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
       query,
-      tenant: {} as any,
     });
 
     const filters = getFiltersFromLastCall();
@@ -138,9 +157,8 @@ describe('SearchService Logic', () => {
     };
 
     await service.searchResources({
-      headers: {} as any,
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
       query,
-      tenant: {} as any,
     });
 
     const filters = getFiltersFromLastCall();
@@ -162,9 +180,8 @@ describe('SearchService Logic', () => {
     const query: SearchQueryDto = { ...baseQuery, coords: [-93.2, 44.9] };
 
     await service.searchResources({
-      headers: {} as any,
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
       query,
-      tenant: {} as any,
     });
 
     const filters = getFiltersFromLastCall();
@@ -180,9 +197,8 @@ describe('SearchService Logic', () => {
     const query: SearchQueryDto = { ...baseQuery, distance: 10 }; // Distance ignored without coords
 
     await service.searchResources({
-      headers: {} as any,
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
       query,
-      tenant: {} as any,
     });
 
     const filters = getFiltersFromLastCall();
