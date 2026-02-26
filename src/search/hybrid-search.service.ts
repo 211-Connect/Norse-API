@@ -37,7 +37,6 @@ const RERANK_NAME_PREFIX = 30;
 const RERANK_NAME_CONTAINS = 20;
 const RERANK_TAXONOMY_BASE = 50;
 const RERANK_GEO_MAX = 10;
-const RERANK_PINNED = 100;
 const RERANK_PRIORITY_FACTOR = 2;
 
 const BM25_NAME_BOOST = 15;
@@ -489,16 +488,7 @@ export class HybridSearchService {
           }
         }
 
-        if (src.pinned) bonus += RERANK_PINNED;
         if (src.priority) bonus += src.priority * RERANK_PRIORITY_FACTOR;
-
-        this.logger.debug(
-          `Rerank bonus for ${src.service_at_location_id}: ${bonus.toFixed(2)} (name: ${nameLower}, predictedCodes: ${predictedCodes.join(
-            ',',
-          )}, docCodes: ${src.taxonomies
-            ?.map((t) => t.code)
-            .join(',')}, distanceBonus: ${coords ? bonus.toFixed(2) : 'N/A'})`,
-        );
 
         return {
           ...hit,
