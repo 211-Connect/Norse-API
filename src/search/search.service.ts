@@ -94,6 +94,16 @@ export class SearchService {
       distance,
       geo_type,
     } = q;
+
+    if (
+      !(
+        typeof query === 'string' ||
+        (Array.isArray(query) && query.every((q) => typeof q === 'string'))
+      )
+    ) {
+      throw new BadRequestException('Invalid query type');
+    }
+
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
 
@@ -142,10 +152,7 @@ export class SearchService {
       geometry,
     );
 
-    const queryType: QueryType = this.getQueryType(
-      query as string | string[],
-      query_type,
-    );
+    const queryType: QueryType = this.getQueryType(query, query_type);
 
     let parsedComplexQuery = null;
     if (this.isComplexQuery(query)) {
@@ -173,7 +180,7 @@ export class SearchService {
       this.logger.debug('Using simple query logic');
       specificQuery = this.getQueryObject(
         queryType,
-        query,
+        Array.isArray(query) ? query.join(',') : query,
         queryFilters,
         searchableCustomAttributeFields,
       );
@@ -265,13 +272,13 @@ export class SearchService {
 
   private getQueryObject(
     queryType: QueryType,
-    query: string | string[],
+    query: string,
     filters: QueryDslQueryContainer[],
     customAttributeFields: string[],
   ): Partial<SearchRequest> {
     const baseBool = { filter: filters };
     const fieldsWithCustomAttributes = [
-      ...SearchService.fieldsToQuery,
+      ...SearchUtilsService.FIELDS_TO_QUERY,
       ...customAttributeFields,
     ];
 
@@ -317,7 +324,7 @@ export class SearchService {
               must: {
                 match: {
                   [SearchService.ES_FIELDS.ORG_NAME]: {
-                    query: query as string,
+                    query,
                     operator: 'AND',
                   },
                 },
