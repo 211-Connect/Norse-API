@@ -17,6 +17,8 @@ import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
+import { FacetConfig } from 'src/cms-config/types/facet-config';
+import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 
 type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -141,14 +143,8 @@ export class SearchService {
       `searchResources - index name = ${indexName}, locale = ${locale}`,
     );
 
-    const [tenantFacets, customAttributes] = await Promise.all([
-      this.tenantConfigService.getFacets(tenantId),
-      this.orchestrationConfigService
-        .getCustomAttributesByTenantId(tenantId)
-        // if an error occurs, just skip custom attributes
-        // error is logged in OrchestrationConfigService
-        .catch(() => []),
-    ]);
+    const { tenantFacets, customAttributes } =
+      await this.getFacetsAndCustomAttributes(tenantId);
 
     const searchableCustomAttributeFields = customAttributes
       .filter((attr) => attr.searchable === true)
@@ -812,5 +808,50 @@ export class SearchService {
         },
       },
     };
+  }
+
+  /**
+   * Fetches facets and custom attributes with a 2-second timeout.
+   * Returns empty arrays if the timeout is reached.
+   * It prevents the search endpoint from being blocked by slow responses from config services.
+   */
+  private async getFacetsAndCustomAttributes(tenantId: string): Promise<{
+    tenantFacets: FacetConfig[];
+    customAttributes: CustomAttribute[];
+  }> {
+    let timeoutId: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<{
+      tenantFacets: FacetConfig[];
+      customAttributes: CustomAttribute[];
+    }>((resolve) => {
+      timeoutId = setTimeout(() => {
+        this.logger.warn(
+          `Timeout fetching facets and custom attributes for tenant ${tenantId}, using empty arrays`,
+        );
+        resolve({ tenantFacets: [], customAttributes: [] });
+      }, 2000);
+    });
+
+    const dataPromise = Promise.all([
+      this.tenantConfigService.getFacets(tenantId).catch((err) => {
+        this.logger.error(`Error fetching facets for tenant ${tenantId}:`, err);
+        return [];
+      }),
+      this.orchestrationConfigService
+        .getCustomAttributesByTenantId(tenantId)
+        .catch(() => {
+          this.logger.error(
+            `Error fetching custom attributes for tenant ${tenantId}, using empty array`,
+          );
+          return [];
+        }),
+    ]).then(([tenantFacets, customAttributes]) => {
+      // Clear timeout to prevent memory leak
+      clearTimeout(timeoutId);
+      return { tenantFacets, customAttributes };
+    });
+
+    return Promise.race([dataPromise, timeoutPromise]);
   }
 }
