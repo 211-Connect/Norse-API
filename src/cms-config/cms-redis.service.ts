@@ -36,6 +36,8 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
       database: 2,
       socket: {
         keepAlive: true,
+        connectTimeout: 10_000,
+        keepAliveInitialDelay: 0,
         reconnectStrategy: (retries) => {
           if (retries > 10) {
             this.logger.error(
@@ -43,13 +45,14 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
             );
             return new Error('Max reconnection attempts reached');
           }
-          const delay = Math.min(retries * 100, 3000);
+          const delay = Math.min(Math.max(100, retries * 100), 5000);
           this.logger.warn(
-            `Redis (DB 2): Reconnecting in ${delay}ms (attempt ${retries})`,
+            `Redis (DB 2): Reconnecting in ${delay}ms (attempt ${retries + 1})`,
           );
           return delay;
         },
       },
+      pingInterval: 30_000,
     });
 
     this.client.on('error', (err) => {
@@ -68,8 +71,20 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn('Redis (DB 2): Connection ended');
     });
 
-    await this.client.connect();
-    this.logger.log('Redis client (DB 2) connected');
+    this.client.on('connect', () => {
+      this.logger.log('Redis (DB 2): Socket connected');
+    });
+
+    try {
+      await this.client.connect();
+      this.logger.log('Redis client (DB 2) connected and ready');
+    } catch (error) {
+      this.logger.error(
+        `Failed to connect to Redis (DB 2): ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -80,10 +95,29 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getClient(): RedisClientType {
-    if (!this.client || !this.client.isReady) {
-      throw new Error('Redis client not ready');
+    if (!this.client) {
+      throw new Error('Redis client not initialized');
+    }
+    if (!this.client.isOpen) {
+      throw new Error('Redis client not connected');
+    }
+    if (!this.client.isReady) {
+      throw new Error('Redis client not ready (possibly reconnecting)');
     }
     return this.client;
+  }
+
+  async isHealthy(): Promise<boolean> {
+    try {
+      if (!this.client?.isOpen || !this.client?.isReady) {
+        return false;
+      }
+      await this.client.ping();
+      return true;
+    } catch (error) {
+      this.logger.warn(`Redis (DB 2) health check failed: ${error.message}`);
+      return false;
+    }
   }
 
   scan({

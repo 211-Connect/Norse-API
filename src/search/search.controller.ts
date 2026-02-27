@@ -81,7 +81,6 @@ export class SearchController {
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
-    @Req() req,
   ): Promise<SearchResponse> {
     try {
       return this.searchService.searchResources({
@@ -91,7 +90,7 @@ export class SearchController {
     } catch (error) {
       // Attach minimal context and rethrow a controlled HTTP exception
       const message = error?.message ?? 'Search failed';
-      const meta = { tenant: req.tenantId, query };
+      const meta = { tenant: headers['x-tenant-id'], query };
       throw new HttpException(
         { message, meta },
         error?.status ?? HttpStatus.INTERNAL_SERVER_ERROR,
