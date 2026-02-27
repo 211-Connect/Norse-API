@@ -36,7 +36,8 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
       database: 2,
       socket: {
         keepAlive: true,
-        connectTimeout: 10000,
+        connectTimeout: 10_000,
+        keepAliveInitialDelay: 0,
         reconnectStrategy: (retries) => {
           if (retries > 10) {
             this.logger.error(
@@ -51,7 +52,7 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
           return delay;
         },
       },
-      pingInterval: 30000,
+      pingInterval: 30_000,
     });
 
     this.client.on('error', (err) => {
