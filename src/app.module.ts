@@ -44,7 +44,7 @@ import { CmsConfigModule } from './cms-config/cms-config.module';
       useFactory: async (configService: ConfigService) => ({
         store: redisStore,
         url: configService.get('REDIS_URL'),
-        pingInterval: 4 * 60 * 1000,
+        pingInterval: 30 * 1000,
       }),
       inject: [ConfigService],
       isGlobal: true,
