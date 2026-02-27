@@ -16,6 +16,8 @@ export class OrchestrationConfigService {
   async getCustomAttributesByTenantId(
     tenantId: string,
   ): Promise<CustomAttribute[]> {
+    return []; // early return to avoid hitting Redis while custom attributes are not used yet
+
     this.logger.debug(`Getting custom attributes for tenant ID: ${tenantId}`);
 
     try {
@@ -23,7 +25,7 @@ export class OrchestrationConfigService {
       const value = await this.cmsRedisService.get(redisKey);
 
       if (!value) {
-        this.logger.warn(
+        this.logger.debug(
           `No orchestration config found for tenant ID: ${tenantId}`,
         );
         return [];
