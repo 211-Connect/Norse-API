@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Geometry } from 'geojson';
+import { ShardsInfo } from '../types';
 
 // Top-level facets mapping (facet key -> human-readable name object)
 export type SearchFacets = Record<string, Record<string, string>>;
@@ -181,12 +182,7 @@ export class SearchResponseDto {
   search: {
     took: number;
     timed_out: boolean;
-    _shards: {
-      total: number;
-      successful: number;
-      skipped?: number;
-      failed: number;
-    };
+    _shards: ShardsInfo;
     hits: SearchHitsContainer;
   };
 

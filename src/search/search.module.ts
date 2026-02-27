@@ -4,10 +4,11 @@ import { SearchController } from './search.controller';
 import { ElasticsearchModule } from '@nestjs/elasticsearch';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CmsConfigModule } from 'src/cms-config/cms-config.module';
+import { HybridSearchService } from './hybrid-search.service';
 
 @Module({
   controllers: [SearchController],
-  providers: [SearchService],
+  providers: [SearchService, HybridSearchService],
   imports: [
     CmsConfigModule,
     ElasticsearchModule.registerAsync({
