@@ -4,8 +4,8 @@ import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
-import { ONE_HOUR } from 'src/common/const/one-hour';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { FIFTEEN_MINUTES } from 'src/common/const';
 
 @ApiTags('Resource')
 @Controller('resource')
@@ -14,7 +14,7 @@ export class ResourceController {
 
   @Get(':id')
   @Version('1')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id' })
@@ -124,7 +124,7 @@ export class ResourceController {
   }
 
   @Get('original/:id')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @Version('1')
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })

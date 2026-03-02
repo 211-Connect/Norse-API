@@ -25,8 +25,8 @@ import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
-import { ONE_HOUR } from 'src/common/const/one-hour';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { FIFTEEN_MINUTES } from 'src/common/const';
 
 @ApiTags('Search')
 @Controller('search')
@@ -43,7 +43,7 @@ export class SearchController {
 
   @Get()
   @Version('1')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiResponse({
     status: 200,
     type: SearchResponseDto,
@@ -104,7 +104,7 @@ export class SearchController {
 
   @Post()
   @Version('1')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiResponse({
     status: 200,
     description: 'Search resources (POST)',
