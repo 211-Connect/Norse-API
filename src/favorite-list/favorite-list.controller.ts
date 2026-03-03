@@ -26,7 +26,6 @@ import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
 } from './dto/favorite-list.response.dto';
-import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 
 @ApiTags('Favorite List')
 @Controller({
@@ -34,10 +33,7 @@ import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
   version: '1',
 })
 export class FavoriteListController {
-  constructor(
-    private readonly favoriteListService: FavoriteListService,
-    private readonly keycloakAuthService: KeycloakAuthService,
-  ) {}
+  constructor(private readonly favoriteListService: FavoriteListService) {}
 
   @Post()
   @UseGuards(KeycloakGuard)
@@ -77,10 +73,9 @@ export class FavoriteListController {
     const favoriteList = await this.favoriteListService.findOne(id, locale);
 
     if (favoriteList.privacy === 'PRIVATE') {
-      const authorized = await this.keycloakAuthService.isAuthorized(request);
-
-      if (!authorized || request.user.id !== favoriteList.ownerId)
+      if (!(request.user && request.user.id === favoriteList.ownerId)) {
         throw new UnauthorizedException();
+      }
     }
 
     return favoriteList;
