@@ -104,7 +104,6 @@ export class SearchController {
 
   @Post()
   @Version('1')
-  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiResponse({
     status: 200,
     description: 'Search resources (POST)',
