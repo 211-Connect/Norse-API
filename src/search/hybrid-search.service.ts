@@ -92,7 +92,10 @@ export class HybridSearchService {
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
-    const predictedTaxonomies = await this.getTaxonomyCodes(queryVector, tenantId);
+    const predictedTaxonomies = await this.getTaxonomyCodes(
+      queryVector,
+      tenantId,
+    );
     const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
     const predictedCodes = predictedTaxonomies.map((t) => t.code);
@@ -151,7 +154,7 @@ export class HybridSearchService {
       };
     });
 
-    const { facets, facetsValues } = SearchUtilsService.transformAggregations(
+    const facets = SearchUtilsService.transformAggregations(
       tenantFacets,
       metadata.aggregations,
       lang,
@@ -174,7 +177,6 @@ export class HybridSearchService {
         },
       },
       facets,
-      facets_values: facetsValues,
     };
   }
 

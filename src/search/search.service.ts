@@ -9,6 +9,7 @@ import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
+  AggregationsStringTermsAggregate,
   QueryDslQueryContainer,
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
@@ -140,6 +141,10 @@ export class SearchService {
       locale,
     );
 
+    this.logger.debug(
+      `Built ${Object.keys(aggregations).length} aggregations from ${tenantFacets.length} facet configs`,
+    );
+
     const queryFilters = SearchUtilsService.buildFilters(
       filters,
       coords,
@@ -192,8 +197,10 @@ export class SearchService {
       ...specificQuery,
     };
 
-    const data =
-      await this.elasticsearchService.search<SearchSource>(finalQuery);
+    const data = await this.elasticsearchService.search<
+      SearchSource,
+      Record<string, AggregationsStringTermsAggregate>
+    >(finalQuery);
 
     if (data.hits?.hits) {
       data.hits.hits = data.hits.hits.map((hit) => {
@@ -208,15 +215,19 @@ export class SearchService {
       });
     }
 
-    const { facets, facetsValues } = SearchUtilsService.transformAggregations(
+    const facets = SearchUtilsService.transformAggregations(
       tenantFacets,
-      data.aggregations as
-        | Record<
-            string,
-            import('@elastic/elasticsearch/lib/api/types').AggregationsStringTermsAggregate
-          >
-        | undefined,
+      data.aggregations,
       locale,
+    );
+
+    const totalHits =
+      typeof data.hits.total === 'number'
+        ? data.hits.total
+        : (data.hits.total?.value ?? 0);
+
+    this.logger.debug(
+      `Search completed: ${totalHits} results, ${facets.length} facets`,
     );
 
     return {
@@ -232,7 +243,6 @@ export class SearchService {
         hits: data.hits,
       },
       facets,
-      facets_values: facetsValues,
     };
   }
 
