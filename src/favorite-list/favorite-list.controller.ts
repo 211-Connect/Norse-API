@@ -9,6 +9,7 @@ import {
   Req,
   Query,
   Put,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
@@ -62,17 +63,22 @@ export class FavoriteListController {
   }
 
   @Get(':id')
-  @UseGuards(KeycloakGuard)
   @ApiResponse({ type: FavoriteListDetailResponseDto })
-  findOne(
+  async findOne(
     @Param('id') id: string,
     @Req() request,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<FavoriteListDetailResponseDto> {
-    return this.favoriteListService.findOne(id, {
-      request,
-      headers,
-    });
+    const locale = headers['accept-language'];
+    const favoriteList = await this.favoriteListService.findOne(id, locale);
+
+    if (favoriteList.privacy === 'PRIVATE') {
+      if (!(request.user && request.user.id === favoriteList.ownerId)) {
+        throw new UnauthorizedException();
+      }
+    }
+
+    return favoriteList;
   }
 
   @Put(':id')
