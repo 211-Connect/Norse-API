@@ -47,9 +47,12 @@ export class KeycloakAuthService {
   ) {}
 
   /**
-   * Verify if the request is authorized based on JWT token
+   * Verify JWT token from request and extract user identity
+   * Returns authentication status and userId (if authenticated)
    */
-  async isAuthorized(request: Request): Promise<boolean> {
+  async verifyToken(
+    request: Request,
+  ): Promise<{ isAuthenticated: boolean; userId: string | null }> {
     this.logger.debug('Starting authorization check...');
 
     const tenantId = request.tenantId;
@@ -66,9 +69,9 @@ export class KeycloakAuthService {
     const token = request.headers.authorization?.split(' ')[1]; // Bearer <token>
     if (!token) {
       this.logger.warn(
-        'Authorization check failed: No authorization token (JWT) found in headers.',
+        'Token verification: No authorization token (JWT) found in headers.',
       );
-      throw new UnauthorizedException('Authorization token is missing.');
+      return { isAuthenticated: false, userId: null };
     }
 
     try {
@@ -131,15 +134,17 @@ export class KeycloakAuthService {
         algorithms: ['RS256'],
       }) as jwt.JwtPayload;
 
+      const userId = String(verifiedPayload.sub);
+
       // Populate req.user with details from the verified token.
       request.user = {
-        id: verifiedPayload.sub as string,
+        id: userId,
       };
 
       this.logger.log(
-        `User token successfully verified for realm ${keycloakRealmId}. User: ${request.user.id}`,
+        `User token successfully verified for realm ${keycloakRealmId}. User: ${userId}`,
       );
-      return true;
+      return { isAuthenticated: true, userId };
     } catch (error) {
       if (
         error instanceof jwt.JsonWebTokenError ||
