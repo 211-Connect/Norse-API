@@ -53,7 +53,6 @@ const BM25_TAXONOMY_BOOST = 10;
 export class HybridSearchService {
   private readonly logger = new Logger(HybridSearchService.name);
   private readonly embeddingBaseUrl: string;
-  private readonly embeddingModel: string;
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -62,7 +61,6 @@ export class HybridSearchService {
   ) {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
-    this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
   }
 
   async searchHybrid(options: {
@@ -181,21 +179,19 @@ export class HybridSearchService {
   }
 
   async embedQuery(query: string): Promise<number[]> {
-    this.logger.debug(
-      `Embedding query: "${query}" using model: ${this.embeddingModel}`,
-    );
+    this.logger.debug(`Embedding query: "${query}"`);
 
-    if (!this.embeddingBaseUrl || !this.embeddingModel) {
+    if (!this.embeddingBaseUrl) {
       throw new InternalServerErrorException(
-        'EMBEDDING_BASE_URL and EMBEDDING_MODEL must be configured for hybrid search',
+        'EMBEDDING_BASE_URL must be configured for hybrid search',
       );
     }
 
     try {
-      const response = await fetch(`${this.embeddingBaseUrl}/embeddings`, {
+      const response = await fetch(`${this.embeddingBaseUrl}/embedding`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.embeddingModel, input: query }),
+        body: JSON.stringify({ content: query }),
       });
 
       if (!response.ok) {
@@ -204,7 +200,7 @@ export class HybridSearchService {
       }
 
       const data: EmbeddingResponse = await response.json();
-      const embedding = data.data[0].embedding;
+      const embedding = data[0].embedding[0];
 
       this.logger.debug(`Embedding length: ${embedding.length}`);
       return embedding;
