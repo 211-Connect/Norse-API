@@ -54,6 +54,7 @@ export class HybridSearchService {
   private readonly logger = new Logger(HybridSearchService.name);
   private readonly embeddingBaseUrl: string;
   private readonly embeddingModel: string;
+  private readonly runpodApiKey: string;
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -63,6 +64,7 @@ export class HybridSearchService {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
+    this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
   }
 
   async searchHybrid(options: {
@@ -194,7 +196,10 @@ export class HybridSearchService {
     try {
       const response = await fetch(`${this.embeddingBaseUrl}/embeddings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.runpodApiKey}`,
+        },
         body: JSON.stringify({ model: this.embeddingModel, input: query }),
       });
 
