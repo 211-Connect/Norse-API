@@ -9,6 +9,9 @@ export default () => ({
     limit: parseInt(process.env.RATE_LIMIT_MAX, 10) || 60, // 60 request per minute
   },
   internalApiKey: process.env.INTERNAL_API_KEY || '',
+  pushgatewayUrl: process.env.PROMETHEUS_PUSHGATEWAY_URL || '',
+  pushIntervalMs:
+    parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
 });
