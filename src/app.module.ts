@@ -32,11 +32,13 @@ import { GeocodingModule } from './geocoding/geocoding.module';
 import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
     CmsConfigModule,
+    MetricsModule,
     CacheModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

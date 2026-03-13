@@ -9,6 +9,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiHeader,
@@ -39,7 +40,10 @@ import { FIFTEEN_MINUTES } from 'src/common/const';
   },
 })
 export class SearchController {
-  constructor(private readonly searchService: SearchService) {}
+  constructor(
+    private readonly searchService: SearchService,
+    private readonly metricsService: MetricsService,
+  ) {}
 
   @Get()
   @Version('1')
@@ -86,6 +90,8 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ): Promise<SearchResponse> {
+    this.metricsService.incrementSearchHit('GET', 'getResources');
+
     try {
       return this.searchService.searchResources({
         headers,
@@ -165,6 +171,8 @@ export class SearchController {
     @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
     @Req() req,
   ) {
+    this.metricsService.incrementSearchHit('POST', 'getResourcesPost');
+
     // Validate Content-Type
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {

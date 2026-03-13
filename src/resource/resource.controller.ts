@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Version } from '@nestjs/common';
 import { ResourceService } from './resource.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
@@ -10,7 +11,10 @@ import { FIFTEEN_MINUTES } from 'src/common/const';
 @ApiTags('Resource')
 @Controller('resource')
 export class ResourceController {
-  constructor(private readonly resourceService: ResourceService) {}
+  constructor(
+    private readonly resourceService: ResourceService,
+    private readonly metricsService: MetricsService,
+  ) {}
 
   @Get(':id')
   @Version('1')
@@ -118,6 +122,8 @@ export class ResourceController {
     @Param('id') id,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
+    this.metricsService.incrementResourceHit('GET', 'getResourceById');
+
     return this.resourceService.findById(id, {
       headers,
     });
@@ -229,6 +235,8 @@ export class ResourceController {
     @Param('id') id: string, // The path parameter named id, but it is original ID
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
+    this.metricsService.incrementResourceHit('GET', 'getResourceByOriginalId');
+
     return this.resourceService.findByOriginalId(id, {
       headers,
     });
