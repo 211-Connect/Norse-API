@@ -10,11 +10,11 @@ import {
 @Injectable()
 export class MetricsService implements OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
-  private readonly searchHitsCounter: Counter<string>;
-  private readonly resourceHitsCounter: Counter<string>;
+  private readonly searchHitsCounter: Counter;
+  private readonly resourceHitsCounter: Counter;
   private readonly gateway: Pushgateway<'text/plain; version=0.0.4; charset=utf-8'> | null;
   private readonly pushIntervalMs: number;
-  private pushInterval: ReturnType<typeof setInterval> | null = null;
+  private pushInterval: NodeJS.Timeout | null = null;
 
   constructor(private readonly configService: ConfigService) {
     collectDefaultMetrics({ register });
@@ -37,9 +37,9 @@ export class MetricsService implements OnModuleDestroy {
       },
     );
 
-    this.pushIntervalMs = this.configService.get<number>('pushIntervalMs');
+    this.pushIntervalMs = this.configService.get<number>('PUSH_INTERVAL_MS');
 
-    const gatewayUrl = this.configService.get<string>('pushgatewayUrl');
+    const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
     if (gatewayUrl) {
       this.gateway = new Pushgateway(gatewayUrl);
       this.startPeriodicPush();
@@ -71,9 +71,7 @@ export class MetricsService implements OnModuleDestroy {
 
   private startPeriodicPush(): void {
     this.pushInterval = setInterval(() => {
-      this.pushMetrics().catch((err) =>
-        this.logger.error('Failed to push metrics', err),
-      );
+      this.pushMetrics().catch(() => {});
     }, this.pushIntervalMs);
   }
 
@@ -90,11 +88,8 @@ export class MetricsService implements OnModuleDestroy {
     name: string,
     options: Omit<ConstructorParameters<typeof Counter>[0], 'name'>,
   ): Counter<string> {
-    const existingMetric = register.getSingleMetric(
-      name,
-    ) as Counter<string> | null;
-
-    if (existingMetric) {
+    const existingMetric = register.getSingleMetric(name);
+    if (existingMetric instanceof Counter) {
       return existingMetric;
     }
 
