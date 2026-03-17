@@ -2,19 +2,18 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Counter,
+  PrometheusContentType,
   Pushgateway,
   collectDefaultMetrics,
   register,
 } from 'prom-client';
-
-type PUSHGATEWAY_CONFIG = 'text/plain; version=0.0.4; charset=utf-8';
 
 @Injectable()
 export class MetricsService implements OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
   private readonly searchHitsCounter: Counter;
   private readonly resourceHitsCounter: Counter;
-  private readonly gateway: Pushgateway<PUSHGATEWAY_CONFIG> | null;
+  private readonly gateway: Pushgateway<PrometheusContentType> | null;
   private readonly pushIntervalMs: number;
   private pushInterval: NodeJS.Timeout | null = null;
 
