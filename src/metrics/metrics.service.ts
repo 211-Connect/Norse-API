@@ -21,23 +21,19 @@ export class MetricsService implements OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {
     collectDefaultMetrics({ register });
 
-    this.searchHitsCounter = this.createOrGetCounter(
-      'norse_search_hits_total',
-      {
-        help: 'Total hits for /search endpoints',
-        labelNames: ['method', 'handler'],
-        registers: [register],
-      },
-    );
+    this.searchHitsCounter = this.createOrGetCounter({
+      name: 'norse_search_hits_total',
+      help: 'Total hits for /search endpoints',
+      labelNames: ['method', 'handler'],
+      registers: [register],
+    });
 
-    this.resourceHitsCounter = this.createOrGetCounter(
-      'norse_resource_hits_total',
-      {
-        help: 'Total hits for /resource endpoints',
-        labelNames: ['method', 'handler'],
-        registers: [register],
-      },
-    );
+    this.resourceHitsCounter = this.createOrGetCounter({
+      name: 'norse_resource_hits_total',
+      help: 'Total hits for /resource endpoints',
+      labelNames: ['method', 'handler'],
+      registers: [register],
+    });
 
     this.pushIntervalMs = this.configService.get<number>('PUSH_INTERVAL_MS');
 
@@ -87,17 +83,13 @@ export class MetricsService implements OnModuleDestroy {
   }
 
   private createOrGetCounter(
-    name: string,
-    options: Omit<ConstructorParameters<typeof Counter>[0], 'name'>,
-  ): Counter<string> {
-    const existingMetric = register.getSingleMetric(name);
+    config: ConstructorParameters<typeof Counter>[0],
+  ): Counter {
+    const existingMetric = register.getSingleMetric(config.name);
     if (existingMetric instanceof Counter) {
       return existingMetric;
     }
 
-    return new Counter({
-      name,
-      ...options,
-    });
+    return new Counter(config);
   }
 }
