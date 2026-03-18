@@ -137,30 +137,52 @@ export class SearchUtilsService {
     return filters;
   }
 
+  private static getGeoDistanceSort(coords: number[]): Sort {
+    const [lon, lat] = coords;
+    return [
+      {
+        _geo_distance: {
+          'location.point': { lon, lat },
+          order: 'asc',
+          unit: 'm',
+          mode: 'min',
+        },
+      },
+    ];
+  }
+
   /**
    * Build the sort clause for standard (non-hybrid) search.
    * Priority descending is the primary sort; geo-distance is secondary when
    * coordinates are provided.
    */
-  static buildSort(coords: number[] | undefined): Sort {
+  static buildSort(coords: number[] | undefined, sortOption?: string): Sort {
     const baseSort: Sort = [{ priority: 'desc' }];
 
-    if (coords) {
-      const [lon, lat] = coords;
+    switch (sortOption) {
+      case 'distance':
+        if (coords) {
+          return this.getGeoDistanceSort(coords);
+        }
+        return baseSort;
 
-      return baseSort.concat([
-        {
-          _geo_distance: {
-            'location.point': { lon, lat },
-            order: 'asc',
-            unit: 'm',
-            mode: 'min',
-          },
-        },
-      ]);
+      case 'name':
+        return [{ 'name.raw': { order: 'asc' } }, ...baseSort];
+
+      case 'provider':
+        return [
+          { 'organization.name.raw': { order: 'asc' } },
+          { 'name.raw': { order: 'asc' } },
+          ...baseSort,
+        ];
+
+      case 'relevance':
+      default:
+        if (coords) {
+          return baseSort.concat(this.getGeoDistanceSort(coords));
+        }
+        return baseSort;
     }
-
-    return baseSort;
   }
 
   static haversineDistanceMiles(

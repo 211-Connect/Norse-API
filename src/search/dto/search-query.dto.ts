@@ -46,6 +46,10 @@ export const searchQuerySchema = z.object({
   distance: z.coerce.number().int().nonnegative().default(0),
   limit: z.coerce.number().int().positive().max(300).min(25).default(25),
   geo_type: z.enum(['boundary', 'proximity']).optional(),
+  sort: z
+    .enum(['relevance', 'distance', 'name', 'provider'])
+    .optional()
+    .default('relevance'),
 });
 
 export type SearchQueryDto = z.infer<typeof searchQuerySchema>;

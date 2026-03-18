@@ -81,6 +81,14 @@ export class SearchController {
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    enum: ['relevance', 'distance', 'name', 'provider'],
+    description:
+      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), provider (alphabetical by organization name)',
+    schema: { default: 'relevance' },
+  })
   @ApiQueryForComplexSearch()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
@@ -146,6 +154,14 @@ export class SearchController {
     required: false,
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
+  })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    enum: ['relevance', 'distance', 'name', 'provider'],
+    description:
+      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), provider (alphabetical by organization name)',
+    schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
   @ApiBody({
