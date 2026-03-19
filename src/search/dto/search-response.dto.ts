@@ -1,8 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Geometry } from 'geojson';
+import { ShardsInfo } from '../types';
 
-// Top-level facets mapping (facet key -> human-readable name object)
-export type SearchFacets = Record<string, Record<string, string>>;
+export type SearchFacet = {
+  key: string;
+  name: { en: string; locale: string };
+  values: Array<{ en: string; locale: string; doc_count: number }>;
+};
 
 // Per-document facet values: language -> array of values
 // Example: { area_served_by_county: { en: ['Dakota County'], es: ['Condado de Dakota'] } }
@@ -181,20 +185,12 @@ export class SearchResponseDto {
   search: {
     took: number;
     timed_out: boolean;
-    _shards: {
-      total: number;
-      successful: number;
-      skipped?: number;
-      failed: number;
-    };
+    _shards: ShardsInfo;
     hits: SearchHitsContainer;
   };
 
   @ApiProperty()
-  facets: SearchFacets;
-
-  @ApiProperty({ required: false })
-  facets_values?: DocumentFacets;
+  facets: SearchFacet[];
 }
 
 export type SearchResponse = SearchResponseDto;

@@ -57,6 +57,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
         `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,
         exception instanceof Error ? exception.stack : exception,
       );
+    } else if (
+      status === 404 &&
+      req?.method === 'GET' &&
+      req.originalUrl.startsWith('/resource/')
+    ) {
+      this.logger.debug(
+        `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,
+      );
     } else {
       this.logger.warn(
         `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,

@@ -9,6 +9,7 @@ import {
   Req,
   Query,
   Put,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
@@ -25,6 +26,7 @@ import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
 } from './dto/favorite-list.response.dto';
+import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 
 @ApiTags('Favorite List')
 @Controller({
@@ -32,7 +34,10 @@ import {
   version: '1',
 })
 export class FavoriteListController {
-  constructor(private readonly favoriteListService: FavoriteListService) {}
+  constructor(
+    private readonly favoriteListService: FavoriteListService,
+    private readonly keycloakAuthService: KeycloakAuthService,
+  ) {}
 
   @Post()
   @UseGuards(KeycloakGuard)
@@ -62,17 +67,29 @@ export class FavoriteListController {
   }
 
   @Get(':id')
-  @UseGuards(KeycloakGuard)
   @ApiResponse({ type: FavoriteListDetailResponseDto })
-  findOne(
+  async findOne(
     @Param('id') id: string,
     @Req() request,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<FavoriteListDetailResponseDto> {
-    return this.favoriteListService.findOne(id, {
-      request,
-      headers,
-    });
+    const locale = headers['accept-language'];
+    const favoriteList = await this.favoriteListService.findOne(id, locale);
+
+    if (favoriteList.privacy === 'PRIVATE') {
+      const authResult = await this.keycloakAuthService.verifyToken(request);
+
+      if (
+        !(
+          authResult.isAuthenticated &&
+          authResult.userId === favoriteList.ownerId
+        )
+      ) {
+        throw new UnauthorizedException();
+      }
+    }
+
+    return favoriteList;
   }
 
   @Put(':id')

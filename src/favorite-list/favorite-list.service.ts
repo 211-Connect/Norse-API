@@ -1,36 +1,26 @@
-import {
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 import { Model, FilterQuery } from 'mongoose';
-import { HeadersDto } from 'src/common/dto/headers.dto';
-import { Request } from 'express';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
 } from './dto/favorite-list.response.dto';
-import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 
 interface User {
   id: string;
 }
 @Injectable()
 export class FavoriteListService {
-  // Initialize the logger
   private readonly logger = new Logger(FavoriteListService.name);
 
   constructor(
     @InjectModel(FavoriteList.name)
     private favoriteListModel: Model<FavoriteList>,
-    private readonly keycloakAuthService: KeycloakAuthService,
   ) {}
 
   async create(
@@ -147,7 +137,7 @@ export class FavoriteListService {
 
   async findOne(
     id: string,
-    options: { headers: HeadersDto; request: Request },
+    locale: string,
   ): Promise<FavoriteListDetailResponseDto> {
     const favoriteList = await this.favoriteListModel.findById(id).populate({
       path: 'favorites',
@@ -157,7 +147,7 @@ export class FavoriteListService {
         if (!doc) return null;
 
         const translation = doc.translations.find(
-          (el: any) => el.locale === options.headers['accept-language'],
+          (el: any) => el.locale === locale,
         );
 
         doc.translations = [];
@@ -176,15 +166,6 @@ export class FavoriteListService {
     favoriteList.favorites = favoriteList.favorites.filter(
       (el: any) => el != null,
     );
-
-    if (favoriteList.privacy === 'PRIVATE') {
-      const authorized = await this.keycloakAuthService.isAuthorized(
-        options.request,
-      );
-
-      if (!authorized || options.request.user.id !== favoriteList.ownerId)
-        throw new UnauthorizedException();
-    }
 
     return {
       id: favoriteList._id.toString(),

@@ -23,7 +23,7 @@ export const searchQuerySchema = z.object({
     .or(createComplexQuerySchema(5))
     .default(''),
   query_type: z
-    .enum(['text', 'taxonomy', 'organization', 'more_like_this'])
+    .enum(['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'])
     .default('text'),
   page: z.coerce.number().int().positive().default(1),
   coords: z

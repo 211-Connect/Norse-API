@@ -9,6 +9,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiHeader,
@@ -25,6 +26,9 @@ import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
+import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { FIFTEEN_MINUTES } from 'src/common/const';
+
 @ApiTags('Search')
 @Controller('search')
 @ApiHeader({
@@ -36,10 +40,14 @@ import { SearchResponse } from './dto/search-response.dto';
   },
 })
 export class SearchController {
-  constructor(private readonly searchService: SearchService) {}
+  constructor(
+    private readonly searchService: SearchService,
+    private readonly metricsService: MetricsService,
+  ) {}
 
   @Get()
   @Version('1')
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiResponse({
     status: 200,
     type: SearchResponseDto,
@@ -74,7 +82,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this'],
+    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQueryForComplexSearch()
@@ -82,6 +90,8 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ): Promise<SearchResponse> {
+    this.metricsService.incrementSearchHit('GET', 'getResources');
+
     try {
       return this.searchService.searchResources({
         headers,
@@ -140,7 +150,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this'],
+    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQueryForComplexSearch()
@@ -161,6 +171,8 @@ export class SearchController {
     @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
     @Req() req,
   ) {
+    this.metricsService.incrementSearchHit('POST', 'getResourcesPost');
+
     // Validate Content-Type
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {

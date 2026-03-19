@@ -30,11 +30,15 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CmsConfigModule } from './cms-config/cms-config.module';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
     CmsConfigModule,
+    MetricsModule,
     CacheModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -63,7 +67,10 @@ import { CmsConfigModule } from './cms-config/cms-config.module';
     GeocodingModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
