@@ -169,7 +169,7 @@ export class SearchUtilsService {
       case 'name':
         return [{ 'name.raw': { order: 'asc' } }, ...baseSort];
 
-      case 'provider':
+      case 'organization':
         return [
           { 'organization.name.raw': { order: 'asc' } },
           { 'name.raw': { order: 'asc' } },

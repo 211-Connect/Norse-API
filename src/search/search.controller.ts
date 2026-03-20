@@ -84,9 +84,9 @@ export class SearchController {
   @ApiQuery({
     name: 'sort',
     required: false,
-    enum: ['relevance', 'distance', 'name', 'provider'],
+    enum: ['relevance', 'distance', 'name', 'organization'],
     description:
-      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), provider (alphabetical by organization name)',
+      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), organization (alphabetical by provider name)',
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
@@ -158,9 +158,9 @@ export class SearchController {
   @ApiQuery({
     name: 'sort',
     required: false,
-    enum: ['relevance', 'distance', 'name', 'provider'],
+    enum: ['relevance', 'distance', 'name', 'organization'],
     description:
-      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), provider (alphabetical by organization name)',
+      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), organization (alphabetical by provider name)',
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
