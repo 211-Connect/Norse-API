@@ -10,6 +10,8 @@ export default () => ({
   },
   internalApiKey: process.env.INTERNAL_API_KEY || '',
   PUSH_GATEWAY_URL: process.env.PROMETHEUS_PUSHGATEWAY_URL || '',
+  PUSH_GATEWAY_USERNAME: process.env.PROMETHEUS_PUSHGATEWAY_USERNAME || '',
+  PUSH_GATEWAY_PASSWORD: process.env.PROMETHEUS_PUSHGATEWAY_PASSWORD || '',
   PUSH_INTERVAL_MS:
     parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
