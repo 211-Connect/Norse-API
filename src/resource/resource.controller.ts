@@ -1,12 +1,22 @@
-import { Controller, Get, Param, Version } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Version } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
-import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiHeader,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
+import {
+  ResourceTitlesDto,
+  resourceTitlesSchema,
+} from './dto/resource-titles.dto';
 
 @ApiTags('Resource')
 @Controller('resource')
@@ -240,5 +250,37 @@ export class ResourceController {
     return this.resourceService.findByOriginalId(id, {
       headers,
     });
+  }
+
+  @Post('titles')
+  @Version('1')
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        ids: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 100,
+        },
+      },
+      required: ['ids'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    example: [
+      {
+        id: '00000000-0000-0000-0000-000000000000',
+        displayName: 'EXAMPLE SERVICE | EXAMPLE ORGANIZATION',
+      },
+    ],
+  })
+  getResourceTitlesByIds(
+    @Body(new ZodValidationPipe(resourceTitlesSchema)) dto: ResourceTitlesDto,
+  ) {
+    return this.resourceService.findTitlesByIds(dto.ids);
   }
 }
