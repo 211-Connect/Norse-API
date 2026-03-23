@@ -38,7 +38,11 @@ export class MetricsService implements OnModuleDestroy {
 
     const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
     if (gatewayUrl) {
-      this.gateway = new Pushgateway(gatewayUrl);
+      const username = this.configService.get<string>('PUSH_GATEWAY_USERNAME');
+      const password = this.configService.get<string>('PUSH_GATEWAY_PASSWORD');
+      const options =
+        username && password ? { auth: `${username}:${password}` } : undefined;
+      this.gateway = new Pushgateway(gatewayUrl, options);
       this.startPeriodicPush();
       this.logger.log(
         `Prometheus Pushgateway configured at ${gatewayUrl}, pushing every ${this.pushIntervalMs / 1000}s`,
