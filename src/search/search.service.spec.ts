@@ -3,6 +3,7 @@ import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
+import { HybridSearchService } from './hybrid-search.service';
 
 describe('SearchService', () => {
   let service: SearchService;
@@ -27,6 +28,12 @@ describe('SearchService', () => {
           provide: OrchestrationConfigService,
           useValue: {
             getCustomAttributesByTenantId: jest.fn().mockResolvedValue([]),
+          },
+        },
+        {
+          provide: HybridSearchService,
+          useValue: {
+            searchHybrid: jest.fn(),
           },
         },
       ],
