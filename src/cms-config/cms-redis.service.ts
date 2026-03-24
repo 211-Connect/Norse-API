@@ -132,12 +132,13 @@ export class CmsRedisService implements OnModuleInit, OnModuleDestroy {
     return this.getClient().get(key);
   }
 
-  async mGet(keys: string[]): Promise<string[]> {
+  async mGet(keys: string[]): Promise<Array<string | null>> {
     if (keys.length === 0) {
       return [];
     }
 
     const result = await this.getClient().mGet(keys);
-    return result.filter((value): value is string => typeof value === 'string');
+
+    return result.map((value) => (typeof value === 'string' ? value : null));
   }
 }

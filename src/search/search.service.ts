@@ -134,7 +134,7 @@ export class SearchService {
       ]);
 
     this.logger.debug(
-      `Found ${searchableCustomAttributeFields.length} searchable custom attribute fields`,
+      `Found ${searchableCustomAttributeFields.length / 2} searchable custom attribute fields`,
     );
 
     const aggregations = SearchUtilsService.buildFacetAggregations(

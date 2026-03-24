@@ -4,12 +4,20 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { stringify } from 'csv-stringify/sync';
+import { LRUCache } from 'lru-cache';
 import { OrchestrationConfigCache, CustomAttribute } from './types';
 import { CmsRedisService } from './cms-redis.service';
 
 @Injectable()
 export class OrchestrationConfigService {
   private readonly logger = new Logger(OrchestrationConfigService.name);
+  private readonly customAttributesCache = new LRUCache<
+    string,
+    CustomAttribute[]
+  >({
+    max: 500,
+    ttl: 1000 * 60 * 15,
+  });
 
   constructor(private readonly cmsRedisService: CmsRedisService) {}
 
@@ -17,6 +25,14 @@ export class OrchestrationConfigService {
     tenantId: string,
   ): Promise<CustomAttribute[]> {
     this.logger.debug(`Getting custom attributes for tenant ID: ${tenantId}`);
+
+    const inMemoryCached = this.customAttributesCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(
+        `In-memory cache hit for custom attributes: ${tenantId}`,
+      );
+      return inMemoryCached;
+    }
 
     try {
       const redisKey = `orchestration_config:${tenantId}`;
@@ -26,6 +42,7 @@ export class OrchestrationConfigService {
         this.logger.warn(
           `No orchestration config found for tenant ID: ${tenantId}`,
         );
+        this.customAttributesCache.set(tenantId, []);
         return [];
       }
 
@@ -41,6 +58,8 @@ export class OrchestrationConfigService {
       this.logger.debug(
         `Found ${allAttributes.length} custom attributes for tenant ${tenantId}`,
       );
+
+      this.customAttributesCache.set(tenantId, allAttributes);
 
       return allAttributes;
     } catch (error) {
@@ -168,5 +187,17 @@ export class OrchestrationConfigService {
         'Failed to retrieve orchestration configuration',
       );
     }
+  }
+
+  clearCache(): void {
+    this.logger.log('Clearing all in-memory cache');
+    this.customAttributesCache.clear();
+    this.logger.log('All in-memory cache cleared');
+  }
+
+  clearCacheForTenant(tenantId: string): void {
+    this.logger.log(`Clearing in-memory cache for tenant: ${tenantId}`);
+    this.customAttributesCache.delete(tenantId);
+    this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }
