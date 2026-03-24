@@ -7,6 +7,7 @@ import { stringify } from 'csv-stringify/sync';
 import { LRUCache } from 'lru-cache';
 import { OrchestrationConfigCache, CustomAttribute } from './types';
 import { CmsRedisService } from './cms-redis.service';
+import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
 export class OrchestrationConfigService {
@@ -14,10 +15,7 @@ export class OrchestrationConfigService {
   private readonly customAttributesCache = new LRUCache<
     string,
     CustomAttribute[]
-  >({
-    max: 500,
-    ttl: 1000 * 60 * 15,
-  });
+  >(LRU_CACHE_CONFIG);
 
   constructor(private readonly cmsRedisService: CmsRedisService) {}
 

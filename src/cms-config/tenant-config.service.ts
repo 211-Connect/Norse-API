@@ -12,18 +12,17 @@ import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
 import { FacetConfig, FacetsConfigCache } from './types';
+import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
 export class TenantConfigService {
   private readonly logger = new Logger(TenantConfigService.name);
-  private readonly keycloakRealmIdCache = new LRUCache<string, string>({
-    max: 500,
-    ttl: 1000 * 60 * 15,
-  });
-  private readonly facetsCache = new LRUCache<string, FacetConfig[]>({
-    max: 500,
-    ttl: 1000 * 60 * 15,
-  });
+  private readonly keycloakRealmIdCache = new LRUCache<string, string>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly facetsCache = new LRUCache<string, FacetConfig[]>(
+    LRU_CACHE_CONFIG,
+  );
 
   constructor(
     private readonly cmsRedisService: CmsRedisService,
