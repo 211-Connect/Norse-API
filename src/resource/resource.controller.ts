@@ -4,6 +4,7 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiHeader,
+  ApiOperation,
   ApiParam,
   ApiResponse,
   ApiTags,
@@ -13,10 +14,7 @@ import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
-import {
-  ResourceTitlesDto,
-  resourceTitlesSchema,
-} from './dto/resource-titles.dto';
+import { ResourceTitlesDto } from './dto/resource-titles.dto';
 
 @ApiTags('Resource')
 @Controller('resource')
@@ -255,32 +253,21 @@ export class ResourceController {
   @Post('titles')
   @Version('1')
   @ApiHeader({ name: 'x-tenant-id', required: true })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        ids: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          maxItems: 100,
-        },
-      },
-      required: ['ids'],
-    },
+  @ApiOperation({
+    summary: 'Get resource titles by IDs',
+    description:
+      'Returns display titles for the provided list of resource UUIDs.',
   })
+  @ApiBody({ type: ResourceTitlesDto })
   @ApiResponse({
     status: 200,
-    example: [
-      {
-        id: '00000000-0000-0000-0000-000000000000',
-        displayName: 'EXAMPLE SERVICE | EXAMPLE ORGANIZATION',
-      },
-    ],
+    description: 'Successfully retrieved resource titles',
   })
-  getResourceTitlesByIds(
-    @Body(new ZodValidationPipe(resourceTitlesSchema)) dto: ResourceTitlesDto,
-  ) {
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request body',
+  })
+  getResourceTitlesByIds(@Body() dto: ResourceTitlesDto) {
     return this.resourceService.findTitlesByIds(dto.ids);
   }
 }
