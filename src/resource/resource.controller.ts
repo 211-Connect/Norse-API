@@ -1,12 +1,20 @@
-import { Controller, Get, Param, Version } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Version } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
-import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
+import { ResourceTitlesDto } from './dto/resource-titles.dto';
 
 @ApiTags('Resource')
 @Controller('resource')
@@ -240,5 +248,26 @@ export class ResourceController {
     return this.resourceService.findByOriginalId(id, {
       headers,
     });
+  }
+
+  @Post('titles')
+  @Version('1')
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiOperation({
+    summary: 'Get resource titles by IDs',
+    description:
+      'Returns display titles for the provided list of resource UUIDs.',
+  })
+  @ApiBody({ type: ResourceTitlesDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved resource titles',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request body',
+  })
+  getResourceTitlesByIds(@Body() dto: ResourceTitlesDto) {
+    return this.resourceService.findTitlesByIds(dto.ids);
   }
 }
