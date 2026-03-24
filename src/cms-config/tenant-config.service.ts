@@ -8,13 +8,21 @@ import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
 import { FacetConfig, FacetsConfigCache } from './types';
+import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
 export class TenantConfigService {
   private readonly logger = new Logger(TenantConfigService.name);
+  private readonly keycloakRealmIdCache = new LRUCache<string, string>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly facetsCache = new LRUCache<string, FacetConfig[]>(
+    LRU_CACHE_CONFIG,
+  );
 
   constructor(
     private readonly cmsRedisService: CmsRedisService,
@@ -24,12 +32,22 @@ export class TenantConfigService {
 
   async getKeycloakRealmId(tenantId: string): Promise<string> {
     this.logger.debug(`Fetching Keycloak Realm ID for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.keycloakRealmIdCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(
+        `In-memory cache hit for Keycloak Realm ID: ${tenantId}`,
+      );
+      return inMemoryCached;
+    }
+
     const redisKey = `keycloak_realm_id:${tenantId}`;
 
     try {
       const cmsRedisValue = await this.cmsRedisService.get(redisKey);
       if (cmsRedisValue && typeof cmsRedisValue === 'string') {
         this.logger.debug(`Redis DB 2 hit for Keycloak Realm ID: ${tenantId}`);
+        this.keycloakRealmIdCache.set(tenantId, cmsRedisValue);
         return cmsRedisValue;
       }
     } catch (error) {
@@ -41,6 +59,7 @@ export class TenantConfigService {
     const cachedRealmId = await this.cacheService.get<string>(redisKey);
     if (cachedRealmId) {
       this.logger.debug(`Cache hit for Keycloak Realm ID: ${tenantId}`);
+      this.keycloakRealmIdCache.set(tenantId, cachedRealmId);
       return cachedRealmId;
     }
 
@@ -56,12 +75,19 @@ export class TenantConfigService {
     }
 
     await this.cacheService.set(redisKey, strapiData.keycloakRealmId, 60_000);
+    this.keycloakRealmIdCache.set(tenantId, strapiData.keycloakRealmId);
 
     return strapiData.keycloakRealmId;
   }
 
   async getFacets(tenantId: string): Promise<FacetConfig[]> {
     this.logger.debug(`Fetching facets for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.facetsCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(`In-memory cache hit for facets: ${tenantId}`);
+      return inMemoryCached;
+    }
 
     try {
       const redisKey = `facets:${tenantId}`;
@@ -74,8 +100,11 @@ export class TenantConfigService {
           this.logger.error(
             `Invalid facets format in Redis for tenant ${tenantId}. Expected FacetsConfigCache with facets array. Got: ${redisValue}`,
           );
-          return [];
+          const emptyFacets = [];
+          this.facetsCache.set(tenantId, emptyFacets);
+          return emptyFacets;
         }
+        this.facetsCache.set(tenantId, facetsCache.facets);
         return facetsCache.facets;
       }
     } catch (error) {
@@ -155,5 +184,19 @@ export class TenantConfigService {
         'Failed to fetch tenant configuration',
       );
     }
+  }
+
+  clearCache(): void {
+    this.logger.log('Clearing all in-memory cache');
+    this.keycloakRealmIdCache.clear();
+    this.facetsCache.clear();
+    this.logger.log('All in-memory cache cleared');
+  }
+
+  clearCacheForTenant(tenantId: string): void {
+    this.logger.log(`Clearing in-memory cache for tenant: ${tenantId}`);
+    this.keycloakRealmIdCache.delete(tenantId);
+    this.facetsCache.delete(tenantId);
+    this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }

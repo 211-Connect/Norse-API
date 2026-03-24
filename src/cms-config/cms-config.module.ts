@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { OrchestrationConfigService } from './orchestration-config.service';
 import { OrchestrationConfigController } from './orchestration-config.controller';
+import { CmsConfigController } from './cms-config.controller';
 import { CmsRedisService } from './cms-redis.service';
 import { TenantConfigService } from './tenant-config.service';
 
 @Module({
-  controllers: [OrchestrationConfigController],
+  controllers: [OrchestrationConfigController, CmsConfigController],
   providers: [OrchestrationConfigService, CmsRedisService, TenantConfigService],
   exports: [TenantConfigService, OrchestrationConfigService],
 })
