@@ -100,7 +100,9 @@ export class TenantConfigService {
           this.logger.error(
             `Invalid facets format in Redis for tenant ${tenantId}. Expected FacetsConfigCache with facets array. Got: ${redisValue}`,
           );
-          return [];
+          const emptyFacets = [];
+          this.facetsCache.set(tenantId, emptyFacets);
+          return emptyFacets;
         }
         this.facetsCache.set(tenantId, facetsCache.facets);
         return facetsCache.facets;

@@ -40,8 +40,9 @@ export class OrchestrationConfigService {
         this.logger.warn(
           `No orchestration config found for tenant ID: ${tenantId}`,
         );
-        this.customAttributesCache.set(tenantId, []);
-        return [];
+        const emptyAttributes: CustomAttribute[] = [];
+        this.customAttributesCache.set(tenantId, emptyAttributes);
+        return emptyAttributes;
       }
 
       const config: OrchestrationConfigCache = JSON.parse(value as string);
