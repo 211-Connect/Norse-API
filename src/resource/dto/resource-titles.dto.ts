@@ -12,6 +12,6 @@ export class ResourceTitlesDto {
   @IsArray()
   @ArrayMinSize(1, { message: 'At least 1 ID is required' })
   @ArrayMaxSize(100, { message: 'No more than 100 IDs are allowed' })
-  @IsUUID('4', { each: true, message: 'Each ID must be a valid UUID' })
+  @IsUUID(undefined, { each: true, message: 'Each ID must be a valid UUID' })
   ids: string[];
 }

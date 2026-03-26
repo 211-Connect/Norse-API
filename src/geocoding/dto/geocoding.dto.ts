@@ -3,6 +3,7 @@ import {
   IsString,
   IsOptional,
   IsInt,
+  IsEnum,
   Min,
   Max,
   IsNotEmpty,
@@ -10,6 +11,11 @@ import {
 import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
 import { PartialType } from '@nestjs/mapped-types';
+
+export enum GeocodingModule {
+  MAPBOX = 'mapbox',
+  OPENCAGE = 'opencage',
+}
 
 export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
   @ApiProperty({
@@ -20,6 +26,17 @@ export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
   @IsString()
   @IsNotEmpty({ message: 'Address is required' })
   address: string;
+
+  @ApiProperty({
+    description: 'Geocoding module to query',
+    example: GeocodingModule.MAPBOX,
+    enum: GeocodingModule,
+    required: false,
+    default: GeocodingModule.MAPBOX,
+  })
+  @IsEnum(GeocodingModule)
+  @IsOptional()
+  module?: GeocodingModule = GeocodingModule.MAPBOX;
 
   @ApiProperty({
     description: 'Maximum number of results to return',
@@ -62,6 +79,17 @@ export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {
     return [lng, lat];
   })
   coordinates: [number, number];
+
+  @ApiProperty({
+    description: 'Geocoding module to query',
+    example: GeocodingModule.MAPBOX,
+    enum: GeocodingModule,
+    required: false,
+    default: GeocodingModule.MAPBOX,
+  })
+  @IsEnum(GeocodingModule)
+  @IsOptional()
+  module?: GeocodingModule = GeocodingModule.MAPBOX;
 }
 
 export class GeocodeResponseDto {
