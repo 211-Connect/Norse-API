@@ -145,6 +145,9 @@ export class SearchSource {
 
   @ApiProperty()
   pinned: boolean;
+
+  @ApiProperty()
+  attribution?: string;
 }
 
 export class SearchHit {
