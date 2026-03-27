@@ -6,7 +6,6 @@ import {
   Min,
   Max,
   IsNotEmpty,
-  Matches,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
@@ -44,13 +43,22 @@ export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {
     example: '-74.006,40.7128',
     required: true,
   })
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^-?\d+\.?\d*,-?\d+\.?\d*$/, {
-    message: 'Invalid coordinates format',
-  })
   @Transform(({ value }) => {
+    if (typeof value !== 'string' || !value) {
+      throw new Error('Coordinates must be a non-empty string');
+    }
+
+    if (!/^-?\d+\.?\d*,-?\d+\.?\d*$/.test(value)) {
+      throw new Error(
+        'Invalid coordinates format. Expected format: "longitude,latitude"',
+      );
+    }
+
     const [lng, lat] = value.split(',').map(Number);
+    if (isNaN(lng) || isNaN(lat)) {
+      throw new Error('Coordinates must be valid numbers');
+    }
+
     return [lng, lat];
   })
   coordinates: [number, number];
