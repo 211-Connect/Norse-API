@@ -46,11 +46,13 @@ export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^-?\d+\.?\d*,-?\d+\.?\d*$/, {
+  @Matches(/^-?\d+\.?\d*(,|%2C)-?\d+\.?\d*$/i, {
     message: 'Invalid coordinates format',
   })
   @Transform(({ value }) => {
-    const [lng, lat] = value.split(',').map(Number);
+    // Handle both regular comma and URL-encoded comma (%2C)
+    const normalized = value.replace(/%2C/gi, ',');
+    const [lng, lat] = normalized.split(',').map(Number);
     return [lng, lat];
   })
   coordinates: [number, number];
