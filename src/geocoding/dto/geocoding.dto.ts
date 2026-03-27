@@ -50,9 +50,8 @@ export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {
     message: 'Invalid coordinates format',
   })
   @Transform(({ value }) => {
-    // Handle both regular comma and URL-encoded comma (%2C)
-    const normalized = value.replace(/%2C/gi, ',');
-    const [lng, lat] = normalized.split(',').map(Number);
+    const decoded = decodeURIComponent(value);
+    const [lng, lat] = decoded.split(',').map(Number);
     return [lng, lat];
   })
   coordinates: [number, number];
