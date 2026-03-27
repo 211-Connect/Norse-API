@@ -157,31 +157,24 @@ export class SearchUtilsService {
    * coordinates are provided.
    */
   static buildSort(coords: number[] | undefined, sortOption?: string): Sort {
-    const baseSort: Sort = [{ priority: 'desc' }];
-
     switch (sortOption) {
       case 'distance':
         if (coords) {
           return this.getGeoDistanceSort(coords);
         }
-        return baseSort;
 
       case 'name':
-        return [{ 'name.raw': { order: 'asc' } }, ...baseSort];
+        return [{ 'name.raw': { order: 'asc' } }];
 
       case 'organization':
         return [
           { 'organization.name.raw': { order: 'asc' } },
           { 'name.raw': { order: 'asc' } },
-          ...baseSort,
         ];
 
       case 'relevance':
       default:
-        if (coords) {
-          return baseSort.concat(this.getGeoDistanceSort(coords));
-        }
-        return baseSort;
+        return [];
     }
   }
 
