@@ -12,7 +12,7 @@ import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
 import { PartialType } from '@nestjs/mapped-types';
 
-export enum GeocodingModule {
+export enum GeocodingProvider {
   MAPBOX = 'mapbox',
   OPENCAGE = 'opencage',
 }
@@ -29,14 +29,14 @@ export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
 
   @ApiProperty({
     description: 'Geocoding module to query',
-    example: GeocodingModule.MAPBOX,
-    enum: GeocodingModule,
+    example: GeocodingProvider.MAPBOX,
+    enum: GeocodingProvider,
     required: false,
-    default: GeocodingModule.MAPBOX,
+    default: GeocodingProvider.MAPBOX,
   })
-  @IsEnum(GeocodingModule)
+  @IsEnum(GeocodingProvider)
   @IsOptional()
-  module?: GeocodingModule = GeocodingModule.MAPBOX;
+  provider?: GeocodingProvider = GeocodingProvider.MAPBOX;
 
   @ApiProperty({
     description: 'Maximum number of results to return',
@@ -82,14 +82,14 @@ export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {
 
   @ApiProperty({
     description: 'Geocoding module to query',
-    example: GeocodingModule.MAPBOX,
-    enum: GeocodingModule,
+    example: GeocodingProvider.MAPBOX,
+    enum: GeocodingProvider,
     required: false,
-    default: GeocodingModule.MAPBOX,
+    default: GeocodingProvider.MAPBOX,
   })
-  @IsEnum(GeocodingModule)
+  @IsEnum(GeocodingProvider)
   @IsOptional()
-  module?: GeocodingModule = GeocodingModule.MAPBOX;
+  provider?: GeocodingProvider = GeocodingProvider.MAPBOX;
 }
 
 export class GeocodeResponseDto {

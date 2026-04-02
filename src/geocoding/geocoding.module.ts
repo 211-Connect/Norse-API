@@ -8,7 +8,7 @@ import { ConfigModule } from '@nestjs/config';
 import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import { MapboxGeocodingProvider } from './providers/mapbox-geocoding.provider';
 import { OpenCageGeocodingProvider } from './providers/opencage-geocoding.provider';
-import { GeocodingModule as GeocodingProviderEnum } from './dto/geocoding.dto';
+import { GeocodingProvider } from './dto/geocoding.dto';
 
 @Module({
   imports: [ConfigModule],
@@ -22,8 +22,8 @@ import { GeocodingModule as GeocodingProviderEnum } from './dto/geocoding.dto';
         mapbox: MapboxGeocodingProvider,
         openCage: OpenCageGeocodingProvider,
       ) => ({
-        [GeocodingProviderEnum.MAPBOX]: mapbox,
-        [GeocodingProviderEnum.OPENCAGE]: openCage,
+        [GeocodingProvider.MAPBOX]: mapbox,
+        [GeocodingProvider.OPENCAGE]: openCage,
       }),
       inject: [MapboxGeocodingProvider, OpenCageGeocodingProvider],
     },

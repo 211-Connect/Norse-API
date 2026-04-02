@@ -10,7 +10,7 @@ import { Cache } from 'cache-manager';
 import {
   ForwardGeocodeQueryDto,
   ForwardGeocodeResponseDto,
-  GeocodingModule,
+  GeocodingProvider,
   ReverseGeocodeQueryDto,
   ReverseGeocodeResponseDto,
 } from './dto/geocoding.dto';
@@ -25,12 +25,12 @@ export class GeocodingService {
 
   constructor(
     @Inject(GEOCODING_PROVIDERS_TOKEN)
-    private readonly providers: Record<GeocodingModule, IGeocodingProvider>,
+    private readonly providers: Record<GeocodingProvider, IGeocodingProvider>,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   private getProvider(
-    module: GeocodingModule = GeocodingModule.MAPBOX,
+    module: GeocodingProvider = GeocodingProvider.MAPBOX,
   ): IGeocodingProvider {
     const provider = this.providers[module];
     if (!provider) {
@@ -46,7 +46,7 @@ export class GeocodingService {
     query: ForwardGeocodeQueryDto,
   ): Promise<ForwardGeocodeResponseDto[]> {
     const { address, locale = 'en', limit = 5 } = query;
-    const providerKey = query.module ?? GeocodingModule.MAPBOX;
+    const providerKey = query.provider ?? GeocodingProvider.MAPBOX;
     const cacheKey = `geocode:forward:${providerKey}:${address}:${locale}:${limit}`;
 
     const cachedResult =
@@ -56,7 +56,7 @@ export class GeocodingService {
     }
 
     try {
-      const results = await this.getProvider(query.module).forwardGeocode(
+      const results = await this.getProvider(query.provider).forwardGeocode(
         query,
       );
       await this.cacheManager.set(cacheKey, results, this.cacheTTL);
@@ -84,7 +84,7 @@ export class GeocodingService {
     query: ReverseGeocodeQueryDto,
   ): Promise<ReverseGeocodeResponseDto[]> {
     const { coordinates, locale = 'en', module } = query;
-    const providerKey = module ?? GeocodingModule.MAPBOX;
+    const providerKey = module ?? GeocodingProvider.MAPBOX;
     const [lng, lat] = coordinates;
 
     // Generate cache key
