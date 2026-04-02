@@ -58,6 +58,9 @@ export class Resource {
   website: string;
 
   @Prop()
+  organizationUrl: string;
+
+  @Prop()
   email: string;
 
   @Prop()
