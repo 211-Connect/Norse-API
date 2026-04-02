@@ -7,17 +7,21 @@ import { ConfigService } from '@nestjs/config';
 import { VersioningType, LogLevel, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 
-async function bootstrap() {
-  const nodeEnv = process.env.NODE_ENV;
-  const loggerLevels: LogLevel[] =
-    nodeEnv === 'development'
-      ? ['log', 'error', 'warn', 'debug']
-      : ['error', 'warn'];
+const logLevelMap: Record<string, LogLevel[]> = {
+  error: ['error'],
+  warn: ['error', 'warn'],
+  log: ['error', 'warn', 'log'],
+  debug: ['error', 'warn', 'log', 'debug'],
+  verbose: ['error', 'warn', 'log', 'debug', 'verbose'],
+};
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    logger: loggerLevels,
-  });
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+
+  const logLevel = config.get<string>('logLevel');
+  const loggerLevels: LogLevel[] = logLevelMap[logLevel] || ['error', 'warn'];
+  app.useLogger(loggerLevels);
 
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(

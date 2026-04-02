@@ -6,6 +6,7 @@ import { BadRequestException } from '@nestjs/common';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
+import { HybridSearchService } from './hybrid-search.service';
 
 describe('SearchService Logic', () => {
   let service: SearchService;
@@ -14,6 +15,9 @@ describe('SearchService Logic', () => {
     search: jest.fn().mockResolvedValue({
       aggregations: {},
       hits: { hits: [], total: { value: 0 } },
+      _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+      timed_out: false,
+      took: 1,
     }),
   };
 
@@ -23,6 +27,15 @@ describe('SearchService Logic', () => {
 
   const mockOrchestrationConfigService = {
     getCustomAttributesByTenantId: jest.fn().mockResolvedValue([]),
+  };
+
+  const mockHybridSearchService = {
+    searchHybrid: jest.fn().mockResolvedValue({
+      hits: { hits: [], total: { value: 0 } },
+      aggregations: {},
+      facets: {},
+      facet_labels: {},
+    }),
   };
 
   beforeEach(async () => {
@@ -40,6 +53,10 @@ describe('SearchService Logic', () => {
         {
           provide: OrchestrationConfigService,
           useValue: mockOrchestrationConfigService,
+        },
+        {
+          provide: HybridSearchService,
+          useValue: mockHybridSearchService,
         },
       ],
     }).compile();
@@ -61,6 +78,7 @@ describe('SearchService Logic', () => {
     filters: {},
     distance: 0,
     query_type: 'text',
+    sort: 'relevance',
   };
 
   it('should apply boundary search filter', async () => {

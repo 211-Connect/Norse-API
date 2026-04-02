@@ -96,6 +96,7 @@ export class SearchService {
       coords,
       distance,
       geo_type,
+      sort,
     } = q;
 
     if (
@@ -133,7 +134,7 @@ export class SearchService {
       ]);
 
     this.logger.debug(
-      `Found ${searchableCustomAttributeFields.length} searchable custom attribute fields`,
+      `Found ${searchableCustomAttributeFields.length / 2} searchable custom attribute fields`,
     );
 
     const aggregations = SearchUtilsService.buildFacetAggregations(
@@ -192,7 +193,7 @@ export class SearchService {
       from: (page - 1) * 25,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: SearchUtilsService.buildSort(coords),
+      sort: SearchUtilsService.buildSort(coords, sort),
       aggs: aggregations,
       ...specificQuery,
     };

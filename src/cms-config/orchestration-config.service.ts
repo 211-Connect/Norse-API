@@ -4,31 +4,45 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { stringify } from 'csv-stringify/sync';
+import { LRUCache } from 'lru-cache';
 import { OrchestrationConfigCache, CustomAttribute } from './types';
 import { CmsRedisService } from './cms-redis.service';
+import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
 export class OrchestrationConfigService {
   private readonly logger = new Logger(OrchestrationConfigService.name);
+  private readonly customAttributesCache = new LRUCache<
+    string,
+    CustomAttribute[]
+  >(LRU_CACHE_CONFIG);
 
   constructor(private readonly cmsRedisService: CmsRedisService) {}
 
   async getCustomAttributesByTenantId(
     tenantId: string,
   ): Promise<CustomAttribute[]> {
-    return []; // early return to avoid hitting Redis while custom attributes are not used yet
-
     this.logger.debug(`Getting custom attributes for tenant ID: ${tenantId}`);
+
+    const inMemoryCached = this.customAttributesCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(
+        `In-memory cache hit for custom attributes: ${tenantId}`,
+      );
+      return inMemoryCached;
+    }
 
     try {
       const redisKey = `orchestration_config:${tenantId}`;
       const value = await this.cmsRedisService.get(redisKey);
 
       if (!value) {
-        this.logger.debug(
+        this.logger.warn(
           `No orchestration config found for tenant ID: ${tenantId}`,
         );
-        return [];
+        const emptyAttributes: CustomAttribute[] = [];
+        this.customAttributesCache.set(tenantId, emptyAttributes);
+        return emptyAttributes;
       }
 
       const config: OrchestrationConfigCache = JSON.parse(value as string);
@@ -43,6 +57,8 @@ export class OrchestrationConfigService {
       this.logger.debug(
         `Found ${allAttributes.length} custom attributes for tenant ${tenantId}`,
       );
+
+      this.customAttributesCache.set(tenantId, allAttributes);
 
       return allAttributes;
     } catch (error) {
@@ -170,5 +186,17 @@ export class OrchestrationConfigService {
         'Failed to retrieve orchestration configuration',
       );
     }
+  }
+
+  clearCache(): void {
+    this.logger.log('Clearing all in-memory cache');
+    this.customAttributesCache.clear();
+    this.logger.log('All in-memory cache cleared');
+  }
+
+  clearCacheForTenant(tenantId: string): void {
+    this.logger.log(`Clearing in-memory cache for tenant: ${tenantId}`);
+    this.customAttributesCache.delete(tenantId);
+    this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }

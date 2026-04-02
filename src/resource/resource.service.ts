@@ -28,6 +28,21 @@ export class ResourceService {
   async findByOriginalId(id: string, options: { headers: HeadersDto }) {
     return this.findResourceAndTransform({ originalId: id }, id, options);
   }
+
+  async findTitlesByIds(
+    ids: string[],
+  ): Promise<{ id: string; displayName: string }[]> {
+    const resources = await this.resourceModel
+      .find({ _id: { $in: ids } }, { _id: 1, displayName: 1 })
+      .lean()
+      .exec();
+
+    return resources.map((r) => ({
+      id: r._id,
+      displayName: r.displayName,
+    }));
+  }
+
   /**
    * Centralized logic for finding, filtering, and transforming the resource.
    */
