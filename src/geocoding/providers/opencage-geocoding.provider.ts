@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   ForwardGeocodeQueryDto,
   ForwardGeocodeResponseDto,
@@ -22,9 +18,6 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
 
     if (!this.accessToken) {
       this.logger.error('OPENCAGE_API_KEY is not configured');
-      throw new InternalServerErrorException(
-        'Geocoding service is not properly configured',
-      );
     }
   }
 

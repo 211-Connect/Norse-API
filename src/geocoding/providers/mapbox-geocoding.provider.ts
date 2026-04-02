@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import mbxGeocoding from '@mapbox/mapbox-sdk/services/geocoding';
 import { GeocodeService } from '@mapbox/mapbox-sdk/services/geocoding';
@@ -24,11 +20,7 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
 
     if (!accessToken) {
       this.logger.error('MAPBOX_API_KEY is not configured');
-      throw new InternalServerErrorException(
-        'Geocoding service is not properly configured',
-      );
     }
-
     this.client = mbxGeocoding({ accessToken });
   }
 
