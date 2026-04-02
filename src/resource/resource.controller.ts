@@ -89,6 +89,7 @@ export class ResourceController {
       originalId: '1234',
       updatedAt: '2024-08-26T00:00:00',
       website: 'https://www.example.com/',
+      organizationUrl: 'https://www.example.org/',
       translation: {
         displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
         fees: 'n/a',
@@ -202,6 +203,7 @@ export class ResourceController {
       originalId: '1234',
       updatedAt: '2024-08-26T00:00:00',
       website: 'https://www.example.com/',
+      organizationUrl: 'https://www.example.org/',
       translation: {
         displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
         fees: 'n/a',
