@@ -17,4 +17,5 @@ export default () => ({
     parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
+  OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
 });
