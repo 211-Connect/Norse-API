@@ -40,6 +40,32 @@ class Facet {
   termName: string;
 }
 
+@Schema({ _id: false })
+class PhoneNumber {
+  @Prop()
+  type: string;
+  @Prop()
+  number: string;
+  @Prop()
+  rank: number;
+}
+
+@Schema({ _id: false })
+class Contact {
+  @Prop()
+  id: string;
+  @Prop()
+  name: string;
+  @Prop()
+  title?: string;
+  @Prop()
+  email?: string;
+  @Prop()
+  phones?: PhoneNumber[];
+  @Prop()
+  priority: number;
+}
+
 @Schema({ timestamps: true })
 export class Resource {
   @Prop({ index: true })
@@ -64,11 +90,7 @@ export class Resource {
   email: string;
 
   @Prop()
-  phoneNumbers: {
-    type: string;
-    number: string;
-    rank: number;
-  }[];
+  phoneNumbers: PhoneNumber[];
 
   @Prop()
   hours: string;
@@ -136,6 +158,8 @@ export class Resource {
     accessibility?: string;
     transportation?: string;
     facets?: Facet[];
+    attributeValues?: Record<string, string>;
+    contacts: Contact[];
   }[];
 
   @Prop()
