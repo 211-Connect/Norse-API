@@ -188,6 +188,36 @@ export class OrchestrationConfigService {
     }
   }
 
+  async getTenantLocales(tenantId: string): Promise<string[]> {
+    this.logger.debug(`Getting enabled locales for tenant ID: ${tenantId}`);
+
+    try {
+      const redisKey = `enabled_locales:${tenantId}`;
+      const value = await this.cmsRedisService.get(redisKey);
+
+      if (!(value && typeof value === 'string')) {
+        this.logger.warn(`No enabled locales found for tenant ID: ${tenantId}`);
+        const emptyLocales: string[] = [];
+        return emptyLocales;
+      }
+
+      const locales: string[] = JSON.parse(value);
+      this.logger.debug(
+        `Found ${locales.length} enabled locales for tenant ${tenantId}`,
+      );
+
+      return locales;
+    } catch (error) {
+      this.logger.error(
+        `Error getting enabled locales for tenant ${tenantId}:`,
+        error instanceof Error ? error.stack : error,
+      );
+      throw new InternalServerErrorException(
+        'Failed to retrieve enabled locales',
+      );
+    }
+  }
+
   clearCache(): void {
     this.logger.log('Clearing all in-memory cache');
     this.customAttributesCache.clear();
