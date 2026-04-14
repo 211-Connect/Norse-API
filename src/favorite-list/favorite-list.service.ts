@@ -2,13 +2,18 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
 import { InjectModel } from '@nestjs/mongoose';
-import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
+import {
+  FavoriteList,
+  FavoriteListDocument,
+} from 'src/common/schemas/favorite-list.schema';
+import { ResourceDocument } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto } from './dto/pagination.dto';
 import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
+  FavoriteListItemDto,
 } from './dto/favorite-list.response.dto';
 
 interface User {
@@ -66,22 +71,24 @@ export class FavoriteListService {
       return this.search({ name: pagination.search }, pagination, options);
     }
 
-    const { page, limit } = pagination;
+    const { page, limit, resource_id } = pagination;
     const skip = (page - 1) * limit;
 
     const query = { ownerId: options.user.id };
 
+    const selectFields = `name description privacy ownerId ${resource_id ? 'favorites' : ''}`;
+
     const [data, total] = await Promise.all([
       this.favoriteListModel
         .find(query)
-        .select('name description privacy ownerId')
+        .select(selectFields)
         .skip(skip)
         .limit(limit)
         .exec(),
       this.favoriteListModel.countDocuments(query).exec(),
     ]);
 
-    return this.mapToResponse(data, total, page);
+    return this.mapToResponse(data, total, page, resource_id);
   }
 
   async search(
@@ -89,7 +96,7 @@ export class FavoriteListService {
     pagination: PaginationDto,
     options: { user: User },
   ): Promise<FavoriteListResponseDto> {
-    const { page, limit } = pagination;
+    const { page, limit, resource_id } = pagination;
     const skip = (page - 1) * limit;
 
     const mongoQuery: FilterQuery<FavoriteList> = {
@@ -104,34 +111,47 @@ export class FavoriteListService {
       mongoQuery.name = { $regex: searchFavoriteListDto.name, $options: 'i' };
     }
 
+    const selectFields = `name description privacy ownerId ${resource_id ? 'favorites' : ''}`;
+
     const [data, total] = await Promise.all([
       this.favoriteListModel
         .find(mongoQuery)
-        .select('name description privacy ownerId')
+        .select(selectFields)
         .skip(skip)
         .limit(limit)
         .exec(),
       this.favoriteListModel.countDocuments(mongoQuery).exec(),
     ]);
 
-    return this.mapToResponse(data, total, page);
+    return this.mapToResponse(data, total, page, resource_id);
   }
 
   private mapToResponse(
-    data: any[],
+    data: FavoriteListDocument[],
     total: number,
     page: number,
+    resourceId?: string,
   ): FavoriteListResponseDto {
     return {
       total,
       page,
-      items: data.map((item) => ({
-        id: item._id.toString(),
-        name: item.name,
-        description: item.description,
-        privacy: item.privacy,
-        ownerId: item.ownerId,
-      })),
+      items: data.map((item): FavoriteListItemDto => {
+        const listItem: FavoriteListItemDto = {
+          id: item._id.toString(),
+          name: item.name,
+          description: item.description,
+          privacy: item.privacy,
+          ownerId: item.ownerId,
+        };
+
+        if (resourceId !== undefined) {
+          listItem.containsResource = item.favorites
+            ? item.favorites.includes(resourceId)
+            : false;
+        }
+
+        return listItem;
+      }),
     };
   }
 
@@ -143,12 +163,10 @@ export class FavoriteListService {
       path: 'favorites',
       model: 'Resource',
       select: '-serviceArea',
-      transform: (doc: any) => {
+      transform: (doc: ResourceDocument | null) => {
         if (!doc) return null;
 
-        const translation = doc.translations.find(
-          (el: any) => el.locale === locale,
-        );
+        const translation = doc.translations.find((el) => el.locale === locale);
 
         doc.translations = [];
 
