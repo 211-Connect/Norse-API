@@ -37,7 +37,7 @@ export class OrchestrationConfigService {
       const value = await this.cmsRedisService.get(redisKey);
 
       if (!value) {
-        this.logger.warn(
+        this.logger.debug(
           `No orchestration config found for tenant ID: ${tenantId}`,
         );
         const emptyAttributes: CustomAttribute[] = [];
