@@ -28,6 +28,10 @@ export class FavoriteListService {
     private favoriteListModel: Model<FavoriteList>,
   ) {}
 
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   async create(
     createFavoriteListDto: CreateFavoriteListDto,
     options: { user: User },
@@ -108,7 +112,8 @@ export class FavoriteListService {
     }
 
     if (searchFavoriteListDto.name) {
-      mongoQuery.name = { $regex: searchFavoriteListDto.name, $options: 'i' };
+      const escapedName = this.escapeRegex(searchFavoriteListDto.name);
+      mongoQuery.name = { $regex: escapedName, $options: 'i' };
     }
 
     const selectFields = `name description privacy ownerId ${resource_id ? 'favorites' : ''}`;
