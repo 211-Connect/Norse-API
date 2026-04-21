@@ -98,7 +98,7 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ): Promise<SearchResponse> {
-    this.metricsService.incrementSearchHit('GET', 'getResources');
+    this.metricsService.incrementSearchHit('GET', 'getResources', headers['x-tenant-id']);
 
     try {
       return this.searchService.searchResources({
@@ -187,7 +187,7 @@ export class SearchController {
     @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
     @Req() req,
   ) {
-    this.metricsService.incrementSearchHit('POST', 'getResourcesPost');
+    this.metricsService.incrementSearchHit('POST', 'getResourcesPost', headers['x-tenant-id']);
 
     // Validate Content-Type
     const contentType = req.headers['content-type'];
