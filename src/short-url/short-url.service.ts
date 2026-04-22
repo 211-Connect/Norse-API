@@ -10,11 +10,7 @@ import { Model } from 'mongoose';
 import { XTenantIdDto } from 'src/common/dto/headers.dto';
 import { ShortenedUrl } from 'src/common/schemas/shortened-url.schema';
 import { nanoid } from 'nanoid';
-import {
-  ShortUrlResponse,
-  CreateShortUrlOptions,
-  FindShortUrlOptions,
-} from './short-url.dto';
+import { ShortUrlResponse, FindShortUrlOptions } from './short-url.dto';
 
 @Injectable()
 export class ShortUrlService {
@@ -75,12 +71,12 @@ export class ShortUrlService {
   }
 
   /**
-   * Find shortened URL by original URL or short ID and tenant
+   * Find shortened URL by original URL or short ID
    */
   private async findShortUrl(
     options: FindShortUrlOptions,
   ): Promise<ShortenedUrl | null> {
-    const { tenantId, originalUrl, shortId } = options;
+    const { originalUrl, shortId } = options;
 
     if (!originalUrl && !shortId) {
       throw new BadRequestException(
@@ -88,7 +84,7 @@ export class ShortUrlService {
       );
     }
 
-    const query: any = { tenantId };
+    const query: Record<string, string> = {};
 
     if (originalUrl) {
       query.originalUrl = originalUrl;
@@ -113,7 +109,6 @@ export class ShortUrlService {
    */
   private async getOrCreateWithUpsert(
     originalUrl: string,
-    tenantId: XTenantIdDto,
   ): Promise<{ shortId: string; isNew: boolean }> {
     let retries = 0;
 
@@ -123,7 +118,6 @@ export class ShortUrlService {
         const existing = await this.shortenedUrlModel
           .findOne({
             originalUrl,
-            tenantId,
           })
           .lean()
           .exec();
@@ -140,7 +134,6 @@ export class ShortUrlService {
           .findOneAndUpdate(
             {
               originalUrl,
-              tenantId,
             },
             {
               $setOnInsert: {
@@ -177,7 +170,6 @@ export class ShortUrlService {
           const existing = await this.shortenedUrlModel
             .findOne({
               originalUrl,
-              tenantId,
             })
             .lean()
             .exec();
@@ -198,27 +190,20 @@ export class ShortUrlService {
   /**
    * Find a shortened URL by its short ID
    * @param id - The short ID to lookup
-   * @param options - Options containing tenant ID
+   * @param options - Options optionally containing tenant ID
    * @returns The original URL
-   * @throws NotFoundException if the short URL doesn't exist
+   * @throws NotFoundException if the short URL doesn't exist or tenant doesn't match
    */
-  async findById(
-    id: string,
-    options: CreateShortUrlOptions,
-  ): Promise<ShortUrlResponse> {
+  async findById(id: string): Promise<ShortUrlResponse> {
     this.validateInput(id, 'Short ID');
-    this.validateTenantId(options.tenantId);
 
     try {
       const shortenedUrl = await this.findShortUrl({
-        tenantId: options.tenantId,
         shortId: id,
       });
 
       if (!shortenedUrl) {
-        this.logger.warn(
-          `Short URL not found: ${id} for tenant: ${options.tenantId}`,
-        );
+        this.logger.warn(`Short URL not found: ${id}`);
         throw new NotFoundException('Short URL not found');
       }
 
@@ -246,20 +231,13 @@ export class ShortUrlService {
    * @returns The shortened URL
    * @throws BadRequestException if the URL is invalid
    */
-  async getOrCreateShortUrl(
-    originalUrl: string,
-    options: CreateShortUrlOptions,
-  ): Promise<ShortUrlResponse> {
+  async getOrCreateShortUrl(originalUrl: string): Promise<ShortUrlResponse> {
     this.validateInput(originalUrl, 'URL');
     this.validateUrl(originalUrl);
-    this.validateTenantId(options.tenantId);
 
     try {
       // Check if shortened URL already exists
-      const shortenedUrl = await this.getOrCreateWithUpsert(
-        originalUrl,
-        options.tenantId,
-      );
+      const shortenedUrl = await this.getOrCreateWithUpsert(originalUrl);
       this.logger.debug(
         `${shortenedUrl.isNew ? 'Created new' : 'Found existing'} short URL: ${originalUrl} -> ${shortenedUrl.shortId}`,
       );

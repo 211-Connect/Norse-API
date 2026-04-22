@@ -1,8 +1,5 @@
 import { Body, Controller, Get, Param, Post, Version } from '@nestjs/common';
 import { ShortUrlService } from './short-url.service';
-import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
-import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
-import { XTenantIdDto, xTenantIdSchema } from 'src/common/dto/headers.dto';
 import { ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Short URL')
@@ -12,21 +9,13 @@ export class ShortUrlController {
 
   @Get(':id')
   @Version('1')
-  getShortUrlById(
-    @Param('id') id,
-    @CustomHeaders('x-tenant-id', new ZodValidationPipe(xTenantIdSchema))
-    tenantId: XTenantIdDto,
-  ) {
-    return this.shortUrlService.findById(id, { tenantId });
+  getShortUrlById(@Param('id') id: string) {
+    return this.shortUrlService.findById(id);
   }
 
   @Post()
   @Version('1')
-  getOrCreateShortUrl(
-    @Body('url') url,
-    @CustomHeaders('x-tenant-id', new ZodValidationPipe(xTenantIdSchema))
-    tenantId,
-  ) {
-    return this.shortUrlService.getOrCreateShortUrl(url, { tenantId });
+  getOrCreateShortUrl(@Body('url') url: string) {
+    return this.shortUrlService.getOrCreateShortUrl(url);
   }
 }
