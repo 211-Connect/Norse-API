@@ -131,7 +131,7 @@ export class ResourceController {
     @Param('id') id,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
-    this.metricsService.incrementResourceHit('GET', 'getResourceById');
+    this.metricsService.incrementResourceHit('GET', 'getResourceById', headers['x-tenant-id'], id);
 
     return this.resourceService.findById(id, {
       headers,
@@ -245,7 +245,7 @@ export class ResourceController {
     @Param('id') id: string, // The path parameter named id, but it is original ID
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
-    this.metricsService.incrementResourceHit('GET', 'getResourceByOriginalId');
+    this.metricsService.incrementResourceHit('GET', 'getResourceByOriginalId', headers['x-tenant-id'], id);
 
     return this.resourceService.findByOriginalId(id, {
       headers,

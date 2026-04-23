@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationResponseDto } from '../../common/dto/pagination-response.dto';
 
 export class FavoriteListItemDto {
@@ -16,6 +16,12 @@ export class FavoriteListItemDto {
 
   @ApiProperty()
   ownerId: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Whether the list contains the specified resource (only present when resource_id is provided)',
+  })
+  containsResource?: boolean;
 }
 
 export class FavoriteListDetailResponseDto extends FavoriteListItemDto {

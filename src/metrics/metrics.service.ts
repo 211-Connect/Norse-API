@@ -23,14 +23,14 @@ export class MetricsService implements OnModuleDestroy {
     this.searchHitsCounter = this.createOrGetCounter({
       name: 'norse_search_hits_total',
       help: 'Total hits for /search endpoints',
-      labelNames: ['method', 'handler'],
+      labelNames: ['method', 'handler', 'tenant_id'],
       registers: [register],
     });
 
     this.resourceHitsCounter = this.createOrGetCounter({
       name: 'norse_resource_hits_total',
       help: 'Total hits for /resource endpoints',
-      labelNames: ['method', 'handler'],
+      labelNames: ['method', 'handler', 'tenant_id', 'resource_id'],
       registers: [register],
     });
 
@@ -62,12 +62,12 @@ export class MetricsService implements OnModuleDestroy {
     await this.pushMetrics();
   }
 
-  incrementSearchHit(method: string, handler: string): void {
-    this.searchHitsCounter.inc({ method, handler });
+  incrementSearchHit(method: string, handler: string, tenantId: string): void {
+    this.searchHitsCounter.inc({ method, handler, tenant_id: tenantId });
   }
 
-  incrementResourceHit(method: string, handler: string): void {
-    this.resourceHitsCounter.inc({ method, handler });
+  incrementResourceHit(method: string, handler: string, tenantId: string, resourceId: string): void {
+    this.resourceHitsCounter.inc({ method, handler, tenant_id: tenantId, resource_id: resourceId });
   }
 
   private startPeriodicPush(): void {

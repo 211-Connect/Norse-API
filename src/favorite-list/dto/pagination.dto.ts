@@ -5,6 +5,7 @@ export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(300).min(1).default(25),
   search: z.string().optional(),
+  resource_id: z.string().optional(),
 });
 
 export class PaginationDto {
@@ -16,4 +17,9 @@ export class PaginationDto {
 
   @ApiPropertyOptional()
   search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Resource ID to check if it exists in each list',
+  })
+  resource_id?: string;
 }
