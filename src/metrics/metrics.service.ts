@@ -30,7 +30,7 @@ export class MetricsService implements OnModuleDestroy {
     this.resourceHitsCounter = this.createOrGetCounter({
       name: 'norse_resource_hits_total',
       help: 'Total hits for /resource endpoints',
-      labelNames: ['method', 'handler', 'tenant_id', 'resource_id'],
+      labelNames: ['method', 'handler', 'tenant_id'],
       registers: [register],
     });
 
@@ -66,8 +66,8 @@ export class MetricsService implements OnModuleDestroy {
     this.searchHitsCounter.inc({ method, handler, tenant_id: tenantId });
   }
 
-  incrementResourceHit(method: string, handler: string, tenantId: string, resourceId: string): void {
-    this.resourceHitsCounter.inc({ method, handler, tenant_id: tenantId, resource_id: resourceId });
+  incrementResourceHit(method: string, handler: string, tenantId: string): void {
+    this.resourceHitsCounter.inc({ method, handler, tenant_id: tenantId });
   }
 
   private startPeriodicPush(): void {
