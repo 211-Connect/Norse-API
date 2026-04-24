@@ -40,7 +40,7 @@ export class OrchestrationConfigController {
     content: {
       'text/csv': {
         example:
-          'source_column,link_entity,label,provenance\nservicecustom_keyword,service,Service Keywords,VisionLink',
+          'source_table,source_column,link_entity,label,provenance,translate_label,translate_value\nvisionlink_service,servicecustom_keyword,service,Service Keywords,VisionLink,true,false',
       },
     },
   })
@@ -89,4 +89,6 @@ export class OrchestrationConfigController {
   ): Promise<string[]> {
     return this.orchestrationConfigService.getTenantLocales(tenantId);
   }
+
+  // @Get('facets/:tenantId')
 }
