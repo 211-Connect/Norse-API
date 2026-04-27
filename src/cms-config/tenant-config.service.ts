@@ -23,6 +23,9 @@ export class TenantConfigService {
   private readonly facetsCache = new LRUCache<string, FacetConfig[]>(
     LRU_CACHE_CONFIG,
   );
+  private readonly localesCache = new LRUCache<string, string[]>(
+    LRU_CACHE_CONFIG,
+  );
 
   constructor(
     private readonly cmsRedisService: CmsRedisService,
@@ -116,6 +119,35 @@ export class TenantConfigService {
     return [];
   }
 
+  async getTenantLocales(tenantId: string): Promise<string[]> {
+    this.logger.debug(`Fetching enabled locales for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.localesCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(`In-memory cache hit for locales: ${tenantId}`);
+      return inMemoryCached;
+    }
+
+    try {
+      const redisKey = `enabled_locales:${tenantId}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.logger.debug(`Redis DB 2 hit for locales: ${tenantId}`);
+        const locales: string[] = JSON.parse(redisValue);
+        this.localesCache.set(tenantId, locales);
+        return locales;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error fetching locales from Redis DB 2 for ${tenantId}: ${error.message}`,
+      );
+    }
+
+    this.logger.warn(`No enabled locales found for tenant: ${tenantId}`);
+    return [];
+  }
+
   /**
    *
    * @deprecated This method is only used as a fallback to fetch tenant configuration from Strapi when Redis DB 2 is unavailable or missing data.
@@ -190,6 +222,7 @@ export class TenantConfigService {
     this.logger.log('Clearing all in-memory cache');
     this.keycloakRealmIdCache.clear();
     this.facetsCache.clear();
+    this.localesCache.clear();
     this.logger.log('All in-memory cache cleared');
   }
 
@@ -197,6 +230,7 @@ export class TenantConfigService {
     this.logger.log(`Clearing in-memory cache for tenant: ${tenantId}`);
     this.keycloakRealmIdCache.delete(tenantId);
     this.facetsCache.delete(tenantId);
+    this.localesCache.delete(tenantId);
     this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }
