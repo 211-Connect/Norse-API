@@ -83,10 +83,13 @@ export class OrchestrationConfigService {
       const attributesMap = new Map<
         string,
         {
+          source_table: string;
           source_column: string;
           link_entity: string;
           label: string;
           provenance: string;
+          translate_label: boolean;
+          translate_value: boolean;
         }
       >();
 
@@ -143,10 +146,13 @@ export class OrchestrationConfigService {
                   for (const attr of schema.customAttributes) {
                     if (!attributesMap.has(attr.source_column)) {
                       attributesMap.set(attr.source_column, {
+                        source_table: attr.source_table,
                         source_column: attr.source_column,
                         link_entity: attr.link_entity,
                         label: attr.label?.en || attr.source_column,
                         provenance: attr.provenance ?? '',
+                        translate_label: attr.translate_label ?? false,
+                        translate_value: attr.translate_value ?? false,
                       });
                     }
                   }
@@ -173,7 +179,15 @@ export class OrchestrationConfigService {
       const csvRows = Array.from(attributesMap.values());
       const csv = stringify(csvRows, {
         header: true,
-        columns: ['source_column', 'link_entity', 'label', 'provenance'],
+        columns: [
+          'source_table',
+          'source_column',
+          'link_entity',
+          'label',
+          'provenance',
+          'translate_label',
+          'translate_value',
+        ],
       });
 
       return csv;
