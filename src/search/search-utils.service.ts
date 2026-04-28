@@ -4,6 +4,7 @@ import {
   AggregationsStringTermsBucketKeys,
   QueryDslQueryContainer,
   Sort,
+  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchBodyDto } from './dto/search-body.dto';
 import { DocumentFacets, SearchFacet } from './dto/search-response.dto';
@@ -137,18 +138,16 @@ export class SearchUtilsService {
     return filters;
   }
 
-  private static getGeoDistanceSort(coords: number[]): Sort {
+  private static getGeoDistanceSort(coords: number[]): SortCombinations {
     const [lon, lat] = coords;
-    return [
-      {
-        _geo_distance: {
-          'location.point': { lon, lat },
-          order: 'asc',
-          unit: 'm',
-          mode: 'min',
-        },
+    return {
+      _geo_distance: {
+        'location.point': { lon, lat },
+        order: 'asc',
+        unit: 'm',
+        mode: 'min',
       },
-    ];
+    };
   }
 
   /**
@@ -157,24 +156,27 @@ export class SearchUtilsService {
    * coordinates are provided.
    */
   static buildSort(coords: number[] | undefined, sortOption?: string): Sort {
+    const prioritySort: SortCombinations = { priority: 'desc' };
+
     switch (sortOption) {
       case 'distance':
         if (coords) {
-          return this.getGeoDistanceSort(coords);
+          return [prioritySort, this.getGeoDistanceSort(coords)];
         }
 
       case 'name':
-        return [{ 'name.raw': { order: 'asc' } }];
+        return [prioritySort, { 'name.raw': { order: 'asc' } }];
 
       case 'organization':
         return [
+          prioritySort,
           { 'organization.name.raw': { order: 'asc' } },
           { 'name.raw': { order: 'asc' } },
         ];
 
       case 'relevance':
       default:
-        return [];
+        return [prioritySort];
     }
   }
 
