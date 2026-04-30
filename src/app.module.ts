@@ -21,7 +21,6 @@ import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 import { TaxonomyController } from './taxonomy/taxonomy.controller';
-import { ShortUrlController } from './short-url/short-url.controller';
 import { SearchController } from './search/search.controller';
 import { ResourceController } from './resource/resource.controller';
 import { FavoriteController } from './favorite/favorite.controller';
@@ -83,7 +82,6 @@ export class AppModule implements NestModule {
       .apply(TenantMiddleware)
       .forRoutes(
         TaxonomyController,
-        ShortUrlController,
         SearchController,
         ResourceController,
         FavoriteController,

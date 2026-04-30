@@ -44,6 +44,15 @@ async function bootstrap() {
     .setTitle('Norse API')
     .setDescription('Welcome to Norse')
     .setVersion('1.0')
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'x-internal-api-key',
+        in: 'header',
+        description: 'Internal API key for protected endpoints',
+      },
+      'x-internal-api-key',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
