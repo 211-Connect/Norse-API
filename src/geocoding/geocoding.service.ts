@@ -83,8 +83,8 @@ export class GeocodingService {
   async reverseGeocode(
     query: ReverseGeocodeQueryDto,
   ): Promise<ReverseGeocodeResponseDto[]> {
-    const { coordinates, locale = 'en', module } = query;
-    const providerKey = module ?? GeocodingProvider.MAPBOX;
+    const { coordinates, locale = 'en', provider } = query;
+    const providerKey = provider ?? GeocodingProvider.MAPBOX;
     const [lng, lat] = coordinates;
 
     // Generate cache key
@@ -102,7 +102,7 @@ export class GeocodingService {
     this.logger.debug(`Cache miss for reverse geocode: ${lng},${lat}`);
 
     try {
-      const results = await this.getProvider(module).reverseGeocode(query);
+      const results = await this.getProvider(provider).reverseGeocode(query);
       await this.cacheManager.set(cacheKey, results, this.cacheTTL);
       return results;
     } catch (error) {
