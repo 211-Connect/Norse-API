@@ -102,6 +102,12 @@ export class FavoriteListController {
     return this.favoriteListService.update(id, updateFavoriteListDto, { user });
   }
 
+  @Delete(':id/favorites')
+  @UseGuards(KeycloakGuard)
+  purge(@Param('id') id: string, @User() user: User) {
+    return this.favoriteListService.purge(id, { user });
+  }
+
   @Delete(':id')
   @UseGuards(KeycloakGuard)
   remove(@Param('id') id: string, @User() user: User) {

@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { FavoriteListController } from './favorite-list.controller';
 import { FavoriteListService } from './favorite-list.service';
+import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 import { PaginationDto } from './dto/pagination.dto';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { FavoriteListResponseDto } from './dto/favorite-list.response.dto';
+import { NotFoundException } from '@nestjs/common';
 
 describe('FavoriteListController', () => {
   let controller: FavoriteListController;
@@ -12,6 +14,11 @@ describe('FavoriteListController', () => {
   const mockFavoriteListService = {
     findAll: jest.fn(),
     search: jest.fn(),
+    purge: jest.fn(),
+  };
+
+  const mockKeycloakAuthService = {
+    verifyToken: jest.fn(),
   };
 
   const mockUser = { id: 'user-123' };
@@ -23,6 +30,10 @@ describe('FavoriteListController', () => {
         {
           provide: FavoriteListService,
           useValue: mockFavoriteListService,
+        },
+        {
+          provide: KeycloakAuthService,
+          useValue: mockKeycloakAuthService,
         },
       ],
     }).compile();
@@ -62,7 +73,6 @@ describe('FavoriteListController', () => {
         page: 1,
       };
 
-      // Mock implementation to verify delegation
       jest.spyOn(service, 'search').mockResolvedValue(expectedResponse);
       mockFavoriteListService.findAll.mockImplementation(async (pag, opt) => {
         if (pag.search) return service.search({ name: pag.search }, pag, opt);
@@ -101,6 +111,27 @@ describe('FavoriteListController', () => {
         user: mockUser,
       });
       expect(result).toEqual(expectedResponse);
+    });
+  });
+
+  describe('purge', () => {
+    it('should call favoriteListService.purge with correct args', async () => {
+      const listId = 'list-abc';
+      const mockResult = { matchedCount: 1, modifiedCount: 1 };
+      mockFavoriteListService.purge.mockResolvedValue(mockResult);
+
+      const result = await controller.purge(listId, mockUser);
+
+      expect(service.purge).toHaveBeenCalledWith(listId, { user: mockUser });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should propagate NotFoundException from service when list not found', async () => {
+      mockFavoriteListService.purge.mockRejectedValue(new NotFoundException());
+
+      await expect(controller.purge('nonexistent', mockUser)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

@@ -245,6 +245,37 @@ export class FavoriteListService {
     }
   }
 
+  async purge(id: string, options: { user: User }) {
+    this.logger.log(
+      `Purging favorites from list with ID: ${id} for user: ${options.user.id}`,
+    );
+    try {
+      const result = await this.favoriteListModel.updateOne(
+        { _id: id, ownerId: options.user.id },
+        { $set: { favorites: [] } },
+      );
+
+      if (result.matchedCount === 0) {
+        this.logger.warn(
+          `Favorite list with ID ${id} not found for user ${options.user.id} during purge.`,
+        );
+        throw new NotFoundException(
+          `Favorite list with ID ${id} not found or user not authorized.`,
+        );
+      }
+
+      this.logger.log(`Favorites purged from list ${id} successfully.`);
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `Error purging favorites from list ${id} for user ${options.user.id}: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
   async remove(id: string, options: { user: User }) {
     this.logger.log(
       `Removing favorite list with ID: ${id} for user: ${options.user.id}`,
