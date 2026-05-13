@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim AS base
 
 FROM base AS dependency-installer
 WORKDIR /opt/norse/deps
-COPY package*.json ./
+COPY package*.json .npmrc ./
 RUN npm ci
 
 FROM base AS builder
