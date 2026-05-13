@@ -1,18 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 
 describe('FavoriteListService', () => {
   let service: FavoriteListService;
+  const aggregateExec = jest.fn();
+  const mockAggregate = jest.fn(() => ({ exec: aggregateExec }));
 
   const mockFavoriteListModel = {
     updateOne: jest.fn(),
     deleteOne: jest.fn(),
     find: jest.fn(),
     findById: jest.fn(),
+    aggregate: mockAggregate,
     countDocuments: jest.fn(),
+    create: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -124,6 +128,101 @@ describe('FavoriteListService', () => {
       await expect(service.remove(listId, { user })).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('syncLocalList', () => {
+    const user = { id: 'user-123' };
+    const tenantId = 'tenant-123';
+
+    it('should return created false when matching list already exists regardless of order', async () => {
+      aggregateExec.mockResolvedValue([
+        {
+          _id: 'existing-list',
+          name: 'Existing list',
+          description: '',
+          privacy: 'PRIVATE',
+          ownerId: user.id,
+          favorites: ['resource-1', 'resource-2'],
+        },
+      ]);
+
+      const result = await service.syncLocalList(
+        { resourceIds: ['resource-2', 'resource-1'] },
+        { user, tenantId },
+      );
+
+      expect(mockFavoriteListModel.aggregate).toHaveBeenCalledWith([
+        { $match: { ownerId: user.id, tenantId } },
+        {
+          $project: {
+            name: 1,
+            description: 1,
+            privacy: 1,
+            ownerId: 1,
+            favorites: { $ifNull: ['$favorites', []] },
+          },
+        },
+        {
+          $match: {
+            $expr: {
+              $eq: [{ $size: '$favorites' }, 2],
+            },
+          },
+        },
+      ]);
+      expect(mockFavoriteListModel.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ created: false });
+    });
+
+    it('should create a new favorite list when no exact match exists', async () => {
+      const createdAt = '2026-05-13T10:00:00.000Z';
+      jest.useFakeTimers().setSystemTime(new Date(createdAt));
+      aggregateExec.mockResolvedValue([]);
+      mockFavoriteListModel.create.mockResolvedValue({
+        _id: 'new-list-id',
+        name: 'My New List',
+        description: '',
+        privacy: 'PRIVATE',
+        ownerId: user.id,
+        favorites: ['resource-1', 'resource-2'],
+      });
+
+      const result = await service.syncLocalList(
+        { resourceIds: ['resource-2', 'resource-1', 'resource-1'] },
+        { user, tenantId },
+      );
+
+      expect(mockFavoriteListModel.create).toHaveBeenCalledWith({
+        name: 'My New List',
+        description: '',
+        privacy: 'PRIVATE',
+        ownerId: user.id,
+        tenantId,
+        favorites: ['resource-1', 'resource-2'],
+      });
+      expect(result).toEqual({
+        created: true,
+        favoriteList: {
+          id: 'new-list-id',
+          name: 'My New List',
+          description: '',
+          privacy: 'PRIVATE',
+          ownerId: user.id,
+          favorites: ['resource-1', 'resource-2'],
+        },
+      });
+
+      jest.useRealTimers();
+    });
+
+    it('should reject requests without any effective resource IDs', async () => {
+      await expect(
+        service.syncLocalList(
+          { resourceIds: [' ', '   '] },
+          { user, tenantId },
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

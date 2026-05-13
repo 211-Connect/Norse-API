@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
 import { InjectModel } from '@nestjs/mongoose';
@@ -14,19 +19,111 @@ import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
   FavoriteListItemDto,
+  FavoriteListSyncResponseDto,
 } from './dto/favorite-list.response.dto';
+import { SyncFavoriteListDto } from './dto/sync-favorite-list.dto';
 
 interface User {
   id: string;
 }
+
+interface FavoriteListOptions {
+  user: User;
+  tenantId?: string;
+}
+
+interface SyncFavoriteListResult {
+  created: boolean;
+  favoriteList?: FavoriteListSyncResponseDto;
+}
+
+interface FavoriteListSyncCandidate {
+  _id: string;
+  name: string;
+  description: string;
+  privacy: 'PUBLIC' | 'PRIVATE';
+  ownerId: string;
+  favorites: string[];
+}
+
 @Injectable()
 export class FavoriteListService {
   private readonly logger = new Logger(FavoriteListService.name);
 
   constructor(
     @InjectModel(FavoriteList.name)
-    private favoriteListModel: Model<FavoriteList>,
+    private favoriteListModel: Model<FavoriteListDocument>,
   ) {}
+
+  private buildOwnershipFilter(options: FavoriteListOptions) {
+    return {
+      ownerId: options.user.id,
+      ...(options.tenantId ? { tenantId: options.tenantId } : {}),
+    };
+  }
+
+  private normalizeResourceIds(resourceIds: string[]): string[] {
+    return [
+      ...new Set(resourceIds.map((id) => id.trim()).filter(Boolean)),
+    ].sort((left, right) => left.localeCompare(right));
+  }
+
+  private buildFavoriteListPayload({
+    name,
+    description,
+    privacy,
+    ownerId,
+    tenantId,
+    favorites = [],
+  }: {
+    name: string;
+    description?: string;
+    privacy?: 'PUBLIC' | 'PRIVATE';
+    ownerId: string;
+    tenantId?: string;
+    favorites?: string[];
+  }) {
+    const normalizedFavorites = this.normalizeResourceIds(favorites);
+
+    return {
+      name,
+      description: description ?? '',
+      privacy: privacy ?? 'PRIVATE',
+      ownerId,
+      ...(tenantId ? { tenantId } : {}),
+      favorites: normalizedFavorites,
+    };
+  }
+
+  private mapToSyncResponse(
+    favoriteList: FavoriteListDocument,
+  ): FavoriteListSyncResponseDto {
+    return {
+      id: favoriteList._id.toString(),
+      name: favoriteList.name,
+      description: favoriteList.description,
+      privacy: favoriteList.privacy,
+      ownerId: favoriteList.ownerId,
+      favorites: favoriteList.favorites.map((favorite) => favorite.toString()),
+    };
+  }
+
+  private hasSameFavorites(
+    favorites: string[] | undefined,
+    normalizedResourceIds: string[],
+  ): boolean {
+    if (!favorites) {
+      return normalizedResourceIds.length === 0;
+    }
+
+    const normalizedFavorites = this.normalizeResourceIds(
+      favorites.map((favorite) => favorite.toString()),
+    );
+
+    return normalizedFavorites.every(
+      (favoriteId, index) => favoriteId === normalizedResourceIds[index],
+    );
+  }
 
   private escapeRegex(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -34,25 +131,23 @@ export class FavoriteListService {
 
   async create(
     createFavoriteListDto: CreateFavoriteListDto,
-    options: { user: User },
+    options: FavoriteListOptions,
   ) {
     this.logger.log(
       `Attempting to create favorite list for user: ${options.user.id}`,
     );
 
-    const favoriteListData = {
+    const favoriteListData = this.buildFavoriteListPayload({
       name: createFavoriteListDto.name,
       description: createFavoriteListDto.description,
       privacy: createFavoriteListDto.public ? 'PUBLIC' : 'PRIVATE',
       ownerId: options.user.id,
-    };
+      tenantId: options.tenantId,
+      favorites: [],
+    });
 
     try {
-      const newFavoriteList = new this.favoriteListModel(favoriteListData);
-      this.logger.log(
-        `New FavoriteList model instantiated. Attempting to save...`,
-      );
-      const savedList = await newFavoriteList.save();
+      const savedList = await this.favoriteListModel.create(favoriteListData);
       this.logger.log(
         `Favorite list created successfully with ID: ${savedList._id}`,
       );
@@ -65,6 +160,65 @@ export class FavoriteListService {
       // Re-throw the error so NestJS can handle it and return a 500
       throw error;
     }
+  }
+
+  async syncLocalList(
+    syncFavoriteListDto: SyncFavoriteListDto,
+    options: FavoriteListOptions,
+  ): Promise<SyncFavoriteListResult> {
+    const normalizedResourceIds = this.normalizeResourceIds(
+      syncFavoriteListDto.resourceIds,
+    );
+
+    if (normalizedResourceIds.length === 0) {
+      throw new BadRequestException(
+        'resourceIds must contain at least one resource ID.',
+      );
+    }
+
+    const candidateLists = await this.favoriteListModel
+      .aggregate<FavoriteListSyncCandidate>([
+        { $match: this.buildOwnershipFilter(options) },
+        {
+          $project: {
+            name: 1,
+            description: 1,
+            privacy: 1,
+            ownerId: 1,
+            favorites: { $ifNull: ['$favorites', []] },
+          },
+        },
+        {
+          $match: {
+            $expr: {
+              $eq: [{ $size: '$favorites' }, normalizedResourceIds.length],
+            },
+          },
+        },
+      ])
+      .exec();
+
+    const existingList = candidateLists.find((favoriteList) =>
+      this.hasSameFavorites(favoriteList.favorites, normalizedResourceIds),
+    );
+
+    if (existingList) {
+      return { created: false };
+    }
+
+    const createdList = await this.favoriteListModel.create(
+      this.buildFavoriteListPayload({
+        name: 'My New List',
+        ownerId: options.user.id,
+        tenantId: options.tenantId,
+        favorites: normalizedResourceIds,
+      }),
+    );
+
+    return {
+      created: true,
+      favoriteList: this.mapToSyncResponse(createdList),
+    };
   }
 
   async findAll(
