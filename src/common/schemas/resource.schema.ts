@@ -4,7 +4,7 @@ import { HydratedDocument } from 'mongoose';
 export type ResourceDocument = HydratedDocument<Resource>;
 
 @Schema()
-class Location {
+export class Location {
   @Prop()
   type: 'Point';
 
@@ -13,7 +13,7 @@ class Location {
 }
 
 @Schema()
-class ServiceArea {
+export class ServiceArea {
   @Prop([Number])
   description: string[];
   extent: {
@@ -23,7 +23,7 @@ class ServiceArea {
 }
 
 @Schema({ _id: false })
-class Taxonomy {
+export class Taxonomy {
   @Prop()
   code: string;
   @Prop()
@@ -31,7 +31,7 @@ class Taxonomy {
 }
 
 @Schema({ _id: false })
-class Facet {
+export class Facet {
   @Prop()
   code: string;
   @Prop()
@@ -41,7 +41,7 @@ class Facet {
 }
 
 @Schema({ _id: false })
-class PhoneNumber {
+export class PhoneNumber {
   @Prop()
   type: string;
   @Prop()
@@ -51,7 +51,7 @@ class PhoneNumber {
 }
 
 @Schema({ _id: false })
-class Contact {
+export class Contact {
   @Prop()
   id: string;
   @Prop()

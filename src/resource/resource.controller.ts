@@ -15,6 +15,15 @@ import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ResourceTitlesDto } from './dto/resource-titles.dto';
+import {
+  ResourceBatchDto,
+  ResourceBatchResponseDto,
+} from './dto/resource-batch.dto';
+import { RESOURCE_EXAMPLE } from './dto/resource-examples';
+import {
+  TransformedResource,
+  ResourceBatchResponse,
+} from './types/resource-response.types';
 
 @ApiTags('Resource')
 @Controller('resource')
@@ -32,106 +41,17 @@ export class ResourceController {
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,
-    example: {
-      _id: '00000000-0000-0000-0000-000000000000',
-      location: {
-        type: 'Point',
-        coordinates: [-106.0746, 42.1485],
-      },
-      addresses: [
-        {
-          city: 'Example',
-          country: 'United States',
-          address_1: '543 East Connect Street',
-          postalCode: '99032',
-          stateProvince: 'WA',
-          rank: 1,
-          type: 'physical',
-        },
-      ],
-      attribution: 'Connect 211',
-      createdAt: '2024-08-26T00:00:00',
-      displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
-      displayPhoneNumber: '(555) 555-5555',
-      email: 'info@example.com',
-      languages: ['English', 'Spanish'],
-      lastAssuredDate: '2024-08-26T00:00:00',
-      organizationName: 'EXAMPLE ORGANIZATION',
-      phoneNumbers: [
-        {
-          number: '(555) 555-5555',
-          rank: 1,
-          type: 'voice',
-        },
-        {
-          number: '(555) 555-5555',
-          rank: 2,
-          type: 'fax',
-        },
-      ],
-      serviceArea: {
-        type: 'Polygon',
-        coordinates: [
-          [
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-          ],
-        ],
-        description: ['Washington'],
-      },
-      tenant_id: '00000000-0000-0000-0000-000000000000',
-      originalId: '1234',
-      updatedAt: '2024-08-26T00:00:00',
-      website: 'https://www.example.com/',
-      organizationUrl: 'https://www.example.org/',
-      translation: {
-        displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
-        fees: 'n/a',
-        hours:
-          'Monday 11:00am - 4:30pm;Tuesday 11:00am - 6:00pm;Wednesday 11:00am - 4:30pm;Thursday 11:00am - 6:00pm',
-        locale: 'en',
-        taxonomies: [
-          {
-            code: 'CW-0000.0000',
-            name: 'Rental Deposit Assistance',
-          },
-        ],
-        serviceName: 'FINANCIAL AND FOOD ASSISTANCE',
-        eligibilities:
-          'Rental Assistance is limited to families and individuals.',
-        requiredDocuments: [],
-        applicationProcess: 'Walk-In;Call',
-        serviceDescription:
-          'Emergency financial assistance to help with:\n- Rental and utility assistance\n- Help with first month rent\n- Utility assistance \nFood Pantry including items\n- Fresh and Shelf-Stable Food\n- Personal hygiene items\n- Diapers\n- Prescriptions',
-        organizationDescription:
-          'We are a nonprofit community based volunteer organizations with goals to alleviate poverty and homelessness, encourage self-sufficiency, to allocate funds and resources efficiently, and to provide a "hands-up" to those in need.',
-        languages: ['English', 'Spanish'],
-      },
-      facetsEn: [
-        {
-          code: 'Benton County',
-          taxonomyName: 'Area Served by County',
-          termName: 'Benton County',
-        },
-        {
-          code: 'People with low income',
-          taxonomyName: 'Specialization',
-          termName: 'People with low income',
-        },
-      ],
-    },
+    example: RESOURCE_EXAMPLE,
   })
   getResourceById(
-    @Param('id') id,
+    @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-  ) {
-    this.metricsService.incrementResourceHit('GET', 'getResourceById', headers['x-tenant-id']);
+  ): Promise<TransformedResource> {
+    this.metricsService.incrementResourceHit(
+      'GET',
+      'getResourceById',
+      headers['x-tenant-id'],
+    );
 
     return this.resourceService.findById(id, {
       headers,
@@ -146,106 +66,17 @@ export class ResourceController {
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
   @ApiResponse({
     status: 200,
-    example: {
-      _id: '00000000-0000-0000-0000-000000000000',
-      location: {
-        type: 'Point',
-        coordinates: [-106.0746, 42.1485],
-      },
-      addresses: [
-        {
-          city: 'Example',
-          country: 'United States',
-          address_1: '543 East Connect Street',
-          postalCode: '99032',
-          stateProvince: 'WA',
-          rank: 1,
-          type: 'physical',
-        },
-      ],
-      attribution: 'Connect 211',
-      createdAt: '2024-08-26T00:00:00',
-      displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
-      displayPhoneNumber: '(555) 555-5555',
-      email: 'info@example.com',
-      languages: ['English', 'Spanish'],
-      lastAssuredDate: '2024-08-26T00:00:00',
-      organizationName: 'EXAMPLE ORGANIZATION',
-      phoneNumbers: [
-        {
-          number: '(555) 555-5555',
-          rank: 1,
-          type: 'voice',
-        },
-        {
-          number: '(555) 555-5555',
-          rank: 2,
-          type: 'fax',
-        },
-      ],
-      serviceArea: {
-        type: 'Polygon',
-        coordinates: [
-          [
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-            [-106.0746, 42.1485],
-          ],
-        ],
-        description: ['Washington'],
-      },
-      tenant_id: '00000000-0000-0000-0000-000000000000',
-      originalId: '1234',
-      updatedAt: '2024-08-26T00:00:00',
-      website: 'https://www.example.com/',
-      organizationUrl: 'https://www.example.org/',
-      translation: {
-        displayName: 'FINANCIAL AND FOOD ASSISTANCE | EXAMPLE ORGANIZATION',
-        fees: 'n/a',
-        hours:
-          'Monday 11:00am - 4:30pm;Tuesday 11:00am - 6:00pm;Wednesday 11:00am - 4:30pm;Thursday 11:00am - 6:00pm',
-        locale: 'en',
-        taxonomies: [
-          {
-            code: 'CW-0000.0000',
-            name: 'Rental Deposit Assistance',
-          },
-        ],
-        serviceName: 'FINANCIAL AND FOOD ASSISTANCE',
-        eligibilities:
-          'Rental Assistance is limited to families and individuals.',
-        requiredDocuments: [],
-        applicationProcess: 'Walk-In;Call',
-        serviceDescription:
-          'Emergency financial assistance to help with:\n- Rental and utility assistance\n- Help with first month rent\n- Utility assistance \nFood Pantry including items\n- Fresh and Shelf-Stable Food\n- Personal hygiene items\n- Diapers\n- Prescriptions',
-        organizationDescription:
-          'We are a nonprofit community based volunteer organizations with goals to alleviate poverty and homelessness, encourage self-sufficiency, to allocate funds and resources efficiently, and to provide a "hands-up" to those in need.',
-        languages: ['English', 'Spanish'],
-      },
-      facetsEn: [
-        {
-          code: 'Benton County',
-          taxonomyName: 'Area Served by County',
-          termName: 'Benton County',
-        },
-        {
-          code: 'People with low income',
-          taxonomyName: 'Specialization',
-          termName: 'People with low income',
-        },
-      ],
-    },
+    example: RESOURCE_EXAMPLE,
   })
   getResourceByOriginalId(
     @Param('id') id: string, // The path parameter named id, but it is original ID
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-  ) {
-    this.metricsService.incrementResourceHit('GET', 'getResourceByOriginalId', headers['x-tenant-id']);
+  ): Promise<TransformedResource> {
+    this.metricsService.incrementResourceHit(
+      'GET',
+      'getResourceByOriginalId',
+      headers['x-tenant-id'],
+    );
 
     return this.resourceService.findByOriginalId(id, {
       headers,
@@ -269,7 +100,42 @@ export class ResourceController {
     status: 400,
     description: 'Invalid request body',
   })
-  getResourceTitlesByIds(@Body() dto: ResourceTitlesDto) {
+  getResourceTitlesByIds(
+    @Body() dto: ResourceTitlesDto,
+  ): Promise<{ id: string; displayName: string }[]> {
     return this.resourceService.findTitlesByIds(dto.ids);
+  }
+
+  @Post('batch')
+  @Version('1')
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @ApiHeader({ name: 'accept-language', required: true })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiOperation({
+    summary: 'Batch fetch resources by IDs',
+    description:
+      'Fetches multiple resources by their UUIDs. Returns a structured response with successful resources and errors for failed IDs. Supports partial success.',
+  })
+  @ApiBody({ type: ResourceBatchDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Batch operation completed (may include partial failures)',
+    type: ResourceBatchResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request body',
+  })
+  async getResourcesBatch(
+    @Body() dto: ResourceBatchDto,
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+  ): Promise<ResourceBatchResponse> {
+    this.metricsService.incrementResourceHit(
+      'POST',
+      'getResourcesBatch',
+      headers['x-tenant-id'],
+    );
+
+    return this.resourceService.findManyByIds(dto.ids, { headers });
   }
 }

@@ -6,9 +6,14 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { Resource, ResourceDocument } from 'src/common/schemas/resource.schema';
+import { Resource } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
+import {
+  TransformedResource,
+  ResourceBatchResponse,
+  ResourceTranslation,
+} from './types/resource-response.types';
 
 @Injectable()
 export class ResourceService {
@@ -21,11 +26,17 @@ export class ResourceService {
     this.logger = new Logger(ResourceService.name);
   }
 
-  async findById(id: string, options: { headers: HeadersDto }) {
+  async findById(
+    id: string,
+    options: { headers: HeadersDto },
+  ): Promise<TransformedResource> {
     return this.findResourceAndTransform({ _id: id }, id, options);
   }
 
-  async findByOriginalId(id: string, options: { headers: HeadersDto }) {
+  async findByOriginalId(
+    id: string,
+    options: { headers: HeadersDto },
+  ): Promise<TransformedResource> {
     return this.findResourceAndTransform({ originalId: id }, id, options);
   }
 
@@ -44,13 +55,111 @@ export class ResourceService {
   }
 
   /**
+   * Batch fetch resources by IDs with partial failure support.
+   * Returns a structured response with successful resources and errors.
+   * Optimized to use a single MongoDB query instead of N queries.
+   */
+  async findManyByIds(
+    ids: string[],
+    options: { headers: HeadersDto },
+  ): Promise<ResourceBatchResponse> {
+    const uniqueIds = [...new Set(ids)]; // Deduplicate IDs
+    const locale = options.headers['accept-language'];
+    const data: Record<string, TransformedResource> = {};
+    const errors: ResourceBatchResponse['errors'] = [];
+
+    // Single aggregation query to fetch all resources
+    const results = await this.resourceModel
+      .aggregate([
+        { $match: { _id: { $in: uniqueIds } } },
+        {
+          $addFields: {
+            translations: {
+              $filter: {
+                input: '$translations',
+                as: 't',
+                cond: {
+                  $or: [
+                    { $eq: ['$$t.locale', locale] },
+                    { $eq: ['$$t.locale', 'en'] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ])
+      .exec();
+
+    // Create a Set of found IDs for quick lookup
+    const foundIds = new Set<string>();
+
+    // Process found resources
+    for (const resource of results) {
+      const resourceId = resource._id;
+      foundIds.add(resourceId);
+
+      try {
+        const transformed = this.transformResourceWithTranslations(
+          resource,
+          locale,
+          resourceId,
+        );
+        data[resourceId] = transformed;
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          errors.push({
+            id: resourceId,
+            reason: 'Translation not available for requested locale',
+            statusCode: 400,
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    // Check for missing IDs and add to errors
+    for (const id of uniqueIds) {
+      if (!foundIds.has(id)) {
+        // Check for redirects
+        const redirect = await this.redirectModel.findById(id).exec();
+
+        if (redirect) {
+          errors.push({
+            id,
+            reason: `Resource not found (redirect available: /search/${redirect.newId})`,
+            statusCode: 404,
+          });
+        } else {
+          errors.push({
+            id,
+            reason: 'Resource not found',
+            statusCode: 404,
+          });
+        }
+      }
+    }
+
+    return {
+      data,
+      errors,
+      meta: {
+        requested: ids.length,
+        successful: Object.keys(data).length,
+        failed: errors.length,
+      },
+    };
+  }
+
+  /**
    * Centralized logic for finding, filtering, and transforming the resource.
    */
   private async findResourceAndTransform(
     matchQuery: FilterQuery<Resource>,
     lookupId: string,
     options: { headers: HeadersDto },
-  ) {
+  ): Promise<TransformedResource> {
     const locale = options.headers['accept-language'];
 
     // Perform Aggregation
@@ -78,7 +187,7 @@ export class ResourceService {
       ])
       .exec();
 
-    const resource = results[0] as ResourceDocument & { _id: string };
+    const resource = results[0];
 
     this.logger.debug(`Resource lookupId=${lookupId}, found=${!!resource}`);
 
@@ -96,13 +205,26 @@ export class ResourceService {
       throw new NotFoundException();
     }
 
+    return this.transformResourceWithTranslations(resource, locale, lookupId);
+  }
+
+  /**
+   * Shared transformation logic to construct the response with translation and facets.
+   * Extracts the user's locale translation and English facets.
+   */
+  private transformResourceWithTranslations(
+    resource: Omit<Resource, 'translations'> & {
+      _id: string;
+      translations: ResourceTranslation[];
+    },
+    locale: string,
+    lookupId: string,
+  ): TransformedResource {
     // Extract specific translations from the filtered result
-    const userTranslation = resource.translations.find(
-      (t: any) => t.locale === locale,
-    );
-    const enTranslation = resource.translations.find(
-      (t: any) => t.locale === 'en',
-    );
+    const userTranslation: ResourceTranslation | undefined =
+      resource.translations.find((t) => t.locale === locale);
+    const enTranslation: ResourceTranslation | undefined =
+      resource.translations.find((t) => t.locale === 'en');
 
     if (!userTranslation) {
       this.logger.debug(
