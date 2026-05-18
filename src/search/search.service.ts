@@ -22,7 +22,7 @@ import { HybridSearchService } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 
-type QueryType =
+export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
 
 interface ComplexQuery {
@@ -193,7 +193,7 @@ export class SearchService {
       from: (page - 1) * 25,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: SearchUtilsService.buildSort(coords, sort),
+      sort: SearchUtilsService.buildSort(coords, sort, queryType),
       aggs: aggregations,
       ...specificQuery,
     };
