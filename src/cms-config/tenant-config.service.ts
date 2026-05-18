@@ -11,7 +11,12 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
-import { FacetConfig, FacetsConfigCache } from './types';
+import {
+  FacetConfig,
+  FacetsConfigCache,
+  TenantBrandingConfig,
+  TenantLegalConfig,
+} from './types';
 import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
@@ -24,6 +29,12 @@ export class TenantConfigService {
     LRU_CACHE_CONFIG,
   );
   private readonly localesCache = new LRUCache<string, string[]>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly brandingCache = new LRUCache<string, TenantBrandingConfig>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly legalCache = new LRUCache<string, TenantLegalConfig>(
     LRU_CACHE_CONFIG,
   );
 
@@ -148,6 +159,84 @@ export class TenantConfigService {
     return [];
   }
 
+  async getBrandingConfig(
+    tenantId: string,
+    locale: string,
+  ): Promise<TenantBrandingConfig | null> {
+    return this.getLocaleConfig(
+      this.brandingCache,
+      'branding_config',
+      'branding config',
+      tenantId,
+      locale,
+    );
+  }
+
+  async getLegalConfig(
+    tenantId: string,
+    locale: string,
+  ): Promise<TenantLegalConfig | null> {
+    return this.getLocaleConfig(
+      this.legalCache,
+      'legal_config',
+      'legal config',
+      tenantId,
+      locale,
+    );
+  }
+
+  private async getLocaleConfig<T>(
+    cache: LRUCache<string, T>,
+    redisKeyPrefix: string,
+    label: string,
+    tenantId: string,
+    locale: string,
+  ): Promise<T | null> {
+    this.logger.debug(
+      `Fetching ${label} for tenant: ${tenantId}, locale: ${locale}`,
+    );
+
+    const cacheKey = `${tenantId}:${locale}`;
+
+    const inMemoryCached = cache.get(cacheKey);
+    if (inMemoryCached) {
+      this.logger.debug(
+        `In-memory cache hit for ${label}: ${tenantId}/${locale}`,
+      );
+      return inMemoryCached;
+    }
+
+    try {
+      const redisKey = `${redisKeyPrefix}:${tenantId}:${locale}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.logger.debug(`Redis DB 2 hit for ${label}: ${tenantId}/${locale}`);
+        const parsed = JSON.parse(redisValue) as T;
+        cache.set(cacheKey, parsed);
+        return parsed;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error fetching ${label} from Redis DB 2 for ${tenantId}/${locale}: ${error.message}`,
+      );
+    }
+
+    this.logger.warn(
+      `No ${label} found for tenant: ${tenantId}, locale: ${locale}`,
+    );
+    return null;
+  }
+
+  private evictByTenantPrefix<T>(
+    cache: LRUCache<string, T>,
+    tenantId: string,
+  ): void {
+    for (const key of cache.keys()) {
+      if (key.startsWith(`${tenantId}:`)) cache.delete(key);
+    }
+  }
+
   /**
    *
    * @deprecated This method is only used as a fallback to fetch tenant configuration from Strapi when Redis DB 2 is unavailable or missing data.
@@ -223,6 +312,8 @@ export class TenantConfigService {
     this.keycloakRealmIdCache.clear();
     this.facetsCache.clear();
     this.localesCache.clear();
+    this.brandingCache.clear();
+    this.legalCache.clear();
     this.logger.log('All in-memory cache cleared');
   }
 
@@ -231,6 +322,9 @@ export class TenantConfigService {
     this.keycloakRealmIdCache.delete(tenantId);
     this.facetsCache.delete(tenantId);
     this.localesCache.delete(tenantId);
+    // branding and legal caches are keyed by tenantId:locale — purge all entries for this tenant
+    this.evictByTenantPrefix(this.brandingCache, tenantId);
+    this.evictByTenantPrefix(this.legalCache, tenantId);
     this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }
