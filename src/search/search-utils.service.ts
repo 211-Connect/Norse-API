@@ -15,6 +15,8 @@ import {
   ShardsInfo,
 } from './types';
 import { FacetConfig } from '../cms-config/types';
+import { SearchQueryDto } from './dto/search-query.dto';
+import { QueryType } from './search.service';
 
 export class SearchUtilsService {
   static readonly FIELDS_TO_QUERY: string[] = [
@@ -155,7 +157,11 @@ export class SearchUtilsService {
    * Priority descending is the primary sort; geo-distance is secondary when
    * coordinates are provided.
    */
-  static buildSort(coords: number[] | undefined, sortOption?: string): Sort {
+  static buildSort(
+    coords: number[] | undefined,
+    sortOption: SearchQueryDto['sort'],
+    queryType: QueryType,
+  ): Sort {
     const prioritySort: SortCombinations = { priority: 'desc' };
 
     switch (sortOption) {
@@ -176,6 +182,13 @@ export class SearchUtilsService {
 
       case 'relevance':
       default:
+        if (queryType === 'taxonomy') {
+          return [
+            prioritySort,
+            { 'service_at_location_id.raw': { order: 'asc' } },
+          ];
+        }
+
         return [prioritySort];
     }
   }
