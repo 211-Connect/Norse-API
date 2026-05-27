@@ -9,12 +9,20 @@ import {
   Req,
   Query,
   Put,
+  Res,
+  HttpStatus,
   UnauthorizedException,
 } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
+import {
+  ApiTags,
+  ApiResponse,
+  ApiBody,
+  ApiCreatedResponse,
+  ApiNoContentResponse,
+} from '@nestjs/swagger';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
-import { ApiTags, ApiResponse } from '@nestjs/swagger';
 import { KeycloakGuard } from 'src/auth/guards/keycloak.guard';
 import { User } from 'src/common/decorators/User';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
@@ -25,8 +33,11 @@ import { PaginationDto, paginationSchema } from './dto/pagination.dto';
 import {
   FavoriteListResponseDto,
   FavoriteListDetailResponseDto,
+  FavoriteListSyncResponseDto,
 } from './dto/favorite-list.response.dto';
 import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
+import { SyncFavoriteListDto } from './dto/sync-favorite-list.dto';
+import { Request, Response } from 'express';
 
 @ApiTags('Favorite List')
 @Controller({
@@ -41,8 +52,43 @@ export class FavoriteListController {
 
   @Post()
   @UseGuards(KeycloakGuard)
-  create(@Body() createFavoriteListDto: CreateFavoriteListDto, @User() user) {
-    return this.favoriteListService.create(createFavoriteListDto, { user });
+  create(
+    @Body() createFavoriteListDto: CreateFavoriteListDto,
+    @User() user: User,
+    @Req() request: Request,
+  ) {
+    return this.favoriteListService.create(createFavoriteListDto, {
+      user,
+      tenantId: request.tenantId,
+    });
+  }
+
+  @Post('sync')
+  @UseGuards(KeycloakGuard)
+  @ApiBody({ type: SyncFavoriteListDto })
+  @ApiCreatedResponse({ type: FavoriteListSyncResponseDto })
+  @ApiNoContentResponse({
+    description: 'An identical favorite list already exists.',
+  })
+  async syncLocalList(
+    @Body() syncFavoriteListDto: SyncFavoriteListDto,
+    @User() user: User,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<FavoriteListSyncResponseDto | void> {
+    const result = await this.favoriteListService.syncLocalList(
+      syncFavoriteListDto,
+      {
+        user,
+        tenantId: request.tenantId,
+      },
+    );
+
+    response.status(
+      result.created ? HttpStatus.CREATED : HttpStatus.NO_CONTENT,
+    );
+
+    return result.favoriteList;
   }
 
   @Get()
@@ -100,6 +146,12 @@ export class FavoriteListController {
     @User() user,
   ) {
     return this.favoriteListService.update(id, updateFavoriteListDto, { user });
+  }
+
+  @Delete(':id/favorites')
+  @UseGuards(KeycloakGuard)
+  purge(@Param('id') id: string, @User() user: User) {
+    return this.favoriteListService.purge(id, { user });
   }
 
   @Delete(':id')
