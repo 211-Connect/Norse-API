@@ -82,7 +82,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -94,6 +94,12 @@ export class SearchController {
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
+  @ApiQuery({
+    name: 'query_path',
+    required: false,
+    enum: ['path_a', 'path_b'],
+    description: 'Hybrid search path override (default from HYBRID_SEARCH_PATH env)',
+  })
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
@@ -158,7 +164,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -170,6 +176,12 @@ export class SearchController {
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
+  @ApiQuery({
+    name: 'query_path',
+    required: false,
+    enum: ['path_a', 'path_b'],
+    description: 'Hybrid search path override (default from HYBRID_SEARCH_PATH env)',
+  })
   @ApiBody({
     schema: {
       type: 'object',

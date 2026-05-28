@@ -37,7 +37,6 @@ export class SearchService {
   private static readonly ES_FIELDS = {
     TAXONOMY_RAW: 'taxonomies.code.raw',
     ORG_NAME: 'organization.name',
-    ORG_NAME_KEYWORD: 'organization.name.keyword',
   };
 
   constructor(
@@ -102,7 +101,8 @@ export class SearchService {
     if (
       !(
         typeof query === 'string' ||
-        (Array.isArray(query) && query.every((q) => typeof q === 'string'))
+        (Array.isArray(query) && query.every((q) => typeof q === 'string')) ||
+        (query_type === 'taxonomy' && this.isComplexQuery(query))
       )
     ) {
       throw new BadRequestException('Invalid query type');
@@ -154,13 +154,16 @@ export class SearchService {
       geometry,
     );
 
-    const queryType: QueryType = this.getQueryType(query, query_type);
-
     let parsedComplexQuery = null;
     if (this.isComplexQuery(query)) {
       parsedComplexQuery =
         typeof query === 'string' ? JSON.parse(query) : query;
     }
+
+    const queryType: QueryType =
+      parsedComplexQuery != null && query_type === 'taxonomy'
+        ? SearchService.QUERY_TYPE.TAXONOMY
+        : this.getQueryType(query as string | string[], query_type);
 
     let specificQuery: Partial<SearchRequest>;
 
@@ -182,7 +185,7 @@ export class SearchService {
       this.logger.debug('Using simple query logic');
       specificQuery = this.getQueryObject(
         queryType,
-        Array.isArray(query) ? query.join(',') : query,
+        Array.isArray(query) ? query.join(',') : (query as string),
         queryFilters,
         searchableCustomAttributeFields,
       );
@@ -190,8 +193,8 @@ export class SearchService {
 
     const finalQuery: SearchRequest = {
       index: indexName,
-      from: (page - 1) * 25,
-      size: limit || 25,
+      from: (page - 1) * limit,
+      size: limit,
       _source_excludes: ['service_area'],
       sort: SearchUtilsService.buildSort(coords, sort, queryType),
       aggs: aggregations,

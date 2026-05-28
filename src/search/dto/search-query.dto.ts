@@ -50,6 +50,7 @@ export const searchQuerySchema = z.object({
     .enum(['relevance', 'distance', 'name', 'organization'])
     .optional()
     .default('relevance'),
+  query_path: z.enum(['path_a', 'path_b']).optional(),
 });
 
 export type SearchQueryDto = z.infer<typeof searchQuerySchema>;

@@ -8,6 +8,7 @@ export interface RetrievalMetadata {
   timedOut: boolean;
   shards: ShardsInfo;
   aggregations: Record<string, AggregationsStringTermsAggregate> | undefined;
+  bm25Total?: number;
 }
 
 export interface RetrievalResult {
