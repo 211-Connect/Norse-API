@@ -7,6 +7,9 @@ import {
   Min,
   Max,
   IsNotEmpty,
+  IsArray,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
@@ -167,3 +170,120 @@ export class GeocodeResponseDto {
 
 export class ForwardGeocodeResponseDto extends GeocodeResponseDto {}
 export class ReverseGeocodeResponseDto extends GeocodeResponseDto {}
+
+export class BatchForwardGeocodeBodyDto extends PartialType(LocaleDto) {
+  @ApiProperty({
+    description: 'Array of addresses to geocode',
+    example: [
+      '123 Main St, New York, NY',
+      '1600 Pennsylvania Ave NW, Washington, DC',
+    ],
+    type: [String],
+    minItems: 1,
+    maxItems: 50,
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  addresses: string[];
+
+  @ApiProperty({
+    description: 'Geocoding provider to use',
+    example: GeocodingProvider.MAPBOX,
+    enum: GeocodingProvider,
+    required: false,
+    default: GeocodingProvider.MAPBOX,
+  })
+  @IsEnum(GeocodingProvider)
+  @IsOptional()
+  provider?: GeocodingProvider = GeocodingProvider.MAPBOX;
+
+  @ApiProperty({
+    description: 'Maximum number of results per address',
+    example: 5,
+    default: 5,
+    minimum: 1,
+    maximum: 10,
+    required: false,
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  @IsOptional()
+  limit?: number = 5;
+}
+
+export class BatchReverseGeocodeBodyDto extends PartialType(LocaleDto) {
+  @ApiProperty({
+    description: 'Array of coordinates in "longitude,latitude" format',
+    example: ['-74.006,40.7128', '-77.0366,38.8971'],
+    type: [String],
+    minItems: 1,
+    maxItems: 50,
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  coordinates: string[];
+
+  @ApiProperty({
+    description: 'Geocoding provider to use',
+    example: GeocodingProvider.MAPBOX,
+    enum: GeocodingProvider,
+    required: false,
+    default: GeocodingProvider.MAPBOX,
+  })
+  @IsEnum(GeocodingProvider)
+  @IsOptional()
+  provider?: GeocodingProvider = GeocodingProvider.MAPBOX;
+}
+
+export class BatchForwardGeocodeResultDto {
+  @ApiProperty({
+    description: 'The input address',
+    example: '123 Main St, New York, NY',
+  })
+  address: string;
+
+  @ApiProperty({
+    description: 'Geocoding results for this address',
+    type: [ForwardGeocodeResponseDto],
+    required: false,
+  })
+  results?: ForwardGeocodeResponseDto[];
+
+  @ApiProperty({
+    description: 'Error message if geocoding failed for this address',
+    example: 'Failed to geocode address',
+    required: false,
+  })
+  error?: string;
+}
+
+export class BatchReverseGeocodeResultDto {
+  @ApiProperty({
+    description: 'The input coordinates string',
+    example: '-74.006,40.7128',
+  })
+  coordinates: string;
+
+  @ApiProperty({
+    description: 'Reverse geocoding results for these coordinates',
+    type: [ReverseGeocodeResponseDto],
+    required: false,
+  })
+  results?: ReverseGeocodeResponseDto[];
+
+  @ApiProperty({
+    description:
+      'Error message if reverse geocoding failed for these coordinates',
+    example: 'Failed to reverse geocode coordinates',
+    required: false,
+  })
+  error?: string;
+}

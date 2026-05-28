@@ -13,6 +13,10 @@ import {
   GeocodingProvider,
   ReverseGeocodeQueryDto,
   ReverseGeocodeResponseDto,
+  BatchForwardGeocodeBodyDto,
+  BatchReverseGeocodeBodyDto,
+  BatchForwardGeocodeResultDto,
+  BatchReverseGeocodeResultDto,
 } from './dto/geocoding.dto';
 import { IGeocodingProvider } from './providers/geocoding-provider.interface';
 
@@ -28,6 +32,30 @@ export class GeocodingService {
     private readonly providers: Record<GeocodingProvider, IGeocodingProvider>,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
+
+  /**
+   * Run tasks with a maximum concurrency limit
+   */
+  private async runWithConcurrency<T>(
+    tasks: (() => Promise<T>)[],
+    concurrency = 5,
+  ): Promise<T[]> {
+    const results: T[] = new Array(tasks.length);
+    let index = 0;
+
+    const worker = async (): Promise<void> => {
+      while (index < tasks.length) {
+        const current = index++;
+        results[current] = await tasks[current]();
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, tasks.length) }, worker),
+    );
+
+    return results;
+  }
 
   private getProvider(
     module: GeocodingProvider = GeocodingProvider.MAPBOX,
@@ -119,6 +147,76 @@ export class GeocodingService {
         'Failed to reverse geocode coordinates. Please try again later.',
       );
     }
+  }
+
+  /**
+   * Batch forward geocode - convert multiple addresses to coordinates
+   */
+  async batchForwardGeocode(
+    body: BatchForwardGeocodeBodyDto,
+  ): Promise<BatchForwardGeocodeResultDto[]> {
+    const { addresses, provider, limit, locale } = body;
+
+    const tasks = addresses.map(
+      (address) => async (): Promise<BatchForwardGeocodeResultDto> => {
+        try {
+          const query: ForwardGeocodeQueryDto = {
+            address,
+            provider,
+            limit,
+            locale,
+          };
+          const results = await this.forwardGeocode(query);
+          return { address, results };
+        } catch (error) {
+          this.logger.warn(
+            `Batch forward geocode failed for address: ${address}`,
+            error,
+          );
+          return {
+            address,
+            error: 'Failed to geocode address',
+          };
+        }
+      },
+    );
+
+    return this.runWithConcurrency(tasks);
+  }
+
+  /**
+   * Batch reverse geocode - convert multiple coordinates to addresses
+   */
+  async batchReverseGeocode(
+    body: BatchReverseGeocodeBodyDto,
+  ): Promise<BatchReverseGeocodeResultDto[]> {
+    const { coordinates: coordStrings, provider, locale } = body;
+
+    const tasks = coordStrings.map(
+      (coordStr) => async (): Promise<BatchReverseGeocodeResultDto> => {
+        try {
+          const [lng, lat] = coordStr.split(',').map(Number);
+          const query: ReverseGeocodeQueryDto = {
+            coordinates: [lng, lat],
+            provider,
+            locale,
+          };
+          const results = await this.reverseGeocode(query);
+          return { coordinates: coordStr, results };
+        } catch (error) {
+          this.logger.warn(
+            `Batch reverse geocode failed for coordinates: ${coordStr}`,
+            error,
+          );
+          return {
+            coordinates: coordStr,
+            error: 'Failed to reverse geocode coordinates',
+          };
+        }
+      },
+    );
+
+    return this.runWithConcurrency(tasks);
   }
 
   /**

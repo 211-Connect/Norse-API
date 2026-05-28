@@ -1,6 +1,8 @@
 import {
   Controller,
   Get,
+  Post,
+  Body,
   Query,
   Version,
   Delete,
@@ -12,6 +14,7 @@ import {
   ApiResponse,
   ApiQuery,
   ApiHeader,
+  ApiBody,
 } from '@nestjs/swagger';
 import { GeocodingService } from './geocoding.service';
 import { InternalApiGuard } from '../common/guards/internal-api.guard';
@@ -20,6 +23,10 @@ import {
   ForwardGeocodeResponseDto,
   ReverseGeocodeQueryDto,
   ReverseGeocodeResponseDto,
+  BatchForwardGeocodeBodyDto,
+  BatchReverseGeocodeBodyDto,
+  BatchForwardGeocodeResultDto,
+  BatchReverseGeocodeResultDto,
 } from './dto/geocoding.dto';
 import { SetCdnCacheTTL } from '../common/decorators/cdn-cache-ttl.decorator';
 import { ONE_MONTH } from '../common/const';
@@ -91,6 +98,50 @@ export class GeocodingController {
     @Query() query: ReverseGeocodeQueryDto,
   ): Promise<ReverseGeocodeResponseDto[]> {
     return this.geocodingService.reverseGeocode(query);
+  }
+
+  @Post('forward/batch')
+  @Version('1')
+  @ApiOperation({
+    summary:
+      'Batch forward geocoding - convert multiple addresses to coordinates',
+    description:
+      'Accepts an array of up to 50 addresses and returns geocoding results for each. Items are processed in parallel (up to 5 concurrent requests). Failed items are returned with an error field instead of results — the overall request always returns 200.',
+  })
+  @ApiBody({ type: BatchForwardGeocodeBodyDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Batch geocoding complete (partial failures are included inline)',
+    type: [BatchForwardGeocodeResultDto],
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request body' })
+  async batchForwardGeocode(
+    @Body() body: BatchForwardGeocodeBodyDto,
+  ): Promise<BatchForwardGeocodeResultDto[]> {
+    return this.geocodingService.batchForwardGeocode(body);
+  }
+
+  @Post('reverse/batch')
+  @Version('1')
+  @ApiOperation({
+    summary:
+      'Batch reverse geocoding - convert multiple coordinates to addresses',
+    description:
+      'Accepts an array of up to 50 coordinate strings in "longitude,latitude" format and returns reverse geocoding results for each. Items are processed in parallel (up to 5 concurrent requests). Failed items are returned with an error field instead of results — the overall request always returns 200.',
+  })
+  @ApiBody({ type: BatchReverseGeocodeBodyDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Batch reverse geocoding complete (partial failures are included inline)',
+    type: [BatchReverseGeocodeResultDto],
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request body' })
+  async batchReverseGeocode(
+    @Body() body: BatchReverseGeocodeBodyDto,
+  ): Promise<BatchReverseGeocodeResultDto[]> {
+    return this.geocodingService.batchReverseGeocode(body);
   }
 
   @Delete('cache')
