@@ -18,4 +18,5 @@ export default () => ({
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
+  HYBRID_SEARCH_PATH: process.env.HYBRID_SEARCH_PATH || 'path_a',
 });

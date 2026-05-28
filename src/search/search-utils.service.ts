@@ -40,6 +40,9 @@ export class SearchUtilsService {
   static readonly NESTED_FIELDS_TO_QUERY: string[] = [
     'taxonomies.name',
     'taxonomies.description',
+    'taxonomies.use_for^0.8',
+    'taxonomies.definition^0.5',
+    'taxonomies.parent_names^0.3',
   ];
 
   private static readonly FACETS_FIELD_PREFIX = 'facets.';
@@ -62,17 +65,16 @@ export class SearchUtilsService {
 
       const values = Array.isArray(value) ? value : [value];
 
-      for (const item of values) {
-        filters.push({
-          bool: {
-            should: [
-              { term: { [localeField]: item } },
-              { term: { [enField]: item } },
-            ],
-            minimum_should_match: 1,
-          },
-        });
-      }
+      const termClauses = values.flatMap((item) => [
+        { term: { [localeField]: item } },
+        { term: { [enField]: item } },
+      ]);
+      filters.push({
+        bool: {
+          should: termClauses,
+          minimum_should_match: 1,
+        },
+      });
     }
 
     if (geoType === 'boundary') {
@@ -162,19 +164,28 @@ export class SearchUtilsService {
     sortOption: SearchQueryDto['sort'],
     queryType: QueryType,
   ): Sort {
-    const prioritySort: SortCombinations = { priority: 'desc' };
+    const pinnedSort: SortCombinations = {
+      pinned: { order: 'desc', missing: '_last' },
+    };
+    const prioritySort: SortCombinations = {
+      priority: { order: 'desc', missing: '_last' },
+    };
 
     switch (sortOption) {
       case 'distance':
         if (coords) {
-          return [prioritySort, this.getGeoDistanceSort(coords)];
+          return [pinnedSort, prioritySort, this.getGeoDistanceSort(coords)];
         }
+        throw new BadRequestException(
+          'coords parameter is required for distance sort',
+        );
 
       case 'name':
-        return [prioritySort, { 'name.raw': { order: 'asc' } }];
+        return [pinnedSort, prioritySort, { 'name.raw': { order: 'asc' } }];
 
       case 'organization':
         return [
+          pinnedSort,
           prioritySort,
           { 'organization.name.raw': { order: 'asc' } },
           { 'name.raw': { order: 'asc' } },
@@ -184,12 +195,13 @@ export class SearchUtilsService {
       default:
         if (queryType === 'taxonomy') {
           return [
+            pinnedSort,
             prioritySort,
             { 'service_at_location_id.raw': { order: 'asc' } },
           ];
         }
 
-        return [prioritySort];
+        return [pinnedSort, prioritySort, { _score: { order: 'desc' } }];
     }
   }
 
