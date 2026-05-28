@@ -1,14 +1,19 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateFavoriteDto } from './dto/create-favorite.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 import { Model } from 'mongoose';
+import { FavoriteListDocument } from 'src/common/schemas/favorite-list.schema';
 
 @Injectable()
 export class FavoriteService {
   constructor(
     @InjectModel(FavoriteList.name)
-    private favoriteListModel: Model<FavoriteList>,
+    private favoriteListModel: Model<FavoriteListDocument>,
   ) {}
 
   async create(createFavoriteDto: CreateFavoriteDto, options: { user: User }) {
@@ -17,8 +22,9 @@ export class FavoriteService {
       _id: createFavoriteDto.favoriteListId,
     });
 
-    if (!favoriteList)
-      throw new Error('No favorite list found to add favorite to.');
+    if (!favoriteList) {
+      throw new NotFoundException('No favorite list found to add favorite to.');
+    }
 
     const favorites = favoriteList.favorites;
     const exists = favorites.find(
@@ -48,8 +54,11 @@ export class FavoriteService {
       _id: options.favoriteListId,
     });
 
-    if (!favoriteList)
-      throw new Error('No favorite list found to remove favorite from.');
+    if (!favoriteList) {
+      throw new NotFoundException(
+        'No favorite list found to remove favorite from.',
+      );
+    }
 
     const favorites = favoriteList.favorites;
     const index = favorites.findIndex(

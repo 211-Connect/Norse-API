@@ -36,3 +36,8 @@ export class FavoriteListResponseDto extends PaginationResponseDto {
   @ApiProperty({ type: [FavoriteListItemDto] })
   items: FavoriteListItemDto[];
 }
+
+export class FavoriteListSyncResponseDto extends FavoriteListItemDto {
+  @ApiProperty({ type: [String] })
+  favorites: string[];
+}
