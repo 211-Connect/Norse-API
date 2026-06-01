@@ -1,6 +1,30 @@
 {
   "version": 1,
   "skills": {
+    "mapbox-geospatial-operations": {
+      "source": "mapbox/mapbox-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mapbox-geospatial-operations/SKILL.md",
+      "computedHash": "14ddc6c35cd1db188c05ecd093c8ed4334d369a98d127fcd36a91a73e3e0164c"
+    },
+    "mapbox-search-patterns": {
+      "source": "mapbox/mapbox-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mapbox-search-patterns/SKILL.md",
+      "computedHash": "c92de6e6f3338c75a6e71cfa9ca41ca79de9e4315b2e2807a44a524cc8a07ac4"
+    },
+    "mapbox-web-integration-patterns": {
+      "source": "mapbox/mapbox-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mapbox-web-integration-patterns/SKILL.md",
+      "computedHash": "92bb0f77b79861c7962df4e766e0b455377932abd625ac9c6aa09dbfcaa5d1e7"
+    },
+    "mapbox-web-performance-patterns": {
+      "source": "mapbox/mapbox-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mapbox-web-performance-patterns/SKILL.md",
+      "computedHash": "e6a22ee384645f88e2955975ddda7d6b329afb8ed95af71bb55493a1e04c10df"
+    },
     "nestjs-best-practices": {
       "source": "kadajett/agent-nestjs-skills",
       "sourceType": "github",
