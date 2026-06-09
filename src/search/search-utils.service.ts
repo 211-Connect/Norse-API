@@ -51,6 +51,7 @@ export class SearchUtilsService {
     facets: Record<string, string | string[]>,
     coords: number[] | undefined,
     distance: number,
+    age: number | undefined,
     geoType: string | undefined,
     geometry: SearchBodyDto['geometry'],
   ): QueryDslQueryContainer[] {
@@ -73,6 +74,41 @@ export class SearchUtilsService {
           },
         });
       }
+    }
+
+    if (age !== undefined) {
+      filters.push({
+        bool: {
+          must: [
+            {
+              bool: {
+                should: [
+                  { range: { 'service.minimum_age': { lte: age } } },
+                  {
+                    bool: {
+                      must_not: { exists: { field: 'service.minimum_age' } },
+                    },
+                  },
+                ],
+                minimum_should_match: 1,
+              },
+            },
+            {
+              bool: {
+                should: [
+                  { range: { 'service.maximum_age': { gte: age } } },
+                  {
+                    bool: {
+                      must_not: { exists: { field: 'service.maximum_age' } },
+                    },
+                  },
+                ],
+                minimum_should_match: 1,
+              },
+            },
+          ],
+        },
+      });
     }
 
     if (geoType === 'boundary') {

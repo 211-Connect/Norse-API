@@ -95,6 +95,7 @@ export class SearchService {
       filters,
       coords,
       distance,
+      age,
       geo_type,
       sort,
     } = q;
@@ -150,6 +151,7 @@ export class SearchService {
       filters,
       coords,
       distance,
+      age,
       geo_type,
       geometry,
     );

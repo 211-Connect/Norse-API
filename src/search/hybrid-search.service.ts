@@ -73,7 +73,7 @@ export class HybridSearchService {
     body?: SearchBodyDto;
   }): Promise<SearchResponse> {
     const { headers, query: q } = options;
-    const { query, page, limit, filters, coords, distance, geo_type } = q;
+    const { query, page, limit, filters, coords, distance, age, geo_type } = q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
     const lang = headers['accept-language'] || 'en';
@@ -109,6 +109,7 @@ export class HybridSearchService {
       filters,
       coords,
       distance,
+      age,
       geo_type,
       geometry,
     );

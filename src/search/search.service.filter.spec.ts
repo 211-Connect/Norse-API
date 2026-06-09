@@ -226,4 +226,66 @@ describe('SearchService Logic', () => {
     expect(svcAreaFilter).toBeUndefined();
     expect(boolFilter).toBeUndefined();
   });
+
+  it('should apply age filter with open interval logic', async () => {
+    const query: SearchQueryDto = { ...baseQuery, age: 12 };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const filters = getFiltersFromLastCall();
+    const ageFilter = filters.find((f) =>
+      f.bool?.must?.some((clause) =>
+        clause.bool?.should?.some(
+          (inner) => inner.range?.['service.minimum_age'],
+        ),
+      ),
+    );
+
+    expect(ageFilter).toBeDefined();
+
+    const mustClauses = ageFilter.bool.must;
+    const minClause = mustClauses[0].bool;
+    const maxClause = mustClauses[1].bool;
+
+    expect(minClause.minimum_should_match).toBe(1);
+    expect(maxClause.minimum_should_match).toBe(1);
+
+    const minRange = minClause.should.find(
+      (s) => s.range?.['service.minimum_age'],
+    );
+    const maxRange = maxClause.should.find(
+      (s) => s.range?.['service.maximum_age'],
+    );
+
+    expect(minRange.range['service.minimum_age'].lte).toBe(12);
+    expect(maxRange.range['service.maximum_age'].gte).toBe(12);
+  });
+
+  it('should not apply age filter when age is not provided', async () => {
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query: baseQuery,
+    });
+
+    const filters = getFiltersFromLastCall();
+    const hasAgeFilter = filters.some((f) =>
+      f.bool?.must?.some((clause) => {
+        const shouldClauses = clause.bool?.should;
+        if (!shouldClauses) {
+          return false;
+        }
+
+        return shouldClauses.some(
+          (inner) =>
+            inner.range?.['service.minimum_age'] ||
+            inner.range?.['service.maximum_age'],
+        );
+      }),
+    );
+
+    expect(hasAgeFilter).toBe(false);
+  });
 });
