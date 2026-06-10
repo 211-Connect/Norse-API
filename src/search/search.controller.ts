@@ -80,6 +80,13 @@ export class SearchController {
   })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({
+    name: 'age',
+    required: false,
+    description:
+      'Searcher age used to match service.minimum_age/service.maximum_age',
+    schema: { type: 'integer', minimum: 0 },
+  })
+  @ApiQuery({
     name: 'query_type',
     required: false,
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
@@ -98,7 +105,11 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
   ): Promise<SearchResponse> {
-    this.metricsService.incrementSearchHit('GET', 'getResources', headers['x-tenant-id']);
+    this.metricsService.incrementSearchHit(
+      'GET',
+      'getResources',
+      headers['x-tenant-id'],
+    );
 
     try {
       return this.searchService.searchResources({
@@ -156,6 +167,13 @@ export class SearchController {
   })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({
+    name: 'age',
+    required: false,
+    description:
+      'Searcher age used to match service.minimum_age/service.maximum_age',
+    schema: { type: 'integer', minimum: 0 },
+  })
+  @ApiQuery({
     name: 'query_type',
     required: false,
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
@@ -187,7 +205,11 @@ export class SearchController {
     @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
     @Req() req,
   ) {
-    this.metricsService.incrementSearchHit('POST', 'getResourcesPost', headers['x-tenant-id']);
+    this.metricsService.incrementSearchHit(
+      'POST',
+      'getResourcesPost',
+      headers['x-tenant-id'],
+    );
 
     // Validate Content-Type
     const contentType = req.headers['content-type'];

@@ -44,6 +44,7 @@ export const searchQuerySchema = z.object({
     .optional(),
   filters: z.record(z.string(), z.string().or(z.array(z.string()))).default({}),
   distance: z.coerce.number().int().nonnegative().default(0),
+  age: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(300).min(25).default(25),
   geo_type: z.enum(['boundary', 'proximity']).optional(),
   sort: z
