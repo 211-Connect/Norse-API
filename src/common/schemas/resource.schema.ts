@@ -90,6 +90,11 @@ export class LinkQualityUrl {
   displayText: string;
 }
 
+const taxonomySchema = SchemaFactory.createForClass(Taxonomy);
+const facetSchema = SchemaFactory.createForClass(Facet);
+const contactSchema = SchemaFactory.createForClass(Contact);
+const linkQualityUrlSchema = SchemaFactory.createForClass(LinkQualityUrl);
+
 @Schema({ timestamps: true })
 export class Resource {
   @Prop({ index: true })
@@ -186,16 +191,16 @@ export class Resource {
         fees: String,
         hours: String,
         locale: String,
-        taxonomies: [Taxonomy],
+        taxonomies: { type: [taxonomySchema], default: [] },
         serviceName: String,
         serviceDescription: String,
         organizationDescription: String,
         accessibility: String,
         transportation: String,
-        facets: [Facet],
+        facets: { type: [facetSchema], default: [] },
         attributeValues: { type: Object },
-        contacts: [Contact],
-        linkQualityUrls: [LinkQualityUrl],
+        contacts: { type: [contactSchema], default: [] },
+        linkQualityUrls: { type: [linkQualityUrlSchema], default: [] },
       },
     ],
     default: [],
