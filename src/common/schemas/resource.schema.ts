@@ -3,22 +3,37 @@ import { HydratedDocument } from 'mongoose';
 
 export type ResourceDocument = HydratedDocument<Resource>;
 
-@Schema()
+type GeoCoordinates = [number, number];
+type GeoPolygonCoordinates = GeoCoordinates[][];
+type GeoMultiPolygonCoordinates = GeoPolygonCoordinates[];
+
+@Schema({ _id: false })
 export class Location {
-  @Prop()
+  @Prop({ required: true, enum: ['Point'] })
   type: 'Point';
 
-  @Prop(Number)
-  coordinates: number[];
+  @Prop({ type: [Number], required: true })
+  coordinates: GeoCoordinates;
 }
 
-@Schema()
+@Schema({ _id: false })
+export class ServiceAreaExtent {
+  @Prop({ required: true, enum: ['Polygon', 'MultiPolygon'] })
+  type: 'Polygon' | 'MultiPolygon';
+
+  @Prop({ type: [[[[Number]]]], required: true })
+  coordinates: GeoPolygonCoordinates | GeoMultiPolygonCoordinates;
+}
+
+@Schema({ _id: false })
 export class ServiceArea {
-  @Prop([Number])
+  @Prop({ type: [String], default: [] })
   description: string[];
+
+  @Prop({ type: ServiceAreaExtent, required: true })
   extent: {
     type: 'Polygon' | 'MultiPolygon';
-    coordinates: [[[[number]]]]; // Array of arrays of arrays of numbers
+    coordinates: GeoPolygonCoordinates | GeoMultiPolygonCoordinates;
   };
 }
 
@@ -60,10 +75,19 @@ export class Contact {
   title?: string;
   @Prop()
   email?: string;
-  @Prop()
+  @Prop({ type: [PhoneNumber] })
   phones?: PhoneNumber[];
   @Prop()
   priority: number;
+}
+
+@Schema({ _id: false })
+export class LinkQualityUrl {
+  @Prop()
+  url: string;
+
+  @Prop()
+  displayText: string;
 }
 
 @Schema({ timestamps: true })
@@ -89,7 +113,7 @@ export class Resource {
   @Prop()
   email: string;
 
-  @Prop()
+  @Prop({ type: [PhoneNumber], default: [] })
   phoneNumbers: PhoneNumber[];
 
   @Prop()
@@ -101,8 +125,8 @@ export class Resource {
   @Prop()
   eligibilities: string;
 
-  @Prop()
-  languages: [string];
+  @Prop({ type: [String], default: [] })
+  languages: string[];
 
   @Prop()
   fees: string;
@@ -116,25 +140,35 @@ export class Resource {
   @Prop({ type: Location })
   location: {
     type: 'Point';
-    coordinates: {
-      type: [number];
-      required: true;
-    };
+    coordinates: GeoCoordinates;
   };
 
   @Prop({ type: ServiceArea })
   serviceArea: {
-    description: [string];
+    description: string[];
     extent: {
       type: 'Polygon' | 'MultiPolygon';
-      coordinates: [[[[number]]]]; // Array of arrays of arrays of numbers
+      coordinates: GeoPolygonCoordinates | GeoMultiPolygonCoordinates;
     };
   };
 
   @Prop()
   organizationName: string;
 
-  @Prop()
+  @Prop({
+    type: [
+      {
+        address_1: String,
+        address_2: String,
+        city: String,
+        stateProvince: String,
+        postalCode: String,
+        country: String,
+        type: String,
+      },
+    ],
+    default: [],
+  })
   addresses: {
     address_1: string;
     address_2: string;
@@ -145,7 +179,27 @@ export class Resource {
     type: string;
   }[];
 
-  @Prop()
+  @Prop({
+    type: [
+      {
+        displayName: String,
+        fees: String,
+        hours: String,
+        locale: String,
+        taxonomies: [Taxonomy],
+        serviceName: String,
+        serviceDescription: String,
+        organizationDescription: String,
+        accessibility: String,
+        transportation: String,
+        facets: [Facet],
+        attributeValues: { type: Object },
+        contacts: [Contact],
+        linkQualityUrls: [LinkQualityUrl],
+      },
+    ],
+    default: [],
+  })
   translations: {
     displayName: string;
     fees?: string;
@@ -160,6 +214,7 @@ export class Resource {
     facets?: Facet[];
     attributeValues?: Record<string, string>;
     contacts: Contact[];
+    linkQualityUrls: LinkQualityUrl[];
   }[];
 
   @Prop()

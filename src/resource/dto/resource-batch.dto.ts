@@ -1,26 +1,17 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
-import { TransformedResource } from '../types/resource-response.types';
+import { ApiProperty, getSchemaPath } from '@nestjs/swagger';
+import {
+  ResourceBatchError,
+  ResourceBatchMeta,
+  ResourceBatchResponse,
+  TransformedResource,
+} from '../types/resource-response.types';
+import { RESOURCE_EXAMPLE } from './resource-examples';
+import { TransformedResourceDto } from './resource-response.dto';
+import { ResourceIdsDto } from './resource-ids.dto';
 
-export class ResourceBatchDto {
-  @ApiProperty({
-    description: 'Array of resource UUIDs to fetch',
-    type: [String],
-    minItems: 1,
-    maxItems: 100,
-    example: [
-      '550e8400-e29b-41d4-a716-446655440000',
-      '550e8400-e29b-41d4-a716-446655440001',
-    ],
-  })
-  @IsArray()
-  @ArrayMinSize(1, { message: 'At least 1 ID is required' })
-  @ArrayMaxSize(100, { message: 'No more than 100 IDs are allowed' })
-  @IsUUID(undefined, { each: true, message: 'Each ID must be a valid UUID' })
-  ids: string[];
-}
+export class ResourceBatchDto extends ResourceIdsDto {}
 
-export class ResourceBatchErrorDto {
+export class ResourceBatchErrorDto implements ResourceBatchError {
   @ApiProperty({
     description: 'The resource ID that failed',
     example: '550e8400-e29b-41d4-a716-446655440000',
@@ -40,17 +31,15 @@ export class ResourceBatchErrorDto {
   statusCode: number;
 }
 
-export class ResourceBatchResponseDto {
+export class ResourceBatchResponseDto implements ResourceBatchResponse {
   @ApiProperty({
     description: 'Successfully fetched resources, keyed by resource ID',
     type: 'object',
-    additionalProperties: { type: 'object' },
+    additionalProperties: {
+      $ref: getSchemaPath(TransformedResourceDto),
+    },
     example: {
-      '550e8400-e29b-41d4-a716-446655440000': {
-        _id: '550e8400-e29b-41d4-a716-446655440000',
-        displayName: 'Example Resource',
-        // ... other fields
-      },
+      '550e8400-e29b-41d4-a716-446655440000': RESOURCE_EXAMPLE,
     },
   })
   data: Record<string, TransformedResource>;
@@ -76,9 +65,5 @@ export class ResourceBatchResponseDto {
       failed: 1,
     },
   })
-  meta: {
-    requested: number;
-    successful: number;
-    failed: number;
-  };
+  meta: ResourceBatchMeta;
 }

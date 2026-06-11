@@ -14,6 +14,7 @@ import {
   ResourceBatchResponse,
   ResourceTranslation,
 } from './types/resource-response.types';
+import { ResourceTitleResponseDto } from './dto/resource-response.dto';
 
 @Injectable()
 export class ResourceService {
@@ -40,9 +41,7 @@ export class ResourceService {
     return this.findResourceAndTransform({ originalId: id }, id, options);
   }
 
-  async findTitlesByIds(
-    ids: string[],
-  ): Promise<{ id: string; displayName: string }[]> {
+  async findTitlesByIds(ids: string[]): Promise<ResourceTitleResponseDto[]> {
     const resources = await this.resourceModel
       .find({ _id: { $in: ids } }, { _id: 1, displayName: 1 })
       .lean()

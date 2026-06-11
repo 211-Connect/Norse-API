@@ -2,6 +2,7 @@ import { Controller, Get, Param, Post, Body, Version } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import {
+  ApiExtraModels,
   ApiBody,
   ApiHeader,
   ApiOperation,
@@ -21,11 +22,20 @@ import {
 } from './dto/resource-batch.dto';
 import { RESOURCE_EXAMPLE } from './dto/resource-examples';
 import {
+  ResourceTitleResponseDto,
+  TransformedResourceDto,
+} from './dto/resource-response.dto';
+import {
   TransformedResource,
   ResourceBatchResponse,
 } from './types/resource-response.types';
 
 @ApiTags('Resource')
+@ApiExtraModels(
+  TransformedResourceDto,
+  ResourceBatchResponseDto,
+  ResourceTitleResponseDto,
+)
 @Controller('resource')
 export class ResourceController {
   constructor(
@@ -41,6 +51,7 @@ export class ResourceController {
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,
+    type: TransformedResourceDto,
     example: RESOURCE_EXAMPLE,
   })
   getResourceById(
@@ -66,6 +77,7 @@ export class ResourceController {
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
   @ApiResponse({
     status: 200,
+    type: TransformedResourceDto,
     example: RESOURCE_EXAMPLE,
   })
   getResourceByOriginalId(
@@ -95,6 +107,7 @@ export class ResourceController {
   @ApiResponse({
     status: 200,
     description: 'Successfully retrieved resource titles',
+    type: [ResourceTitleResponseDto],
   })
   @ApiResponse({
     status: 400,
@@ -102,7 +115,7 @@ export class ResourceController {
   })
   getResourceTitlesByIds(
     @Body() dto: ResourceTitlesDto,
-  ): Promise<{ id: string; displayName: string }[]> {
+  ): Promise<ResourceTitleResponseDto[]> {
     return this.resourceService.findTitlesByIds(dto.ids);
   }
 

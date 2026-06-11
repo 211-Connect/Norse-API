@@ -9,6 +9,7 @@ import {
   Facet,
   PhoneNumber,
   Contact,
+  LinkQualityUrl,
 } from 'src/common/schemas/resource.schema';
 
 /**
@@ -20,7 +21,7 @@ export type ResourceTranslation = Resource['translations'][number];
 /**
  * Re-export schema types for convenience
  */
-export type { Taxonomy, Facet, PhoneNumber, Contact };
+export type { Taxonomy, Facet, PhoneNumber, Contact, LinkQualityUrl };
 
 /**
  * The transformed resource response returned to clients.
@@ -37,12 +38,14 @@ export interface ResourceBatchError {
   statusCode: number;
 }
 
+export interface ResourceBatchMeta {
+  requested: number;
+  successful: number;
+  failed: number;
+}
+
 export interface ResourceBatchResponse {
   data: Record<string, TransformedResource>;
   errors: ResourceBatchError[];
-  meta: {
-    requested: number;
-    successful: number;
-    failed: number;
-  };
+  meta: ResourceBatchMeta;
 }

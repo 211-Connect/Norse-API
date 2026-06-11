@@ -81,6 +81,20 @@ export const RESOURCE_EXAMPLE = {
     organizationDescription:
       'We are a nonprofit community based volunteer organizations with goals to alleviate poverty and homelessness, encourage self-sufficiency, to allocate funds and resources efficiently, and to provide a "hands-up" to those in need.',
     languages: ['English', 'Spanish'],
+    linkQualityUrls: [
+      {
+        url: 'https://www.example.org/quality/survey.pdf',
+        displayText: 'Department of Health - Assisted Living Survey',
+      },
+      {
+        url: 'https://www.example.org/quality/complaint.pdf',
+        displayText: 'Department of Health - Facility Complaint',
+      },
+      {
+        url: 'https://www.example.org/quality/report-card',
+        displayText: 'Minnesota Assisted Living Report Card',
+      },
+    ],
   },
   facetsEn: [
     {
