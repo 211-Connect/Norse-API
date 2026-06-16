@@ -83,10 +83,10 @@ export class SearchUtilsService {
             {
               bool: {
                 should: [
-                  { range: { 'service.minimum_age': { lte: age } } },
+                  { range: { minimum_age: { lte: age } } },
                   {
                     bool: {
-                      must_not: { exists: { field: 'service.minimum_age' } },
+                      must_not: { exists: { field: 'minimum_age' } },
                     },
                   },
                 ],
@@ -96,10 +96,10 @@ export class SearchUtilsService {
             {
               bool: {
                 should: [
-                  { range: { 'service.maximum_age': { gte: age } } },
+                  { range: { maximum_age: { gte: age } } },
                   {
                     bool: {
-                      must_not: { exists: { field: 'service.maximum_age' } },
+                      must_not: { exists: { field: 'maximum_age' } },
                     },
                   },
                 ],
