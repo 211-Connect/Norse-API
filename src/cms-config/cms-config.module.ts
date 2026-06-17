@@ -8,6 +8,6 @@ import { TenantConfigService } from './tenant-config.service';
 @Module({
   controllers: [OrchestrationConfigController, CmsConfigController],
   providers: [OrchestrationConfigService, CmsRedisService, TenantConfigService],
-  exports: [TenantConfigService, OrchestrationConfigService],
+  exports: [TenantConfigService, OrchestrationConfigService, CmsRedisService],
 })
 export class CmsConfigModule {}

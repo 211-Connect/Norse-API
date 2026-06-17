@@ -32,6 +32,7 @@ import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { MetricsModule } from './metrics/metrics.module';
     ResourceModule,
     SuggestionModule,
     GeocodingModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [

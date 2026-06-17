@@ -53,6 +53,15 @@ async function bootstrap() {
       },
       'x-internal-api-key',
     )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'x-analytics-api-key',
+        in: 'header',
+        description: 'Analytics API key identifying the tenant',
+      },
+      'x-analytics-api-key',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

@@ -14,5 +14,6 @@ import { Redirect, RedirectSchema } from 'src/common/schemas/redirect.schema';
   ],
   controllers: [ResourceController],
   providers: [ResourceService],
+  exports: [ResourceService],
 })
 export class ResourceModule {}
