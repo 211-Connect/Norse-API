@@ -5,6 +5,8 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 import { HybridSearchService } from './hybrid-search.service';
+import { MetricsService } from 'src/metrics/metrics.service';
+import { AiSearchService } from './ai-search.service';
 
 describe('SearchController', () => {
   let controller: SearchController;
@@ -36,6 +38,19 @@ describe('SearchController', () => {
           provide: HybridSearchService,
           useValue: {
             searchHybrid: jest.fn(),
+          },
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            incrementSearchHit: jest.fn(),
+          },
+        },
+        {
+          provide: AiSearchService,
+          useValue: {
+            predict: jest.fn(),
+            reRank: jest.fn(),
           },
         },
       ],

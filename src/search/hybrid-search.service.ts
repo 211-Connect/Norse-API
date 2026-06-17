@@ -67,6 +67,14 @@ export class HybridSearchService {
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
   }
 
+  // todo: will be implemented soon
+  async getDocumentsCount(
+    query: string,
+    taxonomies: string[],
+  ): Promise<number> {
+    return Math.round(Math.random() * 1000 + taxonomies.length + query.length);
+  }
+
   async searchHybrid(options: {
     headers: HeadersDto;
     query: SearchQueryDto;
