@@ -238,9 +238,7 @@ describe('SearchService Logic', () => {
     const filters = getFiltersFromLastCall();
     const ageFilter = filters.find((f) =>
       f.bool?.must?.some((clause) =>
-        clause.bool?.should?.some(
-          (inner) => inner.range?.['service.minimum_age'],
-        ),
+        clause.bool?.should?.some((inner) => inner.range?.['minimum_age']),
       ),
     );
 
@@ -253,15 +251,11 @@ describe('SearchService Logic', () => {
     expect(minClause.minimum_should_match).toBe(1);
     expect(maxClause.minimum_should_match).toBe(1);
 
-    const minRange = minClause.should.find(
-      (s) => s.range?.['service.minimum_age'],
-    );
-    const maxRange = maxClause.should.find(
-      (s) => s.range?.['service.maximum_age'],
-    );
+    const minRange = minClause.should.find((s) => s.range?.['minimum_age']);
+    const maxRange = maxClause.should.find((s) => s.range?.['maximum_age']);
 
-    expect(minRange.range['service.minimum_age'].lte).toBe(12);
-    expect(maxRange.range['service.maximum_age'].gte).toBe(12);
+    expect(minRange.range['minimum_age'].lte).toBe(12);
+    expect(maxRange.range['maximum_age'].gte).toBe(12);
   });
 
   it('should not apply age filter when age is not provided', async () => {
