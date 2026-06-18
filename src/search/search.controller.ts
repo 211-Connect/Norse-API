@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  HttpCode,
   Query,
   Body,
   Req,
@@ -82,8 +83,7 @@ export class SearchController {
   @ApiQuery({
     name: 'age',
     required: false,
-    description:
-      'Searcher age used to match service.minimum_age/service.maximum_age',
+    description: 'Searcher age used to match minimum_age/service.maximum_age',
     schema: { type: 'integer', minimum: 0 },
   })
   @ApiQuery({
@@ -129,6 +129,7 @@ export class SearchController {
 
   @Post()
   @Version('1')
+  @HttpCode(HttpStatus.OK)
   @ApiResponse({
     status: 200,
     description: 'Search resources (POST)',
@@ -169,8 +170,7 @@ export class SearchController {
   @ApiQuery({
     name: 'age',
     required: false,
-    description:
-      'Searcher age used to match service.minimum_age/service.maximum_age',
+    description: 'Searcher age used to match minimum_age/maximum_age',
     schema: { type: 'integer', minimum: 0 },
   })
   @ApiQuery({
