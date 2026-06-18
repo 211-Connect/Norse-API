@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsObject } from 'class-validator';
+import { IsInt, IsObject, IsOptional, Min } from 'class-validator';
 import { IsStringNumberRecord } from 'src/common/dto/is-string-number-record';
 
 export class AiSearchReRankRequestDto {
@@ -16,4 +16,15 @@ export class AiSearchReRankRequestDto {
   @IsObject()
   @IsStringNumberRecord()
   need_weights: Record<string, number>;
+
+  @ApiProperty({
+    required: false,
+    default: 100,
+    minimum: 1,
+    description: 'Number of candidates to request from ML Broker (default 100)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  top_k?: number;
 }

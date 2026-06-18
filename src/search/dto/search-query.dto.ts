@@ -43,6 +43,33 @@ export const searchQuerySchema = z.object({
     })
     .optional(),
   filters: z.record(z.string(), z.string().or(z.array(z.string()))).default({}),
+  // Hard taxonomy scope (HSIS codes) from the AI predict/re-rank flow.
+  // Accepts a comma-delimited string (e.g. "BM-1400,BM-1700") or an array and
+  // normalizes to a deduplicated string[]. Applied as a nested terms filter on
+  // taxonomies.code in hybrid search.
+  // Tolerant of URL-encoded payloads where each code is wrapped in quotes
+  // (e.g. `"B","BT-8610.2500"`) and an optional surrounding [ ] array wrapper;
+  // surrounding quotes/brackets/whitespace are stripped while dots in codes
+  // (e.g. BD-1800.8200-150) are preserved.
+  taxonomy: z
+    .string()
+    .or(z.array(z.string()))
+    .transform((val) => {
+      const raw = Array.isArray(val)
+        ? val
+        : val
+            .replace(/^\s*\[/, '')
+            .replace(/\]\s*$/, '')
+            .split(',');
+      return Array.from(
+        new Set(
+          raw
+            .map((code) => code.trim().replace(/^["']+|["']+$/g, '').trim())
+            .filter(Boolean),
+        ),
+      );
+    })
+    .default([]),
   distance: z.coerce.number().int().nonnegative().default(0),
   age: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().positive().max(300).min(25).default(25),
