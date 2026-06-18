@@ -17,7 +17,7 @@ import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto'
 import { HybridSearchService } from './hybrid-search.service';
 
 const ML_BROKER_TIMEOUT_MS = 10_000;
-const ML_BROKER_TOP_K = 100;
+const ML_BROKER_TOP_K = 150;
 const PRESELECTED_THRESHOLD = 0.6;
 
 enum MlBrokerTask {
@@ -73,20 +73,27 @@ export class AiSearchService {
     headers: HeadersDto,
     body: AiSearchPredictRequestDto,
   ): Promise<AiSearchPredictResponseDto> {
-    const [brokerResponse] = await Promise.all([
-      this.callMlBroker({
-        task: MlBrokerTask.PREDICT,
-        headers,
-        body: {
-          query: body.query,
-          tenant_id: headers['x-tenant-id'],
-          top_k: ML_BROKER_TOP_K,
-        },
-      }),
-      this.hybridSearchService.embedQuery(body.query),
-    ]);
+    const topK = body.top_k ?? ML_BROKER_TOP_K;
 
-    return this.toAiSearchResponse(brokerResponse);
+    const brokerResponse = await this.callMlBroker({
+      task: MlBrokerTask.PREDICT,
+      headers,
+      body: {
+        query: body.query,
+        tenant_id: headers['x-tenant-id'],
+        top_k: topK,
+      },
+    });
+
+    this.logger.debug(
+      `[predict] query="${body.query}" tenant=${headers['x-tenant-id']} | ` +
+        `needs=[${(brokerResponse.needs || [])
+          .map((n) => `${n.code}:${n.score}`)
+          .join(', ')}] | ` +
+        `hsis_taxonomies=[${(brokerResponse.hsis_taxonomies || []).join(', ')}]`,
+    );
+
+    return this.toAiSearchResponse(headers, brokerResponse, topK);
   }
 
   async reRank(
@@ -99,9 +106,15 @@ export class AiSearchService {
       body: {
         tenant_id: headers['x-tenant-id'],
         need_weights: body.need_weights,
-        top_k: ML_BROKER_TOP_K,
+        top_k: body.top_k ?? ML_BROKER_TOP_K,
       },
     });
+
+    this.logger.debug(
+      `[re-rank] tenant=${headers['x-tenant-id']} | ` +
+        `need_weights=${JSON.stringify(body.need_weights)} | ` +
+        `hsis_taxonomies=[${(response.hsis_taxonomies || []).join(', ')}]`,
+    );
 
     return {
       hsis_taxonomies: response.hsis_taxonomies || [],
@@ -177,10 +190,12 @@ export class AiSearchService {
   }
 
   private async toAiSearchResponse(
+    headers: HeadersDto,
     input: MlBrokerPredictResponse,
+    topK: number,
   ): Promise<AiSearchPredictResponseDto> {
     const scenario = this.resolveScenario(input);
-    const options = await this.buildOptions(input, scenario);
+    const options = await this.buildOptions(headers, input, scenario, topK);
     const hsisTaxonomies = input.hsis_taxonomies || [];
 
     return {
@@ -213,8 +228,10 @@ export class AiSearchService {
   }
 
   private async buildOptions(
+    headers: HeadersDto,
     input: MlBrokerPredictResponse,
     scenario: AiSearchScenario,
+    topK: number,
   ): Promise<AiSearchOptionDto[]> {
     const needs = input.needs || [];
 
@@ -245,7 +262,7 @@ export class AiSearchService {
             body: {
               tenant_id: input.tenant_id,
               need_weights,
-              top_k: ML_BROKER_TOP_K,
+              top_k: topK,
             },
           });
 
@@ -254,8 +271,16 @@ export class AiSearchService {
           );
 
           const resultsCount = await this.hybridSearchService.getDocumentsCount(
+            headers,
             input.query,
             hsisTaxonomies,
+          );
+
+          this.logger.debug(
+            `[predict/clarify] need=${need.code} | ` +
+              `need_weights=${JSON.stringify(need_weights)} | ` +
+              `hsis_taxonomies=[${hsisTaxonomies.join(', ')}] | ` +
+              `results_count=${resultsCount}`,
           );
 
           return {

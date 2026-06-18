@@ -99,6 +99,13 @@ export class SearchController {
     schema: { default: 'text' },
   })
   @ApiQuery({
+    name: 'taxonomy',
+    required: false,
+    description:
+      'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
+    schema: { type: 'string', example: 'BM-1400,BM-1700' },
+  })
+  @ApiQuery({
     name: 'sort',
     required: false,
     enum: ['relevance', 'distance', 'name', 'organization'],
@@ -184,6 +191,13 @@ export class SearchController {
     required: false,
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
+  })
+  @ApiQuery({
+    name: 'taxonomy',
+    required: false,
+    description:
+      'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
+    schema: { type: 'string', example: 'BM-1400,BM-1700' },
   })
   @ApiQuery({
     name: 'sort',

@@ -166,11 +166,11 @@ describe('AiSearchService', () => {
       },
     ]);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(1, 'need help', [
+    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(1, headers, 'need help', [
       'BH-100',
       'BH-200',
     ]);
-    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(2, 'need help', [
+    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(2, headers, 'need help', [
       'BV-300',
     ]);
   });
