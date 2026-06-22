@@ -210,21 +210,21 @@ export class AiSearchService {
 
     if (low_info?.is_low_info) {
       if (confidence?.top_labels?.length > 1) {
-        return 'clarify';
+        return 'clarify_low_info';
       }
 
-      return 'search_and_notify';
+      return 'search_and_notify_low_info';
     }
 
     if (confidence?.level === 'high') {
       if (confidence.multiple_high_confidence) {
-        return 'clarify';
+        return 'clarify_multiple_labels';
       }
 
       return 'search';
     }
 
-    return 'search_and_notify';
+    return 'search_and_notify_low_confidence';
   }
 
   private async buildOptions(
@@ -234,8 +234,10 @@ export class AiSearchService {
     topK: number,
   ): Promise<AiSearchOptionDto[]> {
     const needs = input.needs || [];
+    const isClarifyScenario =
+      scenario === 'clarify_low_info' || scenario === 'clarify_multiple_labels';
 
-    if (scenario !== 'clarify' || needs.length === 0) {
+    if (!isClarifyScenario || needs.length === 0) {
       return needs.map((need) => ({
         code: need.code,
         score: need.score,

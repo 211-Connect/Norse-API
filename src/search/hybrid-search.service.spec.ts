@@ -13,7 +13,11 @@ const taxonomyResponse = {
   hits: {
     hits: [
       { _id: 't1', _score: 0.9, _source: { code: 'BH-1800', name: 'Housing' } },
-      { _id: 't2', _score: 0.6, _source: { code: 'BV-8900', name: 'Utilities' } },
+      {
+        _id: 't2',
+        _score: 0.6,
+        _source: { code: 'BV-8900', name: 'Utilities' },
+      },
     ],
   },
 };
@@ -80,9 +84,7 @@ describe('HybridSearchService', () => {
     }).compile();
 
     service = module.get<HybridSearchService>(HybridSearchService);
-    jest
-      .spyOn(service, 'embedQuery')
-      .mockResolvedValue([0.1, 0.2, 0.3, 0.4]);
+    jest.spyOn(service, 'embedQuery').mockResolvedValue([0.1, 0.2, 0.3, 0.4]);
   });
 
   const baseQuery = {

@@ -66,7 +66,11 @@ export class MetricsService implements OnModuleDestroy {
     this.searchHitsCounter.inc({ method, handler, tenant_id: tenantId });
   }
 
-  incrementResourceHit(method: string, handler: string, tenantId: string): void {
+  incrementResourceHit(
+    method: string,
+    handler: string,
+    tenantId: string,
+  ): void {
     this.resourceHitsCounter.inc({ method, handler, tenant_id: tenantId });
   }
 
