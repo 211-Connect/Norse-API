@@ -42,7 +42,7 @@ Required env vars:
 
 Runtime constants:
 
-- `top_k = 100` for predict and re-rank.
+- `top_k = 150` for predict and re-rank.
 - `pre_selected = score > 0.6`.
 - ML Broker timeout: 10s.
 
@@ -67,8 +67,12 @@ Norse never forwards inbound user auth headers to ML Broker.
 4. Norse returns compact payload: `scenario`, `options`, `hsis_taxonomies`.
 5. Frontend behavior (scenarios):
    - `search`: navigate hybrid results immediately.
-   - `search_and_notify`: navigate hybrid results and display an alert
-   - `clarify`: show multi-select; user can skip/confirm.
+
+- `search_and_notify_low_info`: navigate hybrid results and display an alert for low-info query
+- `search_and_notify_low_confidence`: navigate hybrid results and display an alert for low-confidence classification
+- `clarify_low_info`: show multi-select; user can skip/confirm.
+- `clarify_multiple_labels`: show multi-select; user can skip/confirm.
+
 6. If user confirms clarify selection, frontend calls `/search/re-rank` with `need_weights`.
 7. Norse forwards `need_weights` directly to ML Broker `/re-rank` and returns `hsis_taxonomies`.
 8. Frontend navigates hybrid results with original query + deduplicated taxonomy hints.
@@ -119,7 +123,7 @@ Clarify example:
 
 ```json
 {
-  "scenario": "clarify",
+  "scenario": "clarify_multiple_labels",
   "options": [
     {
       "code": "BH-1800",
@@ -140,7 +144,7 @@ Clarify example:
 
 ### Predict response fields
 
-- `scenario`: `clarify` | `search` | `search_and_notify`.
+- `scenario`: `search` | `clarify_low_info` | `clarify_multiple_labels` | `search_and_notify_low_info` | `search_and_notify_low_confidence`.
 - `options`: list derived from broker needs.
 - `options[].code`: need code (frontend translation key input).
 - `options[].score`: broker confidence score.
@@ -159,11 +163,11 @@ Order:
 
 Decision:
 
-- Low info + multiple top labels -> `clarify`
-- Low info + 0/1 top label -> `search_and_notify`
-- High confidence + multiple high-confidence labels -> `clarify`
+- Low info + multiple top labels -> `clarify_low_info`
+- Low info + 0/1 top label -> `search_and_notify_low_info`
+- High confidence + multiple high-confidence labels -> `clarify_multiple_labels`
 - High confidence + single dominant label -> `search`
-- Low confidence -> `search_and_notify`
+- Low confidence -> `search_and_notify_low_confidence`
 
 ## Re-rank API
 
@@ -210,7 +214,7 @@ Norse forwards to ML Broker:
 
 Frontend always uses `query_type=hybrid`.
 
-For `search`/`search_and_notify` and clarify skip:
+For `search`, `search_and_notify_low_info`, `search_and_notify_low_confidence`, and clarify skip:
 
 - use original query + deduplicated predict `hsis_taxonomies`.
 

@@ -64,7 +64,12 @@ export const searchQuerySchema = z.object({
       return Array.from(
         new Set(
           raw
-            .map((code) => code.trim().replace(/^["']+|["']+$/g, '').trim())
+            .map((code) =>
+              code
+                .trim()
+                .replace(/^["']+|["']+$/g, '')
+                .trim(),
+            )
             .filter(Boolean),
         ),
       );

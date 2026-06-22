@@ -148,7 +148,7 @@ describe('AiSearchService', () => {
       query: 'need help',
     });
 
-    expect(result.scenario).toBe('clarify');
+    expect(result.scenario).toBe('clarify_multiple_labels');
     expect(result.hsis_taxonomies).toEqual(['BH', 'BV']);
     expect(result.options).toHaveLength(2);
     expect(result.options).toEqual([
@@ -166,13 +166,18 @@ describe('AiSearchService', () => {
       },
     ]);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(1, headers, 'need help', [
-      'BH-100',
-      'BH-200',
-    ]);
-    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(2, headers, 'need help', [
-      'BV-300',
-    ]);
+    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(
+      1,
+      headers,
+      'need help',
+      ['BH-100', 'BH-200'],
+    );
+    expect(getDocumentsCountSpy).toHaveBeenNthCalledWith(
+      2,
+      headers,
+      'need help',
+      ['BV-300'],
+    );
   });
 
   it('returns search_and_notify when low_info is true and single top label', async () => {
@@ -204,7 +209,7 @@ describe('AiSearchService', () => {
       query: 'help',
     });
 
-    expect(result.scenario).toBe('search_and_notify');
+    expect(result.scenario).toBe('search_and_notify_low_info');
     expect(result.hsis_taxonomies).toEqual(['BH']);
     expect(result.options).toEqual([
       {
@@ -248,7 +253,7 @@ describe('AiSearchService', () => {
       query: 'need help',
     });
 
-    expect(result.scenario).toBe('clarify');
+    expect(result.scenario).toBe('clarify_multiple_labels');
     expect(result.options).toEqual([
       {
         code: 'BH-1800',
@@ -288,7 +293,7 @@ describe('AiSearchService', () => {
       query: 'i need things',
     });
 
-    expect(result.scenario).toBe('search_and_notify');
+    expect(result.scenario).toBe('search_and_notify_low_confidence');
     expect(result.hsis_taxonomies).toEqual([]);
     expect(result.options).toHaveLength(0);
   });
@@ -325,7 +330,7 @@ describe('AiSearchService', () => {
       query: 'help',
     });
 
-    expect(result.scenario).toBe('clarify');
+    expect(result.scenario).toBe('clarify_low_info');
     expect(result.hsis_taxonomies).toEqual(['BH', 'BV']);
     expect(result.options).toHaveLength(2);
     expect(result.options[0].code).toBe('BH-1800');

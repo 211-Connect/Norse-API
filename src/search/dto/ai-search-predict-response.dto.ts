@@ -1,6 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export type AiSearchScenario = 'clarify' | 'search' | 'search_and_notify';
+export type AiSearchScenario =
+  | 'search'
+  | 'clarify_low_info'
+  | 'clarify_multiple_labels'
+  | 'search_and_notify_low_info'
+  | 'search_and_notify_low_confidence';
 
 export class AiSearchOptionDto {
   @ApiProperty()
@@ -22,7 +27,15 @@ export class AiSearchOptionDto {
 }
 
 export class AiSearchPredictResponseDto {
-  @ApiProperty({ enum: ['clarify', 'search', 'search_and_notify'] })
+  @ApiProperty({
+    enum: [
+      'search',
+      'clarify_low_info',
+      'clarify_multiple_labels',
+      'search_and_notify_low_info',
+      'search_and_notify_low_confidence',
+    ],
+  })
   scenario: AiSearchScenario;
 
   @ApiProperty({ type: [String] })
