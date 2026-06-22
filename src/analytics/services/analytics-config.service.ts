@@ -91,6 +91,7 @@ export class AnalyticsConfigService {
         .map((entry) => entry?.websiteId)
         .filter((id): id is string => typeof id === 'string' && id.length > 0),
     );
+    allowed.add(config.umamiWebsiteId);
     const forbidden = requestedIds.filter((id) => !allowed.has(id));
     if (forbidden.length > 0) {
       throw new ForbiddenException(

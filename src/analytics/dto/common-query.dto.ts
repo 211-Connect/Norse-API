@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Validate,
   ValidationArguments,
   ValidatorConstraint,
@@ -100,6 +101,7 @@ export class CommonAnalyticsQuery {
     type: String,
   })
   @IsOptional()
+  @IsUUID('4', { each: true })
   @Transform(({ value }) => parseWebsiteIds(value), { toClassOnly: true })
   websiteIds?: string[];
 }
