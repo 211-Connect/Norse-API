@@ -1,4 +1,9 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common';
 
 import { aggregateByEndpoint } from '../internal/aggregators';
 import {
@@ -12,11 +17,13 @@ import { isSearchQueryType } from '../internal/search-query-type';
 import { UmamiHttpService } from './umami-http.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
 import { ResourceService } from '../../resource/resource.service';
+import type { TimeWindow } from '../internal/period';
 import type {
   AnalyticsMetrics,
-  LanguageSwitchDestination,
+  LanguageSwitch,
   MetricsExpandedEntry,
   PageviewEntry,
+  PaginatedSessions,
   ResourceByEntry,
   ResourceMetric,
   Searches,
@@ -24,7 +31,6 @@ import type {
   SearchQueryType,
   Stats,
   UmamiEventDataValue,
-  UmamiSession,
   UmamiSessionResponse,
   ZeroResultQuery,
 } from '../types';
@@ -44,6 +50,14 @@ function extractResourceId(path: string): string | null {
   return id.length > 0 ? id : null;
 }
 
+function resolveTimeWindow(start: string, end: string): TimeWindow {
+  const result = timeWindow(start, end);
+  if (result.success === false) {
+    throw new BadRequestException(result.error);
+  }
+  return result.timeWindow;
+}
+
 export interface AnalyticsInput {
   tenantId: string;
   start: string;
@@ -60,6 +74,11 @@ export interface TimezoneInput extends AnalyticsInput {
   timezone: string;
 }
 
+export interface SessionsInput extends AnalyticsInput {
+  page: number;
+  limit: number;
+}
+
 @Injectable()
 export class UmamiAnalyticsService {
   constructor(
@@ -69,7 +88,7 @@ export class UmamiAnalyticsService {
   ) {}
 
   async getStats(input: AnalyticsInput): Promise<Stats> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'stats',
@@ -88,7 +107,7 @@ export class UmamiAnalyticsService {
   }
 
   async getPageviews(input: PageviewsInput): Promise<PageviewEntry[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'pageviews',
@@ -116,7 +135,7 @@ export class UmamiAnalyticsService {
   }
 
   async getMetrics(input: TimezoneInput): Promise<AnalyticsMetrics> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'metrics',
@@ -182,7 +201,7 @@ export class UmamiAnalyticsService {
   }
 
   async getResourceMetrics(input: AnalyticsInput): Promise<ResourceMetric[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'resource-metrics',
@@ -229,7 +248,7 @@ export class UmamiAnalyticsService {
   }
 
   async getSearches(input: AnalyticsInput): Promise<Searches> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'searches',
@@ -279,7 +298,7 @@ export class UmamiAnalyticsService {
   async getZeroResultQueries(
     input: AnalyticsInput,
   ): Promise<ZeroResultQuery[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'zero-result-queries',
@@ -308,13 +327,11 @@ export class UmamiAnalyticsService {
     );
   }
 
-  async getLanguageSwitchDestinations(
-    input: AnalyticsInput,
-  ): Promise<LanguageSwitchDestination[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+  async getLanguageSwitches(input: AnalyticsInput): Promise<LanguageSwitch[]> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
-      'language-switch-destinations',
+      'language-switches',
       input.websiteIds,
       startMs,
       endMs,
@@ -341,7 +358,7 @@ export class UmamiAnalyticsService {
   }
 
   async getResourceByEntry(input: AnalyticsInput): Promise<ResourceByEntry[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'resource-by-entry',
@@ -370,8 +387,10 @@ export class UmamiAnalyticsService {
     );
   }
 
-  async getSessions(input: AnalyticsInput): Promise<UmamiSession[]> {
-    const { startMs, endMs } = timeWindow(input.start, input.end);
+  async getSessions(input: SessionsInput): Promise<PaginatedSessions> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
+    const cacheExtra = `page:${input.page}:limit:${input.limit}`;
+
     return this.analyticsCacheService.getOrSet(
       input.tenantId,
       'sessions',
@@ -383,7 +402,12 @@ export class UmamiAnalyticsService {
           await this.umamiHttpService.fanOut<UmamiSessionResponse>(
             input.websiteIds,
             'sessions',
-            { startAt: startMs, endAt: endMs },
+            {
+              startAt: startMs,
+              endAt: endMs,
+              page: input.page,
+              pageSize: input.limit,
+            },
           );
         const aggregated = aggregateByEndpoint<UmamiSessionResponse>(
           'sessions',
@@ -395,8 +419,16 @@ export class UmamiAnalyticsService {
             HttpStatus.BAD_GATEWAY,
           );
         }
-        return aggregated.data;
+        const data = aggregated.data;
+        return {
+          page: input.page,
+          limit: input.limit,
+          count: data.length,
+          data,
+        };
       },
+      undefined,
+      cacheExtra,
     );
   }
 }

@@ -1,9 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type { LanguageSwitchDestination } from '../types';
+import type { LanguageSwitch } from '../types';
 
-export class LanguageSwitchDestinationsResponse
-  implements LanguageSwitchDestination
-{
+export class LanguageSwitchesResponse implements LanguageSwitch {
   @ApiProperty({
     description: 'Destination language code the user switched to',
     example: 'fr',

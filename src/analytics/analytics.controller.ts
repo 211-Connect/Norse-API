@@ -26,12 +26,13 @@ import {
   AnalyticsInfoResponse,
   AnalyticsMetricsResponse,
   CommonAnalyticsQuery,
-  LanguageSwitchDestinationsResponse,
+  LanguageSwitchesResponse,
   PageviewsResponse,
+  PaginatedSessionsResponse,
   ResourceByEntryResponse,
   ResourceMetricsResponse,
   SearchesResponse,
-  SessionsResponse,
+  SessionsQueryDto,
   StatsResponse,
   TimezoneAnalyticsQueryDto,
   ZeroResultQueriesResponse,
@@ -251,25 +252,25 @@ export class AnalyticsController {
     });
   }
 
-  @Get('language-switch-destinations')
+  @Get('language-switches')
   @Version('1')
   @ApiOperation({
     summary: 'Get metrics for language switch destination pages',
   })
   @ApiResponse({
     status: 200,
-    description: 'Successfully retrieved language switch destination metrics',
-    type: [LanguageSwitchDestinationsResponse],
+    description: 'Successfully retrieved language switch metrics',
+    type: [LanguageSwitchesResponse],
   })
-  async getLanguageSwitchDestinations(
+  async getLanguageSwitches(
     @Headers(TENANT_ID_HEADER) tenantId: string,
     @Query() query: CommonAnalyticsQuery,
-  ): Promise<LanguageSwitchDestinationsResponse[]> {
+  ): Promise<LanguageSwitchesResponse[]> {
     const websiteIds = await this.analyticsConfigService.getWebsiteIds(
       tenantId,
       query.websiteIds,
     );
-    return this.umamiAnalyticsService.getLanguageSwitchDestinations({
+    return this.umamiAnalyticsService.getLanguageSwitches({
       tenantId,
       start: query.start,
       end: query.end,
@@ -311,12 +312,12 @@ export class AnalyticsController {
   @ApiResponse({
     status: 200,
     description: 'Successfully retrieved visitor sessions',
-    type: [SessionsResponse],
+    type: PaginatedSessionsResponse,
   })
   async getSessions(
     @Headers(TENANT_ID_HEADER) tenantId: string,
-    @Query() query: CommonAnalyticsQuery,
-  ): Promise<SessionsResponse[]> {
+    @Query() query: SessionsQueryDto,
+  ): Promise<PaginatedSessionsResponse> {
     const websiteIds = await this.analyticsConfigService.getWebsiteIds(
       tenantId,
       query.websiteIds,
@@ -326,6 +327,8 @@ export class AnalyticsController {
       start: query.start,
       end: query.end,
       websiteIds,
+      page: query.page,
+      limit: query.limit,
     });
   }
 }

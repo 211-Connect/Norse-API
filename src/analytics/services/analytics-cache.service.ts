@@ -15,9 +15,9 @@ import { isClosedRange } from '../internal/analytics-cache-ttl';
 export class AnalyticsCacheService {
   private readonly logger = new Logger(AnalyticsCacheService.name);
 
-  private readonly lru: LRUCache<string, any>;
+  private readonly lru: LRUCache<string, unknown>;
 
-  private readonly inflight = new Map<string, Promise<any>>();
+  private readonly inflight = new Map<string, Promise<unknown>>();
 
   private readonly sessionTtlMs: number;
 
@@ -34,7 +34,7 @@ export class AnalyticsCacheService {
       60_000,
     );
 
-    this.lru = new LRUCache<string, any>({
+    this.lru = new LRUCache<string, unknown>({
       max: lruMax,
       ttl: 60 * 1_000, // 1 minute
       noUpdateTTL: true,
@@ -49,28 +49,33 @@ export class AnalyticsCacheService {
     endMs: number,
     factory: () => Promise<T>,
     timezone?: string,
+    extra?: string,
   ): Promise<T> {
+    // The timezone affects both the TTL decision and the cache key, so
+    // timezone-sensitive responses (pageviews, metrics) don't collide.
+    // `extra` is for other endpoint-specific key segments (e.g. pagination).
+    const keyExtra = extra ?? timezone;
     const key = analyticsResponseCacheKey(
       tenantId,
       endpoint,
       websiteIds,
       startMs,
       endMs,
-      timezone,
+      keyExtra,
     );
 
     // L1 — in-process LRU
-    const l1Hit = this.lru.get(key) as T | undefined;
+    const l1Hit = this.lru.get(key);
     if (l1Hit !== undefined) {
       this.logger.debug(`Analytics LRU hit: ${key}`);
-      return l1Hit;
+      return l1Hit as T;
     }
 
     // Coalesce concurrent identical requests
-    const existing = this.inflight.get(key) as Promise<T> | undefined;
+    const existing = this.inflight.get(key);
     if (existing) {
       this.logger.debug(`Analytics request coalesced: ${key}`);
-      return existing;
+      return existing as Promise<T>;
     }
 
     const promise = this.fetchAndCache(key, endpoint, endMs, factory, timezone);
@@ -99,7 +104,7 @@ export class AnalyticsCacheService {
       const l2Hit = await this.cacheManager.get<T>(key);
       if (l2Hit !== undefined && l2Hit !== null) {
         this.logger.debug(`Analytics Redis hit: ${key}`);
-        this.lru.set(key, l2Hit);
+        this.lru.set(key, l2Hit as unknown);
         return l2Hit;
       }
     } catch (err) {

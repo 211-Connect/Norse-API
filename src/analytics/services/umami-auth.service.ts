@@ -22,6 +22,7 @@ export class UmamiAuthService {
 
   private cachedToken: string | null = null;
   private inflight: Promise<string> | null = null;
+  private tokenGeneration = 0;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -34,9 +35,14 @@ export class UmamiAuthService {
       return this.inflight;
     }
 
+    const generation = ++this.tokenGeneration;
+
     this.inflight = this.login()
       .then((token) => {
-        this.cachedToken = token;
+        // Only cache the token if no invalidation happened while we were logging in
+        if (generation === this.tokenGeneration) {
+          this.cachedToken = token;
+        }
         return token;
       })
       .finally(() => {
@@ -48,6 +54,7 @@ export class UmamiAuthService {
 
   invalidate(): void {
     this.cachedToken = null;
+    this.tokenGeneration++;
   }
 
   private async isTokenValid(token: string): Promise<boolean> {
