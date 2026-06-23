@@ -82,6 +82,7 @@ export class AiSearchService {
         query: body.query,
         tenant_id: headers['x-tenant-id'],
         top_k: topK,
+        return_all_labels: true,
       },
     });
 
