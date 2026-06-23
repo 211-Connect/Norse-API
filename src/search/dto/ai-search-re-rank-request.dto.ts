@@ -19,9 +19,9 @@ export class AiSearchReRankRequestDto {
 
   @ApiProperty({
     required: false,
-    default: 100,
+    default: 150,
     minimum: 1,
-    description: 'Number of candidates to request from ML Broker (default 100)',
+    description: 'Number of candidates to request from ML Broker (default 150)',
   })
   @IsOptional()
   @IsInt()
