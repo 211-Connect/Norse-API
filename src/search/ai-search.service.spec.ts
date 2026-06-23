@@ -84,7 +84,7 @@ describe('AiSearchService', () => {
 
     const [, requestOptions] = fetchSpy.mock.calls[0] as [unknown, RequestInit];
     const parsedBody = JSON.parse(String(requestOptions.body));
-    expect(parsedBody.top_k).toBe(100);
+    expect(parsedBody.top_k).toBe(150);
 
     expect(result.scenario).toBe('search');
     expect(result.hsis_taxonomies).toEqual(['L']);
@@ -383,7 +383,7 @@ describe('AiSearchService', () => {
     ];
     expect(String(calledUrl)).toContain('/re-rank');
     const parsedBody = JSON.parse(String(requestOptions.body));
-    expect(parsedBody.top_k).toBe(100);
+    expect(parsedBody.top_k).toBe(150);
     expect(parsedBody.need_weights).toEqual({
       'HO-300': 0.907,
       'IC-330': 0.0817,
