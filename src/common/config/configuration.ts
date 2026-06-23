@@ -20,4 +20,18 @@ export default () => ({
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
   ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
+  umami: {
+    apiUrl: process.env.UMAMI_API_URL || '',
+    username: process.env.UMAMI_USERNAME || '',
+    password: process.env.UMAMI_PASSWORD || '',
+  },
+  analytics: {
+    cache: {
+      responseLruMax:
+        parseInt(process.env.ANALYTICS_RESPONSE_LRU_MAX, 10) || 500,
+      configLruMax: parseInt(process.env.ANALYTICS_CONFIG_LRU_MAX, 10) || 1000,
+      sessionTtlMs:
+        parseInt(process.env.ANALYTICS_SESSION_CACHE_TTL_MS, 10) || 60_000,
+    },
+  },
 });
