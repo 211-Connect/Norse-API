@@ -24,6 +24,12 @@ export class ServiceDto {
 
   @ApiProperty({ nullable: true })
   summary?: string | null;
+
+  @ApiProperty({ nullable: true })
+  eligibility?: string | null;
+
+  @ApiProperty({ nullable: true })
+  application_process?: string | null;
 }
 
 export class PhysicalAddressDto {
