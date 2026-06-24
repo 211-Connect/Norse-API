@@ -5,6 +5,11 @@ import {
   ALLOWED_ENDPOINT,
   ANALYTICS_FETCH_TIMEOUT_MS,
 } from '../internal/constants';
+import {
+  UmamiBatchResponse,
+  UmamiEventPayload,
+  UmamiSendResponse,
+} from '../types/umami';
 import { UmamiAuthService } from './umami-auth.service';
 
 export interface UmamiFanOutOptions {
@@ -41,6 +46,77 @@ export class UmamiHttpService {
         HttpStatus.BAD_GATEWAY,
       );
     }
+  }
+
+  private getUserAgent(): string {
+    return (
+      this.configService.get<string>('umami.userAgent') ??
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+  }
+
+  private async postEvent<T>(
+    path: string,
+    body: unknown,
+    context: string,
+  ): Promise<T> {
+    const apiUrl = this.getApiUrl();
+    const url = `${apiUrl}${path}`;
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'user-Agent': this.getUserAgent(),
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Network error';
+      throw new HttpException(
+        `Umami ${context} network error: ${message}`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new HttpException(
+        `Umami ${context} error (${res.status}): ${text}`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    return res.json() as Promise<T>;
+  }
+
+  async sendEvent(
+    websiteId: string,
+    payload: UmamiEventPayload,
+  ): Promise<UmamiSendResponse> {
+    const result = await this.postEvent<UmamiSendResponse>(
+      '/api/send',
+      { payload: { ...payload, website: websiteId }, type: 'event' },
+      'send',
+    );
+    return result;
+  }
+
+  async sendBatch(
+    events: Array<{ websiteId: string; payload: UmamiEventPayload }>,
+  ): Promise<UmamiBatchResponse> {
+    const batchPayload = events.map((event) => ({
+      payload: { ...event.payload, website: event.websiteId },
+      type: 'event' as const,
+    }));
+
+    return this.postEvent<UmamiBatchResponse>(
+      '/api/batch',
+      batchPayload,
+      'batch',
+    );
   }
 
   async umamiFetch<T = unknown>(
