@@ -17,5 +17,21 @@ export default () => ({
     parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
+  ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
+  ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
+  umami: {
+    apiUrl: process.env.UMAMI_API_URL || '',
+    username: process.env.UMAMI_USERNAME || '',
+    password: process.env.UMAMI_PASSWORD || '',
+  },
+  analytics: {
+    cache: {
+      responseLruMax:
+        parseInt(process.env.ANALYTICS_RESPONSE_LRU_MAX, 10) || 500,
+      configLruMax: parseInt(process.env.ANALYTICS_CONFIG_LRU_MAX, 10) || 1000,
+      sessionTtlMs:
+        parseInt(process.env.ANALYTICS_SESSION_CACHE_TTL_MS, 10) || 60_000,
+    },
+  },
 });

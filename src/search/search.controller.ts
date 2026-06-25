@@ -29,6 +29,11 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
+import { AiSearchPredictRequestDto } from './dto/ai-search-predict-request.dto';
+import { AiSearchReRankRequestDto } from './dto/ai-search-re-rank-request.dto';
+import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
+import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto';
+import { AiSearchService } from './ai-search.service';
 
 @ApiTags('Search')
 @Controller('search')
@@ -44,6 +49,7 @@ export class SearchController {
   constructor(
     private readonly searchService: SearchService,
     private readonly metricsService: MetricsService,
+    private readonly aiSearchService: AiSearchService,
   ) {}
 
   @Get()
@@ -91,6 +97,13 @@ export class SearchController {
     required: false,
     enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
+  })
+  @ApiQuery({
+    name: 'taxonomy',
+    required: false,
+    description:
+      'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
+    schema: { type: 'string', example: 'BM-1400,BM-1700' },
   })
   @ApiQuery({
     name: 'sort',
@@ -180,6 +193,13 @@ export class SearchController {
     schema: { default: 'text' },
   })
   @ApiQuery({
+    name: 'taxonomy',
+    required: false,
+    description:
+      'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
+    schema: { type: 'string', example: 'BM-1400,BM-1700' },
+  })
+  @ApiQuery({
     name: 'sort',
     required: false,
     enum: ['relevance', 'distance', 'name', 'organization'],
@@ -222,5 +242,73 @@ export class SearchController {
       query,
       body,
     });
+  }
+
+  @Post('predict')
+  @Version('1')
+  @HttpCode(HttpStatus.OK)
+  @ApiResponse({
+    status: 200,
+    description: 'Classify search intent and return UI guidance',
+    type: AiSearchPredictResponseDto,
+  })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'Content-Type',
+    required: true,
+    description: 'application/json',
+  })
+  @ApiBody({ type: AiSearchPredictRequestDto })
+  predictNeedsClassification(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Body() body: AiSearchPredictRequestDto,
+  ): Promise<AiSearchPredictResponseDto> {
+    this.metricsService.incrementSearchHit(
+      'POST',
+      'predictSearch',
+      headers['x-tenant-id'],
+    );
+
+    return this.aiSearchService.predict(headers, body);
+  }
+
+  @Post('re-rank')
+  @Version('1')
+  @HttpCode(HttpStatus.OK)
+  @ApiResponse({
+    status: 200,
+    description: 'Re-rank taxonomy hits after user-adjusted needs selection',
+    type: AiSearchReRankResponseDto,
+  })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'Content-Type',
+    required: true,
+    description: 'application/json',
+  })
+  @ApiBody({ type: AiSearchReRankRequestDto })
+  reRankNeedsClassification(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Body() body: AiSearchReRankRequestDto,
+  ): Promise<AiSearchReRankResponseDto> {
+    this.metricsService.incrementSearchHit(
+      'POST',
+      'reRankSearch',
+      headers['x-tenant-id'],
+    );
+
+    return this.aiSearchService.reRank(headers, body);
   }
 }
