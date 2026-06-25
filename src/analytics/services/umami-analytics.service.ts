@@ -30,7 +30,10 @@ import type {
   SearchHits,
   SearchQueryType,
   Stats,
+  UmamiBatchResponse,
   UmamiEventDataValue,
+  UmamiEventPayload,
+  UmamiSendResponse,
   UmamiSessionResponse,
   ZeroResultQuery,
 } from '../types';
@@ -430,5 +433,18 @@ export class UmamiAnalyticsService {
       undefined,
       cacheExtra,
     );
+  }
+
+  async sendEvent(
+    websiteId: string,
+    payload: UmamiEventPayload,
+  ): Promise<UmamiSendResponse> {
+    return this.umamiHttpService.sendEvent(websiteId, payload);
+  }
+
+  async sendBatch(
+    events: Array<{ websiteId: string; payload: UmamiEventPayload }>,
+  ): Promise<UmamiBatchResponse> {
+    return this.umamiHttpService.sendBatch(events);
   }
 }

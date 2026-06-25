@@ -11,3 +11,5 @@ export * from './resource-by-entry-response.dto';
 export * from './sessions-response.dto';
 export * from './sessions-query.dto';
 export * from './paginated-sessions-response.dto';
+export * from './send-event-response.dto';
+export * from './send-event.dto';
