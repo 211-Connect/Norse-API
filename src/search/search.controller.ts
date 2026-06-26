@@ -8,6 +8,7 @@ import {
   Req,
   Version,
   BadRequestException,
+  ValidationPipe,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -29,11 +30,11 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const';
-import { AiSearchPredictRequestDto } from './dto/ai-search-predict-request.dto';
-import { AiSearchReRankRequestDto } from './dto/ai-search-re-rank-request.dto';
-import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
 import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto';
 import { AiSearchService } from './ai-search.service';
+import { AiSearchReRankQueryDto } from './dto/ai-search-re-rank-query.dto';
+import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
+import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 
 @ApiTags('Search')
 @Controller('search')
@@ -259,15 +260,16 @@ export class SearchController {
     },
   })
   @ApiHeader({ name: 'x-tenant-id', required: true })
-  @ApiHeader({
-    name: 'Content-Type',
-    required: true,
-    description: 'application/json',
+  @ApiQuery({ name: 'query', required: true, schema: { type: 'string' } })
+  @ApiQuery({
+    name: 'top_k',
+    required: false,
+    schema: { type: 'integer', minimum: 1, default: 150 },
   })
-  @ApiBody({ type: AiSearchPredictRequestDto })
   predictNeedsClassification(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Body() body: AiSearchPredictRequestDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: AiSearchPredictQueryDto,
   ): Promise<AiSearchPredictResponseDto> {
     this.metricsService.incrementSearchHit(
       'GET',
@@ -275,7 +277,7 @@ export class SearchController {
       headers['x-tenant-id'],
     );
 
-    return this.aiSearchService.predict(headers, body);
+    return this.aiSearchService.predict(headers, query);
   }
 
   @Get('re-rank')
@@ -293,15 +295,22 @@ export class SearchController {
     },
   })
   @ApiHeader({ name: 'x-tenant-id', required: true })
-  @ApiHeader({
-    name: 'Content-Type',
+  @ApiQuery({
+    name: 'need_weights',
     required: true,
-    description: 'application/json',
+    description:
+      'JSON string map of need weights (URL-encoded), e.g. {"HO-300":0.9,"IC-330":0.08}',
+    schema: { type: 'string' },
   })
-  @ApiBody({ type: AiSearchReRankRequestDto })
+  @ApiQuery({
+    name: 'top_k',
+    required: false,
+    schema: { type: 'integer', minimum: 1, default: 150 },
+  })
   reRankNeedsClassification(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Body() body: AiSearchReRankRequestDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: AiSearchReRankQueryDto,
   ): Promise<AiSearchReRankResponseDto> {
     this.metricsService.incrementSearchHit(
       'GET',
@@ -309,6 +318,53 @@ export class SearchController {
       headers['x-tenant-id'],
     );
 
-    return this.aiSearchService.reRank(headers, body);
+    return this.aiSearchService.reRank(headers, {
+      need_weights: this.parseNeedWeightsQuery(query.need_weights),
+      top_k: query.top_k,
+    });
+  }
+
+  private parseNeedWeightsQuery(
+    rawNeedWeights: string,
+  ): Record<string, number> {
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(rawNeedWeights);
+    } catch {
+      throw new BadRequestException(
+        'need_weights must be a valid JSON object string',
+      );
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new BadRequestException(
+        'need_weights must be a JSON object with number values',
+      );
+    }
+
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (entries.length === 0) {
+      throw new BadRequestException('need_weights must not be empty');
+    }
+
+    const result: Record<string, number> = {};
+    for (const [key, value] of entries) {
+      if (typeof key !== 'string' || key.trim().length === 0) {
+        throw new BadRequestException(
+          'need_weights keys must be non-empty strings',
+        );
+      }
+
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new BadRequestException(
+          'need_weights values must be finite numbers',
+        );
+      }
+
+      result[key] = value;
+    }
+
+    return result;
   }
 }

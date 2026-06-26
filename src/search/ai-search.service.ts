@@ -6,8 +6,6 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { AiSearchPredictRequestDto } from './dto/ai-search-predict-request.dto';
-import { AiSearchReRankRequestDto } from './dto/ai-search-re-rank-request.dto';
 import {
   AiSearchPredictResponseDto,
   AiSearchScenario,
@@ -15,6 +13,8 @@ import {
 } from './dto/ai-search-predict-response.dto';
 import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto';
 import { HybridSearchService } from './hybrid-search.service';
+import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
+import { AiSearchReRankPayload } from './dto/ai-search-re-rank-query.dto';
 
 const ML_BROKER_TIMEOUT_MS = 10_000;
 const ML_BROKER_TOP_K = 150;
@@ -71,15 +71,15 @@ export class AiSearchService {
 
   async predict(
     headers: HeadersDto,
-    body: AiSearchPredictRequestDto,
+    queryParams: AiSearchPredictQueryDto,
   ): Promise<AiSearchPredictResponseDto> {
-    const topK = body.top_k ?? ML_BROKER_TOP_K;
+    const topK = queryParams.top_k ?? ML_BROKER_TOP_K;
 
     const brokerResponse = await this.callMlBroker({
       task: MlBrokerTask.PREDICT,
       headers,
       body: {
-        query: body.query,
+        query: queryParams.query,
         tenant_id: headers['x-tenant-id'],
         top_k: topK,
         return_all_labels: true,
@@ -87,7 +87,7 @@ export class AiSearchService {
     });
 
     this.logger.debug(
-      `[predict] query="${body.query}" tenant=${headers['x-tenant-id']} | ` +
+      `[predict] query="${queryParams}" tenant=${headers['x-tenant-id']} | ` +
         `needs=[${(brokerResponse.needs || [])
           .map((n) => `${n.code}:${n.score}`)
           .join(', ')}] | ` +
@@ -99,21 +99,21 @@ export class AiSearchService {
 
   async reRank(
     headers: HeadersDto,
-    body: AiSearchReRankRequestDto,
+    payload: AiSearchReRankPayload,
   ): Promise<AiSearchReRankResponseDto> {
     const response = await this.callMlBroker({
       task: MlBrokerTask.RERANK,
       headers,
       body: {
         tenant_id: headers['x-tenant-id'],
-        need_weights: body.need_weights,
-        top_k: body.top_k ?? ML_BROKER_TOP_K,
+        need_weights: payload.need_weights,
+        top_k: payload.top_k ?? ML_BROKER_TOP_K,
       },
     });
 
     this.logger.debug(
       `[re-rank] tenant=${headers['x-tenant-id']} | ` +
-        `need_weights=${JSON.stringify(body.need_weights)} | ` +
+        `need_weights=${JSON.stringify(payload.need_weights)} | ` +
         `hsis_taxonomies=[${(response.hsis_taxonomies || []).join(', ')}]`,
     );
 
