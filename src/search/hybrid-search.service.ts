@@ -27,7 +27,9 @@ import { RequestCacheService } from 'src/common/services/cache/request-cache.ser
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
-const VECTOR_SCORE_WEIGHT = 50;
+// After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
+// ~1.0–1.4 (+1.0 floor), so this is raised from 50 to 100. Re-tune empirically after deploy.
+const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 10;
@@ -35,6 +37,8 @@ const GEO_GAUSS_WEIGHT = 1.5;
 const GEO_DEFAULT_SCALE_MI = 5;
 
 const BM25_NAME_BOOST = 15;
+const BM25_SERVICE_NAME_BOOST = 10;
+const BM25_ORG_NAME_BOOST = 6;
 
 const TAXONOMY_K = 5;
 const TAXONOMY_NUM_CANDIDATES = 100;
@@ -126,18 +130,33 @@ export class HybridSearchService {
       `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
     );
 
+    // Browse mode (empty query): skip embedding — many embedding servers 400 on
+    // empty input, causing a 503. Filters + sort carry the result set; vector
+    // scoring is simply omitted for browse.
+    const wantsVector = queryStr.trim().length > 0;
     const tEmbedStart = performance.now();
-    const [queryVector, tenantFacets] = await Promise.all([
-      this.embedQuery(queryStr),
+
+    const [embedResult, tenantFacets] = await Promise.all([
+      wantsVector
+        ? this.embedQuery(queryStr).catch((err: Error) => {
+            this.logger.warn(
+              `Embedding failed, falling back to lexical-only: ${err.message}`,
+            );
+            return undefined;
+          })
+        : Promise.resolve(undefined),
       this.tenantConfigService.getFacets(tenantId),
     ]);
+
+    const queryVector = embedResult;
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
-    const predictedTaxonomies = await this.getTaxonomyCodes(
-      queryVector,
-      tenantId,
-    );
+    // Taxonomy prediction requires a query vector; skip if embedding was
+    // skipped (browse) or failed (lexical fallback).
+    const predictedTaxonomies = queryVector
+      ? await this.getTaxonomyCodes(queryVector, tenantId)
+      : [];
     const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
     this.logger.log(
@@ -353,24 +372,95 @@ export class HybridSearchService {
     }));
   }
 
+  /**
+   * Builds the exact / starts-with / phrase tier for one name surface.
+   * All clauses target `.lc` (keyword, lowercase normalizer) or `.clean`
+   * (tokenized, lowercase+asciifolding only — no stem/stop/synonym), never
+   * the analyzed root field, so proper nouns aren't corrupted by stemming.
+   *
+   * `includeEdge`  – true only for top-level `name` (edge-ngram sub-field).
+   * `includePhrase` – enables mid-string phrase matching on `.clean`
+   *   (match_phrase + match_phrase_prefix). Suppress for single-token org
+   *   queries to avoid noisy mid-field token hits ("health" → every
+   *   "X Health Center").
+   */
+  private buildNameTierClauses(
+    field: string,
+    boost: number,
+    queryStr: string,
+    opts: { includePhrase: boolean; includeEdge?: boolean },
+  ): QueryDslQueryContainer[] {
+    const queryLower = queryStr.toLowerCase();
+    const clauses: QueryDslQueryContainer[] = [
+      { term: { [`${field}.lc`]: { value: queryLower, boost } } },
+      { prefix: { [`${field}.lc`]: { value: queryLower, boost } } },
+    ];
+    if (opts.includeEdge) {
+      clauses.push({
+        match: { [`${field}.edge`]: { query: queryStr, boost } },
+      });
+    }
+    if (opts.includePhrase) {
+      clauses.push({
+        match_phrase: { [`${field}.clean`]: { query: queryStr, boost } },
+      });
+      clauses.push({
+        match_phrase_prefix: { [`${field}.clean`]: { query: queryStr, boost } },
+      });
+    }
+    return clauses;
+  }
+
   private buildLexicalShouldClauses(
     queryStr: string,
   ): QueryDslQueryContainer[] {
-    const queryLower = queryStr.toLowerCase();
+    // Phrase clauses on org name are noisy for single-token queries: "health"
+    // would match every "X Health Center" even when its services are unrelated.
+    // Exact + prefix on .lc are anchored to the start of the org name field and
+    // are safe — single-token "rainbow" still finds "Rainbow House". Phrase
+    // matching is enabled only for multi-token queries ("salvation army",
+    // "american red cross of greater chicago").
+    const isMultiToken =
+      queryStr.trim().split(/\s+/).filter(Boolean).length >= 2;
+
+    // organization.name is handled exclusively via the name tier below
+    // (phrase/exact/prefix on .clean/.lc). organization.description is
+    // mission-statement prose that matches unrelated need tokens — both are
+    // excluded from the recall fallback so they don't leak noise at token level.
+    const generalFields = SearchUtilsService.FIELDS_TO_QUERY.filter(
+      (f) => f !== 'organization.name' && f !== 'organization.description',
+    );
 
     return [
-      { term: { 'name.lc': { value: queryLower, boost: BM25_NAME_BOOST } } },
-      { prefix: { 'name.lc': { value: queryLower, boost: BM25_NAME_BOOST } } },
-      { match: { 'name.edge': { query: queryStr, boost: BM25_NAME_BOOST } } },
-      { match_phrase: { name: { query: queryStr, boost: BM25_NAME_BOOST } } },
+      // Top-level name: highest signal — edge-ngram + phrase on .clean
+      ...this.buildNameTierClauses('name', BM25_NAME_BOOST, queryStr, {
+        includePhrase: true,
+        includeEdge: true,
+      }),
+      // Service name tier
+      ...this.buildNameTierClauses(
+        'service.name',
+        BM25_SERVICE_NAME_BOOST,
+        queryStr,
+        { includePhrase: true },
+      ),
+      // Org name tier — phrase suppressed on single-token queries (see above)
+      ...this.buildNameTierClauses(
+        'organization.name',
+        BM25_ORG_NAME_BOOST,
+        queryStr,
+        { includePhrase: isMultiToken },
+      ),
+      // General stemmed recall fallback on analyzed fields (low implicit boost)
       {
         multi_match: {
           operator: 'or',
           minimum_should_match: '2<75%',
-          fields: SearchUtilsService.FIELDS_TO_QUERY,
+          fields: generalFields,
           query: queryStr,
         },
       },
+      // Nested taxonomy name/description boost
       {
         nested: {
           path: 'taxonomies',
@@ -389,21 +479,30 @@ export class HybridSearchService {
   }
 
   private buildScoreFunctions(
-    queryVector: number[],
+    queryVector: number[] | undefined,
     coords: number[] | undefined,
     distance: number,
   ): QueryDslFunctionScoreContainer[] {
-    const functions: QueryDslFunctionScoreContainer[] = [
-      {
+    const functions: QueryDslFunctionScoreContainer[] = [];
+
+    // NOTE: exact cosine runs over the full filtered population per query.
+    // Fine under restrictive tenant+geo filters; for a broad tenant with no geo
+    // filter it covers the whole index — candidate for a future knn pre-filter
+    // or rescore window if tail latency becomes a concern.
+    if (queryVector) {
+      functions.push({
         script_score: {
           script: {
-            source: "cosineSimilarity(params.qv, 'embedding') + 1.0",
+            // Math.max(0, ...) guards against negative cosine scores (which ES
+            // rejects) without the +1.0 floor that was inflating every doc to
+            // ~50–60 under boost_mode:sum and swamping the lexical name signal.
+            source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
             params: { qv: queryVector },
           },
         },
         weight: VECTOR_SCORE_WEIGHT,
-      },
-    ];
+      });
+    }
 
     if (coords) {
       const [lon, lat] = coords;
@@ -428,7 +527,7 @@ export class HybridSearchService {
   private buildHybridQuery(args: {
     index: string;
     queryStr: string;
-    queryVector: number[];
+    queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
     filters: QueryDslQueryContainer[];
     coords: number[] | undefined;
@@ -468,6 +567,32 @@ export class HybridSearchService {
       { service_at_location_id: 'asc' },
     ];
 
+    const scoreFunctions = this.buildScoreFunctions(queryVector, coords, distance);
+
+    // When there are no scoring functions (browse with no coords and no vector),
+    // emit a plain bool so ES doesn't receive an empty function_score.
+    const innerBool: QueryDslQueryContainer = {
+      bool: {
+        // Intentional: filters define the matched population; should clauses
+        // and functions only rank. Do NOT set to 1.
+        minimum_should_match: 0,
+        filter: filters,
+        should,
+      },
+    };
+
+    const esQuery: QueryDslQueryContainer =
+      scoreFunctions.length > 0
+        ? {
+            function_score: {
+              query: innerBool,
+              functions: scoreFunctions,
+              score_mode: 'sum',
+              boost_mode: 'sum',
+            },
+          }
+        : innerBool;
+
     return {
       index,
       from: (page - 1) * limit,
@@ -475,22 +600,7 @@ export class HybridSearchService {
       track_total_hits: true,
       _source: { excludes: ['embedding', 'service_area'] },
       aggs,
-      query: {
-        function_score: {
-          query: {
-            bool: {
-              // Intentional: filters define the matched population; should
-              // clauses and functions only rank. Do NOT set to 1.
-              minimum_should_match: 0,
-              filter: filters,
-              should,
-            },
-          },
-          functions: this.buildScoreFunctions(queryVector, coords, distance),
-          score_mode: 'sum',
-          boost_mode: 'sum',
-        },
-      },
+      query: esQuery,
       sort,
     };
   }
