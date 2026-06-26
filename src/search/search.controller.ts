@@ -28,7 +28,7 @@ import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
-import { FIFTEEN_MINUTES } from 'src/common/const';
+import { ONE_HOUR } from 'src/common/const';
 import { AiSearchPredictRequestDto } from './dto/ai-search-predict-request.dto';
 import { AiSearchReRankRequestDto } from './dto/ai-search-re-rank-request.dto';
 import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
@@ -54,7 +54,7 @@ export class SearchController {
 
   @Get()
   @Version('1')
-  @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     type: SearchResponseDto,
@@ -244,9 +244,9 @@ export class SearchController {
     });
   }
 
-  @Post('predict')
+  @Get('predict')
   @Version('1')
-  @HttpCode(HttpStatus.OK)
+  @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     description: 'Classify search intent and return UI guidance',
@@ -270,7 +270,7 @@ export class SearchController {
     @Body() body: AiSearchPredictRequestDto,
   ): Promise<AiSearchPredictResponseDto> {
     this.metricsService.incrementSearchHit(
-      'POST',
+      'GET',
       'predictSearch',
       headers['x-tenant-id'],
     );
@@ -278,9 +278,9 @@ export class SearchController {
     return this.aiSearchService.predict(headers, body);
   }
 
-  @Post('re-rank')
+  @Get('re-rank')
   @Version('1')
-  @HttpCode(HttpStatus.OK)
+  @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     description: 'Re-rank taxonomy hits after user-adjusted needs selection',
@@ -304,7 +304,7 @@ export class SearchController {
     @Body() body: AiSearchReRankRequestDto,
   ): Promise<AiSearchReRankResponseDto> {
     this.metricsService.incrementSearchHit(
-      'POST',
+      'GET',
       'reRankSearch',
       headers['x-tenant-id'],
     );

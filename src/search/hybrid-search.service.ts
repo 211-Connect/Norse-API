@@ -23,6 +23,8 @@ import {
 import { SearchUtilsService } from './search-utils.service';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 const VECTOR_SCORE_WEIGHT = 50;
@@ -54,6 +56,7 @@ export class HybridSearchService {
     private readonly elasticsearchService: ElasticsearchService,
     private readonly configService: ConfigService,
     private readonly tenantConfigService: TenantConfigService,
+    private readonly requestCacheService: RequestCacheService,
   ) {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
@@ -85,18 +88,22 @@ export class HybridSearchService {
       this.buildHardTaxonomyScopeFilter(taxonomies),
     ];
 
-    try {
-      const result = await this.elasticsearchService.count({
-        index,
-        query: { bool: { filter } },
-      });
-      return result.count;
-    } catch (error) {
-      this.logger.warn(
-        `Document count failed for tenant=${tenantId}: ${error.message}`,
-      );
-      return 0;
-    }
+    const cacheKey = hybridDocumentsCountCacheKey(tenantId, lang, taxonomies);
+
+    return this.requestCacheService.getOrSet(cacheKey, async () => {
+      try {
+        const result = await this.elasticsearchService.count({
+          index,
+          query: { bool: { filter } },
+        });
+        return result.count;
+      } catch (error) {
+        this.logger.warn(
+          `Document count failed for tenant=${tenantId}: ${error.message}`,
+        );
+        return 0;
+      }
+    });
   }
 
   async searchHybrid(options: {
