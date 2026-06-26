@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 
 const headers = {
   'x-tenant-id': 'tenant-a',
@@ -80,6 +81,12 @@ describe('HybridSearchService', () => {
           provide: TenantConfigService,
           useValue: { getFacets: jest.fn().mockResolvedValue([]) },
         },
+        {
+          provide: RequestCacheService,
+          useValue: {
+            getOrSet: jest.fn((_key, factory) => factory()),
+          },
+        },
       ],
     }).compile();
 
@@ -117,7 +124,7 @@ describe('HybridSearchService', () => {
     expect(scriptFn.script_score.script.source).toBe(
       "cosineSimilarity(params.qv, 'embedding') + 1.0",
     );
-    expect(scriptFn.weight).toBe(30);
+    expect(scriptFn.weight).toBe(50);
     // No knn clause anywhere on the main request.
     expect(capturedMainRequest.knn).toBeUndefined();
   });

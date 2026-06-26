@@ -7,6 +7,7 @@ import { SearchBodyDto } from './dto/search-body.dto';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 import { HybridSearchService } from './hybrid-search.service';
+import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 
 describe('SearchService Logic', () => {
   let service: SearchService;
@@ -58,6 +59,12 @@ describe('SearchService Logic', () => {
           provide: HybridSearchService,
           useValue: mockHybridSearchService,
         },
+        {
+          provide: RequestCacheService,
+          useValue: {
+            getOrSet: jest.fn((_key, factory) => factory()),
+          },
+        },
       ],
     }).compile();
 
@@ -76,6 +83,7 @@ describe('SearchService Logic', () => {
     page: 1,
     limit: 25,
     filters: {},
+    taxonomy: [],
     distance: 0,
     query_type: 'text',
     sort: 'relevance',
