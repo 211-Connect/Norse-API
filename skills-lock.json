@@ -1,6 +1,30 @@
 {
   "version": 1,
   "skills": {
+    "mongodb-natural-language-querying": {
+      "source": "mongodb/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mongodb-natural-language-querying/SKILL.md",
+      "computedHash": "35499a2d7c15334669bd71204cb3edf496c494e3c738adc50611fdc76ddbea01"
+    },
+    "mongodb-query-optimizer": {
+      "source": "mongodb/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mongodb-query-optimizer/SKILL.md",
+      "computedHash": "129464c93c61bcd2d4352afc7cc99eeb9485d109c5ae7e6ff614481b5693bd55"
+    },
+    "mongodb-schema-design": {
+      "source": "mongodb/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mongodb-schema-design/SKILL.md",
+      "computedHash": "1324e3d2f8d0dc487a5d2921cd81f28e4c4205861ab5b2a9408ed68f758e9ac0"
+    },
+    "mongodb-search-and-ai": {
+      "source": "mongodb/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mongodb-search-and-ai/SKILL.md",
+      "computedHash": "91ae39c66b490f9b011505cf0b4bc7b5338b69b7e96f357258b268bf5d68913e"
+    },
     "nestjs-best-practices": {
       "source": "kadajett/agent-nestjs-skills",
       "sourceType": "github",
