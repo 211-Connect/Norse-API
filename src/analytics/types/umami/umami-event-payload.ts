@@ -1,6 +1,7 @@
 export interface UmamiEventPayload {
   name: string;
   data?: Record<string, unknown>;
+  timestamp?: number;
 }
 
 export interface UmamiSendResponse {
