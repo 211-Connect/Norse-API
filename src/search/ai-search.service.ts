@@ -250,12 +250,12 @@ export class AiSearchService {
     const options = await Promise.all(
       needs.map(async (need): Promise<AiSearchOptionDto> => {
         try {
-          const need_weights = Object.fromEntries(
-            needs.map((item) => [
-              item.code,
-              item.code === need.code ? item.score : 0.1,
-            ]),
-          );
+          // Count is per-need: weight only the clarified need so the count
+          // reflects what the user gets when selecting it alone. Including
+          // every other need at a 0.1 floor leaks unrelated categories into
+          // the re-rank and inflates the count. The 0.1-floor blend belongs to
+          // the next step (user multi-selects categories), not this count.
+          const need_weights = { [need.code]: need.score };
 
           const reRankResponse = await this.callMlBroker({
             task: MlBrokerTask.RERANK,
