@@ -354,8 +354,7 @@ export class AnalyticsController {
   ): Promise<SendEventResponseDto> {
     await this.analyticsConfigService.getWebsiteIds(tenantId, [dto.websiteId]);
 
-    const { websiteId, payload } = dto;
-    await this.umamiAnalyticsService.sendEvent(websiteId, payload);
+    await this.umamiAnalyticsService.sendEvent(dto.websiteId, dto.payload);
 
     return { success: true };
   }
@@ -380,10 +379,7 @@ export class AnalyticsController {
     const result = await this.umamiAnalyticsService.sendBatch(
       dto.events.map((event) => ({
         websiteId: event.websiteId,
-        payload: {
-          name: event.payload.name,
-          data: event.payload.data,
-        },
+        input: event.payload,
       })),
     );
 
