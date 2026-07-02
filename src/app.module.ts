@@ -33,6 +33,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     SuggestionModule,
     GeocodingModule,
     AnalyticsModule,
+    TaxonomyScorecardModule,
   ],
   controllers: [AppController],
   providers: [

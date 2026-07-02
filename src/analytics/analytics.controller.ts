@@ -1,7 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
   Headers,
+  Post,
   Query,
   UseGuards,
   UseInterceptors,
@@ -32,6 +34,10 @@ import {
   ResourceByEntryResponse,
   ResourceMetricsResponse,
   SearchesResponse,
+  SendBatchDto,
+  SendBatchResponseDto,
+  SendEventDto,
+  SendEventResponseDto,
   SessionsQueryDto,
   StatsResponse,
   TimezoneAnalyticsQueryDto,
@@ -330,5 +336,58 @@ export class AnalyticsController {
       page: query.page,
       limit: query.limit,
     });
+  }
+
+  @Post('events')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Send a custom event to Umami',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Event sent successfully',
+    type: SendEventResponseDto,
+  })
+  async sendEvent(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Body() dto: SendEventDto,
+  ): Promise<SendEventResponseDto> {
+    await this.analyticsConfigService.getWebsiteIds(tenantId, [dto.websiteId]);
+
+    await this.umamiAnalyticsService.sendEvent(dto.websiteId, dto.payload);
+
+    return { success: true };
+  }
+
+  @Post('events/batch')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Send multiple custom events to Umami in a single request',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Batch processed',
+    type: SendBatchResponseDto,
+  })
+  async sendBatch(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Body() dto: SendBatchDto,
+  ): Promise<SendBatchResponseDto> {
+    const websiteIds = [...new Set(dto.events.map((event) => event.websiteId))];
+    await this.analyticsConfigService.getWebsiteIds(tenantId, websiteIds);
+
+    const result = await this.umamiAnalyticsService.sendBatch(
+      dto.events.map((event) => ({
+        websiteId: event.websiteId,
+        input: event.payload,
+      })),
+    );
+
+    return {
+      success: result.errors === 0,
+      processed: result.processed,
+      errors: result.errors,
+      details: result.details,
+    };
   }
 }

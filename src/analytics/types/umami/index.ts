@@ -6,3 +6,4 @@ export * from './umami-session-response';
 export * from './search-query-type';
 export * from './search-by-label-by-type';
 export * from './stats';
+export * from './umami-event-payload';

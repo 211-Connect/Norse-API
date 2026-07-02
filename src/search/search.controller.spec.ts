@@ -7,6 +7,7 @@ import { OrchestrationConfigService } from '../cms-config/orchestration-config.s
 import { HybridSearchService } from './hybrid-search.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { AiSearchService } from './ai-search.service';
+import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 
 describe('SearchController', () => {
   let controller: SearchController;
@@ -51,6 +52,12 @@ describe('SearchController', () => {
           useValue: {
             predict: jest.fn(),
             reRank: jest.fn(),
+          },
+        },
+        {
+          provide: RequestCacheService,
+          useValue: {
+            getOrSet: jest.fn((_key, factory) => factory()),
           },
         },
       ],
