@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsObject, IsOptional } from 'class-validator';
+import { IsBoolean, IsEmail, IsObject, IsOptional } from 'class-validator';
 import { IsStringNumberRecord } from 'src/common/dto/is-string-number-record';
 
 export class UpdateTaxonomyScorecardDto {
@@ -35,4 +35,14 @@ export class UpdateTaxonomyScorecardDto {
   @IsOptional()
   @IsBoolean()
   include_siblings?: boolean;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    example: 'admin@payload.local',
+    description: 'Updater email for published saves. Ignored for draft saves.',
+  })
+  @IsOptional()
+  @IsEmail()
+  updated_by_email?: string;
 }

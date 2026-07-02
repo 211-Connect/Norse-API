@@ -59,6 +59,13 @@ export class ScorecardVersionEntryResponseDto {
 
   @ApiProperty({ example: '2026-06-05T12:00:00.000Z' })
   created_at: string;
+
+  @ApiProperty({
+    example: 'admin@payload.local',
+    nullable: true,
+    required: false,
+  })
+  created_by_email?: string | null;
 }
 
 export class VersionMetadataResponseDto {
@@ -129,6 +136,13 @@ export class TaxonomyScorecardResponseDto {
 
   @ApiProperty({ type: VersionMetadataResponseDto })
   version_metadata: VersionMetadataResponseDto;
+
+  @ApiProperty({
+    example: 'admin@payload.local',
+    nullable: true,
+    required: false,
+  })
+  updated_by_email?: string | null;
 
   @ApiProperty({ example: '2026-06-05T12:00:00.000Z' })
   updated_at: string;

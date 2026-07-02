@@ -231,10 +231,12 @@ export function createVersionEntry(args: {
   nowIso: string;
   scorecard?: TaxonomyScorecardPayload;
   source?: TaxonomySource;
+  createdByEmail?: string | null;
 }): ScorecardVersionEntry {
   return {
     scorecard: cloneScorecardPayload(args.scorecard ?? args.document.scorecard),
     source: cloneSource(args.source ?? args.document.source),
     created_at: args.nowIso,
+    created_by_email: args.createdByEmail ?? null,
   };
 }
