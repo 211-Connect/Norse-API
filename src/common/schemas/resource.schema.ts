@@ -155,6 +155,7 @@ export class Resource {
     serviceName: string;
     serviceDescription: string;
     organizationDescription: string;
+    alert?: string;
     accessibility?: string;
     transportation?: string;
     facets?: Facet[];
