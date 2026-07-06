@@ -76,6 +76,8 @@ export const RESOURCE_EXAMPLE = {
     eligibilities: 'Rental Assistance is limited to families and individuals.',
     requiredDocuments: [],
     applicationProcess: 'Walk-In;Call',
+    alert:
+      'We are currently experiencing high call volumes. Please be patient and leave a message if you are unable to reach us.',
     serviceDescription:
       'Emergency financial assistance to help with:\n- Rental and utility assistance\n- Help with first month rent\n- Utility assistance \nFood Pantry including items\n- Fresh and Shelf-Stable Food\n- Personal hygiene items\n- Diapers\n- Prescriptions',
     organizationDescription:

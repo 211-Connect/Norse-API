@@ -17,6 +17,9 @@ export class ServiceDto {
   name: string;
 
   @ApiProperty({ nullable: true })
+  alert?: string | null;
+
+  @ApiProperty({ nullable: true })
   alternate_name?: string | null;
 
   @ApiProperty({ nullable: true })
@@ -160,11 +163,9 @@ export class SearchHit {
   @ApiProperty()
   _index: string;
 
-  @ApiProperty()
   @ApiProperty({ required: false })
   _id?: string;
 
-  @ApiProperty({ nullable: true })
   @ApiProperty({ nullable: true, required: false })
   _score?: number | null;
 
