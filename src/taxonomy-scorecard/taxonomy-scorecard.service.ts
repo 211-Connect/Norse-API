@@ -136,6 +136,9 @@ export class TaxonomyScorecardService {
 
     const uniqueCodes = Array.from(new Set(affectedCodes));
     const nowIso = new Date().toISOString();
+    const versionCreatedByEmail = draft
+      ? null
+      : (payload.updated_by_email ?? null);
 
     for (const code of uniqueCodes) {
       const { document } = await this.resolveEffectiveDocument(tenantId, code);
@@ -175,6 +178,7 @@ export class TaxonomyScorecardService {
           nowIso,
           scorecard: tenantDocument.scorecard,
           source: tenantDocument.source,
+          createdByEmail: versionCreatedByEmail,
         });
         nextVersionId += 1;
       }
@@ -184,6 +188,7 @@ export class TaxonomyScorecardService {
         nowIso,
         scorecard: nextScorecard,
         source: nextSource,
+        createdByEmail: versionCreatedByEmail,
       });
 
       tenantDocument.versions = versions;
@@ -203,6 +208,7 @@ export class TaxonomyScorecardService {
       );
       if (!draft) {
         tenantDocument.source = nextSource;
+        tenantDocument.updated_by_email = payload.updated_by_email ?? null;
       }
       tenantDocument.updated_at = nowIso;
 
@@ -325,6 +331,7 @@ export class TaxonomyScorecardService {
         active_version: null,
         last_action: 'update',
       },
+      updated_by_email: args.seed.updated_by_email ?? null,
       updated_at: args.nowIso,
     });
 
@@ -473,6 +480,7 @@ export class TaxonomyScorecardService {
           {
             version_id: versionId,
             ...entry,
+            created_by_email: entry.created_by_email ?? null,
           },
         ]),
       ),
@@ -484,6 +492,7 @@ export class TaxonomyScorecardService {
         active_version: document.version_metadata?.active_version ?? null,
         last_action: document.version_metadata?.last_action ?? 'update',
       },
+      updated_by_email: document.updated_by_email ?? null,
       updated_at: document.updated_at,
     };
   }
