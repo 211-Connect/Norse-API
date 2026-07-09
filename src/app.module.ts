@@ -14,7 +14,7 @@ import { SearchModule } from './search/search.module';
 import { ShortUrlModule } from './short-url/short-url.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import configuration from './common/config/configuration';
-import { redisStore } from 'cache-manager-redis-store';
+import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
 import { ResourceModule } from './resource/resource.module';
@@ -43,9 +43,7 @@ import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard
     CacheModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        store: redisStore,
-        url: configService.get('REDIS_URL'),
-        pingInterval: 30 * 1000,
+        stores: [createKeyv(configService.get('REDIS_URL'))],
       }),
       inject: [ConfigService],
       isGlobal: true,

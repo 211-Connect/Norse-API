@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Version,
-  Delete,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Query, Version } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -14,7 +7,6 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { GeocodingService } from './geocoding.service';
-import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import {
   ForwardGeocodeQueryDto,
   ForwardGeocodeResponseDto,
@@ -91,44 +83,5 @@ export class GeocodingController {
     @Query() query: ReverseGeocodeQueryDto,
   ): Promise<ReverseGeocodeResponseDto[]> {
     return this.geocodingService.reverseGeocode(query);
-  }
-
-  @Delete('cache')
-  @Version('1')
-  @UseGuards(InternalApiGuard)
-  @ApiOperation({
-    summary: 'Clear geocoding cache',
-    description:
-      'Clears all cached geocoding results. This endpoint requires internal API authentication.',
-  })
-  @ApiHeader({
-    name: 'x-internal-api-key',
-    description: 'Internal API key for authentication',
-    required: true,
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Cache cleared successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        cleared: { type: 'boolean', example: true },
-        message: {
-          type: 'string',
-          example: 'Geocoding cache cleared successfully',
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Invalid or missing API key',
-  })
-  @ApiResponse({
-    status: 500,
-    description: 'Internal server error',
-  })
-  async clearCache(): Promise<{ cleared: boolean; message: string }> {
-    return this.geocodingService.clearCache();
   }
 }
