@@ -16,8 +16,45 @@ describe('TaxonomyScorecardService', () => {
     search: jest.fn(),
   };
 
+  const createScorecardDoc = (overrides: Record<string, unknown> = {}) => ({
+    _id: 'BD::tenant-1',
+    hsis_code: 'BD',
+    hsis_name: 'Food',
+    scorecard_version: null,
+    taxonomy_version: null,
+    scorecard: {
+      need: {
+        weights: { 'FO-200': 0.9 },
+        top_category_code: 'FO-200',
+        top_weight: 0.9,
+        need_categories_present: ['FO-200'],
+      },
+      target_population: null,
+      urgency: null,
+    },
+    components_available: ['need'],
+    source: {
+      owner: 'tenant-1',
+      customization_version: null,
+      isProduction: true,
+      published_at: '2026-06-05T12:00:00+00:00',
+    },
+    versions: {},
+    version_metadata: {
+      next_version: 0,
+      active_version: null,
+      last_action: 'update',
+    },
+    updated_by_email: null,
+    updated_at: '2026-06-05T12:00:00+00:00',
+    save: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  });
+
   beforeEach(async () => {
     jest.clearAllMocks();
+    modelMock.findOne.mockReset();
+    elasticMock.search.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -407,5 +444,177 @@ describe('TaxonomyScorecardService', () => {
       ]),
     );
     expect(result.affected_codes).not.toContain('LR-9000.0500');
+  });
+
+  it('should store attribution on published update', async () => {
+    const tenantDocument = createScorecardDoc();
+
+    modelMock.findOne
+      .mockResolvedValueOnce(tenantDocument)
+      .mockResolvedValueOnce(tenantDocument);
+
+    const result = await service.updateTaxonomyConfiguration(
+      'tenant-1',
+      'BD',
+      {
+        weights: { 'FO-200': 0.5 },
+        updated_by_email: 'admin@example.com',
+      },
+      false,
+    );
+
+    expect(result.affected_codes).toEqual(['BD']);
+    expect(tenantDocument.updated_by_email).toBe('admin@example.com');
+    expect(tenantDocument.version_metadata.active_version).toBe(1);
+    expect(tenantDocument.versions['1'].created_by_email).toBe(
+      'admin@example.com',
+    );
+    expect(tenantDocument.save).toHaveBeenCalled();
+  });
+
+  it('should not modify attribution fields on draft update', async () => {
+    const tenantDocument = createScorecardDoc({
+      updated_by_email: 'previous@example.com',
+      versions: {
+        '0': {
+          scorecard: {
+            need: {
+              weights: { 'FO-200': 0.9 },
+              top_category_code: 'FO-200',
+              top_weight: 0.9,
+              need_categories_present: ['FO-200'],
+            },
+            target_population: null,
+            urgency: null,
+          },
+          source: {
+            owner: 'tenant-1',
+            customization_version: null,
+            isProduction: true,
+            published_at: '2026-06-05T12:00:00+00:00',
+          },
+          created_at: '2026-06-05T12:00:00+00:00',
+          created_by_email: 'previous@example.com',
+        },
+      },
+      version_metadata: {
+        next_version: 1,
+        active_version: 0,
+        last_action: 'update',
+      },
+    });
+
+    modelMock.findOne
+      .mockResolvedValueOnce(tenantDocument)
+      .mockResolvedValueOnce(tenantDocument);
+
+    const result = await service.updateTaxonomyConfiguration(
+      'tenant-1',
+      'BD',
+      {
+        weights: { 'FO-200': 0.3 },
+      },
+      true,
+    );
+
+    expect(result.affected_codes).toEqual([]);
+    expect(result.potentially_affected_codes).toEqual(['BD']);
+    expect(tenantDocument.updated_by_email).toBe('previous@example.com');
+    expect(tenantDocument.versions['0'].created_by_email).toBe(
+      'previous@example.com',
+    );
+    expect(tenantDocument.versions['1'].created_by_email).toBeNull();
+    expect(tenantDocument.version_metadata.active_version).toBe(0);
+  });
+
+  it('should not modify attribution fields on enable', async () => {
+    const tenantDocument = createScorecardDoc({
+      updated_by_email: 'publisher@example.com',
+      versions: {
+        '0': {
+          scorecard: {
+            need: {
+              weights: { 'FO-200': 0.7 },
+              top_category_code: 'FO-200',
+              top_weight: 0.7,
+              need_categories_present: ['FO-200'],
+            },
+            target_population: null,
+            urgency: null,
+          },
+          source: {
+            owner: 'tenant-1',
+            customization_version: null,
+            isProduction: true,
+            published_at: '2026-06-05T12:00:00+00:00',
+          },
+          created_at: '2026-06-05T12:00:00+00:00',
+          created_by_email: 'publisher@example.com',
+        },
+      },
+      version_metadata: {
+        next_version: 1,
+        active_version: 0,
+        last_action: 'update',
+      },
+    });
+
+    modelMock.findOne.mockResolvedValueOnce(tenantDocument);
+
+    const result = await service.enableTaxonomyScorecardVersion(
+      'tenant-1',
+      'BD',
+      { version_id: 0 },
+    );
+
+    expect(tenantDocument.updated_by_email).toBe('publisher@example.com');
+    expect(tenantDocument.versions['0'].created_by_email).toBe(
+      'publisher@example.com',
+    );
+    expect(result.updated_by_email).toBe('publisher@example.com');
+    expect(result.versions['0'].created_by_email).toBe('publisher@example.com');
+  });
+
+  it('should return null attribution fields for legacy documents', async () => {
+    const legacyDocument = createScorecardDoc({
+      _id: 'BD::default',
+      source: {
+        owner: 'default',
+        customization_version: null,
+        isProduction: true,
+        published_at: '2026-06-05T12:00:00+00:00',
+      },
+      versions: {
+        '0': {
+          scorecard: {
+            need: {
+              weights: { 'FO-200': 0.9 },
+              top_category_code: 'FO-200',
+              top_weight: 0.9,
+              need_categories_present: ['FO-200'],
+            },
+            target_population: null,
+            urgency: null,
+          },
+          source: {
+            owner: 'default',
+            customization_version: null,
+            isProduction: true,
+            published_at: '2026-06-05T12:00:00+00:00',
+          },
+          created_at: '2026-06-05T12:00:00+00:00',
+        },
+      },
+      updated_by_email: undefined,
+    });
+
+    modelMock.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(legacyDocument);
+
+    const result = await service.getTaxonomyConfiguration('tenant-1', 'BD');
+
+    expect(result.updated_by_email).toBeNull();
+    expect(result.versions['0'].created_by_email).toBeNull();
   });
 });

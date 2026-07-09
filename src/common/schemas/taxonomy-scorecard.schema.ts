@@ -55,6 +55,9 @@ export class ScorecardVersionEntry {
 
   @Prop({ required: true })
   created_at: string;
+
+  @Prop({ type: String, default: null })
+  created_by_email?: string | null;
 }
 
 @Schema({ _id: false })
@@ -100,6 +103,9 @@ export class TaxonomyScorecard {
 
   @Prop({ type: VersionMetadata, default: undefined })
   version_metadata?: VersionMetadata;
+
+  @Prop({ type: String, default: null })
+  updated_by_email?: string | null;
 
   @Prop({ required: true })
   updated_at: string;
