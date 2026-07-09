@@ -101,7 +101,6 @@ export class GeocodingService {
       this.logger.debug(
         `Cache hit for reverse geocode: ${roundedLng},${roundedLat}`,
       );
-      console.log('Cache hit:', cachedResult);
       return cachedResult;
     }
 
