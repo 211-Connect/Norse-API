@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.19.1",
+    "@keyv/redis": "^5.1.6",
     "@mapbox/mapbox-sdk": "^0.16.2",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/cache-manager": "^3.1.0",
@@ -40,7 +41,6 @@
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/throttler": "^6.5.0",
     "cache-manager": "^7.2.8",
-    "cache-manager-redis-store": "^3.0.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "csv-stringify": "^6.6.0",
