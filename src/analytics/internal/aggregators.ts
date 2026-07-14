@@ -3,6 +3,8 @@ import type {
   MetricsExpandedEntry,
   Stats,
   UmamiEventDataValue,
+  UmamiEventDataPivotResponse,
+  UmamiEventDataPivotRow,
   UmamiSession,
 } from '../types';
 import { ALLOWED_ENDPOINT } from './constants';
@@ -157,6 +159,33 @@ export function aggregateByEndpoint<T = unknown>(
       data: (responses as Array<{ data?: UmamiSession[] }>).flatMap(
         (r) => r?.data ?? [],
       ),
+    } as unknown as T;
+  }
+
+  if (endpoint === 'event-data-pivot') {
+    const allRows: UmamiEventDataPivotRow[] = [];
+    let totalCount = 0;
+    let page = 1;
+    let pageSize = 100;
+
+    for (const response of responses as UmamiEventDataPivotResponse[]) {
+      if (response?.data) {
+        allRows.push(...response.data);
+      }
+      totalCount += Number(response?.count) || 0;
+      if (response?.page) {
+        page = response.page;
+      }
+      if (response?.pageSize) {
+        pageSize = response.pageSize;
+      }
+    }
+
+    return {
+      data: allRows,
+      count: totalCount,
+      page,
+      pageSize,
     } as unknown as T;
   }
 

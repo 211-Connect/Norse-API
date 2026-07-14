@@ -27,4 +27,5 @@ export type ALLOWED_ENDPOINT =
   | 'events/series'
   | 'metrics/expanded'
   | 'event-data/values'
+  | 'event-data-pivot'
   | 'sessions';
