@@ -454,59 +454,56 @@ export class UmamiAnalyticsService {
   ): Promise<ExportSearchDataResponse> {
     const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
 
-    // return this.analyticsCacheService.getOrSet(
-    //   input.tenantId,
-    //   'export-search-data',
-    //   input.websiteIds,
-    //   startMs,
-    //   endMs,
-    //   async () => {
-    const eventTypeByName: Record<string, 'text' | 'taxonomy'> = {
-      search_text: 'text',
-      search_taxonomy: 'taxonomy',
-    };
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'export-search-data',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const eventTypeByName: Record<string, 'text' | 'taxonomy'> = {
+          search_text: 'text',
+          search_taxonomy: 'taxonomy',
+        };
 
-    const taggedRows: Array<{
-      row: UmamiEventDataPivotRow;
-      queryType: 'text' | 'taxonomy';
-    }> = [];
+        const taggedRows: Array<{
+          row: UmamiEventDataPivotRow;
+          queryType: 'text' | 'taxonomy';
+        }> = [];
 
-    for (const [eventName, queryType] of Object.entries(eventTypeByName)) {
-      const rows = await this.fetchAllPivotRows(
-        input.websiteIds,
-        startMs,
-        endMs,
-        eventName,
-      );
-      for (const row of rows) {
-        taggedRows.push({ row, queryType });
-      }
-    }
+        for (const [eventName, queryType] of Object.entries(eventTypeByName)) {
+          const rows = await this.fetchAllPivotRows(
+            input.websiteIds,
+            startMs,
+            endMs,
+            eventName,
+          );
+          for (const row of rows) {
+            taggedRows.push({ row, queryType });
+          }
+        }
 
-    const data: SearchEventExportRow[] = [];
-    const batchSize = 10;
+        const data: SearchEventExportRow[] = [];
+        const batchSize = 10;
 
-    for (let i = 0; i < taggedRows.length; i += batchSize) {
-      const batch = taggedRows.slice(i, i + batchSize);
-      const results = await Promise.all(
-        batch.map(({ row, queryType }) => this.toExportRow(row, queryType)),
-      );
-      for (const result of results) {
-        if (result) data.push(result);
-      }
-    }
+        for (let i = 0; i < taggedRows.length; i += batchSize) {
+          const batch = taggedRows.slice(i, i + batchSize);
+          const results = await Promise.all(
+            batch.map(({ row, queryType }) => this.toExportRow(row, queryType)),
+          );
+          for (const result of results) {
+            if (result) data.push(result);
+          }
+        }
 
-    return {
-      data,
-      totalCount: data.length,
-    };
+        return {
+          data,
+          totalCount: data.length,
+        };
+      },
+    );
   }
 
-  /**
-   * Fetches every page of pivoted event data for a given event name across
-   * the requested websites, since this endpoint intentionally has no
-   * client-facing pagination.
-   */
   private async fetchAllPivotRows(
     websiteIds: string[],
     startMs: number,
