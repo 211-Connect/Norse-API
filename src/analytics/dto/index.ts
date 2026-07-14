@@ -13,3 +13,5 @@ export * from './sessions-query.dto';
 export * from './paginated-sessions-response.dto';
 export * from './send-event-response.dto';
 export * from './send-event.dto';
+export * from './export-search-data-query.dto';
+export * from './export-search-data-response.dto';
