@@ -1,88 +1,223 @@
-import { z } from 'zod';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from 'class-validator';
 
-// Recursive schema definition for nested AND/OR
-const createComplexQuerySchema = (depth: number): z.ZodTypeAny => {
-  if (depth <= 0) {
-    return z.string(); // Base case: At depth 0, allow a simple string
+interface ComplexQuery {
+  OR?: (string | ComplexQuery)[];
+  AND?: (string | ComplexQuery)[];
+}
+
+const MAX_COMPLEX_QUERY_DEPTH = 5;
+
+const isComplexNode = (value: unknown, depth = 0): value is ComplexQuery => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    depth > MAX_COMPLEX_QUERY_DEPTH
+  ) {
+    return false;
   }
 
-  return z
-    .object({
-      OR: z.array(createComplexQuerySchema(depth - 1)).optional(),
-      AND: z.array(createComplexQuerySchema(depth - 1)).optional(),
-    })
-    .refine((data) => data.OR !== undefined || data.AND !== undefined, {
-      message: "Object must have 'OR' or 'AND' property",
+  const node = value as Record<string, unknown>;
+  const keys = Object.keys(node);
+  if (keys.length === 0 || keys.some((key) => key !== 'OR' && key !== 'AND')) {
+    return false;
+  }
+
+  const hasOr = Array.isArray(node.OR);
+  const hasAnd = Array.isArray(node.AND);
+  if (!hasOr && !hasAnd) {
+    return false;
+  }
+
+  const validateArray = (entry: unknown): boolean =>
+    Array.isArray(entry) &&
+    entry.every((item) => {
+      if (typeof item === 'string') {
+        return true;
+      }
+
+      return isComplexNode(item, depth + 1);
     });
+
+  return (
+    (!hasOr || validateArray(node.OR)) && (!hasAnd || validateArray(node.AND))
+  );
 };
 
-export const searchQuerySchema = z.object({
-  query: z
-    .string()
-    .or(z.array(z.string()))
-    .or(createComplexQuerySchema(5))
-    .default(''),
-  query_type: z
-    .enum(['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'])
-    .default('text'),
-  page: z.coerce.number().int().positive().default(1),
-  coords: z
-    .string()
-    .transform((val) => {
-      const parts = val.split(',');
-      if (parts.length !== 2) {
-        return undefined;
-      }
+@ValidatorConstraint({ name: 'isSearchQueryExpression', async: false })
+class IsSearchQueryExpressionConstraint
+  implements ValidatorConstraintInterface
+{
+  validate(value: unknown): boolean {
+    if (value === undefined || value === null) {
+      return true;
+    }
 
-      const numbers = parts.map(parseFloat);
-      if (numbers.some(isNaN)) {
-        return undefined;
-      }
+    if (typeof value === 'string') {
+      return true;
+    }
 
-      return numbers;
-    })
-    .optional(),
-  filters: z.record(z.string(), z.string().or(z.array(z.string()))).default({}),
-  // Hard taxonomy scope (HSIS codes) from the AI predict/re-rank flow.
-  // Accepts a comma-delimited string (e.g. "BM-1400,BM-1700") or an array and
-  // normalizes to a deduplicated string[]. Applied as a nested terms filter on
-  // taxonomies.code in hybrid search.
-  // Tolerant of URL-encoded payloads where each code is wrapped in quotes
-  // (e.g. `"B","BT-8610.2500"`) and an optional surrounding [ ] array wrapper;
-  // surrounding quotes/brackets/whitespace are stripped while dots in codes
-  // (e.g. BD-1800.8200-150) are preserved.
-  taxonomy: z
-    .string()
-    .or(z.array(z.string()))
-    .transform((val) => {
-      const raw = Array.isArray(val)
-        ? val
-        : val
-            .replace(/^\s*\[/, '')
-            .replace(/\]\s*$/, '')
-            .split(',');
-      return Array.from(
-        new Set(
-          raw
-            .map((code) =>
-              code
-                .trim()
-                .replace(/^["']+|["']+$/g, '')
-                .trim(),
-            )
-            .filter(Boolean),
-        ),
-      );
-    })
-    .default([]),
-  distance: z.coerce.number().int().nonnegative().default(0),
-  age: z.coerce.number().int().nonnegative().optional(),
-  limit: z.coerce.number().int().positive().max(300).min(25).default(25),
-  geo_type: z.enum(['boundary', 'proximity']).optional(),
-  sort: z
-    .enum(['relevance', 'distance', 'name', 'organization'])
-    .optional()
-    .default('relevance'),
-});
+    if (Array.isArray(value)) {
+      return value.every((entry) => typeof entry === 'string');
+    }
 
-export type SearchQueryDto = z.infer<typeof searchQuerySchema>;
+    return isComplexNode(value);
+  }
+
+  defaultMessage(): string {
+    return 'query must be a string, string array, or valid nested AND/OR object';
+  }
+}
+
+export class SearchResourcesQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Search query expression. Can be plain text, string array, or nested AND/OR object payload.',
+    oneOf: [
+      { type: 'string' },
+      { type: 'array', items: { type: 'string' } },
+      { type: 'object', additionalProperties: true },
+    ],
+    default: '',
+  })
+  @IsOptional()
+  @Validate(IsSearchQueryExpressionConstraint)
+  query: string | string[] | ComplexQuery = '';
+
+  @ApiPropertyOptional({
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
+    default: 'text',
+  })
+  @IsOptional()
+  @IsEnum(['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'])
+  query_type:
+    | 'text'
+    | 'taxonomy'
+    | 'organization'
+    | 'more_like_this'
+    | 'hybrid' = 'text';
+
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
+  @ApiPropertyOptional({
+    description: 'Comma-delimited longitude,latitude',
+    example: '-120.740135,47.751076',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const parts = value.split(',');
+    if (parts.length !== 2) {
+      return undefined;
+    }
+
+    const numbers = parts.map((part) => Number.parseFloat(part));
+    if (numbers.some(Number.isNaN)) {
+      return undefined;
+    }
+
+    return numbers;
+  })
+  coords?: number[];
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
+    default: {},
+  })
+  @IsOptional()
+  @IsObject()
+  filters: Record<string, string | string[]> = {};
+
+  @ApiPropertyOptional({
+    description: 'HSIS taxonomy scope as comma-delimited string or array',
+    oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+    default: [],
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) {
+      return [];
+    }
+
+    const raw = Array.isArray(value)
+      ? value
+      : String(value)
+          .replace(/^\s*\[/, '')
+          .replace(/\]\s*$/, '')
+          .split(',');
+
+    return Array.from(
+      new Set(
+        raw
+          .map((code) =>
+            String(code)
+              .trim()
+              .replace(/^["']+|["']+$/g, '')
+              .trim(),
+          )
+          .filter(Boolean),
+      ),
+    );
+  })
+  @IsArray()
+  @IsString({ each: true })
+  taxonomy: string[] = [];
+
+  @ApiPropertyOptional({ minimum: 0, default: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  distance: number = 0;
+
+  @ApiPropertyOptional({ minimum: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  age?: number;
+
+  @ApiPropertyOptional({ minimum: 25, maximum: 300, default: 25 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(25)
+  @Max(300)
+  limit: number = 25;
+
+  @ApiPropertyOptional({ enum: ['boundary', 'proximity'] })
+  @IsOptional()
+  @IsEnum(['boundary', 'proximity'])
+  geo_type?: 'boundary' | 'proximity';
+
+  @ApiPropertyOptional({
+    enum: ['relevance', 'distance', 'name', 'organization'],
+    default: 'relevance',
+  })
+  @IsOptional()
+  @IsEnum(['relevance', 'distance', 'name', 'organization'])
+  sort: 'relevance' | 'distance' | 'name' | 'organization' = 'relevance';
+}

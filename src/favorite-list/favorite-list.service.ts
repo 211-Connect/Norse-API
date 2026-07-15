@@ -129,6 +129,34 @@ export class FavoriteListService {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  async findSummariesByIds(
+    ids: string[],
+    options?: { tenantId?: string },
+  ): Promise<{ id: string; name: string; count: number }[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const uniqueIds = [...new Set(ids)];
+
+    const lists = await this.favoriteListModel
+      .find(
+        {
+          _id: { $in: uniqueIds },
+          ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
+        },
+        { _id: 1, name: 1, favorites: 1 },
+      )
+      .lean()
+      .exec();
+
+    return lists.map((list) => ({
+      id: list._id.toString(),
+      name: list.name,
+      count: list.favorites?.length ?? 0,
+    }));
+  }
+
   async create(
     createFavoriteListDto: CreateFavoriteListDto,
     options: FavoriteListOptions,

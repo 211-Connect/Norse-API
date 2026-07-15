@@ -5,8 +5,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { SearchQueryDto } from './dto/search-query.dto';
-import { SearchBodyDto } from './dto/search-body.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
   AggregationsStringTermsAggregate,
@@ -81,8 +81,8 @@ export class SearchService {
 
   async searchResources(options: {
     headers: HeadersDto;
-    query: SearchQueryDto;
-    body?: SearchBodyDto;
+    query: SearchResourcesQueryDto;
+    body?: SearchResourcesBodyDto;
   }): Promise<SearchResponse> {
     this.logger.debug('Searching for resources');
 
@@ -100,12 +100,12 @@ export class SearchService {
       sort,
     } = q;
 
-    if (
-      !(
-        typeof query === 'string' ||
-        (Array.isArray(query) && query.every((q) => typeof q === 'string'))
-      )
-    ) {
+    const isStringQuery = typeof query === 'string';
+    const isStringArrayQuery =
+      Array.isArray(query) && query.every((entry) => typeof entry === 'string');
+    const isComplexObjectQuery = this.isComplexQuery(query);
+
+    if (!(isStringQuery || isStringArrayQuery || isComplexObjectQuery)) {
       throw new BadRequestException('Invalid query type');
     }
 
@@ -159,12 +159,18 @@ export class SearchService {
     const queryType: QueryType = this.getQueryType(query, query_type);
 
     let parsedComplexQuery = null;
-    if (this.isComplexQuery(query)) {
+    if (isComplexObjectQuery) {
       parsedComplexQuery =
         typeof query === 'string' ? JSON.parse(query) : query;
     }
 
     let specificQuery: Partial<SearchRequest>;
+
+    if (parsedComplexQuery && queryType !== SearchService.QUERY_TYPE.TAXONOMY) {
+      throw new BadRequestException(
+        'Complex query object is only supported when query_type is taxonomy',
+      );
+    }
 
     if (queryType === 'taxonomy' && parsedComplexQuery) {
       this.logger.debug('Using complex query logic');
@@ -182,9 +188,15 @@ export class SearchService {
       }
     } else {
       this.logger.debug('Using simple query logic');
+      const queryText = Array.isArray(query)
+        ? query.join(',')
+        : typeof query === 'string'
+          ? query
+          : '';
+
       specificQuery = this.getQueryObject(
         queryType,
-        Array.isArray(query) ? query.join(',') : query,
+        queryText,
         queryFilters,
         searchableCustomAttributeFields,
       );
@@ -192,7 +204,7 @@ export class SearchService {
 
     const finalQuery: SearchRequest = {
       index: indexName,
-      from: (page - 1) * 25,
+      from: (page - 1) * limit,
       size: limit || 25,
       _source_excludes: ['service_area'],
       sort: SearchUtilsService.buildSort(coords, sort, queryType),
@@ -249,11 +261,20 @@ export class SearchService {
     };
   }
 
-  private getQueryType(query: string | string[], queryType: string): QueryType {
+  private getQueryType(
+    query: string | string[] | ComplexQuery,
+    queryType: string,
+  ): QueryType {
     if (queryType === 'text') {
       if (Array.isArray(query)) {
         throw new NotImplementedException(
           `Query type "text" not supported for query array`,
+        );
+      }
+
+      if (this.isComplexQuery(query)) {
+        throw new BadRequestException(
+          'Complex query object is not supported for text query_type',
         );
       }
 

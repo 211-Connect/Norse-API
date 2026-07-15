@@ -6,7 +6,7 @@ import {
   Sort,
   SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
-import { SearchBodyDto } from './dto/search-body.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { DocumentFacets, SearchFacet } from './dto/search-response.dto';
 import {
   Aggregations,
@@ -15,7 +15,7 @@ import {
   ShardsInfo,
 } from './types';
 import { FacetConfig } from '../cms-config/types';
-import { SearchQueryDto } from './dto/search-query.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
 
 export class SearchUtilsService {
@@ -53,7 +53,7 @@ export class SearchUtilsService {
     distance: number,
     age: number | undefined,
     geoType: string | undefined,
-    geometry: SearchBodyDto['geometry'],
+    geometry: SearchResourcesBodyDto['geometry'],
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
 
@@ -195,7 +195,7 @@ export class SearchUtilsService {
    */
   static buildSort(
     coords: number[] | undefined,
-    sortOption: SearchQueryDto['sort'],
+    sortOption: SearchResourcesQueryDto['sort'],
     queryType: QueryType,
   ): Sort {
     const prioritySort: SortCombinations = { priority: 'desc' };

@@ -10,7 +10,9 @@ import { Resource } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
 import {
+  ResourceBatchError,
   TransformedResource,
+  TransformedResourceMap,
   ResourceBatchResponse,
   ResourceTranslation,
 } from './types/resource-response.types';
@@ -65,8 +67,8 @@ export class ResourceService {
   ): Promise<ResourceBatchResponse> {
     const uniqueIds = [...new Set(ids)]; // Deduplicate IDs
     const locale = options.headers['accept-language'];
-    const data: Record<string, TransformedResource> = {};
-    const errors: ResourceBatchResponse['errors'] = [];
+    const data: TransformedResourceMap = {};
+    const errors: ResourceBatchError[] = [];
 
     // Single aggregation query to fetch all resources
     const results = await this.resourceModel

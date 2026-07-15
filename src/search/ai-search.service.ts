@@ -87,7 +87,7 @@ export class AiSearchService {
     });
 
     this.logger.debug(
-      `[predict] query="${queryParams}" tenant=${headers['x-tenant-id']} | ` +
+      `[predict] query="${queryParams.query}" tenant=${headers['x-tenant-id']} | ` +
         `needs=[${(brokerResponse.needs || [])
           .map((n) => `${n.code}:${n.score}`)
           .join(', ')}] | ` +
