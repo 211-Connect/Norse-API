@@ -36,6 +36,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
+import { OrganizationModule } from './organization/organization.module';
+import { OrganizationController } from './organization/organization.controller';
 
 @Module({
   imports: [
@@ -69,6 +71,7 @@ import { PrintableDirectoryModule } from './printable-directory/printable-direct
     AnalyticsModule,
     TaxonomyScorecardModule,
     PrintableDirectoryModule,
+    OrganizationModule,
   ],
   controllers: [AppController],
   providers: [
@@ -93,6 +96,7 @@ export class AppModule implements NestModule {
         FavoriteListController,
         SuggestionController,
         PrintableDirectoryController,
+        OrganizationController,
       );
   }
 }
