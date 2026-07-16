@@ -124,23 +124,31 @@ export class SearchResourcesQueryDto {
   })
   @IsOptional()
   @Transform(({ value }) => {
-    if (typeof value !== 'string') {
-      return undefined;
+    if (typeof value === 'string') {
+      const parts = value.split(',');
+      if (parts.length !== 2) {
+        return undefined;
+      }
+
+      const numbers = parts.map((part) => Number.parseFloat(part));
+      if (numbers.some(Number.isNaN)) {
+        return undefined;
+      }
+
+      return numbers;
     }
 
-    const parts = value.split(',');
-    if (parts.length !== 2) {
-      return undefined;
+    if (
+      Array.isArray(value) &&
+      value.length === 2 &&
+      value.every((v) => typeof v === 'number')
+    ) {
+      return value;
     }
 
-    const numbers = parts.map((part) => Number.parseFloat(part));
-    if (numbers.some(Number.isNaN)) {
-      return undefined;
-    }
-
-    return numbers;
+    return undefined;
   })
-  coords?: number[];
+  coords?: [number, number];
 
   @ApiPropertyOptional({
     type: 'object',
