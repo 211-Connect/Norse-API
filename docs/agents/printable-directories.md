@@ -23,6 +23,7 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - section: `headingLocalized`, `descriptionLocalized`
   - header/footer: `textLocalized`
 - Header/footer layout is an ordered array of tokens: `text | logo | domain | date`
+- Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords`, and `radius`
 
 ## Endpoints
 
@@ -70,6 +71,8 @@ Each section source has `type` and one matching payload:
 
 - `query`
   - requires `query` object with serialized `/search` params (+ optional body)
+  - preview fallback: if `params.coords` or `params.distance` is missing, service uses directory `defaultQueryConfig.coords` / `defaultQueryConfig.radius`
+  - precedence: source `query.params` values always override directory defaults
 - `favorites_list`
   - requires `favoritesListId`
 - `resource_ids`

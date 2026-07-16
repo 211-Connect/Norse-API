@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { PrintableDirectoryDefaultQueryConfigDto } from '../common/printable-directory-default-query-config.dto';
 import { PrintableDirectoryCoverResponseDto } from './printable-directory-cover.response.dto';
 import { PrintableDirectoryHeaderFooterResponseDto } from './printable-directory-header-footer.response.dto';
 import { PrintableDirectorySectionResponseDto } from './printable-directory-section.response.dto';
@@ -44,6 +45,12 @@ export class PrintableDirectoryResponseDto {
 
   @ApiProperty({ enum: PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS })
   resourceLayout: PrintableDirectoryResourceLayout;
+
+  @ApiPropertyOptional({
+    type: PrintableDirectoryDefaultQueryConfigDto,
+    nullable: true,
+  })
+  defaultQueryConfig?: PrintableDirectoryDefaultQueryConfigDto | null;
 
   @ApiProperty({ type: [PrintableDirectorySectionResponseDto] })
   sections: PrintableDirectorySectionResponseDto[];

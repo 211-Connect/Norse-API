@@ -81,6 +81,11 @@ describe('PrintableDirectoryService', () => {
       tenantId: string;
       ownerUserId: string;
       name: string;
+      defaultQueryConfig: {
+        locationName?: string | null;
+        coords?: [number, number] | null;
+        radius?: number | null;
+      } | null;
     }>,
   ) => {
     return {
@@ -108,6 +113,7 @@ describe('PrintableDirectoryService', () => {
         logoUrl: null,
       },
       resourceLayout: 'standard',
+      defaultQueryConfig: overrides?.defaultQueryConfig ?? null,
       sections: overrides?.sections ?? [],
       createdAt: new Date('2026-07-08T08:00:00.000Z'),
       updatedAt: new Date('2026-07-08T09:00:00.000Z'),
@@ -330,6 +336,142 @@ describe('PrintableDirectoryService', () => {
       'resource-2',
     ]);
     expect(result.sections[0].maxResources).toBe(2);
+  });
+
+  it('uses directory query defaults when query source params miss coords and distance', async () => {
+    const directory = createDirectoryDoc({
+      defaultQueryConfig: {
+        locationName: 'Seattle, WA',
+        coords: [-122.3321, 47.6062],
+        radius: 15,
+      },
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: { values: { en: 'Heading' } },
+          descriptionLocalized: { values: {} },
+          maxResources: 10,
+          sources: [
+            {
+              id: 'src-1',
+              order: 0,
+              type: 'query',
+              query: {
+                title: 'q',
+                params: {
+                  query: 'housing',
+                  query_type: 'text',
+                  page: 1,
+                  limit: 25,
+                },
+              },
+              favoritesListId: null,
+              resourceIds: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(directory),
+    });
+
+    mockSearchService.searchResources.mockResolvedValue({
+      search: {
+        took: 10,
+        timed_out: false,
+        _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+        hits: { total: { value: 0, relation: 'eq' }, hits: [] },
+      },
+      facets: [],
+    });
+
+    await service.preview(
+      'directory-1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+
+    expect(mockSearchService.searchResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({
+          coords: [-122.3321, 47.6062],
+          distance: 15,
+        }),
+      }),
+    );
+  });
+
+  it('prefers query source coords and distance over directory defaults', async () => {
+    const directory = createDirectoryDoc({
+      defaultQueryConfig: {
+        locationName: 'Seattle, WA',
+        coords: [-122.3321, 47.6062],
+        radius: 15,
+      },
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: { values: { en: 'Heading' } },
+          descriptionLocalized: { values: {} },
+          maxResources: 10,
+          sources: [
+            {
+              id: 'src-1',
+              order: 0,
+              type: 'query',
+              query: {
+                title: 'q',
+                params: {
+                  query: 'housing',
+                  query_type: 'text',
+                  page: 1,
+                  limit: 25,
+                  coords: [-73.935242, 40.73061],
+                  distance: 30,
+                },
+              },
+              favoritesListId: null,
+              resourceIds: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(directory),
+    });
+
+    mockSearchService.searchResources.mockResolvedValue({
+      search: {
+        took: 10,
+        timed_out: false,
+        _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+        hits: { total: { value: 0, relation: 'eq' }, hits: [] },
+      },
+      facets: [],
+    });
+
+    await service.preview(
+      'directory-1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+
+    expect(mockSearchService.searchResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({
+          coords: [-73.935242, 40.73061],
+          distance: 30,
+        }),
+      }),
+    );
   });
 
   it('resolves preview favorites_list source using owner and tenant scope', async () => {

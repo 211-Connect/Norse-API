@@ -10,6 +10,7 @@ import {
   PRINTABLE_DIRECTORY_ACCESS_POLICIES,
   PrintableDirectory,
   PrintableDirectoryAccessPolicy,
+  PrintableDirectoryDefaultQueryConfig,
   PrintableDirectoryDocument,
   PrintableDirectorySection,
   PrintableDirectorySectionSource,
@@ -123,6 +124,9 @@ export class PrintableDirectoryService {
         logoUrl: null,
       },
       resourceLayout: payload.resourceLayout ?? 'line',
+      defaultQueryConfig: this.normalizeDefaultQueryConfig(
+        payload.defaultQueryConfig,
+      ),
     });
 
     return this.toResponseDto(created);
@@ -190,6 +194,12 @@ export class PrintableDirectoryService {
 
     if (payload.accessPolicy !== undefined) {
       directory.accessPolicy = payload.accessPolicy;
+    }
+
+    if (payload.defaultQueryConfig !== undefined) {
+      directory.defaultQueryConfig = this.normalizeDefaultQueryConfig(
+        payload.defaultQueryConfig,
+      );
     }
 
     directory.updatedBy = scope.userId;
@@ -454,6 +464,7 @@ export class PrintableDirectoryService {
       .sort((left, right) => left.order - right.order)
       .map((section, index) =>
         this.resolveSectionForPreview(
+          directory,
           section,
           resolvedBaseDirectoryDto.sections[index],
           previewLocale,
@@ -474,6 +485,7 @@ export class PrintableDirectoryService {
   }
 
   private async resolveSectionForPreview(
+    directory: PrintableDirectoryDocument,
     section: PrintableDirectorySection,
     sectionDto: PrintableDirectoryResponseDto['sections'][number],
     locale: string,
@@ -489,6 +501,7 @@ export class PrintableDirectoryService {
 
     for (const source of orderedSources) {
       const resources = await this.resolveSourceResources(
+        directory,
         source,
         headers,
         scope,
@@ -521,6 +534,7 @@ export class PrintableDirectoryService {
   }
 
   private async resolveSourceResources(
+    directory: PrintableDirectoryDocument,
     source: PrintableDirectorySectionSource,
     headers: HeadersDto,
     scope: RequestScope,
@@ -560,7 +574,9 @@ export class PrintableDirectoryService {
       );
     }
 
-    const parsedQuery = this.parseSearchQueryOrThrow(source.query.params);
+    const parsedQuery = this.parseSearchQueryOrThrow(
+      this.withDefaultQueryParams(source.query.params, directory),
+    );
     const parsedBody = source.query.body
       ? this.parseSearchBodyOrThrow(source.query.body)
       : undefined;
@@ -762,6 +778,53 @@ export class PrintableDirectoryService {
     return parsed;
   }
 
+  private normalizeDefaultQueryConfig(
+    raw: UpdatePrintableDirectoryDto['defaultQueryConfig'],
+  ): PrintableDirectoryDefaultQueryConfig | null {
+    if (raw === null) {
+      return null;
+    }
+
+    if (raw === undefined) {
+      return null;
+    }
+
+    return {
+      locationName: raw.locationName ?? null,
+      coords: raw.coords ?? null,
+      radius: raw.radius ?? null,
+    };
+  }
+
+  private withDefaultQueryParams(
+    params: Record<string, unknown>,
+    directory: PrintableDirectoryDocument,
+  ): Record<string, unknown> {
+    const mergedParams = { ...params };
+    const defaults = directory.defaultQueryConfig;
+
+    if (!defaults) {
+      return mergedParams;
+    }
+
+    if (
+      (mergedParams.coords === undefined || mergedParams.coords === null) &&
+      defaults.coords
+    ) {
+      mergedParams.coords = defaults.coords;
+    }
+
+    if (
+      (mergedParams.distance === undefined || mergedParams.distance === null) &&
+      defaults.radius !== undefined &&
+      defaults.radius !== null
+    ) {
+      mergedParams.distance = defaults.radius;
+    }
+
+    return mergedParams;
+  }
+
   private resolveLocalizedText(
     values: Record<string, string>,
     locale: string,
@@ -909,6 +972,13 @@ export class PrintableDirectoryService {
         logoUrl: directory.footer?.logoUrl ?? null,
       },
       resourceLayout: directory.resourceLayout ?? 'line',
+      defaultQueryConfig: directory.defaultQueryConfig
+        ? {
+            locationName: directory.defaultQueryConfig.locationName ?? null,
+            coords: directory.defaultQueryConfig.coords ?? null,
+            radius: directory.defaultQueryConfig.radius ?? null,
+          }
+        : null,
       sections: [...(directory.sections ?? [])]
         .sort((left, right) => left.order - right.order)
         .map((section) => ({

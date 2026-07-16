@@ -1,4 +1,5 @@
 export { PrintableDirectoryLocalizedValuesDto } from './common/localized-values.dto';
+export { PrintableDirectoryDefaultQueryConfigDto } from './common/printable-directory-default-query-config.dto';
 export { PrintableDirectoryCoverDto } from './request/printable-directory-cover.dto';
 export { PrintableDirectoryHeaderFooterDto } from './request/printable-directory-header-footer.dto';
 export { PrintableDirectorySourceQueryDto } from './request/printable-directory-source-query.dto';

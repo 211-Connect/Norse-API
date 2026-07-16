@@ -99,6 +99,18 @@ export class PrintableDirectorySectionSourceQuery {
 }
 
 @Schema({ _id: false })
+export class PrintableDirectoryDefaultQueryConfig {
+  @Prop({ type: String, default: null })
+  locationName?: string | null;
+
+  @Prop({ type: [Number], default: null })
+  coords?: [number, number] | null;
+
+  @Prop({ type: Number, default: null })
+  radius?: number | null;
+}
+
+@Schema({ _id: false })
 export class PrintableDirectorySectionSource {
   @Prop({ required: true, type: String })
   id: string;
@@ -188,6 +200,9 @@ export class PrintableDirectory {
     default: 'line',
   })
   resourceLayout: PrintableDirectoryResourceLayout;
+
+  @Prop({ type: PrintableDirectoryDefaultQueryConfig, default: null })
+  defaultQueryConfig?: PrintableDirectoryDefaultQueryConfig | null;
 
   @Prop({ type: [PrintableDirectorySection], default: [] })
   sections: PrintableDirectorySection[];
