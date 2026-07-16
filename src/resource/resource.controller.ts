@@ -3,6 +3,7 @@ import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
+  ApiExtraModels,
   ApiHeader,
   ApiOperation,
   ApiParam,
@@ -24,8 +25,10 @@ import {
   TransformedResource,
   ResourceBatchResponse,
 } from './types/resource-response.types';
+import { TransformedResourceOpenApiDto } from './dto/transformed-resource.openapi.dto';
 
 @ApiTags('Resource')
+@ApiExtraModels(TransformedResourceOpenApiDto)
 @Controller('resource')
 export class ResourceController {
   constructor(
@@ -41,6 +44,7 @@ export class ResourceController {
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,
+    type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
   getResourceById(
@@ -66,6 +70,7 @@ export class ResourceController {
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
   @ApiResponse({
     status: 200,
+    type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
   getResourceByOriginalId(

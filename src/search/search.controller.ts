@@ -20,9 +20,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
-import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResponseDto } from './dto/search-response.dto';
-import { SearchBodyDto, searchBodySchema } from './dto/search-body.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
@@ -96,7 +96,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -117,7 +117,8 @@ export class SearchController {
   @ApiQueryForComplexSearch()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SearchResourcesQueryDto,
   ): Promise<SearchResponse> {
     this.metricsService.incrementSearchHit(
       'GET',
@@ -190,7 +191,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -222,8 +223,10 @@ export class SearchController {
   })
   getResourcesPost(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
-    @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SearchResourcesQueryDto,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: SearchResourcesBodyDto,
     @Req() req,
   ) {
     this.metricsService.incrementSearchHit(

@@ -34,6 +34,8 @@ import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-cont
 import { MetricsModule } from './metrics/metrics.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
+import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
+import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 
 @Module({
   imports: [
@@ -66,6 +68,7 @@ import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard
     GeocodingModule,
     AnalyticsModule,
     TaxonomyScorecardModule,
+    PrintableDirectoryModule,
   ],
   controllers: [AppController],
   providers: [
@@ -89,6 +92,7 @@ export class AppModule implements NestModule {
         FavoriteController,
         FavoriteListController,
         SuggestionController,
+        PrintableDirectoryController,
       );
   }
 }

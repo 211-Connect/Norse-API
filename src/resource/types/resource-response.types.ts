@@ -31,18 +31,22 @@ export type TransformedResource = Omit<Resource, 'translations'> & {
   facetsEn: Facet[];
 };
 
+export type TransformedResourceMap = Record<string, TransformedResource>;
+
 export interface ResourceBatchError {
   id: string;
   reason: string;
   statusCode: number;
 }
 
+export interface ResourceBatchMeta {
+  requested: number;
+  successful: number;
+  failed: number;
+}
+
 export interface ResourceBatchResponse {
-  data: Record<string, TransformedResource>;
+  data: TransformedResourceMap;
   errors: ResourceBatchError[];
-  meta: {
-    requested: number;
-    successful: number;
-    failed: number;
-  };
+  meta: ResourceBatchMeta;
 }

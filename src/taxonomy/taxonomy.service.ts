@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { SearchQueryDto } from './dto/search-query.dto';
+import { TaxonomySearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
 import {
@@ -25,7 +25,7 @@ export class TaxonomyService {
 
   async searchTaxonomies(options: {
     headers: HeadersDto;
-    query: SearchQueryDto;
+    query: TaxonomySearchQueryDto;
   }): Promise<TaxonomySearchResponse> {
     try {
       const q = options.query;
@@ -99,7 +99,7 @@ export class TaxonomyService {
 
   async searchTaxonomiesV2(options: {
     headers: HeadersDto;
-    query: SearchQueryDto;
+    query: TaxonomySearchQueryDto;
   }): Promise<TaxonomyResponseDto> {
     const data = await this.searchTaxonomies(options);
 
