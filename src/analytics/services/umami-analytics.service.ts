@@ -3,6 +3,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 
 import { aggregateByEndpoint } from '../internal/aggregators';
@@ -17,6 +18,12 @@ import { isSearchQueryType } from '../internal/search-query-type';
 import { UmamiHttpService } from './umami-http.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
 import { ResourceService } from '../../resource/resource.service';
+import { GeocodingService } from '../../geocoding/geocoding.service';
+import { GeocodingProvider } from '../../geocoding/dto/geocoding.dto';
+import {
+  ExportSearchDataResponse,
+  SearchEventExportRow,
+} from '../dto/export-search-data-response.dto';
 import type { TimeWindow } from '../internal/period';
 import type {
   AnalyticsMetrics,
@@ -32,6 +39,8 @@ import type {
   Stats,
   UmamiBatchResponse,
   UmamiEventDataValue,
+  UmamiEventDataPivotResponse,
+  UmamiEventDataPivotRow,
   UmamiEventPayload,
   UmamiSendResponse,
   UmamiSessionResponse,
@@ -82,12 +91,17 @@ export interface SessionsInput extends AnalyticsInput {
   limit: number;
 }
 
+export type ExportSearchDataInput = AnalyticsInput;
+
 @Injectable()
 export class UmamiAnalyticsService {
+  private readonly logger = new Logger(UmamiAnalyticsService.name);
+
   constructor(
     private readonly umamiHttpService: UmamiHttpService,
     private readonly resourceService: ResourceService,
     private readonly analyticsCacheService: AnalyticsCacheService,
+    private readonly geocodingService: GeocodingService,
   ) {}
 
   async getStats(input: AnalyticsInput): Promise<Stats> {
@@ -433,6 +447,197 @@ export class UmamiAnalyticsService {
       undefined,
       cacheExtra,
     );
+  }
+
+  async getExportSearchData(
+    input: ExportSearchDataInput,
+  ): Promise<ExportSearchDataResponse> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
+
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'export-search-data',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const eventTypeByName: Record<string, 'text' | 'taxonomy'> = {
+          search_text: 'text',
+          search_taxonomy: 'taxonomy',
+        };
+
+        const taggedRows: Array<{
+          row: UmamiEventDataPivotRow;
+          queryType: 'text' | 'taxonomy';
+        }> = [];
+
+        for (const [eventName, queryType] of Object.entries(eventTypeByName)) {
+          const rows = await this.fetchAllPivotRows(
+            input.websiteIds,
+            startMs,
+            endMs,
+            eventName,
+          );
+          for (const row of rows) {
+            taggedRows.push({ row, queryType });
+          }
+        }
+
+        const data: SearchEventExportRow[] = [];
+        const batchSize = 10;
+
+        for (let i = 0; i < taggedRows.length; i += batchSize) {
+          const batch = taggedRows.slice(i, i + batchSize);
+          const results = await Promise.all(
+            batch.map(({ row, queryType }) => this.toExportRow(row, queryType)),
+          );
+          for (const result of results) {
+            if (result) data.push(result);
+          }
+        }
+
+        return {
+          data,
+          totalCount: data.length,
+        };
+      },
+    );
+  }
+
+  private async fetchAllPivotRows(
+    websiteIds: string[],
+    startMs: number,
+    endMs: number,
+    eventName: string,
+  ): Promise<UmamiEventDataPivotRow[]> {
+    const pageSize = 1000;
+    const rows: UmamiEventDataPivotRow[] = [];
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const responses =
+        await this.umamiHttpService.fanOut<UmamiEventDataPivotResponse>(
+          websiteIds,
+          'event-data-pivot',
+          {
+            startAt: startMs,
+            endAt: endMs,
+            eventName,
+            page,
+            pageSize,
+          },
+        );
+
+      const aggregated = aggregateByEndpoint<UmamiEventDataPivotResponse>(
+        'event-data-pivot',
+        responses,
+      );
+
+      if (aggregated?.data) {
+        rows.push(...aggregated.data);
+      }
+
+      if (page === 1) {
+        totalPages = Math.max(
+          1,
+          Math.ceil((aggregated?.count ?? 0) / pageSize),
+        );
+      }
+
+      page++;
+    } while (page <= totalPages);
+
+    return rows;
+  }
+
+  private getPivotPropertyValue(
+    row: UmamiEventDataPivotRow,
+    key: string,
+  ): string | null {
+    const idx = row.propertyKeys.indexOf(key);
+    return idx >= 0 ? row.propertyValues[idx] : null;
+  }
+
+  private async toExportRow(
+    row: UmamiEventDataPivotRow,
+    queryType: 'text' | 'taxonomy',
+  ): Promise<SearchEventExportRow | null> {
+    try {
+      const queryLabel = this.getPivotPropertyValue(row, 'queryLabel');
+      if (!queryLabel) {
+        this.logger.debug(`Skipping event ${row.eventId}: missing queryLabel`);
+        return null;
+      }
+
+      const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
+      const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
+      const coordinates = userCoords || searchCoords;
+
+      let zipCode: string | null = null;
+      if (coordinates) {
+        zipCode = await this.reverseGeocodeToZipCode(coordinates, row.eventId);
+      }
+
+      const timestamp = new Date(row.createdAt).toISOString();
+
+      return {
+        timestamp,
+        queryLabel,
+        queryType,
+        coordinates,
+        zipCode,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to process event ${row.eventId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return null;
+    }
+  }
+
+  private async reverseGeocodeToZipCode(
+    coordinates: string,
+    eventId: string,
+  ): Promise<string | null> {
+    try {
+      const parts = coordinates.split(',').map((s) => s.trim());
+      if (parts.length !== 2) {
+        this.logger.warn(
+          `Invalid coordinates format for event ${eventId}: ${coordinates}`,
+        );
+        return null;
+      }
+
+      const [lng, lat] = parts.map(Number);
+
+      if (isNaN(lat) || isNaN(lng)) {
+        this.logger.warn(
+          `Invalid coordinate values for event ${eventId}: ${coordinates}`,
+        );
+        return null;
+      }
+
+      const results = await this.geocodingService.reverseGeocode({
+        coordinates: [lng, lat],
+        provider: GeocodingProvider.OPENCAGE,
+      });
+
+      if (results && results.length > 0 && results[0].postcode) {
+        return results[0].postcode;
+      }
+
+      this.logger.debug(
+        `No postcode found for event ${eventId} at coordinates ${coordinates}`,
+      );
+
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `Geocoding failed for event ${eventId} at ${coordinates}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return null;
+    }
   }
 
   async sendEvent(

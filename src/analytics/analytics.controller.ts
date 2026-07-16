@@ -28,6 +28,8 @@ import {
   AnalyticsInfoResponse,
   AnalyticsMetricsResponse,
   CommonAnalyticsQuery,
+  ExportSearchDataQueryDto,
+  ExportSearchDataResponse,
   LanguageSwitchesResponse,
   PageviewsResponse,
   PaginatedSessionsResponse,
@@ -335,6 +337,34 @@ export class AnalyticsController {
       websiteIds,
       page: query.page,
       limit: query.limit,
+    });
+  }
+
+  @Get('export-search-data')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get detailed search event data for CSV export',
+    description:
+      'Returns search events with timestamps, coordinates, and ZIP codes.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved export data',
+    type: ExportSearchDataResponse,
+  })
+  async getExportSearchData(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: ExportSearchDataQueryDto,
+  ): Promise<ExportSearchDataResponse> {
+    const websiteIds = await this.analyticsConfigService.getWebsiteIds(
+      tenantId,
+      query.websiteIds,
+    );
+    return this.umamiAnalyticsService.getExportSearchData({
+      tenantId,
+      start: query.start,
+      end: query.end,
+      websiteIds,
     });
   }
 
