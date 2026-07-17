@@ -71,6 +71,9 @@ export class Resource {
   @Prop({ index: true })
   originalId: string;
 
+  @Prop({ index: true })
+  serviceAtLocationId: string;
+
   @Prop()
   _id: string;
 
@@ -110,8 +113,8 @@ export class Resource {
   @Prop()
   requiredDocuments: string;
 
-  @Prop({ index: true })
-  tenantId: string;
+  @Prop({ index: true, name: 'tenant_id' })
+  tenant_id: string;
 
   @Prop({ type: Location })
   location: {

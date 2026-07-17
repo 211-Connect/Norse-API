@@ -17,6 +17,21 @@ import {
   ResourceTranslation,
 } from './types/resource-response.types';
 
+type LookupPath = 'primary' | 'fallback';
+
+interface FallbackLookupLogContext {
+  tenantId: string;
+  serviceAtLocationId: string;
+  mongoId: string;
+  handler: string;
+}
+
+type AggregatedResource = Omit<Resource, 'translations'> & {
+  _id: string;
+  serviceAtLocationId?: string;
+  translations: ResourceTranslation[];
+};
+
 @Injectable()
 export class ResourceService {
   private readonly logger: Logger;
@@ -32,28 +47,72 @@ export class ResourceService {
     id: string,
     options: { headers: HeadersDto },
   ): Promise<TransformedResource> {
-    return this.findResourceAndTransform({ _id: id }, id, options);
+    const tenantId = options.headers['x-tenant-id'];
+    return this.findResourceBySalId(id, tenantId, 'findById', options);
   }
 
   async findByOriginalId(
     id: string,
     options: { headers: HeadersDto },
   ): Promise<TransformedResource> {
-    return this.findResourceAndTransform({ originalId: id }, id, options);
+    const tenantId = options.headers['x-tenant-id'];
+    return this.findResourceAndTransform(
+      { tenant_id: tenantId, originalId: id },
+      id,
+      options,
+    );
   }
 
   async findTitlesByIds(
     ids: string[],
+    tenantId: string,
   ): Promise<{ id: string; displayName: string }[]> {
-    const resources = await this.resourceModel
-      .find({ _id: { $in: ids } }, { _id: 1, displayName: 1 })
+    const uniqueIds = [...new Set(ids)];
+    const titles: { id: string; displayName: string }[] = [];
+    const foundIds = new Set<string>();
+
+    const primaryResults = await this.resourceModel
+      .find(
+        { tenant_id: tenantId, serviceAtLocationId: { $in: uniqueIds } },
+        { serviceAtLocationId: 1, displayName: 1 },
+      )
       .lean()
       .exec();
 
-    return resources.map((r) => ({
-      id: r._id,
-      displayName: r.displayName,
-    }));
+    for (const resource of primaryResults) {
+      const requestedId = resource.serviceAtLocationId;
+      foundIds.add(requestedId);
+      titles.push({
+        id: requestedId,
+        displayName: resource.displayName,
+      });
+    }
+
+    const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      const fallbackResults = await this.resourceModel
+        .find(
+          { tenant_id: tenantId, _id: { $in: missingIds } },
+          { _id: 1, displayName: 1 },
+        )
+        .lean()
+        .exec();
+
+      for (const resource of fallbackResults) {
+        this.logFallbackLookup({
+          tenantId,
+          serviceAtLocationId: resource._id,
+          mongoId: resource._id,
+          handler: 'findTitlesByIds',
+        });
+        titles.push({
+          id: resource._id,
+          displayName: resource.displayName,
+        });
+      }
+    }
+
+    return titles;
   }
 
   /**
@@ -65,53 +124,34 @@ export class ResourceService {
     ids: string[],
     options: { headers: HeadersDto },
   ): Promise<ResourceBatchResponse> {
-    const uniqueIds = [...new Set(ids)]; // Deduplicate IDs
+    const tenantId = options.headers['x-tenant-id'];
+    const uniqueIds = [...new Set(ids)];
     const locale = options.headers['accept-language'];
-    const data: TransformedResourceMap = {};
-    const errors: ResourceBatchError[] = [];
-
-    // Single aggregation query to fetch all resources
-    const results = await this.resourceModel
-      .aggregate([
-        { $match: { _id: { $in: uniqueIds } } },
-        {
-          $addFields: {
-            translations: {
-              $filter: {
-                input: '$translations',
-                as: 't',
-                cond: {
-                  $or: [
-                    { $eq: ['$$t.locale', locale] },
-                    { $eq: ['$$t.locale', 'en'] },
-                  ],
-                },
-              },
-            },
-          },
-        },
-      ])
-      .exec();
+    const data: Record<string, TransformedResource> = {};
+    const errors: ResourceBatchResponse['errors'] = [];
 
     // Create a Set of found IDs for quick lookup
     const foundIds = new Set<string>();
 
-    // Process found resources
-    for (const resource of results) {
-      const resourceId = resource._id;
-      foundIds.add(resourceId);
+    const primaryResults = await this.aggregateResources(
+      { tenant_id: tenantId, serviceAtLocationId: { $in: uniqueIds } },
+      locale,
+    );
+
+    for (const resource of primaryResults) {
+      const requestedId = resource.serviceAtLocationId ?? resource._id;
+      foundIds.add(requestedId);
 
       try {
-        const transformed = this.transformResourceWithTranslations(
+        data[requestedId] = this.transformResourceWithTranslations(
           resource,
           locale,
-          resourceId,
+          requestedId,
         );
-        data[resourceId] = transformed;
       } catch (error) {
         if (error instanceof BadRequestException) {
           errors.push({
-            id: resourceId,
+            id: requestedId,
             reason: 'Translation not available for requested locale',
             statusCode: 400,
           });
@@ -121,10 +161,46 @@ export class ResourceService {
       }
     }
 
-    // Check for missing IDs and add to errors
+    const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      const fallbackResults = await this.aggregateResources(
+        { tenant_id: tenantId, _id: { $in: missingIds } },
+        locale,
+      );
+
+      for (const resource of fallbackResults) {
+        const requestedId = resource._id;
+        foundIds.add(requestedId);
+
+        this.logFallbackLookup({
+          tenantId,
+          serviceAtLocationId: requestedId,
+          mongoId: resource._id,
+          handler: 'findManyByIds',
+        });
+
+        try {
+          data[requestedId] = this.transformResourceWithTranslations(
+            resource,
+            locale,
+            requestedId,
+          );
+        } catch (error) {
+          if (error instanceof BadRequestException) {
+            errors.push({
+              id: requestedId,
+              reason: 'Translation not available for requested locale',
+              statusCode: 400,
+            });
+          } else {
+            throw error;
+          }
+        }
+      }
+    }
+
     for (const id of uniqueIds) {
       if (!foundIds.has(id)) {
-        // Check for redirects
         const redirect = await this.redirectModel.findById(id).exec();
 
         if (redirect) {
@@ -154,6 +230,58 @@ export class ResourceService {
     };
   }
 
+  private async findResourceBySalId(
+    urlId: string,
+    tenantId: string,
+    handler: string,
+    options: { headers: HeadersDto },
+  ): Promise<TransformedResource> {
+    const locale = options.headers['accept-language'];
+
+    let results = await this.aggregateResources(
+      { tenant_id: tenantId, serviceAtLocationId: urlId },
+      locale,
+    );
+    let lookupPath: LookupPath = 'primary';
+
+    if (!results[0]) {
+      results = await this.aggregateResources(
+        { tenant_id: tenantId, _id: urlId },
+        locale,
+      );
+      lookupPath = 'fallback';
+    }
+
+    const resource = results[0];
+
+    if (resource) {
+      if (lookupPath === 'fallback') {
+        this.logFallbackLookup({
+          tenantId,
+          serviceAtLocationId: urlId,
+          mongoId: resource._id,
+          handler,
+        });
+      } else {
+        this.logger.debug(
+          `Resource lookup path=primary tenantId=${tenantId} serviceAtLocationId=${urlId} handler=${handler}`,
+        );
+      }
+
+      return this.transformResourceWithTranslations(resource, locale, urlId);
+    }
+
+    const redirect = await this.redirectModel.findById(urlId).exec();
+
+    if (redirect) {
+      throw new NotFoundException({
+        redirect: `/search/${redirect.newId}`,
+      });
+    }
+
+    throw new NotFoundException();
+  }
+
   /**
    * Centralized logic for finding, filtering, and transforming the resource.
    */
@@ -163,39 +291,12 @@ export class ResourceService {
     options: { headers: HeadersDto },
   ): Promise<TransformedResource> {
     const locale = options.headers['accept-language'];
-
-    // Perform Aggregation
-    // Fetch the document and filter the translations array in the DB
-    // to only return the user's locale and 'en' (for facets).
-    const results = await this.resourceModel
-      .aggregate([
-        { $match: matchQuery },
-        {
-          $addFields: {
-            translations: {
-              $filter: {
-                input: '$translations',
-                as: 't',
-                cond: {
-                  $or: [
-                    { $eq: ['$$t.locale', locale] },
-                    { $eq: ['$$t.locale', 'en'] },
-                  ],
-                },
-              },
-            },
-          },
-        },
-      ])
-      .exec();
-
+    const results = await this.aggregateResources(matchQuery, locale);
     const resource = results[0];
 
     this.logger.debug(`Resource lookupId=${lookupId}, found=${!!resource}`);
 
-    // Handle Not Found & Redirects
     if (!resource) {
-      // Check for redirects using the ID passed (works for both _id and originalId contexts)
       const redirect = await this.redirectModel.findById(lookupId).exec();
 
       if (redirect) {
@@ -210,19 +311,58 @@ export class ResourceService {
     return this.transformResourceWithTranslations(resource, locale, lookupId);
   }
 
+  private async aggregateResources(
+    matchQuery: FilterQuery<Resource>,
+    locale: string,
+  ): Promise<AggregatedResource[]> {
+    return this.resourceModel
+      .aggregate([
+        { $match: matchQuery },
+        this.buildTranslationFilterStage(locale),
+      ])
+      .exec();
+  }
+
+  private buildTranslationFilterStage(locale: string) {
+    return {
+      $addFields: {
+        translations: {
+          $filter: {
+            input: '$translations',
+            as: 't',
+            cond: {
+              $or: [
+                { $eq: ['$$t.locale', locale] },
+                { $eq: ['$$t.locale', 'en'] },
+              ],
+            },
+          },
+        },
+      },
+    };
+  }
+
+  private logFallbackLookup(context: FallbackLookupLogContext): void {
+    this.logger.warn(
+      `Resource lookup used fallback path: ${JSON.stringify({
+        lookupPath: 'fallback',
+        tenantId: context.tenantId,
+        serviceAtLocationId: context.serviceAtLocationId,
+        mongoId: context.mongoId,
+        handler: context.handler,
+      })}`,
+    );
+  }
+
   /**
    * Shared transformation logic to construct the response with translation and facets.
    * Extracts the user's locale translation and English facets.
    */
   private transformResourceWithTranslations(
-    resource: Omit<Resource, 'translations'> & {
-      _id: string;
-      translations: ResourceTranslation[];
-    },
+    resource: AggregatedResource,
     locale: string,
     lookupId: string,
   ): TransformedResource {
-    // Extract specific translations from the filtered result
     const userTranslation: ResourceTranslation | undefined =
       resource.translations.find((t) => t.locale === locale);
     const enTranslation: ResourceTranslation | undefined =
@@ -235,9 +375,6 @@ export class ResourceService {
       throw new BadRequestException();
     }
 
-    // Construct Response
-    // Destructure to separate 'translations' (to be removed)
-    // from 'resourceData' (the rest of the document fields).
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { translations, ...resourceData } = resource;
 

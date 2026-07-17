@@ -107,8 +107,12 @@ export class ResourceController {
   })
   getResourceTitlesByIds(
     @Body() dto: ResourceTitlesDto,
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<{ id: string; displayName: string }[]> {
-    return this.resourceService.findTitlesByIds(dto.ids);
+    return this.resourceService.findTitlesByIds(
+      dto.ids,
+      headers['x-tenant-id'],
+    );
   }
 
   @Post('batch')

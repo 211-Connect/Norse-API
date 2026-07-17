@@ -4,6 +4,7 @@
 
 export const RESOURCE_EXAMPLE = {
   _id: '00000000-0000-0000-0000-000000000000',
+  serviceAtLocationId: '00000000-0000-0000-0000-000000000000',
   location: {
     type: 'Point',
     coordinates: [-106.0746, 42.1485],
