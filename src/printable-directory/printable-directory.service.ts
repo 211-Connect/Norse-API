@@ -124,6 +124,7 @@ export class PrintableDirectoryService {
         logoUrl: null,
       },
       resourceLayout: payload.resourceLayout ?? 'line',
+      isBookletLayout: payload.isBookletLayout ?? false,
       defaultQueryConfig: this.normalizeDefaultQueryConfig(
         payload.defaultQueryConfig,
       ),
@@ -190,6 +191,10 @@ export class PrintableDirectoryService {
 
     if (payload.resourceLayout !== undefined) {
       directory.resourceLayout = payload.resourceLayout;
+    }
+
+    if (payload.isBookletLayout !== undefined) {
+      directory.isBookletLayout = payload.isBookletLayout;
     }
 
     if (payload.accessPolicy !== undefined) {
@@ -972,6 +977,7 @@ export class PrintableDirectoryService {
         logoUrl: directory.footer?.logoUrl ?? null,
       },
       resourceLayout: directory.resourceLayout ?? 'line',
+      isBookletLayout: directory.isBookletLayout ?? false,
       defaultQueryConfig: directory.defaultQueryConfig
         ? {
             locationName: directory.defaultQueryConfig.locationName ?? null,

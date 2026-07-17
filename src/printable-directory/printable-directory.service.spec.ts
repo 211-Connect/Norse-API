@@ -137,6 +137,47 @@ describe('PrintableDirectoryService', () => {
     expect(result.name).toBe('My Directory');
   });
 
+  it('defaults isBookletLayout to false when creating a directory', async () => {
+    const doc = createDirectoryDoc({ name: 'My Directory' });
+    mockPrintableDirectoryModel.create.mockResolvedValue(doc);
+
+    const result = await service.create({ name: 'My Directory' }, scope);
+
+    expect(mockPrintableDirectoryModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ isBookletLayout: false }),
+    );
+    expect(result.isBookletLayout).toBe(false);
+  });
+
+  it('defaults isBookletLayout to false for existing directories missing the field in MongoDB', async () => {
+    const doc = createDirectoryDoc();
+    delete doc.isBookletLayout;
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.getById('directory-1', scope);
+
+    expect(result.isBookletLayout).toBe(false);
+  });
+
+  it('updates isBookletLayout when provided', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.update(
+      'directory-1',
+      { isBookletLayout: true },
+      scope,
+    );
+
+    expect(doc.isBookletLayout).toBe(true);
+    expect(doc.save).toHaveBeenCalled();
+    expect(result.isBookletLayout).toBe(true);
+  });
+
   it('lists directories with pagination for owner scope', async () => {
     const findExec = jest.fn().mockResolvedValue([createDirectoryDoc()]);
     const findChain = {

@@ -24,6 +24,15 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - header/footer: `textLocalized`
 - Header/footer layout is an ordered array of tokens: `text | logo | domain | date`
 - Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords`, and `radius`
+- Booklet layout: `isBookletLayout` (boolean, default `false`)
+  - When `true`, the printable document must be generated with a total page
+    count that is a multiple of four
+  - Blank pages are inserted after the cover (page 2) and/or before the back
+    cover (page n-1) as needed, so the cover stays the first page and the back
+    cover stays the last page
+  - Page generation/insertion happens client-side when rendering the preview
+    into a printable document; the API only stores and returns the flag
+  - Existing directories without the field stored in MongoDB default to `false`
 
 ## Endpoints
 

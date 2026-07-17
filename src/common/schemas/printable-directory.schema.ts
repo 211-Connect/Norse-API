@@ -201,6 +201,9 @@ export class PrintableDirectory {
   })
   resourceLayout: PrintableDirectoryResourceLayout;
 
+  @Prop({ type: Boolean, default: false })
+  isBookletLayout: boolean;
+
   @Prop({ type: PrintableDirectoryDefaultQueryConfig, default: null })
   defaultQueryConfig?: PrintableDirectoryDefaultQueryConfig | null;
 
