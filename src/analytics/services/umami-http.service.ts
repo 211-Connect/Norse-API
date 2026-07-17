@@ -9,6 +9,7 @@ import {
   UmamiBatchResponse,
   UmamiEventPayload,
   UmamiSendResponse,
+  UmamiWebsite,
 } from '../types/umami';
 import { UmamiAuthService } from './umami-auth.service';
 
@@ -117,6 +118,42 @@ export class UmamiHttpService {
       batchPayload,
       'batch',
     );
+  }
+
+  async fetchWebsite(websiteId: string, token: string): Promise<UmamiWebsite> {
+    const apiUrl = this.getApiUrl();
+    const url = `${apiUrl}/api/websites/${encodeURIComponent(websiteId)}`;
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new Error(
+          `Umami fetchWebsite timed out after ${ANALYTICS_FETCH_TIMEOUT_MS}ms (website=${websiteId})`,
+        );
+      }
+      const message = err instanceof Error ? err.message : 'Network error';
+      throw new Error(
+        `Umami fetchWebsite network error (website=${websiteId}): ${message}`,
+      );
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `Umami fetchWebsite error for ${websiteId} (${res.status}): ${body}`,
+      );
+    }
+
+    const data = (await res.json()) as { id?: string; name?: string };
+    return { id: data?.id ?? websiteId, name: data?.name ?? websiteId };
   }
 
   async umamiFetch<T = unknown>(

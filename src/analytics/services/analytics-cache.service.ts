@@ -6,6 +6,7 @@ import { LRUCache } from 'lru-cache';
 
 import { analyticsResponseCacheKey } from '../internal/analytics-redis-keys';
 import {
+  ANALYTICS_CACHE_TTL_CATALOG_MS,
   ANALYTICS_CACHE_TTL_CLOSED_RANGE_MS,
   ANALYTICS_CACHE_TTL_OPEN_RANGE_MS,
 } from '../internal/constants';
@@ -136,6 +137,10 @@ export class AnalyticsCacheService {
   ): number {
     if (endpoint === 'sessions') {
       return this.sessionTtlMs;
+    }
+
+    if (endpoint === 'event-catalog') {
+      return ANALYTICS_CACHE_TTL_CATALOG_MS;
     }
 
     return isClosedRange(endMs, timezone)
