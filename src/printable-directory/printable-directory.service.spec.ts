@@ -83,7 +83,7 @@ describe('PrintableDirectoryService', () => {
       name: string;
       defaultQueryConfig: {
         locationName?: string | null;
-        coords?: [number, number] | null;
+        coords?: { latitude: number; longitude: number } | null;
         radius?: number | null;
       } | null;
     }>,
@@ -383,7 +383,7 @@ describe('PrintableDirectoryService', () => {
     const directory = createDirectoryDoc({
       defaultQueryConfig: {
         locationName: 'Seattle, WA',
-        coords: [-122.3321, 47.6062],
+        coords: { latitude: 47.6062, longitude: -122.3321 },
         radius: 15,
       },
       sections: [
@@ -450,7 +450,7 @@ describe('PrintableDirectoryService', () => {
     const directory = createDirectoryDoc({
       defaultQueryConfig: {
         locationName: 'Seattle, WA',
-        coords: [-122.3321, 47.6062],
+        coords: { latitude: 47.6062, longitude: -122.3321 },
         radius: 15,
       },
       sections: [

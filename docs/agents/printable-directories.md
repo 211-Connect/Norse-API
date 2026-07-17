@@ -23,7 +23,7 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - section: `headingLocalized`, `descriptionLocalized`
   - header/footer: `textLocalized`
 - Header/footer layout is an ordered array of tokens: `text | logo | domain | date`
-- Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords`, and `radius`
+- Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords` (`{ latitude, longitude }` object), and `radius`
 - Booklet layout: `isBookletLayout` (boolean, default `false`)
   - When `true`, the printable document must be generated with a total page
     count that is a multiple of four
