@@ -43,6 +43,17 @@ export const ANALYTICS_CDN_TTL_CLOSED_RANGE_S = 60 * 60; // 1 hour
 
 export const ANALYTICS_CACHE_TTL_CATALOG_MS = 24 * 60 * 60 * 1_000; // 24 hours
 
+/**
+ * Granularity used to bucket `startMs`/`endMs` when building analytics
+ * response cache keys. Clients often compute `start`/`end` freshly per
+ * request (e.g. relative to "now"), which introduces sub-minute jitter
+ * that would otherwise produce a distinct cache key on every request.
+ * Rounding both boundaries down to the same bucket lets near-identical
+ * requests share a cache entry, while the exact (unrounded) values are
+ * still used for the underlying Umami query.
+ */
+export const ANALYTICS_CACHE_KEY_BUCKET_MS = 60_000; // 1 minute
+
 export type ALLOWED_ENDPOINT =
   | 'pageviews'
   | 'stats'
