@@ -7,4 +7,6 @@ export enum UmamiEvent {
   WidgetSearch = 'widget_search',
   CalloutClick = 'callout_click',
   ResourceViewed = 'resource_viewed',
+  SafeExitClick = 'safe_exit_click',
+  FavoriteAddToList = 'favorite_add_to_list',
 }

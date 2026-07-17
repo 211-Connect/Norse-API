@@ -61,4 +61,16 @@ export class AnalyticsMetricsResponse implements AnalyticsMetrics {
     example: 30,
   })
   resourceViewed: number;
+
+  @ApiProperty({
+    description: 'Number of safe exit link clicks',
+    example: 25,
+  })
+  safeExitClicks: number;
+
+  @ApiProperty({
+    description: 'Number of favorites added to a list',
+    example: 40,
+  })
+  favoriteAddToList: number;
 }

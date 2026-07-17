@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 
 import { AnalyticsConfigService } from './services/analytics-config.service';
+import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
 import {
   AnalyticsApiKeyGuard,
@@ -27,9 +28,14 @@ import {
 import {
   AnalyticsInfoResponse,
   AnalyticsMetricsResponse,
+  AreaSearchesResponse,
   CommonAnalyticsQuery,
+  EventCatalogEntryResponse,
+  EventValuesQueryDto,
+  EventValuesResponse,
   ExportSearchDataQueryDto,
   ExportSearchDataResponse,
+  HeatmapPointResponse,
   LanguageSwitchesResponse,
   PageviewsResponse,
   PaginatedSessionsResponse,
@@ -74,6 +80,7 @@ export class AnalyticsController {
   constructor(
     private readonly umamiAnalyticsService: UmamiAnalyticsService,
     private readonly analyticsConfigService: AnalyticsConfigService,
+    private readonly infoEnricher: AnalyticsInfoEnricherService,
   ) {}
 
   @Get('info')
@@ -91,14 +98,23 @@ export class AnalyticsController {
     @Headers(TENANT_ID_HEADER) tenantId: string,
   ): Promise<AnalyticsInfoResponse> {
     const config = await this.analyticsConfigService.getConfig(tenantId);
+    const rootWebsiteId = config?.umamiWebsiteId ?? '';
+    const additionalWebsiteIds =
+      config?.additionalWebsiteIds
+        .map((entry) => entry?.websiteId)
+        .filter(
+          (id): id is string => typeof id === 'string' && id.length > 0,
+        ) ?? [];
+
+    let websites: { id: string; name: string }[] = [];
+    if (config) {
+      websites = await this.infoEnricher.getWebsiteNames(tenantId, config);
+    }
+
     return {
-      rootWebsiteId: config?.umamiWebsiteId ?? '',
-      additionalWebsiteIds:
-        config?.additionalWebsiteIds
-          .map((entry) => entry?.websiteId)
-          .filter(
-            (id): id is string => typeof id === 'string' && id.length > 0,
-          ) ?? [],
+      rootWebsiteId,
+      additionalWebsiteIds,
+      websites,
     };
   }
 
@@ -364,6 +380,109 @@ export class AnalyticsController {
       tenantId,
       start: query.start,
       end: query.end,
+      websiteIds,
+    });
+  }
+
+  @Get('heatmap')
+  @Version('1')
+  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
+  @ApiOperation({
+    summary: 'Get search heatmap points',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved heatmap points',
+    type: [HeatmapPointResponse],
+  })
+  async getHeatmap(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: CommonAnalyticsQuery,
+  ): Promise<HeatmapPointResponse[]> {
+    const websiteIds = await this.analyticsConfigService.getWebsiteIds(
+      tenantId,
+      query.websiteIds,
+    );
+    return this.umamiAnalyticsService.getHeatmap({
+      tenantId,
+      start: query.start,
+      end: query.end,
+      websiteIds,
+    });
+  }
+
+  @Get('area-searches')
+  @Version('1')
+  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
+  @ApiOperation({
+    summary: 'Get search metrics grouped by ZIP code and county',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved area search metrics',
+    type: AreaSearchesResponse,
+  })
+  async getAreaSearches(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: CommonAnalyticsQuery,
+  ): Promise<AreaSearchesResponse> {
+    const websiteIds = await this.analyticsConfigService.getWebsiteIds(
+      tenantId,
+      query.websiteIds,
+    );
+    return this.umamiAnalyticsService.getAreaSearches({
+      tenantId,
+      start: query.start,
+      end: query.end,
+      websiteIds,
+    });
+  }
+
+  @Get('event-values')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get distinct values for an event property',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved event values',
+    type: [EventValuesResponse],
+  })
+  async getEventValues(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: EventValuesQueryDto,
+  ): Promise<EventValuesResponse[]> {
+    const websiteIds = await this.analyticsConfigService.getWebsiteIds(
+      tenantId,
+      query.websiteIds,
+    );
+    return this.umamiAnalyticsService.getEventValues({
+      tenantId,
+      start: query.start,
+      end: query.end,
+      websiteIds,
+      event: query.event,
+      property: query.property,
+    });
+  }
+
+  @Get('event-catalog')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get available events and their properties for the tenant',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved event catalog',
+    type: [EventCatalogEntryResponse],
+  })
+  async getEventCatalog(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+  ): Promise<EventCatalogEntryResponse[]> {
+    const websiteIds =
+      await this.analyticsConfigService.getWebsiteIds(tenantId);
+    return this.umamiAnalyticsService.getEventCatalog({
+      tenantId,
       websiteIds,
     });
   }

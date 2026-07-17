@@ -8,6 +8,10 @@ export const analyticsConfigRedisKey = (tenantId: string) =>
  * Sorted websiteIds ensure that `[a,b]` and `[b,a]` map to the same key.
  * The optional `extra` segment carries endpoint-specific params (e.g. timezone).
  */
+export const analyticsWebsiteNamesPrefix = 'analytics_website_names:';
+export const analyticsWebsiteNamesRedisKey = (tenantId: string) =>
+  `${analyticsWebsiteNamesPrefix}${tenantId}`;
+
 export const analyticsResponseCacheKey = (
   tenantId: string,
   endpoint: string,

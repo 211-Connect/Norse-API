@@ -21,6 +21,28 @@ export const ANALYTICS_CACHE_TTL_CLOSED_RANGE_MS = 60 * 60 * 1_000; // 1 hour
 export const ANALYTICS_CDN_TTL_OPEN_RANGE_S = 5 * 60; // 5 minutes
 export const ANALYTICS_CDN_TTL_CLOSED_RANGE_S = 60 * 60; // 1 hour
 
+/**
+ * Cache TTL for slow-changing, admin-style analytics metadata — data that
+ * only changes when a developer ships new tracking code or a tenant renames
+ * a website, not on every request cycle like metrics/pageviews.
+ *
+ * Used by:
+ * - `event-catalog` endpoint responses (`AnalyticsCacheService.resolveRedisTtl`):
+ *   the list of known event names + their properties. Rebuilding this is
+ *   expensive — one `events/series` call plus one `event-data-pivot` call
+ *   per distinct event name — so a short TTL would be wasteful.
+ * - Website display names (`AnalyticsInfoEnricherService`): `{id, name}`
+ *   pairs fetched from Umami's admin API, one HTTP call per website ID.
+ *
+ * A day-long TTL avoids re-paying those costs on every request while still
+ * surfacing new events/renamed websites within a day, without needing a
+ * manual cache-invalidation mechanism.
+ *
+ * Values are in milliseconds
+ */
+
+export const ANALYTICS_CACHE_TTL_CATALOG_MS = 24 * 60 * 60 * 1_000; // 24 hours
+
 export type ALLOWED_ENDPOINT =
   | 'pageviews'
   | 'stats'
