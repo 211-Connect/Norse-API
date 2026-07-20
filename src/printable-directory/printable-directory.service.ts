@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -50,6 +51,8 @@ interface RequestScope {
 
 @Injectable()
 export class PrintableDirectoryService {
+  private readonly logger = new Logger(PrintableDirectoryService.name);
+
   constructor(
     @InjectModel(PrintableDirectory.name)
     private readonly printableDirectoryModel: Model<PrintableDirectoryDocument>,
@@ -124,6 +127,7 @@ export class PrintableDirectoryService {
         logoUrl: null,
       },
       resourceLayout: payload.resourceLayout ?? 'line',
+      isBookletLayout: payload.isBookletLayout ?? false,
       defaultQueryConfig: this.normalizeDefaultQueryConfig(
         payload.defaultQueryConfig,
       ),
@@ -190,6 +194,10 @@ export class PrintableDirectoryService {
 
     if (payload.resourceLayout !== undefined) {
       directory.resourceLayout = payload.resourceLayout;
+    }
+
+    if (payload.isBookletLayout !== undefined) {
+      directory.isBookletLayout = payload.isBookletLayout;
     }
 
     if (payload.accessPolicy !== undefined) {
@@ -791,7 +799,12 @@ export class PrintableDirectoryService {
 
     return {
       locationName: raw.locationName ?? null,
-      coords: raw.coords ?? null,
+      coords: raw.coords
+        ? {
+            latitude: raw.coords.latitude,
+            longitude: raw.coords.longitude,
+          }
+        : null,
       radius: raw.radius ?? null,
     };
   }
@@ -811,7 +824,10 @@ export class PrintableDirectoryService {
       (mergedParams.coords === undefined || mergedParams.coords === null) &&
       defaults.coords
     ) {
-      mergedParams.coords = defaults.coords;
+      mergedParams.coords = [
+        defaults.coords.longitude,
+        defaults.coords.latitude,
+      ];
     }
 
     if (
@@ -972,10 +988,16 @@ export class PrintableDirectoryService {
         logoUrl: directory.footer?.logoUrl ?? null,
       },
       resourceLayout: directory.resourceLayout ?? 'line',
+      isBookletLayout: directory.isBookletLayout ?? false,
       defaultQueryConfig: directory.defaultQueryConfig
         ? {
             locationName: directory.defaultQueryConfig.locationName ?? null,
-            coords: directory.defaultQueryConfig.coords ?? null,
+            coords: directory.defaultQueryConfig.coords
+              ? {
+                  latitude: directory.defaultQueryConfig.coords.latitude,
+                  longitude: directory.defaultQueryConfig.coords.longitude,
+                }
+              : null,
             radius: directory.defaultQueryConfig.radius ?? null,
           }
         : null,

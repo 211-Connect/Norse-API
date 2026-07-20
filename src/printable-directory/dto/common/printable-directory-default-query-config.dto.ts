@@ -1,15 +1,38 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize,
-  ArrayMinSize,
-  IsArray,
   IsNumber,
   IsOptional,
   IsString,
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+
+export class PrintableDirectoryCoordsDto {
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: -90,
+    maximum: 90,
+    example: 47.6062,
+  })
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude: number;
+
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: -180,
+    maximum: 180,
+    example: -122.3321,
+  })
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude: number;
+}
 
 export class PrintableDirectoryDefaultQueryConfigDto {
   @ApiPropertyOptional({
@@ -24,18 +47,14 @@ export class PrintableDirectoryDefaultQueryConfigDto {
   locationName?: string | null;
 
   @ApiPropertyOptional({
-    type: [Number],
+    type: PrintableDirectoryCoordsDto,
     nullable: true,
-    minItems: 2,
-    maxItems: 2,
-    example: [-122.3321, 47.6062],
+    example: { latitude: 47.6062, longitude: -122.3321 },
   })
   @IsOptional()
-  @IsArray()
-  @ArrayMinSize(2)
-  @ArrayMaxSize(2)
-  @IsNumber({}, { each: true })
-  coords?: [number, number] | null;
+  @ValidateNested()
+  @Type(() => PrintableDirectoryCoordsDto)
+  coords?: PrintableDirectoryCoordsDto | null;
 
   @ApiPropertyOptional({
     type: Number,

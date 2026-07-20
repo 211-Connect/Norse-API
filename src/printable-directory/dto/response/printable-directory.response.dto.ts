@@ -46,6 +46,18 @@ export class PrintableDirectoryResponseDto {
   @ApiProperty({ enum: PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS })
   resourceLayout: PrintableDirectoryResourceLayout;
 
+  @ApiProperty({
+    type: Boolean,
+    default: false,
+    description:
+      'Enables booklet layout generation. When enabled, the brochure is formatted ' +
+      'for booklet printing by ensuring the total page count is a multiple of four. ' +
+      'If necessary, blank pages are inserted after the cover and before the back ' +
+      'cover so that the cover remains the first page and the back cover remains ' +
+      'the last page.',
+  })
+  isBookletLayout: boolean;
+
   @ApiPropertyOptional({
     type: PrintableDirectoryDefaultQueryConfigDto,
     nullable: true,

@@ -99,12 +99,21 @@ export class PrintableDirectorySectionSourceQuery {
 }
 
 @Schema({ _id: false })
+export class PrintableDirectoryCoords {
+  @Prop({ required: true, type: Number })
+  latitude: number;
+
+  @Prop({ required: true, type: Number })
+  longitude: number;
+}
+
+@Schema({ _id: false })
 export class PrintableDirectoryDefaultQueryConfig {
   @Prop({ type: String, default: null })
   locationName?: string | null;
 
-  @Prop({ type: [Number], default: null })
-  coords?: [number, number] | null;
+  @Prop({ type: PrintableDirectoryCoords, default: null })
+  coords?: PrintableDirectoryCoords | null;
 
   @Prop({ type: Number, default: null })
   radius?: number | null;
@@ -200,6 +209,9 @@ export class PrintableDirectory {
     default: 'line',
   })
   resourceLayout: PrintableDirectoryResourceLayout;
+
+  @Prop({ type: Boolean, default: false })
+  isBookletLayout: boolean;
 
   @Prop({ type: PrintableDirectoryDefaultQueryConfig, default: null })
   defaultQueryConfig?: PrintableDirectoryDefaultQueryConfig | null;

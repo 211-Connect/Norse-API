@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsOptional,
@@ -33,6 +34,15 @@ export class CreatePrintableDirectoryDto {
   @IsOptional()
   @IsEnum(PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS)
   resourceLayout?: PrintableDirectoryResourceLayout;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    default: false,
+    description: `Enables booklet layout generation. When enabled, the brochure is formatted for booklet printing by ensuring the total page count is a multiple of four. If necessary, blank pages are inserted after the cover and before the back cover so that the cover remains the first page and the back cover remains the last page.`,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isBookletLayout?: boolean;
 
   @ApiPropertyOptional({
     type: PrintableDirectoryDefaultQueryConfigDto,
