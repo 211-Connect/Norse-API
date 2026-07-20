@@ -17,7 +17,9 @@ const CONFIG_LRU_TTL_MS = 60 * 1_000;
 export class AnalyticsConfigService {
   private readonly logger = new Logger(AnalyticsConfigService.name);
 
-  private readonly configLru: LRUCache<string, AnalyticsInfo | null>;
+  private readonly configLru: LRUCache<string, AnalyticsInfo | null> | null;
+
+  private readonly l1Enabled: boolean;
 
   constructor(
     private readonly cmsRedisService: CmsRedisService,
@@ -27,16 +29,22 @@ export class AnalyticsConfigService {
       'analytics.cache.configLruMax',
       1000,
     );
-    this.configLru = new LRUCache<string, AnalyticsInfo | null>({
-      max: lruMax,
-      ttl: CONFIG_LRU_TTL_MS,
-      noUpdateTTL: true,
-    });
+    this.l1Enabled = this.configService.get<boolean>(
+      'analytics.cache.l1Enabled',
+      true,
+    );
+    this.configLru = this.l1Enabled
+      ? new LRUCache<string, AnalyticsInfo | null>({
+          max: lruMax,
+          ttl: CONFIG_LRU_TTL_MS,
+          noUpdateTTL: true,
+        })
+      : null;
   }
 
   async getConfig(tenantId: string): Promise<AnalyticsInfo | null> {
     // L1 — in-process LRU
-    if (this.configLru.has(tenantId)) {
+    if (this.configLru?.has(tenantId)) {
       this.logger.debug(`Analytics config LRU hit for tenant: ${tenantId}`);
       return this.configLru.get(tenantId) ?? null;
     }
@@ -46,7 +54,7 @@ export class AnalyticsConfigService {
       analyticsConfigRedisKey(tenantId),
     );
     if (!raw) {
-      this.configLru.set(tenantId, null);
+      this.configLru?.set(tenantId, null);
       return null;
     }
 
@@ -55,13 +63,13 @@ export class AnalyticsConfigService {
         typeof raw === 'string'
           ? (JSON.parse(raw) as AnalyticsInfo)
           : (raw as AnalyticsInfo);
-      this.configLru.set(tenantId, config);
+      this.configLru?.set(tenantId, config);
       return config;
     } catch (err) {
       this.logger.error(
         `Failed to parse analytics config for tenant ${tenantId}: ${err}`,
       );
-      this.configLru.set(tenantId, null);
+      this.configLru?.set(tenantId, null);
       return null;
     }
   }

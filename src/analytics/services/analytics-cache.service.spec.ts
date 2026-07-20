@@ -200,6 +200,57 @@ describe('AnalyticsCacheService', () => {
     expect(result).toEqual({ value: 'result' });
   });
 
+  describe('when the L1 cache is disabled', () => {
+    beforeEach(async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          AnalyticsCacheService,
+          {
+            provide: CACHE_MANAGER,
+            useValue: cacheManager,
+          },
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultValue?: unknown) =>
+                key === 'analytics.cache.l1Enabled' ? false : defaultValue,
+              ),
+            },
+          },
+        ],
+      }).compile();
+
+      service = module.get<AnalyticsCacheService>(AnalyticsCacheService);
+    });
+
+    it('always falls through to Redis (L2) instead of using an in-process LRU', async () => {
+      const factory = jest.fn().mockResolvedValue({ value: 'result' });
+
+      await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        factory,
+      );
+      cacheManager.get.mockResolvedValueOnce({ value: 'result' });
+
+      const result = await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        factory,
+      );
+
+      expect(result).toEqual({ value: 'result' });
+      expect(factory).toHaveBeenCalledTimes(1); // served by Redis, not the factory
+      expect(cacheManager.get).toHaveBeenCalledTimes(2); // L1 disabled, always checks Redis
+    });
+  });
+
   describe('TTL selection', () => {
     const dayMs = 24 * 60 * 60 * 1_000;
     const closedEndMs = Date.now() - 2 * dayMs; // definitely closed

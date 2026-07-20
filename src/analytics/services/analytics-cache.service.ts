@@ -16,7 +16,9 @@ import { isClosedRange } from '../internal/analytics-cache-ttl';
 export class AnalyticsCacheService {
   private readonly logger = new Logger(AnalyticsCacheService.name);
 
-  private readonly lru: LRUCache<string, unknown>;
+  private readonly lru: LRUCache<string, unknown> | null;
+
+  private readonly l1Enabled: boolean;
 
   private readonly inflight = new Map<string, Promise<unknown>>();
 
@@ -34,12 +36,18 @@ export class AnalyticsCacheService {
       'analytics.cache.sessionTtlMs',
       60_000,
     );
+    this.l1Enabled = this.configService.get<boolean>(
+      'analytics.cache.l1Enabled',
+      true,
+    );
 
-    this.lru = new LRUCache<string, unknown>({
-      max: lruMax,
-      ttl: 60 * 1_000, // 1 minute
-      noUpdateTTL: true,
-    });
+    this.lru = this.l1Enabled
+      ? new LRUCache<string, unknown>({
+          max: lruMax,
+          ttl: 60 * 1_000, // 1 minute
+          noUpdateTTL: true,
+        })
+      : null;
   }
 
   async getOrSet<T>(
@@ -66,7 +74,7 @@ export class AnalyticsCacheService {
     );
 
     // L1 — in-process LRU
-    const l1Hit = this.lru.get(key);
+    const l1Hit = this.lru?.get(key);
     if (l1Hit !== undefined) {
       this.logger.debug(`Analytics LRU hit: ${key}`);
       return l1Hit as T;
@@ -105,7 +113,7 @@ export class AnalyticsCacheService {
       const l2Hit = await this.cacheManager.get<T>(key);
       if (l2Hit !== undefined && l2Hit !== null) {
         this.logger.debug(`Analytics Redis hit: ${key}`);
-        this.lru.set(key, l2Hit as unknown);
+        this.lru?.set(key, l2Hit as unknown);
         return l2Hit;
       }
     } catch (err) {
@@ -119,7 +127,7 @@ export class AnalyticsCacheService {
 
     const redisTtlMs = this.resolveRedisTtl(endpoint, endMs, timezone);
 
-    this.lru.set(key, result);
+    this.lru?.set(key, result);
 
     try {
       await this.cacheManager.set(key, result, redisTtlMs);
