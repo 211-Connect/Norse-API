@@ -104,17 +104,44 @@ describe('ResourceService', () => {
       expect(result.displayName).toBe('Test Resource');
     });
 
-    it('throws NotFoundException when both lookup paths miss', async () => {
-      aggregateExec.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-      mockRedirectModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+    it('throws NotFoundException when all lookup paths miss', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      mockRedirectModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.findById(salId, { headers })).rejects.toThrow(
         NotFoundException,
       );
     });
 
+    it('uses cross-tenant fallback_no_tenant path and logs when tenant-scoped lookups miss', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([buildResource({ tenant_id: 'other-tenant' })]);
+
+      const result = await service.findById(salId, { headers });
+
+      expect(mockAggregate).toHaveBeenCalledTimes(3);
+      expect(mockAggregate).toHaveBeenNthCalledWith(3, [
+        { $match: { serviceAtLocationId: salId } },
+        expect.any(Object),
+      ]);
+      expect(service['logger'].warn).toHaveBeenCalledWith(
+        expect.stringContaining('"lookupPath":"fallback_no_tenant"'),
+      );
+      expect(result.displayName).toBe('Test Resource');
+    });
+
     it('returns redirect payload when resource is missing but redirect exists', async () => {
-      aggregateExec.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
       mockRedirectModel.findById.mockReturnValue({
         exec: jest.fn().mockResolvedValue({ newId: 'new-sal-id' }),
       });
@@ -124,8 +151,11 @@ describe('ResourceService', () => {
       });
     });
 
-    it('does not return a resource from another tenant', async () => {
-      aggregateExec.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    it('does not return a resource from another tenant when none exists at all', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       await expect(
         service.findById(salId, {
@@ -199,7 +229,9 @@ describe('ResourceService', () => {
 
     it('reports missing ids as batch errors', async () => {
       aggregateExec.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-      mockRedirectModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+      mockRedirectModel.findById.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
 
       const result = await service.findManyByIds(['missing-id'], { headers });
 
