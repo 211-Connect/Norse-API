@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -40,6 +41,12 @@ import { PrintableDirectoryModule } from './printable-directory/printable-direct
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
+    ArcjetModule.forRoot({
+      isGlobal: true,
+      key: process.env.ARCJET_KEY!,
+      rules: [],
+      proxies: [cloudflare()],
+    }),
     CmsConfigModule,
     MetricsModule,
     CacheModule.registerAsync({

@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Post, Body, Version } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Version,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import {
@@ -26,6 +34,7 @@ import {
   ResourceBatchResponse,
 } from './types/resource-response.types';
 import { TransformedResourceOpenApiDto } from './dto/transformed-resource.openapi.dto';
+import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 
 @ApiTags('Resource')
 @ApiExtraModels(TransformedResourceOpenApiDto)
@@ -38,6 +47,7 @@ export class ResourceController {
 
   @Get(':id')
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
@@ -47,7 +57,7 @@ export class ResourceController {
     type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
-  getResourceById(
+  async getResourceById(
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<TransformedResource> {
@@ -65,6 +75,7 @@ export class ResourceController {
   @Get('original/:id')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description

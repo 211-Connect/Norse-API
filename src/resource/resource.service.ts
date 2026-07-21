@@ -10,9 +10,7 @@ import { Resource } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
 import {
-  ResourceBatchError,
   TransformedResource,
-  TransformedResourceMap,
   ResourceBatchResponse,
   ResourceTranslation,
 } from './types/resource-response.types';
