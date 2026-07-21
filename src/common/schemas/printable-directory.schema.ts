@@ -218,6 +218,12 @@ export class PrintableDirectory {
 
   @Prop({ type: [PrintableDirectorySection], default: [] })
   sections: PrintableDirectorySection[];
+
+  @Prop({ type: Date, default: null })
+  createdAt?: Date;
+
+  @Prop({ type: Date, default: null })
+  updatedAt?: Date;
 }
 
 export const PrintableDirectorySchema =
