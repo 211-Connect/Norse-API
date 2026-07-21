@@ -15,13 +15,14 @@ import {
   ResourceTranslation,
 } from './types/resource-response.types';
 
-type LookupPath = 'primary' | 'fallback';
+type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 
 interface FallbackLookupLogContext {
   tenantId: string;
   serviceAtLocationId: string;
   mongoId: string;
   handler: string;
+  lookupPath: Exclude<LookupPath, 'primary'>;
 }
 
 type AggregatedResource = Omit<Resource, 'translations'> & {
@@ -102,6 +103,7 @@ export class ResourceService {
           serviceAtLocationId: resource._id,
           mongoId: resource._id,
           handler: 'findTitlesByIds',
+          lookupPath: 'fallback',
         });
         titles.push({
           id: resource._id,
@@ -136,28 +138,14 @@ export class ResourceService {
       locale,
     );
 
-    for (const resource of primaryResults) {
-      const requestedId = resource.serviceAtLocationId ?? resource._id;
-      foundIds.add(requestedId);
-
-      try {
-        data[requestedId] = this.transformResourceWithTranslations(
-          resource,
-          locale,
-          requestedId,
-        );
-      } catch (error) {
-        if (error instanceof BadRequestException) {
-          errors.push({
-            id: requestedId,
-            reason: 'Translation not available for requested locale',
-            statusCode: 400,
-          });
-        } else {
-          throw error;
-        }
-      }
-    }
+    this.collectTransformedResources(
+      primaryResults,
+      locale,
+      data,
+      errors,
+      foundIds,
+      (resource) => resource.serviceAtLocationId ?? resource._id,
+    );
 
     const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
     if (missingIds.length > 0) {
@@ -167,34 +155,23 @@ export class ResourceService {
       );
 
       for (const resource of fallbackResults) {
-        const requestedId = resource._id;
-        foundIds.add(requestedId);
-
         this.logFallbackLookup({
           tenantId,
-          serviceAtLocationId: requestedId,
+          serviceAtLocationId: resource._id,
           mongoId: resource._id,
           handler: 'findManyByIds',
+          lookupPath: 'fallback',
         });
-
-        try {
-          data[requestedId] = this.transformResourceWithTranslations(
-            resource,
-            locale,
-            requestedId,
-          );
-        } catch (error) {
-          if (error instanceof BadRequestException) {
-            errors.push({
-              id: requestedId,
-              reason: 'Translation not available for requested locale',
-              statusCode: 400,
-            });
-          } else {
-            throw error;
-          }
-        }
       }
+
+      this.collectTransformedResources(
+        fallbackResults,
+        locale,
+        data,
+        errors,
+        foundIds,
+        (resource) => resource._id,
+      );
     }
 
     for (const id of uniqueIds) {
@@ -228,6 +205,15 @@ export class ResourceService {
     };
   }
 
+  /**
+   * Looks up a resource by its public-facing serviceAtLocationId (SAL) using a
+   * 3-tier fallback chain:
+   *   1. primary: tenant-scoped lookup by serviceAtLocationId.
+   *   2. fallback: tenant-scoped lookup by mongo _id (legacy links that use
+   *      the mongo id instead of the serviceAtLocationId).
+   *   3. fallback_no_tenant: cross-tenant lookup by serviceAtLocationId, for
+   *      resources that are intentionally shared/global across tenants.
+   */
   private async findResourceBySalId(
     urlId: string,
     tenantId: string,
@@ -237,7 +223,10 @@ export class ResourceService {
     const locale = options.headers['accept-language'];
 
     let results = await this.aggregateResources(
-      { tenant_id: tenantId, serviceAtLocationId: urlId },
+      {
+        tenant_id: tenantId,
+        serviceAtLocationId: urlId,
+      },
       locale,
     );
     let lookupPath: LookupPath = 'primary';
@@ -250,20 +239,31 @@ export class ResourceService {
       lookupPath = 'fallback';
     }
 
+    if (!results[0]) {
+      results = await this.aggregateResources(
+        {
+          serviceAtLocationId: urlId,
+        },
+        locale,
+      );
+      lookupPath = 'fallback_no_tenant';
+    }
+
     const resource = results[0];
 
     if (resource) {
-      if (lookupPath === 'fallback') {
+      if (lookupPath === 'primary') {
+        this.logger.debug(
+          `Resource lookup path=primary tenantId=${tenantId} serviceAtLocationId=${urlId} handler=${handler}`,
+        );
+      } else {
         this.logFallbackLookup({
           tenantId,
           serviceAtLocationId: urlId,
           mongoId: resource._id,
           handler,
+          lookupPath,
         });
-      } else {
-        this.logger.debug(
-          `Resource lookup path=primary tenantId=${tenantId} serviceAtLocationId=${urlId} handler=${handler}`,
-        );
       }
 
       return this.transformResourceWithTranslations(resource, locale, urlId);
@@ -342,14 +342,52 @@ export class ResourceService {
 
   private logFallbackLookup(context: FallbackLookupLogContext): void {
     this.logger.warn(
-      `Resource lookup used fallback path: ${JSON.stringify({
-        lookupPath: 'fallback',
+      `Resource lookup used ${context.lookupPath} path: ${JSON.stringify({
+        lookupPath: context.lookupPath,
         tenantId: context.tenantId,
         serviceAtLocationId: context.serviceAtLocationId,
         mongoId: context.mongoId,
         handler: context.handler,
       })}`,
     );
+  }
+
+  /**
+   * Shared batch-processing logic used by findManyByIds for both the primary
+   * and fallback result sets: resolves each resource's requested id, marks it
+   * as found, and transforms it, collecting per-resource errors instead of
+   * throwing.
+   */
+  private collectTransformedResources(
+    resources: AggregatedResource[],
+    locale: string,
+    data: Record<string, TransformedResource>,
+    errors: ResourceBatchResponse['errors'],
+    foundIds: Set<string>,
+    resolveId: (resource: AggregatedResource) => string,
+  ): void {
+    for (const resource of resources) {
+      const requestedId = resolveId(resource);
+      foundIds.add(requestedId);
+
+      try {
+        data[requestedId] = this.transformResourceWithTranslations(
+          resource,
+          locale,
+          requestedId,
+        );
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          errors.push({
+            id: requestedId,
+            reason: 'Translation not available for requested locale',
+            statusCode: 400,
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
   }
 
   /**
