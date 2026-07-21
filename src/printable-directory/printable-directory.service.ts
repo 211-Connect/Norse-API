@@ -596,7 +596,10 @@ export class PrintableDirectoryService {
     });
 
     const orderedIds = response.search.hits.hits
-      .map((hit) => hit?._source?.id ?? hit?._id)
+      .map(
+        (hit) =>
+          hit?._source?.service_at_location_id ?? hit?._source?.id ?? hit?._id,
+      )
       .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
     return this.resolveResourcesByIds(orderedIds, headers);
@@ -610,15 +613,19 @@ export class PrintableDirectoryService {
       return [];
     }
 
+    this.logger.debug(
+      `Resolving ${ids.length} resources for preview: ${ids.join(', ')}`,
+    );
+
     const batchResponse = await this.resourceService.findManyByIds(ids, {
       headers,
     });
 
     if (batchResponse.errors.length > 0) {
-      throw new BadRequestException({
-        message: 'Failed to resolve one or more resources for preview',
-        errors: batchResponse.errors,
-      });
+      this.logger.warn(
+        batchResponse.errors,
+        'Errors occurred while resolving resources for preview',
+      );
     }
 
     return ids
@@ -909,12 +916,13 @@ export class PrintableDirectoryService {
   }
 
   private async toResponseDto(
-    directory: PrintableDirectoryDocument,
+    directoryDocument: PrintableDirectoryDocument,
   ): Promise<PrintableDirectoryResponseDto> {
-    const timestamps = directory as PrintableDirectoryDocument & {
-      createdAt?: Date;
-      updatedAt?: Date;
-    };
+    const directory =
+      typeof directoryDocument.toObject === 'function'
+        ? directoryDocument.toObject()
+        : directoryDocument;
+    const timestamps = directory;
 
     const allSources = (directory.sections ?? []).flatMap(
       (section) => section.sources ?? [],
@@ -944,7 +952,7 @@ export class PrintableDirectoryService {
       this.favoriteListService.findSummariesByIds(favoriteListIds, {
         tenantId: directory.tenantId,
       }),
-      this.resourceService.findTitlesByIds(resourceIds),
+      this.resourceService.findTitlesByIds(resourceIds, directory.tenantId),
     ]);
 
     const favoriteListById = new Map(
