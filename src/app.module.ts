@@ -21,6 +21,7 @@ import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMi
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
+import { LocaleMiddleware } from './common/middleware/LocaleMiddleware';
 import { TaxonomyController } from './taxonomy/taxonomy.controller';
 import { SearchController } from './search/search.controller';
 import { ResourceController } from './resource/resource.controller';
@@ -97,6 +98,17 @@ export class AppModule implements NestModule {
         SearchController,
         ResourceController,
         FavoriteController,
+        FavoriteListController,
+        SuggestionController,
+        PrintableDirectoryController,
+      );
+
+    consumer
+      .apply(LocaleMiddleware)
+      .forRoutes(
+        TaxonomyController,
+        SearchController,
+        ResourceController,
         FavoriteListController,
         SuggestionController,
         PrintableDirectoryController,

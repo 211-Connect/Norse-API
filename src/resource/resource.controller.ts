@@ -21,6 +21,7 @@ import {
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ResourceTitlesDto } from './dto/resource-titles.dto';
@@ -39,6 +40,8 @@ import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 @ApiTags('Resource')
 @ApiExtraModels(TransformedResourceOpenApiDto)
 @Controller('resource')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class ResourceController {
   constructor(
     private readonly resourceService: ResourceService,

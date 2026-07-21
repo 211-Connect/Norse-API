@@ -26,6 +26,7 @@ import { SearchResponseDto } from './dto/search-response.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from '../common/decorators/CustomHeaders';
+import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
@@ -40,6 +41,8 @@ import { ArcjetGuard } from '../common/guards/arcjet.guard';
 
 @ApiTags('Search')
 @Controller('search')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 @ApiHeader({
   name: 'x-api-version',
   description: 'API version',

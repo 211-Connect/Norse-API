@@ -12,10 +12,12 @@ import { CreateFavoriteDto } from './dto/create-favorite.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { KeycloakGuard } from 'src/auth/guards/keycloak.guard';
 import { User } from 'src/common/decorators/User';
+import { ApiTenantIdQuery } from 'src/common/decorators';
 
 @ApiTags('Favorite')
 @Controller('favorite')
 @UseGuards(KeycloakGuard)
+@ApiTenantIdQuery()
 export class FavoriteController {
   constructor(private readonly favoriteService: FavoriteService) {}
 

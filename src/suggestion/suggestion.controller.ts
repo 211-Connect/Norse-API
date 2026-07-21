@@ -9,6 +9,7 @@ import { ApiHeader, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { SuggestionSearchQueryDto } from './dto/search-query.dto';
 import {
   TaxonomyTermsQueryDto,
@@ -18,6 +19,8 @@ import { SuggestionService } from './suggestion.service';
 
 @ApiTags('Suggestion')
 @Controller('suggestion')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class SuggestionController {
   constructor(private readonly suggestionService: SuggestionService) {}
 

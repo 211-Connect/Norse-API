@@ -8,6 +8,7 @@ declare global {
       configService: ConfigService;
       user: User;
       tenantId: string;
+      locale?: string;
     }
   }
 

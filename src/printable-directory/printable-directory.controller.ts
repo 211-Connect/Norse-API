@@ -42,6 +42,7 @@ import { PrintableDirectoryService } from './printable-directory.service';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 
 @ApiTags('Printable Directories')
 @ApiExtraModels(
@@ -53,6 +54,8 @@ import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
   path: 'printable-directories',
   version: '1',
 })
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class PrintableDirectoryController {
   constructor(
     private readonly printableDirectoryService: PrintableDirectoryService,

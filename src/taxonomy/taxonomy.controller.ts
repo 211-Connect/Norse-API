@@ -16,6 +16,7 @@ import {
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { TaxonomySearchQueryDto } from './dto/search-query.dto';
 import {
   TaxonomyTermsQueryDto,
@@ -26,6 +27,8 @@ import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
 
 @ApiTags('Taxonomy')
 @Controller('taxonomy')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class TaxonomyController {
   constructor(private readonly taxonomyService: TaxonomyService) {}
 

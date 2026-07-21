@@ -28,6 +28,7 @@ import { User } from 'src/common/decorators/User';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto, paginationSchema } from './dto/pagination.dto';
 import {
@@ -44,6 +45,8 @@ import { Request, Response } from 'express';
   path: 'favorite-list',
   version: '1',
 })
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class FavoriteListController {
   constructor(
     private readonly favoriteListService: FavoriteListService,
@@ -125,12 +128,9 @@ export class FavoriteListController {
     if (favoriteList.privacy === 'PRIVATE') {
       const authResult = await this.keycloakAuthService.verifyToken(request);
 
-      if (
-        !(
-          authResult.isAuthenticated &&
-          authResult.userId === favoriteList.ownerId
-        )
-      ) {
+      if (!(
+        authResult.isAuthenticated && authResult.userId === favoriteList.ownerId
+      )) {
         throw new UnauthorizedException();
       }
     }
