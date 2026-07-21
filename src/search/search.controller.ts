@@ -9,6 +9,7 @@ import {
   Version,
   BadRequestException,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -35,6 +36,7 @@ import { AiSearchService } from './ai-search.service';
 import { AiSearchReRankQueryDto } from './dto/ai-search-re-rank-query.dto';
 import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
+import { ArcjetGuard } from '../common/guards/arcjet.guard';
 
 @ApiTags('Search')
 @Controller('search')
@@ -55,6 +57,7 @@ export class SearchController {
 
   @Get()
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
@@ -144,6 +147,7 @@ export class SearchController {
 
   @Post()
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiResponse({
     status: 200,

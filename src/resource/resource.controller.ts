@@ -75,6 +75,7 @@ export class ResourceController {
   @Get('original/:id')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
