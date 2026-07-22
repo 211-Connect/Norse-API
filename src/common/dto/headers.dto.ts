@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const xTenantIdSchema = z.string(); //.uuid(); We still have tenants not using UUID for tenant_id.
+export const xTenantIdSchema = z.uuid();
 export const acceptLanguageSchema = z.string().transform((val) => {
   return val
     .split(',')
