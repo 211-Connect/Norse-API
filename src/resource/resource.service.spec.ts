@@ -274,6 +274,20 @@ describe('ResourceService', () => {
       );
       expect(result).toEqual([{ id: salId, displayName: 'Fallback Title' }]);
     });
+
+    it('looks up across all tenants when tenantId is not provided', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        { serviceAtLocationId: salId, displayName: 'Global Title' },
+      ]);
+
+      const result = await service.findTitlesByIds([salId]);
+
+      expect(mockFind).toHaveBeenCalledWith(
+        { serviceAtLocationId: { $in: [salId] } },
+        { serviceAtLocationId: 1, displayName: 1 },
+      );
+      expect(result).toEqual([{ id: salId, displayName: 'Global Title' }]);
+    });
   });
 
   describe('transformResourceWithTranslations', () => {
