@@ -32,7 +32,7 @@ import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-docume
 const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
-const BASE_TAXONOMY_BOOST = 10;
+const BASE_TAXONOMY_BOOST = 50;
 const GEO_GAUSS_WEIGHT = 1.5;
 const GEO_DEFAULT_SCALE_MI = 5;
 
@@ -40,8 +40,8 @@ const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
 const BM25_ORG_NAME_BOOST = 6;
 
-const TAXONOMY_K = 5;
-const TAXONOMY_NUM_CANDIDATES = 100;
+const TAXONOMY_K = 10;
+const TAXONOMY_NUM_CANDIDATES = 500;
 
 interface PredictedTaxonomy {
   code: string;

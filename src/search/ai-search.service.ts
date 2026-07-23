@@ -17,7 +17,7 @@ import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { AiSearchReRankPayload } from './dto/ai-search-re-rank-query.dto';
 
 const ML_BROKER_TIMEOUT_MS = 10_000;
-const ML_BROKER_TOP_K = 150;
+const ML_BROKER_TOP_K = 250;
 const PRESELECTED_THRESHOLD = 0.6;
 
 enum MlBrokerTask {
