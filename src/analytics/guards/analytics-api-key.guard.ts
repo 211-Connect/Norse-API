@@ -26,8 +26,7 @@ export class AnalyticsApiKeyGuard implements CanActivate {
     }
 
     const apiKey = request.headers[ANALYTICS_API_KEY_HEADER] as
-      | string
-      | undefined;
+      string | undefined;
     if (!apiKey) {
       throw new UnauthorizedException(
         `Missing ${ANALYTICS_API_KEY_HEADER} header`,

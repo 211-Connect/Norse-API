@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { aggregateByEndpoint } from '../internal/aggregators';
 import {
@@ -114,7 +115,16 @@ export class UmamiAnalyticsService {
     private readonly resourceService: ResourceService,
     private readonly analyticsCacheService: AnalyticsCacheService,
     private readonly geocodingService: GeocodingService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private hasTrailingSlashConvention(tenantId: string): boolean {
+    const trailingSlashTenants = this.configService.get<string[]>(
+      'analytics.trailingSlashTenants',
+      [],
+    );
+    return trailingSlashTenants.includes(tenantId);
+  }
 
   async getStats(input: AnalyticsInput): Promise<Stats> {
     const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
@@ -204,9 +214,13 @@ export class UmamiAnalyticsService {
         );
 
         const eventTotals = sumEventTotals(events);
+        const hasTrailingSlash = this.hasTrailingSlashConvention(
+          input.tenantId,
+        );
         const { searchCount, resourceMetrics } = parseMetrics(
           pathMetrics,
           queryMetrics,
+          hasTrailingSlash,
         );
 
         const sumY = (entries: { y: number }[]) =>
@@ -253,7 +267,14 @@ export class UmamiAnalyticsService {
           pathRes,
         );
 
-        const { resourceMetrics } = parseMetrics(pathMetrics, []);
+        const hasTrailingSlash = this.hasTrailingSlashConvention(
+          input.tenantId,
+        );
+        const { resourceMetrics } = parseMetrics(
+          pathMetrics,
+          [],
+          hasTrailingSlash,
+        );
         const resourceIdsViewMap = resourceMetrics
           .map((row) => ({ id: extractResourceId(row.x), views: row.y }))
           .filter((id): id is { id: string; views: number } => id.id !== null);
