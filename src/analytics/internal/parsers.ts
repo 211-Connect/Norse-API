@@ -29,9 +29,26 @@ export function sumEventTotals(
   }, {});
 }
 
+function stripTrailingSlashBeforeQuery(name: string): string {
+  const qIndex = name.indexOf('?');
+  if (qIndex > 0 && name[qIndex - 1] === '/') {
+    return name.slice(0, qIndex - 1) + name.slice(qIndex);
+  }
+  if (qIndex === -1 && name.endsWith('/')) {
+    return name.slice(0, -1);
+  }
+  return name;
+}
+
+function stripQueryString(name: string): string {
+  const qIndex = name.indexOf('?');
+  return qIndex === -1 ? name : name.slice(0, qIndex);
+}
+
 export function parseMetrics(
   metricsData: MetricsExpandedEntry[] | undefined | null,
   queryMetricsData: MetricsExpandedEntry[] | undefined | null,
+  hasTrailingSlash = false,
 ): {
   searchCount: number;
   resourceMetrics: MetricEntry[];
@@ -42,7 +59,12 @@ export function parseMetrics(
 
   for (const metricData of metricsData ?? []) {
     if (metricData?.name == null) continue;
-    if (metricData.name === '/search' || metricData.name.endsWith('/search')) {
+    const name = hasTrailingSlash
+      ? stripTrailingSlashBeforeQuery(metricData.name)
+      : metricData.name;
+    const pathOnly = stripQueryString(name);
+    const isRoot = pathOnly === '/search' || pathOnly.endsWith('/search');
+    if (isRoot) {
       searchCount += Number(metricData.pageviews) || 0;
     } else if (metricData.name.includes('/search/')) {
       resourceMetrics.push({
