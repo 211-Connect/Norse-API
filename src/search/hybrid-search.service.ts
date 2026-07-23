@@ -39,6 +39,10 @@ const GEO_DEFAULT_SCALE_MI = 5;
 const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
 const BM25_ORG_NAME_BOOST = 6;
+// use_references are curated taxonomy aliases (e.g. "Girl Scouts", "Scouts",
+// "Scouting" for Scouting Programs). A match there is a strong intent signal —
+// stronger than a generic name/description token hit — so it gets its own boost.
+const BM25_TAXONOMY_USE_REF_BOOST = 12;
 
 const TAXONOMY_K = 5;
 const TAXONOMY_NUM_CANDIDATES = 100;
@@ -473,6 +477,26 @@ export class HybridSearchService {
               query: queryStr,
             },
           },
+        },
+      },
+      // Nested taxonomy use_references (curated aliases) — dedicated higher
+      // boost. "scouts" matches "Scouts"/"Girl Scouts"/"Scouting" on
+      // PS-9800.8500 (Scouting Programs) and lifts it above generic hits.
+      // score_mode: max so the best-matching alias entry drives the score.
+      {
+        nested: {
+          path: 'taxonomies',
+          query: {
+            match: {
+              'taxonomies.use_references': {
+                query: queryStr,
+                operator: 'or',
+                minimum_should_match: '2<75%',
+                boost: BM25_TAXONOMY_USE_REF_BOOST,
+              },
+            },
+          },
+          score_mode: 'max',
         },
       },
     ];
