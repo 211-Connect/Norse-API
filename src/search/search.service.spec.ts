@@ -105,7 +105,7 @@ describe('SearchService', () => {
   it('rejects complex query objects for non-taxonomy query_type', async () => {
     const query: SearchResourcesQueryDto = {
       query: { OR: ['housing'] },
-      query_type: 'organization',
+      query_type: 'text',
       page: 1,
       limit: 25,
       filters: {},

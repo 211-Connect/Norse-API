@@ -9,6 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
 
 export class SearchQueryApiDto {
   @ApiPropertyOptional({
@@ -25,17 +26,12 @@ export class SearchQueryApiDto {
   query?: string | string[] | Record<string, unknown>;
 
   @ApiPropertyOptional({
-    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
+    enum: SEARCH_QUERY_TYPES,
     default: 'text',
   })
   @IsOptional()
-  @IsEnum(['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'])
-  query_type?:
-    | 'text'
-    | 'taxonomy'
-    | 'organization'
-    | 'more_like_this'
-    | 'hybrid';
+  @IsEnum(SEARCH_QUERY_TYPES)
+  query_type?: SearchQueryType;
 
   @ApiPropertyOptional({ minimum: 1, default: 1 })
   @IsOptional()

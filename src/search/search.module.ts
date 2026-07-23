@@ -1,30 +1,16 @@
 import { Module } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { SearchController } from './search.controller';
-import { ElasticsearchModule } from '@nestjs/elasticsearch';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CmsConfigModule } from 'src/cms-config/cms-config.module';
 import { HybridSearchService } from './hybrid-search.service';
 import { AiSearchService } from './ai-search.service';
 import { RequestCacheModule } from 'src/common/services/cache/request-cache.module';
+import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.module';
 
 @Module({
   controllers: [SearchController],
   providers: [SearchService, HybridSearchService, AiSearchService],
   exports: [SearchService],
-  imports: [
-    CmsConfigModule,
-    RequestCacheModule,
-    ElasticsearchModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        node: configService.get('ELASTIC_NODE'),
-        auth: {
-          apiKey: configService.get('ELASTIC_API_KEY'),
-        },
-      }),
-      inject: [ConfigService],
-    }),
-  ],
+  imports: [CmsConfigModule, RequestCacheModule, SharedElasticsearchModule],
 })
 export class SearchModule {}

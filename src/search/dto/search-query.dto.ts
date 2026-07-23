@@ -13,6 +13,7 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
+import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -59,9 +60,7 @@ const isComplexNode = (value: unknown, depth = 0): value is ComplexQuery => {
 };
 
 @ValidatorConstraint({ name: 'isSearchQueryExpression', async: false })
-class IsSearchQueryExpressionConstraint
-  implements ValidatorConstraintInterface
-{
+class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     if (value === undefined || value === null) {
       return true;
@@ -99,17 +98,12 @@ export class SearchResourcesQueryDto {
   query: string | string[] | ComplexQuery = '';
 
   @ApiPropertyOptional({
-    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
+    enum: SEARCH_QUERY_TYPES,
     default: 'text',
   })
   @IsOptional()
-  @IsEnum(['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'])
-  query_type:
-    | 'text'
-    | 'taxonomy'
-    | 'organization'
-    | 'more_like_this'
-    | 'hybrid' = 'text';
+  @IsEnum(SEARCH_QUERY_TYPES)
+  query_type: SearchQueryType = 'text';
 
   @ApiPropertyOptional({ minimum: 1, default: 1 })
   @IsOptional()
