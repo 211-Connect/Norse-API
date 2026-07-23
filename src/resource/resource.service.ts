@@ -18,7 +18,7 @@ import {
 type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 
 interface FallbackLookupLogContext {
-  tenantId: string;
+  tenantId?: string;
   serviceAtLocationId: string;
   mongoId: string;
   handler: string;
@@ -64,15 +64,16 @@ export class ResourceService {
 
   async findTitlesByIds(
     ids: string[],
-    tenantId: string,
+    tenantId?: string,
   ): Promise<{ id: string; displayName: string }[]> {
     const uniqueIds = [...new Set(ids)];
     const titles: { id: string; displayName: string }[] = [];
     const foundIds = new Set<string>();
+    const tenantFilter = tenantId ? { tenant_id: tenantId } : {};
 
     const primaryResults = await this.resourceModel
       .find(
-        { tenant_id: tenantId, serviceAtLocationId: { $in: uniqueIds } },
+        { ...tenantFilter, serviceAtLocationId: { $in: uniqueIds } },
         { serviceAtLocationId: 1, displayName: 1 },
       )
       .lean()
@@ -91,7 +92,7 @@ export class ResourceService {
     if (missingIds.length > 0) {
       const fallbackResults = await this.resourceModel
         .find(
-          { tenant_id: tenantId, _id: { $in: missingIds } },
+          { ...tenantFilter, _id: { $in: missingIds } },
           { _id: 1, displayName: 1 },
         )
         .lean()
