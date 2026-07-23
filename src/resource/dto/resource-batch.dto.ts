@@ -1,6 +1,10 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, getSchemaPath } from '@nestjs/swagger';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
-import { TransformedResource } from '../types/resource-response.types';
+import {
+  ResourceBatchMeta,
+  TransformedResourceMap,
+} from '../types/resource-response.types';
+import { TransformedResourceOpenApiDto } from './transformed-resource.openapi.dto';
 
 export class ResourceBatchDto {
   @ApiProperty({
@@ -40,11 +44,27 @@ export class ResourceBatchErrorDto {
   statusCode: number;
 }
 
+export class ResourceBatchMetaDto implements ResourceBatchMeta {
+  @ApiProperty({ description: 'Requested IDs count', example: 2 })
+  requested: number;
+
+  @ApiProperty({
+    description: 'Successfully resolved resources count',
+    example: 1,
+  })
+  successful: number;
+
+  @ApiProperty({ description: 'Failed IDs count', example: 1 })
+  failed: number;
+}
+
 export class ResourceBatchResponseDto {
   @ApiProperty({
     description: 'Successfully fetched resources, keyed by resource ID',
     type: 'object',
-    additionalProperties: { type: 'object' },
+    additionalProperties: {
+      $ref: getSchemaPath(TransformedResourceOpenApiDto),
+    },
     example: {
       '550e8400-e29b-41d4-a716-446655440000': {
         _id: '550e8400-e29b-41d4-a716-446655440000',
@@ -53,7 +73,7 @@ export class ResourceBatchResponseDto {
       },
     },
   })
-  data: Record<string, TransformedResource>;
+  data: TransformedResourceMap;
 
   @ApiProperty({
     description: 'Failed resource IDs with error details',
@@ -70,15 +90,7 @@ export class ResourceBatchResponseDto {
 
   @ApiProperty({
     description: 'Metadata about the batch operation',
-    example: {
-      requested: 2,
-      successful: 1,
-      failed: 1,
-    },
+    type: ResourceBatchMetaDto,
   })
-  meta: {
-    requested: number;
-    successful: number;
-    failed: number;
-  };
+  meta: ResourceBatchMetaDto;
 }

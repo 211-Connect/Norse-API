@@ -21,6 +21,7 @@ export class AiSearchOptionDto {
 
   @ApiProperty({
     description: 'Number of results for this need',
+    type: Number,
     nullable: true,
   })
   results_count: number | null;

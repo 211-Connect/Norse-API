@@ -11,6 +11,7 @@ import { RequestCacheModule } from 'src/common/services/cache/request-cache.modu
 @Module({
   controllers: [SearchController],
   providers: [SearchService, HybridSearchService, AiSearchService],
+  exports: [SearchService],
   imports: [
     CmsConfigModule,
     RequestCacheModule,

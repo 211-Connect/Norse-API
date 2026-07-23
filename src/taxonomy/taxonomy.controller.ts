@@ -1,4 +1,10 @@
-import { Controller, Get, Query, Version } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  ValidationPipe,
+  Version,
+} from '@nestjs/common';
 import { TaxonomyService } from './taxonomy.service';
 import {
   ApiHeader,
@@ -10,7 +16,8 @@ import {
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
-import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
+import { TaxonomySearchQueryDto } from './dto/search-query.dto';
 import {
   TaxonomyTermsQueryDto,
   taxonomyTermsQuerySchema,
@@ -20,6 +27,8 @@ import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
 
 @ApiTags('Taxonomy')
 @Controller('taxonomy')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class TaxonomyController {
   constructor(private readonly taxonomyService: TaxonomyService) {}
 
@@ -138,7 +147,8 @@ export class TaxonomyController {
   })
   getTaxonomies(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: TaxonomySearchQueryDto,
   ): Promise<TaxonomySearchResponse> {
     return this.taxonomyService.searchTaxonomies({
       headers,
@@ -186,7 +196,8 @@ export class TaxonomyController {
   })
   getTaxonomiesV2(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: TaxonomySearchQueryDto,
   ): Promise<TaxonomyResponseDto> {
     return this.taxonomyService.searchTaxonomiesV2({
       headers,

@@ -1,9 +1,16 @@
-import { Controller, Get, Query, Version } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  ValidationPipe,
+  Version,
+} from '@nestjs/common';
 import { ApiHeader, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
-import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
+import { SuggestionSearchQueryDto } from './dto/search-query.dto';
 import {
   TaxonomyTermsQueryDto,
   taxonomyTermsQuerySchema,
@@ -12,6 +19,8 @@ import { SuggestionService } from './suggestion.service';
 
 @ApiTags('Suggestion')
 @Controller('suggestion')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class SuggestionController {
   constructor(private readonly suggestionService: SuggestionService) {}
 
@@ -32,7 +41,8 @@ export class SuggestionController {
   })
   getTaxonomies(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SuggestionSearchQueryDto,
   ) {
     return this.suggestionService.searchTaxonomies({
       headers,

@@ -1,9 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { SearchQueryDto } from './dto/search-query.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { BadRequestException } from '@nestjs/common';
-import { SearchBodyDto } from './dto/search-body.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 import { HybridSearchService } from './hybrid-search.service';
@@ -78,7 +78,7 @@ describe('SearchService Logic', () => {
     return callArgs.query.bool.filter;
   };
 
-  const baseQuery: SearchQueryDto = {
+  const baseQuery: SearchResourcesQueryDto = {
     query: '',
     page: 1,
     limit: 25,
@@ -90,7 +90,10 @@ describe('SearchService Logic', () => {
   };
 
   it('should apply boundary search filter', async () => {
-    const query: SearchQueryDto = { ...baseQuery, geo_type: 'boundary' };
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      geo_type: 'boundary',
+    };
     const geometry: any = {
       type: 'Polygon',
       coordinates: [
@@ -103,7 +106,7 @@ describe('SearchService Logic', () => {
         ],
       ],
     };
-    const body: SearchBodyDto = { geometry };
+    const body: SearchResourcesBodyDto = { geometry };
 
     await service.searchResources({
       headers: { 'x-tenant-id': 'test-tenant' } as any,
@@ -121,7 +124,10 @@ describe('SearchService Logic', () => {
   });
 
   it('should throw BadRequestException if boundary search missing geometry', async () => {
-    const query: SearchQueryDto = { ...baseQuery, geo_type: 'boundary' };
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      geo_type: 'boundary',
+    };
 
     await expect(
       service.searchResources({
@@ -132,7 +138,7 @@ describe('SearchService Logic', () => {
   });
 
   it('should apply double filtering for proximity search (coords + distance > 0)', async () => {
-    const query: SearchQueryDto = {
+    const query: SearchResourcesQueryDto = {
       ...baseQuery,
       coords: [-93.2, 44.9],
       distance: 10,
@@ -176,7 +182,7 @@ describe('SearchService Logic', () => {
   });
 
   it('should apply ONLY service area filter for proximity search (distance = 0)', async () => {
-    const query: SearchQueryDto = {
+    const query: SearchResourcesQueryDto = {
       ...baseQuery,
       coords: [-93.2, 44.9],
       distance: 0,
@@ -203,7 +209,10 @@ describe('SearchService Logic', () => {
     // DTO default is 0, so strict check if undefined behaves like 0 is covered by DTO logic.
     // But let's testing passing explicitly undefined distance if possible, or just rely on default.
     // The DTO ensures distance is 0 if missing.
-    const query: SearchQueryDto = { ...baseQuery, coords: [-93.2, 44.9] };
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      coords: [-93.2, 44.9],
+    };
 
     await service.searchResources({
       headers: { 'x-tenant-id': 'test-tenant' } as any,
@@ -220,7 +229,10 @@ describe('SearchService Logic', () => {
   });
 
   it('should apply NO geo filters if no coords provided', async () => {
-    const query: SearchQueryDto = { ...baseQuery, distance: 10 }; // Distance ignored without coords
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      distance: 10,
+    }; // Distance ignored without coords
 
     await service.searchResources({
       headers: { 'x-tenant-id': 'test-tenant' } as any,
@@ -236,7 +248,7 @@ describe('SearchService Logic', () => {
   });
 
   it('should apply age filter with open interval logic', async () => {
-    const query: SearchQueryDto = { ...baseQuery, age: 12 };
+    const query: SearchResourcesQueryDto = { ...baseQuery, age: 12 };
 
     await service.searchResources({
       headers: { 'x-tenant-id': 'test-tenant' } as any,

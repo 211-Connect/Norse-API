@@ -9,6 +9,7 @@ import {
   Version,
   BadRequestException,
   ValidationPipe,
+  UseGuards,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -20,11 +21,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
-import { SearchQueryDto, searchQuerySchema } from './dto/search-query.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResponseDto } from './dto/search-response.dto';
-import { SearchBodyDto, searchBodySchema } from './dto/search-body.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from '../common/decorators/CustomHeaders';
+import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
@@ -35,9 +37,12 @@ import { AiSearchService } from './ai-search.service';
 import { AiSearchReRankQueryDto } from './dto/ai-search-re-rank-query.dto';
 import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
+import { ArcjetGuard } from '../common/guards/arcjet.guard';
 
 @ApiTags('Search')
 @Controller('search')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 @ApiHeader({
   name: 'x-api-version',
   description: 'API version',
@@ -55,6 +60,7 @@ export class SearchController {
 
   @Get()
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
@@ -96,7 +102,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -117,7 +123,8 @@ export class SearchController {
   @ApiQueryForComplexSearch()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SearchResourcesQueryDto,
   ): Promise<SearchResponse> {
     this.metricsService.incrementSearchHit(
       'GET',
@@ -143,6 +150,7 @@ export class SearchController {
 
   @Post()
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiResponse({
     status: 200,
@@ -190,7 +198,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'more_like_this', 'hybrid'],
+    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -222,8 +230,10 @@ export class SearchController {
   })
   getResourcesPost(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ZodValidationPipe(searchQuerySchema)) query: SearchQueryDto,
-    @Body(new ZodValidationPipe(searchBodySchema)) body: SearchBodyDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SearchResourcesQueryDto,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: SearchResourcesBodyDto,
     @Req() req,
   ) {
     this.metricsService.incrementSearchHit(

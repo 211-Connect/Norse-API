@@ -12,8 +12,8 @@ import {
   SearchRequest,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
-import { SearchQueryDto } from './dto/search-query.dto';
-import { SearchBodyDto } from './dto/search-body.dto';
+import { SearchResourcesQueryDto } from './dto/search-query.dto';
+import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
   SearchHit,
@@ -112,8 +112,8 @@ export class HybridSearchService {
 
   async searchHybrid(options: {
     headers: HeadersDto;
-    query: SearchQueryDto;
-    body?: SearchBodyDto;
+    query: SearchResourcesQueryDto;
+    body?: SearchResourcesBodyDto;
   }): Promise<SearchResponse> {
     const { headers, query: q } = options;
     const { query, page, limit, filters, coords, distance, age, geo_type } = q;
@@ -567,7 +567,11 @@ export class HybridSearchService {
       { service_at_location_id: 'asc' },
     ];
 
-    const scoreFunctions = this.buildScoreFunctions(queryVector, coords, distance);
+    const scoreFunctions = this.buildScoreFunctions(
+      queryVector,
+      coords,
+      distance,
+    );
 
     // When there are no scoring functions (browse with no coords and no vector),
     // emit a plain bool so ES doesn't receive an empty function_score.

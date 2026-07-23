@@ -1,8 +1,17 @@
-import { Controller, Get, Param, Post, Body, Version } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Post,
+  Version,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
+  ApiExtraModels,
   ApiHeader,
   ApiOperation,
   ApiParam,
@@ -12,6 +21,7 @@ import {
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
+import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ResourceTitlesDto } from './dto/resource-titles.dto';
@@ -24,9 +34,14 @@ import {
   TransformedResource,
   ResourceBatchResponse,
 } from './types/resource-response.types';
+import { TransformedResourceOpenApiDto } from './dto/transformed-resource.openapi.dto';
+import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 
 @ApiTags('Resource')
+@ApiExtraModels(TransformedResourceOpenApiDto)
 @Controller('resource')
+@ApiTenantIdQuery()
+@ApiLocaleQuery()
 export class ResourceController {
   constructor(
     private readonly resourceService: ResourceService,
@@ -35,15 +50,17 @@ export class ResourceController {
 
   @Get(':id')
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,
+    type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
-  getResourceById(
+  async getResourceById(
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<TransformedResource> {
@@ -61,11 +78,13 @@ export class ResourceController {
   @Get('original/:id')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @Version('1')
+  @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
   @ApiResponse({
     status: 200,
+    type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
   getResourceByOriginalId(
@@ -102,8 +121,12 @@ export class ResourceController {
   })
   getResourceTitlesByIds(
     @Body() dto: ResourceTitlesDto,
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<{ id: string; displayName: string }[]> {
-    return this.resourceService.findTitlesByIds(dto.ids);
+    return this.resourceService.findTitlesByIds(
+      dto.ids,
+      headers['x-tenant-id'],
+    );
   }
 
   @Post('batch')

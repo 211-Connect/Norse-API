@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -20,6 +21,7 @@ import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMi
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
+import { LocaleMiddleware } from './common/middleware/LocaleMiddleware';
 import { TaxonomyController } from './taxonomy/taxonomy.controller';
 import { SearchController } from './search/search.controller';
 import { ResourceController } from './resource/resource.controller';
@@ -34,10 +36,20 @@ import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-cont
 import { MetricsModule } from './metrics/metrics.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
+import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
+import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
+import { OrganizationModule } from './organization/organization.module';
+import { OrganizationController } from './organization/organization.controller';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
+    ArcjetModule.forRoot({
+      isGlobal: true,
+      key: process.env.ARCJET_KEY!,
+      rules: [],
+      proxies: [cloudflare()],
+    }),
     CmsConfigModule,
     MetricsModule,
     CacheModule.registerAsync({
@@ -66,6 +78,8 @@ import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard
     GeocodingModule,
     AnalyticsModule,
     TaxonomyScorecardModule,
+    PrintableDirectoryModule,
+    OrganizationModule,
   ],
   controllers: [AppController],
   providers: [
@@ -89,6 +103,19 @@ export class AppModule implements NestModule {
         FavoriteController,
         FavoriteListController,
         SuggestionController,
+        PrintableDirectoryController,
+        OrganizationController,
+      );
+
+    consumer
+      .apply(LocaleMiddleware)
+      .forRoutes(
+        TaxonomyController,
+        SearchController,
+        ResourceController,
+        FavoriteListController,
+        SuggestionController,
+        PrintableDirectoryController,
       );
   }
 }

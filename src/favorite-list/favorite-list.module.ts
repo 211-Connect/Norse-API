@@ -21,5 +21,6 @@ import { AuthModule } from 'src/auth/auth.module';
   ],
   controllers: [FavoriteListController],
   providers: [FavoriteListService],
+  exports: [FavoriteListService],
 })
 export class FavoriteListModule {}

@@ -9,4 +9,6 @@ export interface AnalyticsMetrics {
   calloutClicks: number;
   languageSwitches: number;
   resourceViewed: number;
+  safeExitClicks: number;
+  favoriteAddToList: number;
 }

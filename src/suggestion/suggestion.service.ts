@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import { SearchQueryDto } from './dto/search-query.dto';
+import { SuggestionSearchQueryDto } from './dto/search-query.dto';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
 
@@ -14,7 +14,7 @@ export class SuggestionService {
 
   async searchTaxonomies(options: {
     headers: HeadersDto;
-    query: SearchQueryDto;
+    query: SuggestionSearchQueryDto;
   }) {
     try {
       const q = options.query;

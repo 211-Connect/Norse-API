@@ -32,6 +32,11 @@ export default () => ({
       configLruMax: parseInt(process.env.ANALYTICS_CONFIG_LRU_MAX, 10) || 1000,
       sessionTtlMs:
         parseInt(process.env.ANALYTICS_SESSION_CACHE_TTL_MS, 10) || 60_000,
+      l1Enabled: process.env.ANALYTICS_L1_CACHE_ENABLED !== 'false',
     },
+    trailingSlashTenants: (process.env.TRAILING_SLASH_TENANTS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   },
 });

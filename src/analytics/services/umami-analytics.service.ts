@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { aggregateByEndpoint } from '../internal/aggregators';
 import {
@@ -24,9 +25,15 @@ import {
   ExportSearchDataResponse,
   SearchEventExportRow,
 } from '../dto/export-search-data-response.dto';
+import { ONE_DAY_MS, MAX_RANGE_DAYS } from '../internal/constants';
 import type { TimeWindow } from '../internal/period';
 import type {
   AnalyticsMetrics,
+  AreaMetricsRow,
+  AreaSearchesResponse,
+  EventCatalogEntry,
+  EventValuesResponse,
+  HeatmapPoint,
   LanguageSwitch,
   MetricsExpandedEntry,
   PageviewEntry,
@@ -43,6 +50,7 @@ import type {
   UmamiEventDataPivotRow,
   UmamiEventPayload,
   UmamiSendResponse,
+  UmamiSession,
   UmamiSessionResponse,
   ZeroResultQuery,
 } from '../types';
@@ -93,6 +101,11 @@ export interface SessionsInput extends AnalyticsInput {
 
 export type ExportSearchDataInput = AnalyticsInput;
 
+export interface EventValuesInput extends AnalyticsInput {
+  event: string;
+  property: string;
+}
+
 @Injectable()
 export class UmamiAnalyticsService {
   private readonly logger = new Logger(UmamiAnalyticsService.name);
@@ -102,7 +115,16 @@ export class UmamiAnalyticsService {
     private readonly resourceService: ResourceService,
     private readonly analyticsCacheService: AnalyticsCacheService,
     private readonly geocodingService: GeocodingService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private hasTrailingSlashConvention(tenantId: string): boolean {
+    const trailingSlashTenants = this.configService.get<string[]>(
+      'analytics.trailingSlashTenants',
+      [],
+    );
+    return trailingSlashTenants.includes(tenantId);
+  }
 
   async getStats(input: AnalyticsInput): Promise<Stats> {
     const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
@@ -192,9 +214,13 @@ export class UmamiAnalyticsService {
         );
 
         const eventTotals = sumEventTotals(events);
+        const hasTrailingSlash = this.hasTrailingSlashConvention(
+          input.tenantId,
+        );
         const { searchCount, resourceMetrics } = parseMetrics(
           pathMetrics,
           queryMetrics,
+          hasTrailingSlash,
         );
 
         const sumY = (entries: { y: number }[]) =>
@@ -211,6 +237,8 @@ export class UmamiAnalyticsService {
           calloutClicks: eventTotals[UmamiEvent.CalloutClick] ?? 0,
           languageSwitches: eventTotals[UmamiEvent.LanguageSwitch] ?? 0,
           resourceViewed: eventTotals[UmamiEvent.ResourceViewed] ?? 0,
+          safeExitClicks: eventTotals[UmamiEvent.SafeExitClick] ?? 0,
+          favoriteAddToList: eventTotals[UmamiEvent.FavoriteAddToList] ?? 0,
         };
       },
       input.timezone,
@@ -239,7 +267,14 @@ export class UmamiAnalyticsService {
           pathRes,
         );
 
-        const { resourceMetrics } = parseMetrics(pathMetrics, []);
+        const hasTrailingSlash = this.hasTrailingSlashConvention(
+          input.tenantId,
+        );
+        const { resourceMetrics } = parseMetrics(
+          pathMetrics,
+          [],
+          hasTrailingSlash,
+        );
         const resourceIdsViewMap = resourceMetrics
           .map((row) => ({ id: extractResourceId(row.x), views: row.y }))
           .filter((id): id is { id: string; views: number } => id.id !== null);
@@ -502,6 +537,348 @@ export class UmamiAnalyticsService {
         };
       },
     );
+  }
+
+  async getHeatmap(input: AnalyticsInput): Promise<HeatmapPoint[]> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'heatmap',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const sessions = await this.fetchAllSessions(
+          input.websiteIds,
+          startMs,
+          endMs,
+        );
+
+        const addressBySession: Array<{
+          address: string;
+          visits: number;
+        }> = [];
+
+        for (const session of sessions) {
+          const city = session.city?.trim();
+          const region = session.region?.trim();
+          const country = session.country?.trim();
+
+          if (!city && !region) continue;
+
+          const address = city
+            ? [city, region, country].filter(Boolean).join(', ')
+            : [region, country].filter(Boolean).join(', ');
+
+          addressBySession.push({
+            address,
+            visits: Number(session.visits) || 0,
+          });
+        }
+
+        const uniqueAddresses = [
+          ...new Set(addressBySession.map((s) => s.address)),
+        ];
+
+        const coordsByAddress = new Map<
+          string,
+          { lng: number; lat: number } | null
+        >();
+
+        const batchSize = 10;
+        for (let i = 0; i < uniqueAddresses.length; i += batchSize) {
+          const batch = uniqueAddresses.slice(i, i + batchSize);
+          const results = await Promise.all(
+            batch.map((address) => this.forwardGeocodeAddress(address)),
+          );
+          batch.forEach((address, idx) => {
+            coordsByAddress.set(address, results[idx]);
+          });
+        }
+
+        const binMap = new Map<string, HeatmapPoint>();
+
+        for (const { address, visits } of addressBySession) {
+          const coords = coordsByAddress.get(address);
+          if (!coords) continue;
+
+          const key = `${coords.lng.toFixed(5)},${coords.lat.toFixed(5)}`;
+          const existing = binMap.get(key);
+          if (existing) {
+            existing.weight += visits;
+          } else {
+            binMap.set(key, {
+              lng: parseFloat(coords.lng.toFixed(5)),
+              lat: parseFloat(coords.lat.toFixed(5)),
+              weight: visits,
+            });
+          }
+        }
+
+        return Array.from(binMap.values()).sort((a, b) => b.weight - a.weight);
+      },
+    );
+  }
+
+  async getAreaSearches(input: AnalyticsInput): Promise<AreaSearchesResponse> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'area-searches',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const searchEvents = ['search_text', 'search_taxonomy'];
+        const allRows: UmamiEventDataPivotRow[] = [];
+
+        for (const eventName of searchEvents) {
+          const rows = await this.fetchAllPivotRows(
+            input.websiteIds,
+            startMs,
+            endMs,
+            eventName,
+          );
+          allRows.push(...rows);
+        }
+
+        const zeroRows = await this.fetchAllPivotRows(
+          input.websiteIds,
+          startMs,
+          endMs,
+          UmamiEvent.SearchZeroResults,
+        );
+
+        const zipCounts = new Map<string, { total: number; zero: number }>();
+        const countyCounts = new Map<string, { total: number; zero: number }>();
+
+        const processRows = (
+          rows: UmamiEventDataPivotRow[],
+          isZero: boolean,
+        ) => {
+          for (const row of rows) {
+            const area = this.resolveAreaForRow(row);
+            if (area?.zipCode) {
+              const entry = zipCounts.get(area.zipCode) ?? {
+                total: 0,
+                zero: 0,
+              };
+              entry.total += 1;
+              if (isZero) entry.zero += 1;
+              zipCounts.set(area.zipCode, entry);
+            }
+            if (area?.county) {
+              const entry = countyCounts.get(area.county) ?? {
+                total: 0,
+                zero: 0,
+              };
+              entry.total += 1;
+              if (isZero) entry.zero += 1;
+              countyCounts.set(area.county, entry);
+            }
+          }
+        };
+
+        processRows(allRows, false);
+        processRows(zeroRows, true);
+
+        const buildRows = (
+          map: Map<string, { total: number; zero: number }>,
+        ): AreaMetricsRow[] =>
+          Array.from(map, ([area, counts]) => ({
+            area,
+            totalSearches: counts.total,
+            zeroSearches: counts.zero,
+            zeroRate:
+              counts.total > 0
+                ? Math.round((counts.zero / counts.total) * 1000) / 1000
+                : 0,
+          })).sort((a, b) => b.totalSearches - a.totalSearches);
+
+        return {
+          zipCodeRows: buildRows(zipCounts),
+          countyRows: buildRows(countyCounts),
+        };
+      },
+    );
+  }
+
+  async getEventValues(
+    input: EventValuesInput,
+  ): Promise<EventValuesResponse[]> {
+    const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'event-values',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const responses = await this.umamiHttpService.fanOut<
+          UmamiEventDataValue[]
+        >(input.websiteIds, 'event-data/values', {
+          startAt: startMs,
+          endAt: endMs,
+          event: input.event,
+          propertyName: input.property,
+        });
+
+        const aggregated = aggregateByEndpoint<UmamiEventDataValue[]>(
+          'event-data/values',
+          responses,
+        );
+        return aggregated.map(({ value, total }) => ({ value, total }));
+      },
+      undefined,
+      `${input.event}:${input.property}`,
+    );
+  }
+
+  async getEventCatalog(input: {
+    tenantId: string;
+    websiteIds: string[];
+  }): Promise<EventCatalogEntry[]> {
+    // Bucket to the current day boundary so the cache key (which embeds
+    // startMs/endMs) stays stable for the whole day instead of changing
+    // on every millisecond-precision request.
+    const nowMs = Date.now();
+    const endMs = Math.floor(nowMs / ONE_DAY_MS) * ONE_DAY_MS + ONE_DAY_MS - 1;
+    const startMs = endMs - MAX_RANGE_DAYS * ONE_DAY_MS + 1;
+
+    return this.analyticsCacheService.getOrSet(
+      input.tenantId,
+      'event-catalog',
+      input.websiteIds,
+      startMs,
+      endMs,
+      async () => {
+        const eventsRes = await this.umamiHttpService.fanOut<
+          { x: string; y: number }[]
+        >(input.websiteIds, 'events/series', {
+          startAt: startMs,
+          endAt: endMs,
+          timezone: 'UTC',
+        });
+
+        const events = aggregateByEndpoint<{ x: string; y: number }[]>(
+          'events/series',
+          eventsRes,
+        );
+
+        const eventNames = [
+          ...new Set(events.map((e) => e.x).filter(Boolean)),
+        ].sort();
+
+        const entries: EventCatalogEntry[] = [];
+
+        for (const eventName of eventNames) {
+          const pivotRes =
+            await this.umamiHttpService.fanOut<UmamiEventDataPivotResponse>(
+              input.websiteIds,
+              'event-data-pivot',
+              {
+                startAt: startMs,
+                endAt: endMs,
+                eventName,
+                page: 1,
+                pageSize: 100,
+              },
+            );
+
+          const aggregated = aggregateByEndpoint<UmamiEventDataPivotResponse>(
+            'event-data-pivot',
+            pivotRes,
+          );
+
+          const properties = new Set<string>();
+          for (const row of aggregated?.data ?? []) {
+            for (const key of row.propertyKeys ?? []) {
+              if (key) properties.add(key);
+            }
+          }
+
+          entries.push({
+            eventName,
+            properties: [...properties].sort(),
+          });
+        }
+
+        return entries;
+      },
+    );
+  }
+
+  private async fetchAllSessions(
+    websiteIds: string[],
+    startMs: number,
+    endMs: number,
+  ): Promise<UmamiSession[]> {
+    const pageSize = 1000;
+    const maxPages = 100;
+    const sessions: UmamiSession[] = [];
+    let page = 1;
+
+    while (page <= maxPages) {
+      const responses =
+        await this.umamiHttpService.fanOut<UmamiSessionResponse>(
+          websiteIds,
+          'sessions',
+          { startAt: startMs, endAt: endMs, page, pageSize },
+        );
+
+      const aggregated = aggregateByEndpoint<UmamiSessionResponse>(
+        'sessions',
+        responses,
+      );
+
+      const data = aggregated?.data ?? [];
+      if (data.length === 0) break;
+
+      sessions.push(...data);
+      page++;
+    }
+
+    if (page > maxPages) {
+      this.logger.warn(
+        `Heatmap session pagination hit the ${maxPages}-page safety cap; results may be incomplete`,
+      );
+    }
+
+    return sessions;
+  }
+
+  private async forwardGeocodeAddress(
+    address: string,
+  ): Promise<{ lng: number; lat: number } | null> {
+    try {
+      const results = await this.geocodingService.forwardGeocode({
+        address,
+        provider: GeocodingProvider.OPENCAGE,
+      });
+
+      if (results && results.length > 0) {
+        const [lng, lat] = results[0].coordinates;
+        if (!isNaN(lng) && !isNaN(lat)) {
+          return { lng, lat };
+        }
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `Forward geocoding failed for address "${address}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return null;
+    }
+  }
+
+  private resolveAreaForRow(
+    row: UmamiEventDataPivotRow,
+  ): { zipCode: string | null; county: string | null } | null {
+    const zipCode = this.getPivotPropertyValue(row, 'searchZipCode');
+    const county = this.getPivotPropertyValue(row, 'searchCounty');
+    if (!zipCode && !county) return null;
+    return { zipCode, county };
   }
 
   private async fetchAllPivotRows(
