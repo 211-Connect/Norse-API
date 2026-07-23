@@ -29,7 +29,7 @@ export function sumEventTotals(
   }, {});
 }
 
-function stripTrailingSlashBeforeQuery(name: string): string {
+function stripTrailingSlash(name: string): string {
   const qIndex = name.indexOf('?');
   if (qIndex > 0 && name[qIndex - 1] === '/') {
     return name.slice(0, qIndex - 1) + name.slice(qIndex);
@@ -60,15 +60,15 @@ export function parseMetrics(
   for (const metricData of metricsData ?? []) {
     if (metricData?.name == null) continue;
     const name = hasTrailingSlash
-      ? stripTrailingSlashBeforeQuery(metricData.name)
+      ? stripTrailingSlash(metricData.name)
       : metricData.name;
     const pathOnly = stripQueryString(name);
     const isRoot = pathOnly === '/search' || pathOnly.endsWith('/search');
     if (isRoot) {
       searchCount += Number(metricData.pageviews) || 0;
-    } else if (metricData.name.includes('/search/')) {
+    } else if (name.includes('/search/')) {
       resourceMetrics.push({
-        x: metricData.name,
+        x: name,
         y: Number(metricData.pageviews) || 0,
       });
     }

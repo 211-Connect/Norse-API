@@ -85,6 +85,19 @@ describe('parseMetrics', () => {
       expect(resourceMetrics).toEqual([{ x: '/search/123', y: 10 }]);
     });
 
+    it('strips a trailing slash from a /search/123/ resource path', () => {
+      const { searchCount, resourceMetrics } = parseMetrics(
+        [entry('/search/0003527d-3d58-520b-8cee-986f8f447118/', 5)],
+        [],
+        true,
+      );
+
+      expect(searchCount).toBe(0);
+      expect(resourceMetrics).toEqual([
+        { x: '/search/0003527d-3d58-520b-8cee-986f8f447118', y: 5 },
+      ]);
+    });
+
     it('counts a /search/?query=abc path (trailing slash + query string) as searchCount', () => {
       const { searchCount, resourceMetrics } = parseMetrics(
         [entry('/search/?query=abc', 11)],
