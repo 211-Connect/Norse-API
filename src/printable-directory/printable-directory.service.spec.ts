@@ -100,7 +100,8 @@ describe('PrintableDirectoryService', () => {
         descriptionLocalized: { values: {} },
         primaryColor: null,
         layoutType: 'default',
-        coverImageUrl: null,
+        coverImageUrlFront: null,
+        coverImageUrlBack: null,
       },
       header: {
         layout: [],

@@ -114,7 +114,8 @@ export class PrintableDirectoryService {
         descriptionLocalized: { values: {} },
         primaryColor: null,
         layoutType: 'default',
-        coverImageUrl: null,
+        coverImageUrlFront: null,
+        coverImageUrlBack: null,
       },
       header: {
         layout: [],
@@ -983,7 +984,8 @@ export class PrintableDirectoryService {
         },
         primaryColor: directory.cover?.primaryColor ?? null,
         layoutType: directory.cover?.layoutType ?? 'default',
-        coverImageUrl: directory.cover?.coverImageUrl ?? null,
+        coverImageUrlFront: directory.cover?.coverImageUrlFront ?? null,
+        coverImageUrlBack: directory.cover?.coverImageUrlBack ?? null,
       },
       header: {
         layout: directory.header?.layout ?? [],
