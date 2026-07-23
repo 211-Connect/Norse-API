@@ -85,7 +85,6 @@ export class AnalyticsController {
 
   @Get('info')
   @Version('1')
-  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
   @ApiOperation({
     summary: 'Get analytics configuration for the authenticated tenant',
   })
