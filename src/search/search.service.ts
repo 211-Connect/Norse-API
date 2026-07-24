@@ -81,8 +81,6 @@ export class SearchService {
     query: SearchResourcesQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<SearchResponse> {
-    this.logger.debug('Searching for resources');
-
     const { headers, query: q } = options;
     const {
       query,
