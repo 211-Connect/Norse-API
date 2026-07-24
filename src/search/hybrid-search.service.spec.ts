@@ -79,7 +79,10 @@ describe('HybridSearchService', () => {
         },
         {
           provide: TenantConfigService,
-          useValue: { getFacets: jest.fn().mockResolvedValue([]) },
+          useValue: {
+            getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
+          },
         },
         {
           provide: RequestCacheService,

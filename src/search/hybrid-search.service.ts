@@ -36,9 +36,19 @@ const BASE_TAXONOMY_BOOST = 50;
 const GEO_GAUSS_WEIGHT = 1.5;
 const GEO_DEFAULT_SCALE_MI = 5;
 
+// When a tenant enables boost_pinned_resources, pinned/priority stop being hard
+// sort tiers and become small score contributions instead (so a large pinned
+// pool no longer floods the first pages). Tune these like the other weights.
+const PINNED_SCORE_BOOST = 5;
+const PRIORITY_SCORE_WEIGHT = 1;
+
 const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
 const BM25_ORG_NAME_BOOST = 6;
+// use_references are curated taxonomy aliases (e.g. "Girl Scouts", "Scouts",
+// "Scouting" for Scouting Programs). A match there is a strong intent signal —
+// stronger than a generic name/description token hit — so it gets its own boost.
+const BM25_TAXONOMY_USE_REF_BOOST = 12;
 
 const TAXONOMY_K = 10;
 const TAXONOMY_NUM_CANDIDATES = 500;
@@ -136,7 +146,7 @@ export class HybridSearchService {
     const wantsVector = queryStr.trim().length > 0;
     const tEmbedStart = performance.now();
 
-    const [embedResult, tenantFacets] = await Promise.all([
+    const [embedResult, tenantFacets, searchConfig] = await Promise.all([
       wantsVector
         ? this.embedQuery(queryStr).catch((err: Error) => {
             this.logger.warn(
@@ -146,9 +156,11 @@ export class HybridSearchService {
           })
         : Promise.resolve(undefined),
       this.tenantConfigService.getFacets(tenantId),
+      this.tenantConfigService.getSearchConfig(tenantId),
     ]);
 
     const queryVector = embedResult;
+    const boostPinned = searchConfig?.boost_pinned_resources ?? false;
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
@@ -198,6 +210,7 @@ export class HybridSearchService {
       page,
       limit: limit || 25,
       aggs,
+      boostPinned,
     });
 
     const tSearchStart = performance.now();
@@ -475,6 +488,26 @@ export class HybridSearchService {
           },
         },
       },
+      // Nested taxonomy use_references (curated aliases) — dedicated higher
+      // boost. "scouts" matches "Scouts"/"Girl Scouts"/"Scouting" on
+      // PS-9800.8500 (Scouting Programs) and lifts it above generic hits.
+      // score_mode: max so the best-matching alias entry drives the score.
+      {
+        nested: {
+          path: 'taxonomies',
+          query: {
+            match: {
+              'taxonomies.use_references': {
+                query: queryStr,
+                operator: 'or',
+                minimum_should_match: '2<75%',
+                boost: BM25_TAXONOMY_USE_REF_BOOST,
+              },
+            },
+          },
+          score_mode: 'max',
+        },
+      },
     ];
   }
 
@@ -535,6 +568,7 @@ export class HybridSearchService {
     page: number;
     limit: number;
     aggs: Aggregations;
+    boostPinned: boolean;
   }): SearchRequest {
     const {
       index,
@@ -547,6 +581,7 @@ export class HybridSearchService {
       page,
       limit,
       aggs,
+      boostPinned,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -555,23 +590,51 @@ export class HybridSearchService {
       ? this.buildLexicalShouldClauses(queryStr)
       : [];
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted);
-    const should = [...lexicalShould, ...taxonomyShould];
+    // When boost_pinned_resources is enabled, pinned becomes a small additive
+    // score contribution (constant_score) instead of a hard sort tier.
+    const pinnedShould: QueryDslQueryContainer[] = boostPinned
+      ? [
+          {
+            constant_score: {
+              filter: { term: { pinned: true } },
+              boost: PINNED_SCORE_BOOST,
+            },
+          },
+        ]
+      : [];
+    const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
 
-    // pinned/priority tiering lives in sort (not function_score); _score carries
-    // the hybrid signal within a tier; service_at_location_id is the unique
-    // tiebreaker for deterministic page boundaries.
-    const sort: Sort = [
-      { pinned: 'desc' },
-      { priority: 'desc' },
-      '_score',
-      { service_at_location_id: 'asc' },
-    ];
+    // Default: pinned/priority are hard primary sort tiers; _score carries the
+    // hybrid signal within a tier. When boostPinned is set, both drop out of the
+    // sort and instead feed _score (pinned via the should clause above, priority
+    // via the field_value_factor below), so results rank purely by _score.
+    // service_at_location_id is the unique tiebreaker for deterministic pages.
+    const sort: Sort = boostPinned
+      ? ['_score', { service_at_location_id: 'asc' }]
+      : [
+          { pinned: 'desc' },
+          { priority: 'desc' },
+          '_score',
+          { service_at_location_id: 'asc' },
+        ];
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
       coords,
       distance,
     );
+
+    if (boostPinned) {
+      // priority (integer, higher = more important) as a small score boost.
+      scoreFunctions.push({
+        field_value_factor: {
+          field: 'priority',
+          factor: PRIORITY_SCORE_WEIGHT,
+          modifier: 'none',
+          missing: 0,
+        },
+      });
+    }
 
     // When there are no scoring functions (browse with no coords and no vector),
     // emit a plain bool so ES doesn't receive an empty function_score.
