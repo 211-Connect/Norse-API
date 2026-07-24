@@ -1013,13 +1013,9 @@ export class UmamiAnalyticsService {
           latitude: lat,
           longitude: lng,
           zipCode: results[0].postcode,
-          city: results[0].address || '',
+          city: results[0].place || '',
         };
       }
-
-      this.logger.debug(
-        `No postcode found for event ${eventId} at coordinates ${coordinates}`,
-      );
 
       return null;
     } catch (error) {
