@@ -92,7 +92,7 @@ export class ResourceService {
     if (missingIds.length > 0) {
       const fallbackResults = await this.resourceModel
         .find(
-          { ...tenantFilter, _id: { $in: missingIds } },
+          { tenant_id: tenantId, _id: { $in: missingIds } },
           { _id: 1, displayName: 1 },
         )
         .lean()
@@ -120,6 +120,11 @@ export class ResourceService {
    * Batch fetch resources by IDs with partial failure support.
    * Returns a structured response with successful resources and errors.
    * Optimized to use a single MongoDB query instead of N queries.
+   *
+   * Uses the same 3-tier fallback chain as findResourceBySalId:
+   *   1. primary: tenant-scoped lookup by serviceAtLocationId.
+   *   2. fallback: tenant-scoped lookup by mongo _id.
+   *   3. fallback_no_tenant: cross-tenant lookup by serviceAtLocationId.
    */
   async findManyByIds(
     ids: string[],
@@ -148,10 +153,10 @@ export class ResourceService {
       (resource) => resource.serviceAtLocationId ?? resource._id,
     );
 
-    const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-    if (missingIds.length > 0) {
+    const missingIdsAfterPrimary = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIdsAfterPrimary.length > 0) {
       const fallbackResults = await this.aggregateResources(
-        { tenant_id: tenantId, _id: { $in: missingIds } },
+        { tenant_id: tenantId, _id: { $in: missingIdsAfterPrimary } },
         locale,
       );
 
@@ -172,6 +177,33 @@ export class ResourceService {
         errors,
         foundIds,
         (resource) => resource._id,
+      );
+    }
+
+    const missingIdsAfterFallback = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIdsAfterFallback.length > 0) {
+      const fallbackNoTenantResults = await this.aggregateResources(
+        { serviceAtLocationId: { $in: missingIdsAfterFallback } },
+        locale,
+      );
+
+      for (const resource of fallbackNoTenantResults) {
+        this.logFallbackLookup({
+          tenantId,
+          serviceAtLocationId: resource.serviceAtLocationId!,
+          mongoId: resource._id,
+          handler: 'findManyByIds',
+          lookupPath: 'fallback_no_tenant',
+        });
+      }
+
+      this.collectTransformedResources(
+        fallbackNoTenantResults,
+        locale,
+        data,
+        errors,
+        foundIds,
+        (resource) => resource.serviceAtLocationId ?? resource._id,
       );
     }
 
