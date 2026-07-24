@@ -11,7 +11,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
-import { FacetConfig, FacetsConfigCache } from './types';
+import { FacetConfig, FacetsConfigCache, SearchConfigCache } from './types';
 import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 @Injectable()
@@ -24,6 +24,9 @@ export class TenantConfigService {
     LRU_CACHE_CONFIG,
   );
   private readonly localesCache = new LRUCache<string, string[]>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly searchConfigCache = new LRUCache<string, SearchConfigCache>(
     LRU_CACHE_CONFIG,
   );
 
@@ -149,6 +152,41 @@ export class TenantConfigService {
   }
 
   /**
+   * Reads tenant search configuration written by PayloadCMS to Redis DB 2 under
+   * `search_config:${tenantId}`. Returns an empty object when missing or on
+   * error so callers can safely fall back to default search behavior.
+   */
+  async getSearchConfig(tenantId: string): Promise<SearchConfigCache> {
+    this.logger.debug(`Fetching search config for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.searchConfigCache.get(tenantId);
+    if (inMemoryCached) {
+      this.logger.debug(`In-memory cache hit for search config: ${tenantId}`);
+      return inMemoryCached;
+    }
+
+    try {
+      const redisKey = `search_config:${tenantId}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.logger.debug(`Redis DB 2 hit for search config: ${tenantId}`);
+        const searchConfig = JSON.parse(redisValue) as SearchConfigCache;
+        this.searchConfigCache.set(tenantId, searchConfig);
+        return searchConfig;
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error fetching search config from Redis DB 2 for ${tenantId}: ${error.message}`,
+      );
+    }
+
+    const emptyConfig: SearchConfigCache = {};
+    this.searchConfigCache.set(tenantId, emptyConfig);
+    return emptyConfig;
+  }
+
+  /**
    *
    * @deprecated This method is only used as a fallback to fetch tenant configuration from Strapi when Redis DB 2 is unavailable or missing data.
    * It is not optimized for performance and should not be used as the primary method for fetching tenant configuration due to potential latency and load on the CMS.
@@ -223,6 +261,7 @@ export class TenantConfigService {
     this.keycloakRealmIdCache.clear();
     this.facetsCache.clear();
     this.localesCache.clear();
+    this.searchConfigCache.clear();
     this.logger.log('All in-memory cache cleared');
   }
 
@@ -231,6 +270,7 @@ export class TenantConfigService {
     this.keycloakRealmIdCache.delete(tenantId);
     this.facetsCache.delete(tenantId);
     this.localesCache.delete(tenantId);
+    this.searchConfigCache.delete(tenantId);
     this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }
