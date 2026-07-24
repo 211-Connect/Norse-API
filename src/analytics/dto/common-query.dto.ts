@@ -27,9 +27,7 @@ export function parseWebsiteIds(raw: unknown): string[] {
 }
 
 @ValidatorConstraint({ name: 'AnalyticsDateRange', async: false })
-export class AnalyticsDateRangeConstraint
-  implements ValidatorConstraintInterface
-{
+export class AnalyticsDateRangeConstraint implements ValidatorConstraintInterface {
   validate(_end: unknown, args: ValidationArguments): boolean {
     const obj = args.object as { start?: string; end?: string };
     const startMs = Date.parse(obj.start ?? '');

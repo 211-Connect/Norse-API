@@ -36,8 +36,6 @@ export class SearchService {
 
   private static readonly ES_FIELDS = {
     TAXONOMY_RAW: 'taxonomies.code.raw',
-    ORG_NAME: 'organization.name',
-    ORG_NAME_KEYWORD: 'organization.name.keyword',
   };
 
   constructor(
@@ -54,7 +52,6 @@ export class SearchService {
     KEYWORD: 'keyword',
     TAXONOMY: 'taxonomy',
     MORE_LIKE_THIS: 'more_like_this',
-    ORGANIZATION: 'organization',
     HYBRID: 'hybrid',
   } as const;
 
@@ -286,8 +283,6 @@ export class SearchService {
     switch (queryType) {
       case 'taxonomy':
         return SearchService.QUERY_TYPE.TAXONOMY;
-      case 'organization':
-        return SearchService.QUERY_TYPE.ORGANIZATION;
       case 'more_like_this':
         return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
       case 'hybrid':
@@ -342,23 +337,6 @@ export class SearchService {
                 },
               ],
               minimum_should_match: 1,
-            },
-          },
-        };
-
-      case 'organization':
-        return {
-          query: {
-            bool: {
-              ...baseBool,
-              must: {
-                match: {
-                  [SearchService.ES_FIELDS.ORG_NAME]: {
-                    query,
-                    operator: 'AND',
-                  },
-                },
-              },
             },
           },
         };

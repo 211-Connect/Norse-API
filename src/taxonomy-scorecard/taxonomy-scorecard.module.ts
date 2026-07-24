@@ -6,8 +6,7 @@ import {
 } from 'src/common/schemas/taxonomy-scorecard.schema';
 import { TaxonomyScorecardController } from './taxonomy-scorecard.controller';
 import { TaxonomyScorecardService } from './taxonomy-scorecard.service';
-import { ElasticsearchModule } from '@nestjs/elasticsearch';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.module';
 
 @Module({
   imports: [
@@ -17,16 +16,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         schema: TaxonomyScorecardSchema,
       },
     ]),
-    ElasticsearchModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        node: configService.get('ELASTIC_NODE'),
-        auth: {
-          apiKey: configService.get('ELASTIC_API_KEY'),
-        },
-      }),
-      inject: [ConfigService],
-    }),
+    SharedElasticsearchModule,
   ],
   controllers: [TaxonomyScorecardController],
   providers: [TaxonomyScorecardService],
