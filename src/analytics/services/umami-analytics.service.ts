@@ -53,6 +53,7 @@ import type {
   UmamiSession,
   UmamiSessionResponse,
   ZeroResultQuery,
+  ReverseGeocodeOutput,
 } from '../types';
 
 const SEARCH_RESOURCE_PREFIX = '/search/';
@@ -949,12 +950,13 @@ export class UmamiAnalyticsService {
 
       const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
       const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
-      const coordinates = userCoords || searchCoords;
 
-      let zipCode: string | null = null;
-      if (coordinates) {
-        zipCode = await this.reverseGeocodeToZipCode(coordinates, row.eventId);
-      }
+      const searchResult: ReverseGeocodeOutput | null = searchCoords
+        ? await this.reverseGeocode(searchCoords, row.eventId)
+        : null;
+      const userResult: ReverseGeocodeOutput | null = userCoords
+        ? await this.reverseGeocode(userCoords, row.eventId)
+        : null;
 
       const timestamp = new Date(row.createdAt).toISOString();
 
@@ -962,8 +964,14 @@ export class UmamiAnalyticsService {
         timestamp,
         queryLabel,
         queryType,
-        coordinates,
-        zipCode,
+        searchZipCode: searchResult?.zipCode ?? null,
+        searchCity: searchResult?.city ?? null,
+        searchLatitude: searchResult?.latitude ?? null,
+        searchLongitude: searchResult?.longitude ?? null,
+        userZipCode: userResult?.zipCode ?? null,
+        userCity: userResult?.city ?? null,
+        userLatitude: userResult?.latitude ?? null,
+        userLongitude: userResult?.longitude ?? null,
       };
     } catch (error) {
       this.logger.error(
@@ -973,10 +981,10 @@ export class UmamiAnalyticsService {
     }
   }
 
-  private async reverseGeocodeToZipCode(
+  private async reverseGeocode(
     coordinates: string,
     eventId: string,
-  ): Promise<string | null> {
+  ): Promise<ReverseGeocodeOutput | null> {
     try {
       const parts = coordinates.split(',').map((s) => s.trim());
       if (parts.length !== 2) {
@@ -1001,12 +1009,13 @@ export class UmamiAnalyticsService {
       });
 
       if (results && results.length > 0 && results[0].postcode) {
-        return results[0].postcode;
+        return {
+          latitude: lat,
+          longitude: lng,
+          zipCode: results[0].postcode,
+          city: results[0].place || '',
+        };
       }
-
-      this.logger.debug(
-        `No postcode found for event ${eventId} at coordinates ${coordinates}`,
-      );
 
       return null;
     } catch (error) {

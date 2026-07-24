@@ -21,18 +21,60 @@ export class SearchEventExportRow {
   queryType: 'text' | 'taxonomy';
 
   @ApiProperty({
-    description: 'Search coordinates in "longitude,latitude" format',
-    example: '-122.4194,37.7749',
-    nullable: true,
-  })
-  coordinates: string | null;
-
-  @ApiProperty({
-    description: 'ZIP/postal code from reverse geocoding',
+    description: 'Search ZIP/postal code from reverse geocoding',
     example: '94102',
     nullable: true,
   })
-  zipCode: string | null;
+  searchZipCode: string | null;
+
+  @ApiProperty({
+    description: 'Search city from reverse geocoding',
+    example: 'San Francisco',
+    nullable: true,
+  })
+  searchCity: string | null;
+
+  @ApiProperty({
+    description: 'Search latitude coordinate',
+    example: 37.7749,
+    nullable: true,
+  })
+  searchLatitude: number | null;
+
+  @ApiProperty({
+    description: 'Search longitude coordinate',
+    example: -122.5678,
+    nullable: true,
+  })
+  searchLongitude: number | null;
+
+  @ApiProperty({
+    description: 'User ZIP/postal code from reverse geocoding',
+    example: '94102',
+    nullable: true,
+  })
+  userZipCode: string | null;
+
+  @ApiProperty({
+    description: 'User city from reverse geocoding',
+    example: 'San Francisco',
+    nullable: true,
+  })
+  userCity: string | null;
+
+  @ApiProperty({
+    description: 'User latitude coordinate',
+    example: 37.7749,
+    nullable: true,
+  })
+  userLatitude: number | null;
+
+  @ApiProperty({
+    description: 'User longitude coordinate',
+    example: -122.5678,
+    nullable: true,
+  })
+  userLongitude: number | null;
 }
 
 export class ExportSearchDataResponse {
