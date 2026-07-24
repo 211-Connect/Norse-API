@@ -19,5 +19,8 @@ export class PrintableDirectoryCoverResponseDto {
   layoutType: PrintableDirectoryCoverLayout;
 
   @ApiPropertyOptional({ type: String, nullable: true })
-  coverImageUrl?: string | null;
+  coverImageUrlFront?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  coverImageUrlBack?: string | null;
 }

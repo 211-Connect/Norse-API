@@ -67,7 +67,10 @@ export class PrintableDirectoryCover {
   layoutType?: PrintableDirectoryCoverLayout;
 
   @Prop({ type: String, default: null })
-  coverImageUrl?: string | null;
+  coverImageUrlFront?: string | null;
+
+  @Prop({ type: String, default: null })
+  coverImageUrlBack?: string | null;
 }
 
 @Schema({ _id: false })
