@@ -160,7 +160,7 @@ export class HybridSearchService {
     ]);
 
     const queryVector = embedResult;
-    const boostPinned = searchConfig?.boost_pinned_resources ?? false;
+    const boostPinned = searchConfig?.boost_pinned_resources ?? true;
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
@@ -592,6 +592,9 @@ export class HybridSearchService {
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted);
     // When boost_pinned_resources is enabled, pinned becomes a small additive
     // score contribution (constant_score) instead of a hard sort tier.
+
+    this.logger.debug(`Boost pinned resources: ${boostPinned}`);
+
     const pinnedShould: QueryDslQueryContainer[] = boostPinned
       ? [
           {

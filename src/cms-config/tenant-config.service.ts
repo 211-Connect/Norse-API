@@ -162,6 +162,7 @@ export class TenantConfigService {
     const inMemoryCached = this.searchConfigCache.get(tenantId);
     if (inMemoryCached) {
       this.logger.debug(`In-memory cache hit for search config: ${tenantId}`);
+
       return inMemoryCached;
     }
 
@@ -169,9 +170,10 @@ export class TenantConfigService {
       const redisKey = `search_config:${tenantId}`;
       const redisValue = await this.cmsRedisService.get(redisKey);
 
-      if (redisValue && typeof redisValue === 'string') {
+      if (redisValue) {
         this.logger.debug(`Redis DB 2 hit for search config: ${tenantId}`);
-        const searchConfig = JSON.parse(redisValue) as SearchConfigCache;
+        const searchConfig =
+          typeof redisValue === 'string' ? JSON.parse(redisValue) : redisValue;
         this.searchConfigCache.set(tenantId, searchConfig);
         return searchConfig;
       }
