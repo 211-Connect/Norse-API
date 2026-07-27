@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   PrintableDirectory,
   PrintableDirectorySection,
@@ -148,6 +152,34 @@ describe('PrintableDirectoryService', () => {
       expect.objectContaining({ isBookletLayout: false }),
     );
     expect(result.isBookletLayout).toBe(false);
+  });
+
+  it('throws ConflictException when creating a directory with a slug already used in the tenant', async () => {
+    const duplicateError: any = new Error(
+      'E11000 duplicate key error collection: printableDirectories index: tenantId_1_slug_1 dup key: { tenantId: "tenant-1", slug: "shelter-guide" }',
+    );
+    duplicateError.code = 11000;
+    mockPrintableDirectoryModel.create.mockRejectedValue(duplicateError);
+
+    await expect(
+      service.create({ name: 'My Directory', slug: 'shelter-guide' }, scope),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('throws ConflictException when updating a directory to a slug already used in the tenant', async () => {
+    const doc = createDirectoryDoc();
+    const duplicateError: any = new Error(
+      'E11000 duplicate key error collection: printableDirectories index: tenantId_1_slug_1 dup key: { tenantId: "tenant-1", slug: "shelter-guide" }',
+    );
+    duplicateError.code = 11000;
+    doc.save = jest.fn().mockRejectedValue(duplicateError);
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    await expect(
+      service.update('directory-1', { slug: 'shelter-guide' }, scope),
+    ).rejects.toThrow(ConflictException);
   });
 
   it('defaults isBookletLayout to false for existing directories missing the field in MongoDB', async () => {
@@ -612,5 +644,124 @@ describe('PrintableDirectoryService', () => {
         scope,
       ),
     ).rejects.toThrow(BadRequestException);
+  });
+
+  describe('previewBySlug', () => {
+    it('resolves preview for a private directory without any requesting user', async () => {
+      const directory = createDirectoryDoc({
+        sections: [
+          {
+            id: 'section-1',
+            order: 0,
+            headingLocalized: { values: { en: 'Heading' } },
+            descriptionLocalized: { values: {} },
+            maxResources: 10,
+            sources: [
+              {
+                id: 'src-1',
+                order: 0,
+                type: 'resource_ids',
+                query: null,
+                favoritesListId: null,
+                resourceIds: ['resource-9'],
+              },
+            ],
+          },
+        ],
+      });
+      directory.accessPolicy = 'private';
+      directory.slug = 'shelter-guide';
+
+      mockPrintableDirectoryModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(directory),
+      });
+
+      mockResourceService.findManyByIds.mockResolvedValue({
+        data: { 'resource-9': { _id: 'resource-9', displayName: 'R9' } },
+        errors: [],
+        meta: { requested: 1, successful: 1, failed: 0 },
+      });
+
+      const result = await service.previewBySlug(
+        'shelter-guide',
+        scope.tenantId,
+        'en',
+        { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      );
+
+      expect(mockPrintableDirectoryModel.findOne).toHaveBeenCalledWith({
+        tenantId: scope.tenantId,
+        slug: 'shelter-guide',
+      });
+      expect(result.sections[0].resources.map((item) => item.id)).toEqual([
+        'resource-9',
+      ]);
+    });
+
+    it('throws NotFoundException when no directory matches the tenant/slug', async () => {
+      mockPrintableDirectoryModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      });
+
+      await expect(
+        service.previewBySlug('missing-slug', scope.tenantId, 'en', {
+          'x-tenant-id': scope.tenantId,
+          'accept-language': 'en',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('resolves favorites_list sources against the directory owner, not a requesting user', async () => {
+      const directory = createDirectoryDoc({
+        ownerUserId: 'owner-42',
+        sections: [
+          {
+            id: 'section-1',
+            order: 0,
+            headingLocalized: { values: { en: 'Heading' } },
+            descriptionLocalized: { values: {} },
+            maxResources: 10,
+            sources: [
+              {
+                id: 'src-1',
+                order: 0,
+                type: 'favorites_list',
+                query: null,
+                favoritesListId: 'fav-1',
+                resourceIds: [],
+              },
+            ],
+          },
+        ],
+      });
+      directory.slug = 'shelter-guide';
+
+      mockPrintableDirectoryModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(directory),
+      });
+
+      mockFavoriteListModel.findOne.mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({ favorites: ['resource-9'] }),
+        }),
+      });
+
+      mockResourceService.findManyByIds.mockResolvedValue({
+        data: { 'resource-9': { _id: 'resource-9', displayName: 'R9' } },
+        errors: [],
+        meta: { requested: 1, successful: 1, failed: 0 },
+      });
+
+      await service.previewBySlug('shelter-guide', scope.tenantId, 'en', {
+        'x-tenant-id': scope.tenantId,
+        'accept-language': 'en',
+      });
+
+      expect(mockFavoriteListModel.findOne).toHaveBeenCalledWith({
+        _id: 'fav-1',
+        ownerId: 'owner-42',
+        tenantId: scope.tenantId,
+      });
+    });
   });
 });

@@ -190,6 +190,9 @@ export class PrintableDirectory {
   })
   accessPolicy: PrintableDirectoryAccessPolicy;
 
+  @Prop({ type: String, default: null })
+  slug?: string | null;
+
   @Prop({ type: PrintableDirectoryCover, default: {} })
   cover: PrintableDirectoryCover;
 
@@ -234,3 +237,10 @@ export const PrintableDirectorySchema =
 
 PrintableDirectorySchema.index({ tenantId: 1, ownerUserId: 1, updatedAt: -1 });
 PrintableDirectorySchema.index({ tenantId: 1, ownerUserId: 1, name: 1 });
+// Slug acts as a public sharing token and must be unique per tenant. The
+// partial filter excludes documents without a slug so multiple directories
+// can omit it without colliding on a `null` value.
+PrintableDirectorySchema.index(
+  { tenantId: 1, slug: 1 },
+  { unique: true, partialFilterExpression: { slug: { $type: 'string' } } },
+);

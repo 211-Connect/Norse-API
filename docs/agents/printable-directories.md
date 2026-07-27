@@ -33,6 +33,10 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - Page generation/insertion happens client-side when rendering the preview
     into a printable document; the API only stores and returns the flag
   - Existing directories without the field stored in MongoDB default to `false`
+- Public sharing: `slug` (optional string, unique per tenant)
+  - Never auto-generated; must be explicitly supplied by the client on create/update
+  - Acts as a capability token for `GET /printable-directories/public/:slug/preview` (see below): resolution ignores `accessPolicy` entirely, including `private`
+  - Enforced unique per tenant via a MongoDB partial unique index; duplicate slugs return `409 Conflict`
 
 ## Endpoints
 
@@ -73,6 +77,27 @@ Preview:
   - enforces `maxResources`
   - localized fallback behavior: requested locale -> `en` -> empty string
   - fails whole preview when any source/resource resolution fails
+
+## Public Sharing (Preview by Slug)
+
+A separate, fully public/unauthenticated controller exposes preview-by-slug
+for sharing a printable directory PDF via URL:
+
+- `PrintableDirectoryPublicController` (no `KeycloakGuard`), registered
+  independently from the authenticated `PrintableDirectoryController` so no
+  auth-bypass logic lives on the guarded routes
+- `GET /printable-directories/public/:slug/preview?locale=<locale>`
+  - no bearer token required; `x-tenant-id` is still required (tenant/locale
+    middleware still applies)
+  - resolves the directory by `tenantId` + `slug` only — ignores
+    `accessPolicy` and owner checks entirely, including `private` directories
+  - `favorites_list` sources resolve against the directory owner's favorites
+    list (`ownerUserId`), since there is no requesting user identity in this
+    flow
+  - same resolution semantics as `GET /:id/preview` otherwise (dedupe,
+    `maxResources`, localized fallback)
+  - clients should choose non-guessable slugs for directories that should not
+    be publicly discoverable
 
 ## Source Types
 

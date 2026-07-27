@@ -34,6 +34,15 @@ export class PrintableDirectoryResponseDto {
   })
   accessPolicy: PrintableDirectoryAccessPolicy;
 
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    example: 'winter-shelter-guide',
+    description:
+      'Public, tenant-unique slug used for fully public preview sharing. Null if not set.',
+  })
+  slug?: string | null;
+
   @ApiProperty({ type: PrintableDirectoryCoverResponseDto })
   cover: PrintableDirectoryCoverResponseDto;
 
