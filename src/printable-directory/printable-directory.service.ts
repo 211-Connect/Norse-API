@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -103,38 +104,44 @@ export class PrintableDirectoryService {
     payload: CreatePrintableDirectoryDto,
     scope: RequestScope,
   ): Promise<PrintableDirectoryResponseDto> {
-    const created = await this.printableDirectoryModel.create({
-      tenantId: scope.tenantId,
-      ownerUserId: scope.userId,
-      name: payload.name,
-      updatedBy: scope.userId,
-      accessPolicy: payload.accessPolicy ?? 'private',
-      cover: {
-        titleLocalized: { values: {} },
-        descriptionLocalized: { values: {} },
-        primaryColor: null,
-        layoutType: 'default',
-        coverImageUrlFront: null,
-        coverImageUrlBack: null,
-      },
-      header: {
-        layout: [],
-        textLocalized: { values: {} },
-        logoUrl: null,
-      },
-      footer: {
-        layout: [],
-        textLocalized: { values: {} },
-        logoUrl: null,
-      },
-      resourceLayout: payload.resourceLayout ?? 'line',
-      isBookletLayout: payload.isBookletLayout ?? false,
-      defaultQueryConfig: this.normalizeDefaultQueryConfig(
-        payload.defaultQueryConfig,
-      ),
-    });
+    try {
+      const created = await this.printableDirectoryModel.create({
+        tenantId: scope.tenantId,
+        ownerUserId: scope.userId,
+        name: payload.name,
+        updatedBy: scope.userId,
+        accessPolicy: payload.accessPolicy ?? 'private',
+        slug: payload.slug ?? null,
+        cover: {
+          titleLocalized: { values: {} },
+          descriptionLocalized: { values: {} },
+          primaryColor: null,
+          layoutType: 'default',
+          coverImageUrlFront: null,
+          coverImageUrlBack: null,
+        },
+        header: {
+          layout: [],
+          textLocalized: { values: {} },
+          logoUrl: null,
+        },
+        footer: {
+          layout: [],
+          textLocalized: { values: {} },
+          logoUrl: null,
+        },
+        resourceLayout: payload.resourceLayout ?? 'line',
+        isBookletLayout: payload.isBookletLayout ?? false,
+        defaultQueryConfig: this.normalizeDefaultQueryConfig(
+          payload.defaultQueryConfig,
+        ),
+      });
 
-    return this.toResponseDto(created);
+      return this.toResponseDto(created);
+    } catch (error) {
+      this.throwIfDuplicateSlugError(error);
+      throw error;
+    }
   }
 
   async getById(
@@ -205,6 +212,10 @@ export class PrintableDirectoryService {
       directory.accessPolicy = payload.accessPolicy;
     }
 
+    if (payload.slug !== undefined) {
+      directory.slug = payload.slug;
+    }
+
     if (payload.defaultQueryConfig !== undefined) {
       directory.defaultQueryConfig = this.normalizeDefaultQueryConfig(
         payload.defaultQueryConfig,
@@ -213,7 +224,12 @@ export class PrintableDirectoryService {
 
     directory.updatedBy = scope.userId;
 
-    await directory.save();
+    try {
+      await directory.save();
+    } catch (error) {
+      this.throwIfDuplicateSlugError(error);
+      throw error;
+    }
     return this.toResponseDto(directory);
   }
 
@@ -460,10 +476,48 @@ export class PrintableDirectoryService {
       scope,
     );
 
+    return this.buildPreviewResponse(
+      directory,
+      locale,
+      headers,
+      scope.tenantId,
+      scope.userId,
+    );
+  }
+
+  async previewBySlug(
+    slug: string,
+    tenantId: string,
+    locale: string,
+    headers: HeadersDto,
+  ): Promise<PrintableDirectoryPreviewResponseDto> {
+    const directory = await this.findDirectoryByTenantAndSlugOrThrow(
+      tenantId,
+      slug,
+    );
+
+    // Fully public/unauthenticated flow: there is no requesting user, so
+    // favorites_list sources resolve against the directory owner's list.
+    return this.buildPreviewResponse(
+      directory,
+      locale,
+      headers,
+      tenantId,
+      directory.ownerUserId,
+    );
+  }
+
+  private async buildPreviewResponse(
+    directory: PrintableDirectoryDocument,
+    locale: string,
+    headers: HeadersDto,
+    tenantId: string,
+    favoritesOwnerUserId: string,
+  ): Promise<PrintableDirectoryPreviewResponseDto> {
     const previewLocale = locale || headers['accept-language'] || 'en';
     const previewHeaders: HeadersDto = {
       ...headers,
-      'x-tenant-id': scope.tenantId,
+      'x-tenant-id': tenantId,
       'accept-language': previewLocale,
     };
 
@@ -478,7 +532,7 @@ export class PrintableDirectoryService {
           resolvedBaseDirectoryDto.sections[index],
           previewLocale,
           previewHeaders,
-          scope,
+          favoritesOwnerUserId,
         ),
       );
 
@@ -499,7 +553,7 @@ export class PrintableDirectoryService {
     sectionDto: PrintableDirectoryResponseDto['sections'][number],
     locale: string,
     headers: HeadersDto,
-    scope: RequestScope,
+    favoritesOwnerUserId: string,
   ): Promise<PrintableDirectoryPreviewSectionDto> {
     const orderedSources = [...section.sources].sort(
       (left, right) => left.order - right.order,
@@ -513,7 +567,7 @@ export class PrintableDirectoryService {
         directory,
         source,
         headers,
-        scope,
+        favoritesOwnerUserId,
       );
       for (const resource of resources) {
         if (!seenIds.has(resource.id)) {
@@ -546,7 +600,7 @@ export class PrintableDirectoryService {
     directory: PrintableDirectoryDocument,
     source: PrintableDirectorySectionSource,
     headers: HeadersDto,
-    scope: RequestScope,
+    favoritesOwnerUserId: string,
   ): Promise<PrintableDirectoryPreviewSectionResourceDto[]> {
     if (source.type === 'resource_ids') {
       return this.resolveResourcesByIds(source.resourceIds ?? [], headers);
@@ -562,8 +616,8 @@ export class PrintableDirectoryService {
       const favoriteList = await this.favoriteListModel
         .findOne({
           _id: source.favoritesListId,
-          ownerId: scope.userId,
-          tenantId: scope.tenantId,
+          ownerId: favoritesOwnerUserId,
+          tenantId: directory.tenantId,
         })
         .lean()
         .exec();
@@ -916,6 +970,33 @@ export class PrintableDirectoryService {
     return directory;
   }
 
+  private async findDirectoryByTenantAndSlugOrThrow(
+    tenantId: string,
+    slug: string,
+  ): Promise<PrintableDirectoryDocument> {
+    const directory = await this.printableDirectoryModel
+      .findOne({ tenantId, slug })
+      .exec();
+
+    if (!directory) {
+      throw new NotFoundException('Printable directory not found');
+    }
+
+    return directory;
+  }
+
+  private throwIfDuplicateSlugError(error: unknown): void {
+    if (
+      error &&
+      typeof error === 'object' &&
+      (error as { code?: number }).code === 11000 &&
+      typeof (error as { message?: string }).message === 'string' &&
+      (error as { message: string }).message.includes('slug')
+    ) {
+      throw new ConflictException('Slug is already in use for this tenant');
+    }
+  }
+
   private async toResponseDto(
     directoryDocument: PrintableDirectoryDocument,
   ): Promise<PrintableDirectoryResponseDto> {
@@ -999,6 +1080,7 @@ export class PrintableDirectoryService {
       },
       resourceLayout: directory.resourceLayout ?? 'line',
       isBookletLayout: directory.isBookletLayout ?? false,
+      slug: directory.slug ?? null,
       defaultQueryConfig: directory.defaultQueryConfig
         ? {
             locationName: directory.defaultQueryConfig.locationName ?? null,
