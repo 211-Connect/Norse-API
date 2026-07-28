@@ -951,6 +951,9 @@ export class UmamiAnalyticsService {
       const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
       const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
 
+      const rawUserId = this.getPivotPropertyValue(row, 'userId');
+      const rawSessionId = this.getPivotPropertyValue(row, 'sessionId');
+
       const searchResult: ReverseGeocodeOutput | null = searchCoords
         ? await this.reverseGeocode(searchCoords, row.eventId)
         : null;
@@ -964,6 +967,8 @@ export class UmamiAnalyticsService {
         timestamp,
         queryLabel,
         queryType,
+        userId: rawUserId ?? null,
+        sessionId: rawSessionId ?? null,
         searchZipCode: searchResult?.zipCode ?? null,
         searchCity: searchResult?.city ?? null,
         searchLatitude: searchResult?.latitude ?? null,
