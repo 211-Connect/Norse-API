@@ -8,6 +8,7 @@ import {
 import opencage from 'opencage-api-client';
 import { IGeocodingProvider } from './geocoding-provider.interface';
 import { ConfigService } from '@nestjs/config';
+import { mapOpenCageResultToGeocodeResponse } from '../mappers/geocoding.mapper';
 
 @Injectable()
 export class OpenCageGeocodingProvider implements IGeocodingProvider {
@@ -31,14 +32,7 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
       language: locale,
       limit,
     });
-    return response.results.map((result) => ({
-      coordinates: [result.geometry.lng, result.geometry.lat] as [
-        number,
-        number,
-      ],
-      address: result.formatted,
-      type: 'coordinates',
-    }));
+    return response.results.map(mapOpenCageResultToGeocodeResponse);
   }
 
   async reverseGeocode(
@@ -51,27 +45,9 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
     const response = await opencage.geocode({
       key: this.accessToken,
       q: `${lat},${lng}`,
-      countrycode: 'us',
+      // countrycode: 'us',
       language: locale,
     });
-    return response.results.map((result) => ({
-      type: 'coordinates' as const,
-      address: result.formatted,
-      coordinates: [result.geometry.lng, result.geometry.lat] as [
-        number,
-        number,
-      ],
-      country: result.components.country,
-      place:
-        result.components.city ||
-        result.components.town ||
-        result.components.village,
-      district:
-        result.components.suburb ||
-        result.components.neighbourhood ||
-        result.components.county,
-      postcode: result.components.postcode,
-      region: result.components.state,
-    }));
+    return response.results.map(mapOpenCageResultToGeocodeResponse);
   }
 }
