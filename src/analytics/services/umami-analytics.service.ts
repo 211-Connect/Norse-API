@@ -240,6 +240,8 @@ export class UmamiAnalyticsService {
           resourceViewed: eventTotals[UmamiEvent.ResourceViewed] ?? 0,
           safeExitClicks: eventTotals[UmamiEvent.SafeExitClick] ?? 0,
           favoriteAddToList: eventTotals[UmamiEvent.FavoriteAddToList] ?? 0,
+          highlightClicks: eventTotals[UmamiEvent.HighlightClick] ?? 0,
+          alertClicks: eventTotals[UmamiEvent.AlertClick] ?? 0,
         };
       },
       input.timezone,
