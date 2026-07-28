@@ -45,7 +45,7 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
     const response = await opencage.geocode({
       key: this.accessToken,
       q: `${lat},${lng}`,
-      // countrycode: 'us',
+      countrycode: 'us',
       language: locale,
     });
     return response.results.map(mapOpenCageResultToGeocodeResponse);

@@ -33,7 +33,7 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
     const response = await this.client
       .forwardGeocode({
         query: address,
-        // countries: ['US'],
+        countries: ['US'],
         autocomplete: true,
         language: [locale],
         limit,
