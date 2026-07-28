@@ -160,7 +160,7 @@ export class HybridSearchService {
     ]);
 
     const queryVector = embedResult;
-    const boostPinned = searchConfig?.boost_pinned_resources ?? true;
+    const boostPinned = searchConfig?.boost_pinned_resources ?? false;
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
