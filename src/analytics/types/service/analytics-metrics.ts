@@ -11,4 +11,6 @@ export interface AnalyticsMetrics {
   resourceViewed: number;
   safeExitClicks: number;
   favoriteAddToList: number;
+  highlightClicks: number;
+  alertClicks: number;
 }

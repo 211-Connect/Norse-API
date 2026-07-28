@@ -73,4 +73,15 @@ export class AnalyticsMetricsResponse implements AnalyticsMetrics {
     example: 40,
   })
   favoriteAddToList: number;
+  @ApiProperty({
+    description: 'Number of highlight clicks',
+    example: 15,
+  })
+  highlightClicks: number;
+
+  @ApiProperty({
+    description: 'Number of alert clicks',
+    example: 10,
+  })
+  alertClicks: number;
 }
