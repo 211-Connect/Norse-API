@@ -227,8 +227,31 @@ describe('ResourceService', () => {
       expect(result.errors).toHaveLength(0);
     });
 
+    it('uses cross-tenant fallback_no_tenant for missing tenant-scoped ids and logs', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([buildResource({ tenant_id: 'other-tenant' })]);
+
+      const result = await service.findManyByIds([salId], { headers });
+
+      expect(mockAggregate).toHaveBeenCalledTimes(3);
+      expect(mockAggregate).toHaveBeenNthCalledWith(3, [
+        { $match: { serviceAtLocationId: { $in: [salId] } } },
+        expect.any(Object),
+      ]);
+      expect(service['logger'].warn).toHaveBeenCalledWith(
+        expect.stringContaining('"lookupPath":"fallback_no_tenant"'),
+      );
+      expect(result.data[salId]).toBeDefined();
+      expect(result.errors).toHaveLength(0);
+    });
+
     it('reports missing ids as batch errors', async () => {
-      aggregateExec.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
       mockRedirectModel.findById.mockReturnValue({
         exec: jest.fn().mockResolvedValue(null),
       });

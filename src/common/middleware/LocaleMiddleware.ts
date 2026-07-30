@@ -32,6 +32,13 @@ export class LocaleMiddleware implements NestMiddleware {
     // `accept-language` header exactly.
     const rawLocale = req.query.locale;
     if (rawLocale !== undefined) {
+      if (validation.data === '*') {
+        this.logger.debug(
+          "LocaleMiddleware: accept-language header is '*', skipping locale query param validation.",
+        );
+        return next();
+      }
+
       if (
         !validation.success ||
         typeof rawLocale !== 'string' ||

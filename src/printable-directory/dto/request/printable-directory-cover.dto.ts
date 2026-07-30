@@ -26,9 +26,15 @@ export class PrintableDirectoryCoverDto extends IntersectionType(
   @IsEnum(PRINTABLE_DIRECTORY_COVER_LAYOUTS)
   layoutType?: PrintableDirectoryCoverLayout;
 
-  @ApiPropertyOptional({ example: 'https://example.com/cover.jpg' })
+  @ApiPropertyOptional({ example: 'https://example.com/cover-front.jpg' })
   @IsOptional()
   @IsString()
   @MaxLength(2000)
-  coverImageUrl?: string;
+  coverImageUrlFront?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/cover-back.jpg' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  coverImageUrlBack?: string;
 }

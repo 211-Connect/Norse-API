@@ -18,7 +18,7 @@ import {
 type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 
 interface FallbackLookupLogContext {
-  tenantId: string;
+  tenantId?: string;
   serviceAtLocationId: string;
   mongoId: string;
   handler: string;
@@ -64,15 +64,16 @@ export class ResourceService {
 
   async findTitlesByIds(
     ids: string[],
-    tenantId: string,
+    tenantId?: string,
   ): Promise<{ id: string; displayName: string }[]> {
     const uniqueIds = [...new Set(ids)];
     const titles: { id: string; displayName: string }[] = [];
     const foundIds = new Set<string>();
+    const tenantFilter = tenantId ? { tenant_id: tenantId } : {};
 
     const primaryResults = await this.resourceModel
       .find(
-        { tenant_id: tenantId, serviceAtLocationId: { $in: uniqueIds } },
+        { ...tenantFilter, serviceAtLocationId: { $in: uniqueIds } },
         { serviceAtLocationId: 1, displayName: 1 },
       )
       .lean()
@@ -119,6 +120,11 @@ export class ResourceService {
    * Batch fetch resources by IDs with partial failure support.
    * Returns a structured response with successful resources and errors.
    * Optimized to use a single MongoDB query instead of N queries.
+   *
+   * Uses the same 3-tier fallback chain as findResourceBySalId:
+   *   1. primary: tenant-scoped lookup by serviceAtLocationId.
+   *   2. fallback: tenant-scoped lookup by mongo _id.
+   *   3. fallback_no_tenant: cross-tenant lookup by serviceAtLocationId.
    */
   async findManyByIds(
     ids: string[],
@@ -147,10 +153,10 @@ export class ResourceService {
       (resource) => resource.serviceAtLocationId ?? resource._id,
     );
 
-    const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-    if (missingIds.length > 0) {
+    const missingIdsAfterPrimary = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIdsAfterPrimary.length > 0) {
       const fallbackResults = await this.aggregateResources(
-        { tenant_id: tenantId, _id: { $in: missingIds } },
+        { tenant_id: tenantId, _id: { $in: missingIdsAfterPrimary } },
         locale,
       );
 
@@ -171,6 +177,33 @@ export class ResourceService {
         errors,
         foundIds,
         (resource) => resource._id,
+      );
+    }
+
+    const missingIdsAfterFallback = uniqueIds.filter((id) => !foundIds.has(id));
+    if (missingIdsAfterFallback.length > 0) {
+      const fallbackNoTenantResults = await this.aggregateResources(
+        { serviceAtLocationId: { $in: missingIdsAfterFallback } },
+        locale,
+      );
+
+      for (const resource of fallbackNoTenantResults) {
+        this.logFallbackLookup({
+          tenantId,
+          serviceAtLocationId: resource.serviceAtLocationId!,
+          mongoId: resource._id,
+          handler: 'findManyByIds',
+          lookupPath: 'fallback_no_tenant',
+        });
+      }
+
+      this.collectTransformedResources(
+        fallbackNoTenantResults,
+        locale,
+        data,
+        errors,
+        foundIds,
+        (resource) => resource.serviceAtLocationId ?? resource._id,
       );
     }
 

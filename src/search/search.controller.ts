@@ -28,6 +28,7 @@ import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
+import { SEARCH_QUERY_TYPES } from './dto/search-query-type';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
@@ -102,7 +103,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
+    enum: SEARCH_QUERY_TYPES,
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -198,7 +199,7 @@ export class SearchController {
   @ApiQuery({
     name: 'query_type',
     required: false,
-    enum: ['text', 'taxonomy', 'organization', 'more_like_this', 'hybrid'],
+    enum: SEARCH_QUERY_TYPES,
     schema: { default: 'text' },
   })
   @ApiQuery({

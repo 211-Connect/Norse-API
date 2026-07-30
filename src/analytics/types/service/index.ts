@@ -14,3 +14,4 @@ export * from './area-searches-response';
 export * from './event-values-response';
 export * from './event-catalog-entry';
 export * from './website-name';
+export * from './reverse-geocode-output';

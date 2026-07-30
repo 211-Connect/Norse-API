@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class SearchScorecardTaxonomiesQueryDto {
   @ApiProperty({
@@ -20,26 +27,30 @@ export class SearchScorecardTaxonomiesQueryDto {
   query: string;
 
   @ApiProperty({
+    type: Number,
     required: false,
     default: 1,
     minimum: 1,
     description: 'Pagination page index',
   })
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page = 1;
+  page: number = 1;
 
   @ApiProperty({
+    type: Number,
     required: false,
     default: 10,
     minimum: 1,
     maximum: 100,
     description: 'Page size',
   })
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(100)
-  limit = 10;
+  limit: number = 10;
 }

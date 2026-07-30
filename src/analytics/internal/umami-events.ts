@@ -9,4 +9,6 @@ export enum UmamiEvent {
   ResourceViewed = 'resource_viewed',
   SafeExitClick = 'safe_exit_click',
   FavoriteAddToList = 'favorite_add_to_list',
+  HighlightClick = 'highlight_click',
+  AlertClick = 'alert_click',
 }

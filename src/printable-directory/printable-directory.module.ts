@@ -13,6 +13,7 @@ import { FavoriteListModule } from 'src/favorite-list/favorite-list.module';
 import { ResourceModule } from 'src/resource/resource.module';
 import { SearchModule } from 'src/search/search.module';
 import { PrintableDirectoryController } from './printable-directory.controller';
+import { PrintableDirectoryPublicController } from './printable-directory-public.controller';
 import { PrintableDirectoryService } from './printable-directory.service';
 
 @Module({
@@ -26,7 +27,10 @@ import { PrintableDirectoryService } from './printable-directory.service';
       { name: FavoriteList.name, schema: FavoriteListSchema },
     ]),
   ],
-  controllers: [PrintableDirectoryController],
+  controllers: [
+    PrintableDirectoryController,
+    PrintableDirectoryPublicController,
+  ],
   providers: [PrintableDirectoryService],
 })
 export class PrintableDirectoryModule {}
