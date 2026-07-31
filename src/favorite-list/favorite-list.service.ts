@@ -346,22 +346,26 @@ export class FavoriteListService {
     id: string,
     locale: string,
   ): Promise<FavoriteListDetailResponseDto> {
-    const favoriteList = await this.favoriteListModel.findById(id).populate({
-      path: 'favorites',
-      model: 'Resource',
-      select: '-serviceArea',
-      transform: (doc: ResourceDocument | null) => {
-        if (!doc) return null;
+    const favoriteList = await this.favoriteListModel
+      .findById(id)
+      .populate<{ favorites: (ResourceDocument | null)[] }>({
+        path: 'favorites',
+        model: 'Resource',
+        select: '-serviceArea',
+        transform: (doc: ResourceDocument | null) => {
+          if (!doc) return null;
 
-        const translation = doc.translations.find((el) => el.locale === locale);
+          const translation = doc.translations.find(
+            (el) => el.locale === locale,
+          );
 
-        doc.translations = [];
+          doc.translations = [];
 
-        if (translation) doc.translations.push(translation);
+          if (translation) doc.translations.push(translation);
 
-        return doc;
-      },
-    });
+          return doc;
+        },
+      });
 
     if (!favoriteList) {
       this.logger.warn(`Favorite list with ID: ${id} not found.`);
@@ -369,7 +373,7 @@ export class FavoriteListService {
     }
 
     favoriteList.favorites = favoriteList.favorites.filter(
-      (el: any) => el != null,
+      (el): el is ResourceDocument => el != null,
     );
 
     return {
