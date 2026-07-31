@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 
 export class ResourceLocationOpenApiDto {
   @ApiProperty({ example: 'Point' })
@@ -166,4 +166,19 @@ export class TransformedResourceOpenApiDto {
 
   @ApiPropertyOptional({ type: [ResourceFacetOpenApiDto] })
   facetsEn?: ResourceFacetOpenApiDto[];
+}
+
+/**
+ * Variant of a resource as returned when populated inside a favorite list
+ * (see FavoriteListService.findOne). Unlike TransformedResourceOpenApiDto,
+ * the locale filtering keeps `translations` as an array (0-1 items) rather
+ * than collapsing it to a single `translation`, and `serviceArea` is
+ * excluded via the `-serviceArea` projection used in the populate query.
+ */
+export class FavoriteResourceOpenApiDto extends OmitType(
+  TransformedResourceOpenApiDto,
+  ['translation', 'facetsEn', 'serviceArea'] as const,
+) {
+  @ApiPropertyOptional({ type: [ResourceTranslationOpenApiDto] })
+  translations?: ResourceTranslationOpenApiDto[];
 }
