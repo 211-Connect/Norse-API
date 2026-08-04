@@ -65,7 +65,12 @@ export class OrganizationService {
         'location',
       ],
       query: textQuery,
-      sort: text ? [{ _score: { order: 'desc' } }] : undefined,
+      sort: text
+        ? [{ _score: { order: 'desc' } }]
+        : [
+            { 'name.raw': { order: 'asc' } },
+            { organization_id: { order: 'asc' } },
+          ],
     };
 
     try {
