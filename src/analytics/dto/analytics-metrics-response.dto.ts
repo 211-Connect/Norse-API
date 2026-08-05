@@ -39,6 +39,12 @@ export class AnalyticsMetricsResponse implements AnalyticsMetrics {
   websiteClicks: number;
 
   @ApiProperty({
+    description: 'Number of SMS interactions initiated',
+    example: 0,
+  })
+  smsClicks: number;
+
+  @ApiProperty({
     description: 'Number of searches performed via the embedded widget',
     example: 150,
   })
