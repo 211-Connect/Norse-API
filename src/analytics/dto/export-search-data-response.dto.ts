@@ -95,6 +95,13 @@ export class SearchEventExportRow {
     nullable: true,
   })
   userLongitude: number | null;
+
+  @ApiProperty({
+    description: 'Referral source (from utm_source event property)',
+    example: 'google',
+    nullable: true,
+  })
+  referralSource: string | null;
 }
 
 export class ExportSearchDataResponse {
