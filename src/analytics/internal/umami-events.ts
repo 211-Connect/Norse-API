@@ -4,6 +4,7 @@ export enum UmamiEvent {
   DirectionClick = 'direction_click',
   PhoneClick = 'phone_click',
   WebsiteClick = 'website_click',
+  SmsClick = 'sms_click',
   WidgetSearch = 'widget_search',
   CalloutClick = 'callout_click',
   ResourceViewed = 'resource_viewed',

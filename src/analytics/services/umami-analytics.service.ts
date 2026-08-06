@@ -234,6 +234,7 @@ export class UmamiAnalyticsService {
           directions: eventTotals[UmamiEvent.DirectionClick] ?? 0,
           phoneCalls: eventTotals[UmamiEvent.PhoneClick] ?? 0,
           websiteClicks: eventTotals[UmamiEvent.WebsiteClick] ?? 0,
+          smsClicks: eventTotals[UmamiEvent.SmsClick] ?? 0,
           widgetSearches: eventTotals[UmamiEvent.WidgetSearch] ?? 0,
           calloutClicks: eventTotals[UmamiEvent.CalloutClick] ?? 0,
           languageSwitches: eventTotals[UmamiEvent.LanguageSwitch] ?? 0,
@@ -955,6 +956,7 @@ export class UmamiAnalyticsService {
 
       const rawUserId = this.getPivotPropertyValue(row, 'userId');
       const rawSessionId = this.getPivotPropertyValue(row, 'sessionId');
+      const rawReferralSource = this.getPivotPropertyValue(row, 'utm_source');
 
       const searchResult: ReverseGeocodeOutput | null = searchCoords
         ? await this.reverseGeocode(searchCoords, row.eventId)
@@ -979,6 +981,7 @@ export class UmamiAnalyticsService {
         userCity: userResult?.city ?? null,
         userLatitude: userResult?.latitude ?? null,
         userLongitude: userResult?.longitude ?? null,
+        referralSource: rawReferralSource ?? null,
       };
     } catch (error) {
       this.logger.error(
