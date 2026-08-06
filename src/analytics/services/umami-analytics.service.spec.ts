@@ -175,5 +175,24 @@ describe('UmamiAnalyticsService', () => {
 
       expect(result).toBeNull();
     });
+
+    it('extracts referralSource from the utm_source property when present', async () => {
+      const row = buildRow({
+        queryLabel: 'homeless shelter',
+        utm_source: 'google',
+      });
+
+      const result = (await invoke(row)) as { referralSource: string | null };
+
+      expect(result.referralSource).toBe('google');
+    });
+
+    it('returns null for referralSource when utm_source is absent', async () => {
+      const row = buildRow({ queryLabel: 'no utm here' });
+
+      const result = (await invoke(row)) as { referralSource: string | null };
+
+      expect(result.referralSource).toBeNull();
+    });
   });
 });
