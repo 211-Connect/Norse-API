@@ -5,6 +5,7 @@ export interface AnalyticsMetrics {
   directions: number;
   phoneCalls: number;
   websiteClicks: number;
+  smsClicks: number;
   widgetSearches: number;
   calloutClicks: number;
   languageSwitches: number;

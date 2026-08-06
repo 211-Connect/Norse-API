@@ -234,6 +234,7 @@ export class UmamiAnalyticsService {
           directions: eventTotals[UmamiEvent.DirectionClick] ?? 0,
           phoneCalls: eventTotals[UmamiEvent.PhoneClick] ?? 0,
           websiteClicks: eventTotals[UmamiEvent.WebsiteClick] ?? 0,
+          smsClicks: eventTotals[UmamiEvent.SmsClick] ?? 0,
           widgetSearches: eventTotals[UmamiEvent.WidgetSearch] ?? 0,
           calloutClicks: eventTotals[UmamiEvent.CalloutClick] ?? 0,
           languageSwitches: eventTotals[UmamiEvent.LanguageSwitch] ?? 0,
