@@ -68,7 +68,16 @@ export class OrganizationService {
       sort: text
         ? [{ _score: { order: 'desc' } }]
         : [
-            { 'name.raw': { order: 'asc' } },
+            {
+              _script: {
+                type: 'string' as const,
+                order: 'asc' as const,
+                script: {
+                  lang: 'painless',
+                  source: "params['_source']['name']",
+                },
+              },
+            },
             { organization_id: { order: 'asc' } },
           ],
     };

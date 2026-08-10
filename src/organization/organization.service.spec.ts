@@ -56,7 +56,16 @@ describe('OrganizationService', () => {
       bool: { filter: [{ term: { tenant_id: 'tenant-a' } }] },
     });
     expect(request.sort).toEqual([
-      { 'name.raw': { order: 'asc' } },
+      {
+        _script: {
+          type: 'string',
+          order: 'asc',
+          script: {
+            lang: 'painless',
+            source: "params['_source']['name']",
+          },
+        },
+      },
       { organization_id: { order: 'asc' } },
     ]);
   });
