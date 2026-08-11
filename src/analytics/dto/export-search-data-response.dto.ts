@@ -9,16 +9,6 @@ export class SearchEventExportRow {
 
   @ApiProperty({
     description:
-      'Anonymized, unique identifier for the user who performed the search. ' +
-      'Derived by one-way hashing a client-generated anonymous identifier; ' +
-      'contains no personally identifiable information.',
-    example: 'a3f9c2b1e4d6f0a8b7c5d3e1',
-    nullable: true,
-  })
-  userId: string | null;
-
-  @ApiProperty({
-    description:
       'Anonymized, unique identifier for the browsing session in which the ' +
       'search was performed. Derived by one-way hashing a client-generated ' +
       'anonymous identifier; contains no personally identifiable information.',
