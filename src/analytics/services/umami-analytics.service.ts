@@ -954,7 +954,6 @@ export class UmamiAnalyticsService {
       const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
       const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
 
-      const rawUserId = this.getPivotPropertyValue(row, 'userId');
       const rawSessionId = this.getPivotPropertyValue(row, 'sessionId');
       const rawReferralSource = this.getPivotPropertyValue(row, 'utm_source');
 
@@ -971,7 +970,6 @@ export class UmamiAnalyticsService {
         timestamp,
         queryLabel,
         queryType,
-        userId: rawUserId ?? null,
         sessionId: rawSessionId ?? null,
         searchZipCode: searchResult?.zipCode ?? null,
         searchCity: searchResult?.city ?? null,
