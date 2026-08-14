@@ -302,4 +302,102 @@ describe('SearchService Logic', () => {
 
     expect(hasAgeFilter).toBe(false);
   });
+
+  it('should apply ONLY geo_distance filter for geo_type=proximity (distance > 0)', async () => {
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      coords: [-93.2, 44.9],
+      distance: 10,
+      geo_type: 'proximity',
+    };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const filters = getFiltersFromLastCall();
+
+    const svcAreaFilter = filters.find(
+      (f) => f.geo_shape && f.geo_shape.service_area,
+    );
+    expect(svcAreaFilter).toBeUndefined();
+
+    const boolFilter = filters.find((f) => f.bool && f.bool.should);
+    expect(boolFilter).toBeDefined();
+
+    const shouldClauses = boolFilter.bool.should;
+    const mustClause = shouldClauses.find((c) => c.bool && c.bool.must);
+    const geoDist = mustClause.bool.must.find((m) => m.geo_distance);
+
+    expect(geoDist).toBeDefined();
+    expect(geoDist.geo_distance.distance).toBe('10miles');
+  });
+
+  it('should apply NO geo filters for geo_type=proximity with no distance', async () => {
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      coords: [-93.2, 44.9],
+      distance: 0,
+      geo_type: 'proximity',
+    };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const filters = getFiltersFromLastCall();
+    const svcAreaFilter = filters.find((f) => f.geo_shape);
+    const boolFilter = filters.find((f) => f.bool && f.bool.should);
+
+    expect(svcAreaFilter).toBeUndefined();
+    expect(boolFilter).toBeUndefined();
+  });
+
+  it('should sort taxonomy search by distance when coords are provided and sort is unset (relevance default)', async () => {
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      query_type: 'taxonomy',
+      query: 'BM-1400',
+      coords: [-93.2, 44.9],
+      distance: 10,
+    };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const callArgs = mockEsService.search.mock.calls[0][0];
+    const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
+
+    expect(geoDistanceSort).toBeDefined();
+    expect(geoDistanceSort._geo_distance['location.point']).toEqual({
+      lon: -93.2,
+      lat: 44.9,
+    });
+  });
+
+  it('should fall back to service_at_location_id sort for taxonomy search with no coords', async () => {
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      query_type: 'taxonomy',
+      query: 'BM-1400',
+    };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const callArgs = mockEsService.search.mock.calls[0][0];
+    const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
+    const idSort = callArgs.sort.find(
+      (s) => s['service_at_location_id.raw'],
+    );
+
+    expect(geoDistanceSort).toBeUndefined();
+    expect(idSort).toBeDefined();
+  });
 });
