@@ -133,9 +133,7 @@ export class SearchUtilsService {
     if (coords) {
       const [lon, lat] = coords.map(Number);
 
-      // geo_type=proximity means "radius only" — the caller is explicitly opting out
-      // of the service_area containment requirement, so skip the geo_shape filter
-      // below and rely solely on the geo_distance filter.
+      // proximity opts out of service_area containment; radius filter only.
       if (geoType !== 'proximity') {
         filters.push({
           geo_shape: {
@@ -224,10 +222,7 @@ export class SearchUtilsService {
       case 'relevance':
       default:
         if (queryType === 'taxonomy') {
-          // When the caller has given us a location, "relevance" for a taxonomy
-          // search should mean nearest-first, matching what the Norse UI already
-          // advertises as its default. Without coords there's no distance to sort
-          // by, so fall back to a stable tie-breaker.
+          // Relevance default for taxonomy means nearest-first when we have coords.
           if (coords) {
             return [prioritySort, this.getGeoDistanceSort(coords)];
           }

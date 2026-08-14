@@ -393,9 +393,7 @@ describe('SearchService Logic', () => {
 
     const callArgs = mockEsService.search.mock.calls[0][0];
     const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
-    const idSort = callArgs.sort.find(
-      (s) => s['service_at_location_id.raw'],
-    );
+    const idSort = callArgs.sort.find((s) => s['service_at_location_id.raw']);
 
     expect(geoDistanceSort).toBeUndefined();
     expect(idSort).toBeDefined();
