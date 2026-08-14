@@ -210,7 +210,13 @@ export class SearchResourcesQueryDto {
   @Max(300)
   limit: number = 25;
 
-  @ApiPropertyOptional({ enum: ['boundary', 'proximity'] })
+  @ApiPropertyOptional({
+    enum: ['boundary', 'proximity'],
+    description:
+      'Omitted (default): service_area containment AND distance both required. ' +
+      "'proximity': distance only, skips service_area containment. " +
+      "'boundary': ignores coords/distance, matches service_area against a POST body geometry.",
+  })
   @IsOptional()
   @IsEnum(['boundary', 'proximity'])
   geo_type?: 'boundary' | 'proximity';

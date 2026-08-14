@@ -133,17 +133,20 @@ export class SearchUtilsService {
     if (coords) {
       const [lon, lat] = coords.map(Number);
 
-      filters.push({
-        geo_shape: {
-          service_area: {
-            shape: {
-              type: 'point',
-              coordinates: [lon, lat],
+      // proximity opts out of service_area containment; radius filter only.
+      if (geoType !== 'proximity') {
+        filters.push({
+          geo_shape: {
+            service_area: {
+              shape: {
+                type: 'point',
+                coordinates: [lon, lat],
+              },
+              relation: 'contains',
             },
-            relation: 'contains',
           },
-        },
-      });
+        });
+      }
 
       if (distance > 0) {
         filters.push({
@@ -219,6 +222,11 @@ export class SearchUtilsService {
       case 'relevance':
       default:
         if (queryType === 'taxonomy') {
+          // Relevance default for taxonomy means nearest-first when we have coords.
+          if (coords) {
+            return [prioritySort, this.getGeoDistanceSort(coords)];
+          }
+
           return [
             prioritySort,
             { 'service_at_location_id.raw': { order: 'asc' } },
