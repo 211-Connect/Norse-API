@@ -110,6 +110,18 @@ in the frontend repo). This means:
   ([test/app.e2e-spec.ts](test/app.e2e-spec.ts)), `npm run test:cov` for coverage.
 - Add/update a `*.spec.ts` alongside any service/controller you touch or add.
 
+## Documentation
+
+- When adding or substantially changing a **complex feature** (new module, non-trivial
+  proxy/integration, multi-step workflow, or anything a future agent couldn't infer
+  from the code alone) add or update a doc under [docs/](docs/), following the existing
+  style (see [docs/ai-search-classification.md](docs/ai-search-classification.md),
+  [docs/printable-directories.md](docs/printable-directories.md),
+  [docs/taxonomy-scorecard-customization.md](docs/taxonomy-scorecard-customization.md)).
+- Link the new doc from the module map above so it stays discoverable.
+- Small/self-explanatory changes (a new DTO field, a bug fix, a straightforward CRUD
+  endpoint) don't need a doc — use judgment, don't create docs for trivial changes.
+
 ## Build & run
 
 - `npm install`, `npm run build`, `npm run start:dev` (watch mode), `npm run lint`.
