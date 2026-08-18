@@ -86,6 +86,70 @@ in the frontend repo). This means:
 | `metrics/`                   | Prometheus metrics, pushed to a Pushgateway.                                                                                                                                                          |
 | `common/`                    | Cross-cutting: config, guards, middleware, filters, decorators, Mongoose schemas, request-scoped cache service.                                                                                       |
 
+## Adding a new endpoint
+
+### DTO location
+
+DTOs live in the owning module's own `dto/` folder, e.g. `src/<module>/dto/<name>-query.dto.ts`
+and `src/<module>/dto/<name>-response.dto.ts`. Do **not** put feature DTOs in
+`src/common/dto/` — that's reserved for genuinely cross-cutting concerns (currently just
+header parsing, [src/common/dto/headers.dto.ts](src/common/dto/headers.dto.ts)) — and don't
+scatter DTOs loosely at the module root. If the module has a `dto/index.ts` barrel, export
+every new DTO from it.
+
+### Controllers are thin
+
+Controllers handle HTTP concerns only: route/version decorators (`@Get`/`@Post`,
+`@Version('1')`), `@ApiOperation`/`@ApiResponse`, resolving `tenantId`/headers/auth
+context via guards and decorators, and delegating to a service method. Controllers
+should not contain business logic, downstream calls (Elasticsearch/MongoDB/HTTP
+clients/cache), or domain branching — trivial parameter marshaling (picking fields
+off a DTO to pass into a service call) is fine, decision-making logic is not.
+
+### Services own business logic
+
+All business logic lives in services: downstream calls, domain rules/branching,
+orchestration across multiple downstream calls, and caching strategy. Services are
+the layer that throws `HttpException` subclasses directly when a domain error occurs
+(not the controller) — matching the error-mapping convention described in Tenancy &
+security rules below (`503` for downstream timeouts, `502` for failed/non-2xx
+downstream calls). If a module needs multiple services (e.g. one per external
+integration, one for caching, one for config), keep each focused on a single
+responsibility rather than building a "god service" — split by concern and have the
+controller (or one orchestrating service) compose them.
+
+### Checklist: adding an endpoint to an existing module
+
+1. **Internal/service-layer type** (if the module has a types layer, e.g. `types/service/`) —
+   define the shape returned by the service method and export it from the module's types
+   barrel.
+2. **Query DTO** (if the endpoint takes query params) — `src/<module>/dto/<name>-query.dto.ts`,
+   using `class-validator`/`class-transformer` decorators (`@IsString`, `@IsOptional`,
+   `@Type(() => Number)`, etc.). Extend a shared base query DTO if the module already has one,
+   rather than duplicating common fields.
+3. **Response DTO** — `src/<module>/dto/<name>-response.dto.ts`, implementing the internal
+   type where one exists, with `@ApiProperty` on **every** field (including `required`,
+   `enum`, `default`, nested types — see the OpenAPI contract section above).
+4. **Register both DTOs** in the module's `dto/index.ts` barrel, if present.
+5. **Service method** — implement the business logic, following the module's existing
+   pipeline conventions (caching strategy, downstream calls, error mapping to `503`/`502`
+   per the Tenancy & security rules below).
+6. **Controller route** — add `@Get`/`@Post` with `@Version('1')`, `@ApiOperation`,
+   `@ApiResponse({ status: 200, type: <ResponseDto> })`; resolve tenant id from the
+   `x-tenant-id` header and any auth context from guards; delegate to the service method.
+7. **No module/`app.module.ts` wiring needed** — the controller and its providers are
+   already registered when you're extending an existing module.
+8. **Tests** — add or extend a `*.spec.ts` alongside any service/controller you touch
+   (see Testing conventions below).
+9. **Sanity-check** the generated OpenAPI document (`GET /swagger/json` or `/swagger`)
+   after adding the DTOs/route, per the OpenAPI contract section above.
+
+### Creating a brand-new module (rarer)
+
+Scaffold `<module>/dto/`, `<module>.controller.ts`, `<module>.service.ts`, and
+`<module>.module.ts`; register the new module in `src/app.module.ts` imports; apply
+`TenantMiddleware`/guards as needed following the request lifecycle order described above.
+
 ## Tenancy & security rules
 
 - Tenant id always comes from the `x-tenant-id` header, never from the request body —
