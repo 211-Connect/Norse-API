@@ -69,24 +69,24 @@ in the frontend repo). This means:
 
 ## Module map (`src/`)
 
-| Module | Purpose |
-|---|---|
-| `search/` | Resource search (`SearchService`/`HybridSearchService`) + AI classification/re-rank proxy (`AiSearchService`) to ML Broker. See [docs/ai-search-classification.md](docs/ai-search-classification.md). |
-| `resource/` | Single-resource lookups against Elasticsearch. |
-| `taxonomy/` | HSIS taxonomy tree lookups. |
-| `taxonomy-scorecard/` | Taxonomy scorecard customization; see [docs/taxonomy-scorecard-customization.md](docs/taxonomy-scorecard-customization.md). |
-| `favorite/` `favorite-list/` | User favorites, backed by MongoDB, gated by `KeycloakGuard`. |
-| `organization/` | Organization lookups. |
-| `printable-directory/` | Printable directory generation; public + authenticated controllers — see [docs/printable-directories.md](docs/printable-directories.md). |
-| `geocoding/` | Mapbox/Opencage geocoding wrappers. |
-| `suggestion/` | Search/autocomplete suggestions. |
-| `short-url/` | URL shortening/redirects. |
-| `analytics/` | Umami-backed analytics endpoints, with an internal-only surface (`analytics/internal`) and an LRU + Redis two-tier cache (`ANALYTICS_*` env vars). |
-| `cms-config/` | Tenant/orchestration config sourced from a CMS, cached via `cms-redis.service.ts`. |
-| `auth/` | Keycloak-based auth guard/services. |
-| `health/` | Health check endpoint. |
-| `metrics/` | Prometheus metrics, pushed to a Pushgateway. |
-| `common/` | Cross-cutting: config, guards, middleware, filters, decorators, Mongoose schemas, request-scoped cache service. |
+| Module                       | Purpose                                                                                                                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search/`                    | Resource search (`SearchService`/`HybridSearchService`) + AI classification/re-rank proxy (`AiSearchService`) to ML Broker. See [docs/ai-search-classification.md](docs/ai-search-classification.md). |
+| `resource/`                  | Single-resource lookups against Elasticsearch.                                                                                                                                                        |
+| `taxonomy/`                  | HSIS taxonomy tree lookups.                                                                                                                                                                           |
+| `taxonomy-scorecard/`        | Taxonomy scorecard customization; see [docs/taxonomy-scorecard-customization.md](docs/taxonomy-scorecard-customization.md).                                                                           |
+| `favorite/` `favorite-list/` | User favorites, backed by MongoDB, gated by `KeycloakGuard`.                                                                                                                                          |
+| `organization/`              | Organization lookups.                                                                                                                                                                                 |
+| `printable-directory/`       | Printable directory generation; public + authenticated controllers — see [docs/printable-directories.md](docs/printable-directories.md).                                                              |
+| `geocoding/`                 | Mapbox/Opencage geocoding wrappers.                                                                                                                                                                   |
+| `suggestion/`                | Search/autocomplete suggestions.                                                                                                                                                                      |
+| `short-url/`                 | URL shortening/redirects.                                                                                                                                                                             |
+| `analytics/`                 | Umami-backed analytics endpoints, with an internal-only surface (`analytics/internal`) and an LRU + Redis two-tier cache (`ANALYTICS_*` env vars).                                                    |
+| `cms-config/`                | Tenant/orchestration config sourced from a CMS, cached via `cms-redis.service.ts`.                                                                                                                    |
+| `auth/`                      | Keycloak-based auth guard/services.                                                                                                                                                                   |
+| `health/`                    | Health check endpoint.                                                                                                                                                                                |
+| `metrics/`                   | Prometheus metrics, pushed to a Pushgateway.                                                                                                                                                          |
+| `common/`                    | Cross-cutting: config, guards, middleware, filters, decorators, Mongoose schemas, request-scoped cache service.                                                                                       |
 
 ## Tenancy & security rules
 
