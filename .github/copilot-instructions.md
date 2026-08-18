@@ -1,5 +1,7 @@
 # Project Guidelines
 
+See [AGENTS.md](../AGENTS.md) at the repo root for the fuller reference (module map, request lifecycle, OpenAPI/SDK contract details, testing conventions). This file is the short version.
+
 ## Code Style
 
 - TypeScript + NestJS patterns; modules/controllers/services live under src/ (see [src/app.module.ts](src/app.module.ts)).
@@ -21,12 +23,13 @@
 - Run: npm run start | npm run start:dev | npm run start:prod
 - Lint: npm run lint
 - Tests: npm run test | npm run test:e2e | npm run test:cov
+- Unit tests are colocated `*.spec.ts` files using `Test.createTestingModule` with hand-rolled `jest.fn()` mocks (see [src/favorite/favorite.service.spec.ts](src/favorite/favorite.service.spec.ts)); follow that pattern rather than introducing a mocking library.
 
-## Project Conventions
+## OpenAPI is a contract
 
-- Global exception responses include tenant and request metadata via [src/common/filters/global-exception.filter.ts](src/common/filters/global-exception.filter.ts).
-- Request-scoped helpers are attached by middleware (cacheService, configService, tenantId) in [src/common/middleware/ServiceProviderMiddleware.ts](src/common/middleware/ServiceProviderMiddleware.ts) and [src/common/middleware/TenantMiddleware.ts](src/common/middleware/TenantMiddleware.ts).
-- Swagger is served at /swagger with JSON at /swagger/json (see [src/main.ts](src/main.ts)).
+- The Norse frontend (`211-Connect/Norse`) generates its typed API SDK from this service's `/swagger/json`. Every new/changed public endpoint needs complete `@ApiTags`/`@ApiResponse`/`@ApiBody`/`@ApiQuery`/`@ApiHeader` decorators, and every DTO field needs `@ApiProperty`.
+- Treat field renames, type changes, or response-shape changes as breaking changes for the generated frontend SDK, not just internal refactors. Prefer additive changes.
+- See [AGENTS.md](../AGENTS.md) for the full module map and request lifecycle.
 
 ## Integration Points
 
