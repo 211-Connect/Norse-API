@@ -24,6 +24,9 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - header/footer: `textLocalized`
 - Header/footer layout is an ordered array of tokens: `text | logo | domain | date`
 - Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords` (`{ latitude, longitude }` object), and `radius`
+- Locale configuration:
+  - `locales` (optional array of 2-3 letter locale codes): locales this directory supports; `undefined` if not configured
+  - `defaultLocale` (string, default `en`): fallback locale used when the requested/resolved locale has no localized value; replaces the previously hardcoded `en` fallback in localized-text resolution and preview locale resolution
 - Booklet layout: `isBookletLayout` (boolean, default `false`)
   - When `true`, the printable document must be generated with a total page
     count that is a multiple of four
@@ -75,7 +78,7 @@ Preview:
   - resolves all sources in order
   - de-duplicates resources by ID within section
   - enforces `maxResources`
-  - localized fallback behavior: requested locale -> `en` -> empty string
+  - localized fallback behavior: requested locale -> directory `defaultLocale` (default `en`) -> empty string
   - fails whole preview when any source/resource resolution fails
 
 ## Public Sharing (Preview by Slug)
