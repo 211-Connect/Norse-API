@@ -1,8 +1,6 @@
 # AGENTS.md — Norse API
 
-Agent-facing reference for working in this repo. Keep this file and
-[.github/copilot-instructions.md](.github/copilot-instructions.md) in sync — this file
-goes deeper; the Copilot file is the short version.
+Agent-facing reference for working in this repo.
 
 ## What this service is
 
@@ -121,10 +119,22 @@ in the frontend repo). This means:
   [src/common/config/configuration.ts](src/common/config/configuration.ts) — add new
   vars to **both** when introducing config.
 
+## Bootstrap & integrations
+
+- [src/main.ts](src/main.ts) sets up the global `HttpExceptionFilter`, the global
+  `ValidationPipe` (see whitelist note above), Helmet, CORS, and header-based API
+  versioning (`x-api-version` via `VersioningType.HEADER`).
+- [src/app.module.ts](src/app.module.ts) wires infra providers and registers domain
+  modules: Redis cache (`cache-manager-redis-store`), a Redis-backed rate limiter, and
+  the MongoDB connection (Mongoose).
+- External integrations used by services: Elasticsearch (search/resource/taxonomy),
+  Mapbox/Opencage SDKs (geocoding), the ML Broker (AI search), and Umami (analytics).
+
 ## Skills
 
 Domain skills live under `.agents/skills/` (MongoDB schema/query/search, Elasticsearch
 ES|QL, NestJS best practices) and are tracked in [skills-lock.json](skills-lock.json).
 Use them for relevant tasks (e.g. Mongoose schema changes, ES|QL analytics queries,
 NestJS architecture questions) but always reconcile their suggestions with the
-conventions in this file — repo conventions win over generic skill advice.
+conventions in this file — repo conventions win over generic skill advice. Review any
+skill-generated code for correctness and security before accepting it.
