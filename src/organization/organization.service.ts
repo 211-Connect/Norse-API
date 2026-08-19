@@ -19,8 +19,16 @@ export class OrganizationService {
   }): Promise<OrganizationSearchResponseDto> {
     const text = options.query.query?.trim() ?? '';
     const { page, limit } = options.query;
+    // The `x-tenant-id` header carries ServiceNet's stable identity for the
+    // organization — its `resource_writer_id` — NOT the reader/publishing
+    // `tenant_id`. Published org docs are namespaced under the reader's
+    // publishing tenant (`tenant_id`), which can differ from (and be
+    // many-per) the resource writer, so filtering on `tenant_id` here would
+    // miss the caller's orgs. `resource_writer_id` is the single stable key
+    // every doc carries. See architecture-docs
+    // standards/hsds-organization-object-contract.md.
     const tenantFilter = {
-      term: { tenant_id: options.headers['x-tenant-id'] },
+      term: { resource_writer_id: options.headers['x-tenant-id'] },
     };
     const textQuery = text
       ? {

@@ -35,7 +35,7 @@ describe('OrganizationService', () => {
     const request = (elasticsearch.search as jest.Mock).mock.calls[0][0];
     expect(request.index).toBe('organizations');
     expect(request.query.bool.filter).toEqual([
-      { term: { tenant_id: 'tenant-a' } },
+      { term: { resource_writer_id: 'tenant-a' } },
     ]);
     expect(request.query.bool.should).toEqual(
       expect.arrayContaining([
@@ -53,7 +53,7 @@ describe('OrganizationService', () => {
     });
     const request = (elasticsearch.search as jest.Mock).mock.calls[0][0];
     expect(request.query).toEqual({
-      bool: { filter: [{ term: { tenant_id: 'tenant-a' } }] },
+      bool: { filter: [{ term: { resource_writer_id: 'tenant-a' } }] },
     });
     expect(request.sort).toEqual([
       { 'name.raw': { order: 'asc' } },
