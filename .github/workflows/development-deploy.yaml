@@ -12,18 +12,15 @@ on:
     branches:
       - development
     paths:
-      - "bin/**"
       - "src/**"
-      - "public/**"
       - "package.json"
       - "package-lock.json"
-      - "next.config.js"
+      - ".npmrc"
       - "tsconfig.json"
-      - "tailwind.config.ts"
-      - "postcss.config.cjs"
-      - "components.json"
-      - "app.defaults.json"
+      - "tsconfig.build.json"
+      - "nest-cli.json"
       - "Dockerfile"
+      - ".dockerignore"
 
   workflow_dispatch:
 
