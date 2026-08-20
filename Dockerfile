@@ -19,7 +19,6 @@ RUN apt-get update \
   && chown -R node:node /opt/norse
 COPY --from=builder --chown=node:node /opt/norse/build/node_modules ./node_modules
 COPY --from=builder --chown=node:node /opt/norse/build/dist ./dist
-COPY --from=builder --chown=node:node /opt/norse/build/.env ./.env
 USER node
 ARG NODE_ENV=production
 ENV NODE_ENV=$NODE_ENV
