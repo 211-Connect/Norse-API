@@ -82,6 +82,8 @@ export class SearchController {
   @ApiQuery({
     name: 'distance',
     required: false,
+    description:
+      'Radius in miles. Only takes effect when `coords` is also set.',
     schema: { default: 0, type: 'integer', minimum: 0 },
   })
   @ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } })
@@ -92,6 +94,19 @@ export class SearchController {
     schema: {
       example: '-120.740135,47.751076',
     },
+  })
+  @ApiQuery({
+    name: 'geo_type',
+    required: false,
+    enum: ['boundary', 'proximity'],
+    description:
+      "Controls how coords/distance combine with a resource's declared service_area. " +
+      'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
+      'service_area that geographically contains the exact `coords` point — both required. ' +
+      '`proximity`: skips the service_area check; returns anything within `distance` of ' +
+      '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
+      '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
+      'shape; POST only, 400s on GET without a body.',
   })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({
@@ -178,6 +193,8 @@ export class SearchController {
   @ApiQuery({
     name: 'distance',
     required: false,
+    description:
+      'Radius in miles. Only takes effect when `coords` is also set.',
     schema: { default: 0, type: 'integer', minimum: 0 },
   })
   @ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } })
@@ -188,6 +205,19 @@ export class SearchController {
     schema: {
       example: '-120.740135,47.751076',
     },
+  })
+  @ApiQuery({
+    name: 'geo_type',
+    required: false,
+    enum: ['boundary', 'proximity'],
+    description:
+      "Controls how coords/distance combine with a resource's declared service_area. " +
+      'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
+      'service_area that geographically contains the exact `coords` point — both required. ' +
+      '`proximity`: skips the service_area check; returns anything within `distance` of ' +
+      '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
+      '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
+      'shape.',
   })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({

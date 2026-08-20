@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "elasticsearch-esql": {
+      "source": "elastic/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/elasticsearch/elasticsearch-esql/SKILL.md",
+      "computedHash": "e256313e4652f0de4aab465ac5bf25d9f022a5bbadb43fb320c9964e093d0a76"
+    },
     "mongodb-natural-language-querying": {
       "source": "mongodb/agent-skills",
       "sourceType": "github",
