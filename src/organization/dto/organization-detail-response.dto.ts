@@ -1,10 +1,11 @@
-import { ApiProperty, getSchemaPath } from '@nestjs/swagger';
-import { TransformedResourceOpenApiDto } from 'src/resource/dto/transformed-resource.openapi.dto';
+import { ApiProperty } from '@nestjs/swagger';
 
 /**
- * Swagger documentation DTOs for the organization-detail response. The actual
- * runtime shape is defined by OrganizationDetailResponse; these classes exist
- * so the OpenAPI spec renders the envelope and the sideloaded resource map.
+ * Swagger documentation DTO for the organization-detail response. The actual
+ * runtime shape is defined by OrganizationDetail; this class exists so the
+ * OpenAPI spec renders the returned org graph. The endpoint returns the org
+ * object directly (no envelope), matching the /resource/:id developer
+ * experience.
  */
 
 class OrganizationTranslationDto {
@@ -12,7 +13,7 @@ class OrganizationTranslationDto {
   @ApiProperty({ nullable: true }) DESCRIPTION?: string | null;
 }
 
-class OrganizationDetailDataDto {
+export class OrganizationDetailResponseDto {
   @ApiProperty() organizationId: string;
   @ApiProperty() tenant_id: string;
   @ApiProperty({ nullable: true }) resourceWriterId?: string;
@@ -34,7 +35,9 @@ class OrganizationDetailDataDto {
     type: 'array',
     items: { type: 'object' },
     description:
-      'HSDS services, each with its SERVICE_AT_LOCATIONS references.',
+      'HSDS services, each with its SERVICE_AT_LOCATIONS references. Use the ' +
+      'SERVICE_AT_LOCATIONS[].ID values with POST /resource/batch to fetch ' +
+      'full service-at-location detail.',
   })
   services: Record<string, unknown>[];
 
@@ -51,52 +54,4 @@ class OrganizationDetailDataDto {
     required: false,
   })
   phones?: Record<string, unknown>[];
-}
-
-class OrganizationIncludedDto {
-  @ApiProperty({
-    description:
-      'Sideloaded resources keyed by serviceAtLocationId (JSON:API include pattern).',
-    type: 'object',
-    additionalProperties: {
-      $ref: getSchemaPath(TransformedResourceOpenApiDto),
-    },
-  })
-  resources: Record<string, unknown>;
-}
-
-class OrganizationResourcesMetaDto {
-  @ApiProperty({ example: 2 }) requested: number;
-  @ApiProperty({ example: 2 }) successful: number;
-  @ApiProperty({ example: 0 }) failed: number;
-  @ApiProperty({
-    type: 'array',
-    items: { type: 'object' },
-    description: 'Per-ID errors from the batch hydration (if any).',
-  })
-  errors: Record<string, unknown>[];
-}
-
-class OrganizationIncludeMetaDto {
-  @ApiProperty({ type: OrganizationResourcesMetaDto, required: false })
-  resources?: OrganizationResourcesMetaDto;
-}
-
-export class OrganizationDetailResponseDto {
-  @ApiProperty({ type: OrganizationDetailDataDto })
-  data: OrganizationDetailDataDto;
-
-  @ApiProperty({
-    type: OrganizationIncludedDto,
-    required: false,
-    description: 'Present only when ?include=resources was requested.',
-  })
-  included?: OrganizationIncludedDto;
-
-  @ApiProperty({
-    type: OrganizationIncludeMetaDto,
-    required: false,
-    description: 'Summary of each requested include. Present with ?include.',
-  })
-  meta?: OrganizationIncludeMetaDto;
 }

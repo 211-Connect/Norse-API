@@ -2,16 +2,10 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model } from 'mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
-import {
-  Organization,
-  OrganizationServiceEntry,
-} from 'src/common/schemas/organization.schema';
+import { Organization } from 'src/common/schemas/organization.schema';
 import { Redirect } from 'src/common/schemas/redirect.schema';
-import { ResourceService } from 'src/resource/resource.service';
-import { OrganizationInclude } from './dto/organization-detail-query.dto';
 import {
   OrganizationDetail,
-  OrganizationDetailResponse,
   OrganizationTranslation,
 } from './types/organization-response.types';
 
@@ -24,7 +18,6 @@ type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 type AggregatedOrganization = Omit<Organization, 'translations'> & {
   _id: string;
   organizationId?: string;
-  services?: OrganizationServiceEntry[];
   translations: OrganizationTranslation[];
 };
 
@@ -37,17 +30,15 @@ export class OrganizationDetailService {
     private readonly organizationModel: Model<Organization>,
     @InjectModel(Redirect.name)
     private readonly redirectModel: Model<Redirect>,
-    private readonly resourceService: ResourceService,
   ) {}
 
   /**
-   * Fetch a single organization's full detail, optionally sideloading its
-   * service-at-location resources.
+   * Fetch a single organization's full detail.
    */
   async findById(
     id: string,
-    options: { headers: HeadersDto; include?: OrganizationInclude[] },
-  ): Promise<OrganizationDetailResponse> {
+    options: { headers: HeadersDto },
+  ): Promise<OrganizationDetail> {
     const tenantId = options.headers['x-tenant-id'];
     const locale = options.headers['accept-language'];
 
@@ -57,15 +48,7 @@ export class OrganizationDetailService {
       locale,
     );
 
-    const response: OrganizationDetailResponse = {
-      data: this.transformOrganization(organization, locale),
-    };
-
-    if (options.include?.includes(OrganizationInclude.RESOURCES)) {
-      await this.attachResources(organization, options.headers, response);
-    }
-
-    return response;
+    return this.transformOrganization(organization, locale);
   }
 
   /**
@@ -187,55 +170,5 @@ export class OrganizationDetailService {
     const { translations: _dropped, ...rest } = organization;
 
     return { ...rest, translation };
-  }
-
-  /**
-   * Hydrates every service-at-location ID on the org into a full resource via
-   * the existing /resource/batch service, and attaches the result as an
-   * `included.resources` map plus an `include` meta summary.
-   */
-  private async attachResources(
-    organization: AggregatedOrganization,
-    headers: HeadersDto,
-    response: OrganizationDetailResponse,
-  ): Promise<void> {
-    const salIds = this.collectServiceAtLocationIds(organization);
-
-    if (salIds.length === 0) {
-      response.included = { resources: {} };
-      response.meta = {
-        resources: { requested: 0, successful: 0, failed: 0, errors: [] },
-      };
-      return;
-    }
-
-    const batch = await this.resourceService.findManyByIds(salIds, { headers });
-
-    response.included = { resources: batch.data };
-    response.meta = {
-      resources: {
-        requested: batch.meta.requested,
-        successful: batch.meta.successful,
-        failed: batch.meta.failed,
-        errors: batch.errors,
-      },
-    };
-  }
-
-  /**
-   * Collects the de-duplicated set of serviceAtLocationId values from every
-   * service on the org. These are the join keys into the `resources`
-   * collection (`services[].SERVICE_AT_LOCATIONS[].ID`).
-   */
-  collectServiceAtLocationIds(
-    organization: Pick<AggregatedOrganization, 'services'>,
-  ): string[] {
-    const ids = new Set<string>();
-    for (const service of organization.services ?? []) {
-      for (const sal of service.SERVICE_AT_LOCATIONS ?? []) {
-        if (sal?.ID) ids.add(sal.ID);
-      }
-    }
-    return [...ids];
   }
 }

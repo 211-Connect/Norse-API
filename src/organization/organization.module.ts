@@ -7,7 +7,6 @@ import {
   OrganizationSchema,
 } from 'src/common/schemas/organization.schema';
 import { Redirect, RedirectSchema } from 'src/common/schemas/redirect.schema';
-import { ResourceModule } from 'src/resource/resource.module';
 import { OrganizationController } from './organization.controller';
 import { OrganizationService } from './organization.service';
 import { OrganizationDetailService } from './organization-detail.service';
@@ -18,7 +17,6 @@ import { OrganizationDetailService } from './organization-detail.service';
   imports: [
     MetricsModule,
     SharedElasticsearchModule,
-    ResourceModule,
     MongooseModule.forFeature([
       { name: Organization.name, schema: OrganizationSchema },
       { name: Redirect.name, schema: RedirectSchema },
