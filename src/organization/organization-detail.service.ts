@@ -11,10 +11,6 @@ import {
 
 type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 
-/**
- * An organization document after the aggregation has filtered its top-level
- * `translations` array down to the requested locale (+ English).
- */
 type AggregatedOrganization = Omit<Organization, 'translations'> & {
   _id: string;
   organizationId?: string;
@@ -32,33 +28,22 @@ export class OrganizationDetailService {
     private readonly redirectModel: Model<Redirect>,
   ) {}
 
-  /**
-   * Fetch a single organization's full detail.
-   */
   async findById(
     id: string,
     options: { headers: HeadersDto },
   ): Promise<OrganizationDetail> {
     const tenantId = options.headers['x-tenant-id'];
     const locale = options.headers['accept-language'];
-
     const organization = await this.findOrganizationWithFallback(
       id,
       tenantId,
       locale,
     );
-
     return this.transformOrganization(organization, locale);
   }
 
-  /**
-   * Looks up an organization by its public organizationId using the same
-   * 3-tier fallback chain the resource endpoint uses:
-   *   1. primary: tenant-scoped lookup by organizationId.
-   *   2. fallback: tenant-scoped lookup by mongo _id (legacy links).
-   *   3. fallback_no_tenant: cross-tenant lookup by organizationId, for orgs
-   *      that are intentionally shared/global across tenants.
-   */
+  // Mirrors ResourceService: organizationId -> mongo _id (legacy links) ->
+  // cross-tenant organizationId (shared orgs), then redirect, then 404.
   private async findOrganizationWithFallback(
     urlId: string,
     tenantId: string,
@@ -89,11 +74,7 @@ export class OrganizationDetailService {
     const organization = results[0];
 
     if (organization) {
-      if (lookupPath === 'primary') {
-        this.logger.debug(
-          `Organization lookup path=primary tenantId=${tenantId} organizationId=${urlId}`,
-        );
-      } else {
+      if (lookupPath !== 'primary') {
         this.logger.warn(
           `Organization lookup used ${lookupPath} path: ${JSON.stringify({
             lookupPath,
@@ -126,11 +107,8 @@ export class OrganizationDetailService {
       .exec();
   }
 
-  /**
-   * Filters the org-level `translations` array to the requested locale (+ the
-   * English canonical), mirroring the resource endpoint's locale scoping. Note
-   * the org uses an upper-cased `LOCALE` key.
-   */
+  // Org uses an upper-cased `LOCALE` key; keep the requested locale plus the
+  // English canonical.
   private buildTranslationFilterStage(locale: string) {
     return {
       $addFields: {
@@ -150,12 +128,7 @@ export class OrganizationDetailService {
     };
   }
 
-  /**
-   * Collapses the filtered translations to a single locale-resolved entry.
-   * Unlike the resource endpoint this is lenient: a missing translation yields
-   * `null` rather than a 400, since org-level descriptions are optional and
-   * should not fail the whole detail response.
-   */
+  // Lenient by design: a missing org description yields null rather than a 400.
   private transformOrganization(
     organization: AggregatedOrganization,
     locale: string,

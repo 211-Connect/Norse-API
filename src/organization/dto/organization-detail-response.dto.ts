@@ -1,12 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-/**
- * Swagger documentation DTO for the organization-detail response. The actual
- * runtime shape is defined by OrganizationDetail; this class exists so the
- * OpenAPI spec renders the returned org graph. The endpoint returns the org
- * object directly (no envelope), matching the /resource/:id developer
- * experience.
- */
+// OpenAPI shape for GET /organization/:id. Runtime type is OrganizationDetail.
 
 class OrganizationTranslationDto {
   @ApiProperty({ nullable: true }) LOCALE?: string;
@@ -23,35 +17,20 @@ export class OrganizationDetailResponseDto {
   @ApiProperty({ nullable: true }) website?: string;
   @ApiProperty({ nullable: true }) legalStatus?: string;
 
-  @ApiProperty({
-    type: OrganizationTranslationDto,
-    nullable: true,
-    description:
-      'Org-level description resolved to the requested locale (or English), or null.',
-  })
+  @ApiProperty({ type: OrganizationTranslationDto, nullable: true })
   translation: OrganizationTranslationDto | null;
 
   @ApiProperty({
     type: 'array',
     items: { type: 'object' },
     description:
-      'HSDS services, each with its SERVICE_AT_LOCATIONS references. Use the ' +
-      'SERVICE_AT_LOCATIONS[].ID values with POST /resource/batch to fetch ' +
-      'full service-at-location detail.',
+      'HSDS services. Use SERVICE_AT_LOCATIONS[].ID with POST /resource/batch for service-at-location detail.',
   })
   services: Record<string, unknown>[];
 
-  @ApiProperty({
-    type: 'array',
-    items: { type: 'object' },
-    description: 'HSDS locations with addresses, phones and schedules.',
-  })
+  @ApiProperty({ type: 'array', items: { type: 'object' } })
   locations: Record<string, unknown>[];
 
-  @ApiProperty({
-    type: 'array',
-    items: { type: 'object' },
-    required: false,
-  })
+  @ApiProperty({ type: 'array', items: { type: 'object' }, required: false })
   phones?: Record<string, unknown>[];
 }

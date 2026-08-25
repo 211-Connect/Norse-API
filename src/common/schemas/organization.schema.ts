@@ -3,12 +3,6 @@ import { HydratedDocument } from 'mongoose';
 
 export type OrganizationDocument = HydratedDocument<Organization>;
 
-/**
- * One entry of an organization's top-level `translations` array. Mirrors the
- * HSDS-style upper-cased shape stored in `search_engine.organizations`. Only
- * the organization-level DESCRIPTION is translated here; service/location/phone
- * level translations live in their own nested TRANSLATIONS arrays.
- */
 export interface OrganizationTranslationEntry {
   ID?: string;
   LOCALE: string;
@@ -19,20 +13,12 @@ export interface OrganizationTranslationEntry {
   TENANT_ID?: string;
 }
 
-/**
- * Link from a service to the location it is offered at. `ID` is the public
- * serviceAtLocationId (SAL) that keys the `resources` collection, so it is the
- * join used to hydrate `?include=resources`.
- */
 export interface OrganizationServiceAtLocation {
+  // ID is the serviceAtLocationId that keys the `resources` collection.
   ID: string;
   LOCATION_ID?: string;
 }
 
-/**
- * One entry of an organization's `services` array. Typed loosely because the
- * nested HSDS graph is large; only the fields this endpoint reads are declared.
- */
 export interface OrganizationServiceEntry {
   ID?: string;
   NAME?: string;
@@ -40,16 +26,10 @@ export interface OrganizationServiceEntry {
   [key: string]: unknown;
 }
 
-/**
- * Mongoose model for the `search_engine.organizations` collection (the class
- * name pluralizes to `organizations`). This is the source-of-truth org graph,
- * distinct from the slim Elasticsearch `organizations` typeahead index used by
- * the /organization search route.
- *
- * The deeply-nested HSDS sub-documents (locations, services, phones, etc.) are
- * stored as Mixed and given light TypeScript shapes; only the fields the detail
- * endpoint reads are described precisely.
- */
+// Source-of-truth org graph (Mongo `organizations`), distinct from the slim
+// Elasticsearch `organizations` typeahead index used by /organization search.
+// Deeply-nested HSDS sub-documents are stored as Mixed; only fields the detail
+// endpoint reads are typed precisely.
 @Schema({ collection: 'organizations' })
 export class Organization {
   @Prop()
