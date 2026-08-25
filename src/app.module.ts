@@ -119,6 +119,7 @@ export class AppModule implements NestModule {
         SuggestionController,
         PrintableDirectoryController,
         PrintableDirectoryPublicController,
+        OrganizationController,
       );
   }
 }
