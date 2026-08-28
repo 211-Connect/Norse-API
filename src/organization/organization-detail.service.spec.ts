@@ -193,6 +193,29 @@ describe('OrganizationDetailService', () => {
     ]);
   });
 
+  it('collapses the canonical fallback to one locale when every row is over-flagged canonical (ISS-1281 data)', async () => {
+    aggregateExec.mockResolvedValueOnce([
+      buildOrg({
+        translations: [
+          { LOCALE: 'vi', DESCRIPTION: 'Mot', IS_CANONICAL: true },
+          { LOCALE: 'vi', DESCRIPTION: 'Hai', IS_CANONICAL: true },
+          { LOCALE: 'ar', DESCRIPTION: 'Wahid', IS_CANONICAL: true },
+        ],
+      }),
+    ]);
+
+    // Requested locale (zz) and English both absent; every remaining row is
+    // canonical -> must return a single locale, not all of them.
+    const result = (await service.findById(orgId, {
+      headers: { ...headers, 'accept-language': 'zz' },
+    })) as unknown as Record<string, any>;
+
+    expect(result.translations).toEqual([
+      { LOCALE: 'vi', DESCRIPTION: 'Mot', IS_CANONICAL: true },
+      { LOCALE: 'vi', DESCRIPTION: 'Hai', IS_CANONICAL: true },
+    ]);
+  });
+
   it('walks the 3-tier fallback chain then throws NotFound', async () => {
     aggregateExec
       .mockResolvedValueOnce([]) // primary: tenant + organizationId

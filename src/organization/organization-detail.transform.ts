@@ -29,7 +29,10 @@ export const selectLocaleRows = (
   const english = forLocale('en');
   if (english.length) return english;
 
-  return rows.filter((row) => row?.IS_CANONICAL === true);
+  // Last resort: the authoritative row. Collapse to one locale even when the
+  // upstream data over-flags canonical (ISS-1281 marks every locale canonical).
+  const canonical = rows.filter((row) => row?.IS_CANONICAL === true);
+  return canonical.filter((row) => row?.LOCALE === canonical[0]?.LOCALE);
 };
 
 // Narrows every `translations`/`TRANSLATIONS` array at any nesting level to the
