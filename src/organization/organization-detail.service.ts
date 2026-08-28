@@ -4,18 +4,12 @@ import { FilterQuery, Model } from 'mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Organization } from 'src/common/schemas/organization.schema';
 import { Redirect } from 'src/common/schemas/redirect.schema';
-import {
-  OrganizationDetail,
-  OrganizationTranslation,
-} from './types/organization-response.types';
+import { OrganizationDetail } from './types/organization-response.types';
+import { filterTranslationsByLocale } from './organization-detail.transform';
 
 type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
 
-type AggregatedOrganization = Omit<Organization, 'translations'> & {
-  _id: string;
-  organizationId?: string;
-  translations: OrganizationTranslation[];
-};
+type AggregatedOrganization = Organization & { _id: string };
 
 @Injectable()
 export class OrganizationDetailService {
@@ -34,11 +28,7 @@ export class OrganizationDetailService {
   ): Promise<OrganizationDetail> {
     const tenantId = options.headers['x-tenant-id'];
     const locale = options.headers['accept-language'];
-    const organization = await this.findOrganizationWithFallback(
-      id,
-      tenantId,
-      locale,
-    );
+    const organization = await this.findOrganizationWithFallback(id, tenantId);
     return this.transformOrganization(organization, locale);
   }
 
@@ -47,27 +37,23 @@ export class OrganizationDetailService {
   private async findOrganizationWithFallback(
     urlId: string,
     tenantId: string,
-    locale: string,
   ): Promise<AggregatedOrganization> {
-    let results = await this.aggregateOrganizations(
-      { tenant_id: tenantId, organizationId: urlId },
-      locale,
-    );
+    let results = await this.aggregateOrganizations({
+      tenant_id: tenantId,
+      organizationId: urlId,
+    });
     let lookupPath: LookupPath = 'primary';
 
     if (!results[0]) {
-      results = await this.aggregateOrganizations(
-        { tenant_id: tenantId, _id: urlId },
-        locale,
-      );
+      results = await this.aggregateOrganizations({
+        tenant_id: tenantId,
+        _id: urlId,
+      });
       lookupPath = 'fallback';
     }
 
     if (!results[0]) {
-      results = await this.aggregateOrganizations(
-        { organizationId: urlId },
-        locale,
-      );
+      results = await this.aggregateOrganizations({ organizationId: urlId });
       lookupPath = 'fallback_no_tenant';
     }
 
@@ -95,53 +81,26 @@ export class OrganizationDetailService {
     throw new NotFoundException();
   }
 
+  // Locale scoping is applied post-fetch by filterTranslationsByLocale so it can
+  // reach nested TRANSLATIONS arrays; the aggregation only resolves the document.
   private async aggregateOrganizations(
     matchQuery: FilterQuery<Organization>,
-    locale: string,
   ): Promise<AggregatedOrganization[]> {
-    return this.organizationModel
-      .aggregate([
-        { $match: matchQuery },
-        this.buildTranslationFilterStage(locale),
-      ])
-      .exec();
+    return this.organizationModel.aggregate([{ $match: matchQuery }]).exec();
   }
 
-  // Org uses an upper-cased `LOCALE` key; keep the requested locale plus the
-  // English canonical.
-  private buildTranslationFilterStage(locale: string) {
-    return {
-      $addFields: {
-        translations: {
-          $filter: {
-            input: '$translations',
-            as: 't',
-            cond: {
-              $or: [
-                { $eq: ['$$t.LOCALE', locale] },
-                { $eq: ['$$t.LOCALE', 'en'] },
-              ],
-            },
-          },
-        },
-      },
-    };
-  }
-
-  // Lenient by design: a missing org description yields null rather than a 400.
+  // Response-time projection: drop internal `_id`/`logo`, then filter every
+  // `translations`/`TRANSLATIONS` array to the requested locale. Storage is
+  // unchanged. Unlisted fields are kept intentionally (denylist, not allow-list)
+  // so a consumed-but-unenumerated field is never silently dropped; the DTO
+  // documents the intended contract.
   private transformOrganization(
     organization: AggregatedOrganization,
     locale: string,
   ): OrganizationDetail {
-    const translations = organization.translations ?? [];
-    const translation: OrganizationTranslation | null =
-      translations.find((t) => t?.LOCALE === locale) ??
-      translations.find((t) => t?.LOCALE === 'en') ??
-      null;
-
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { translations: _dropped, ...rest } = organization;
+    const { _id, logo, ...rest } = organization;
 
-    return { ...rest, translation };
+    return filterTranslationsByLocale(rest as OrganizationDetail, locale);
   }
 }

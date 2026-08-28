@@ -27,12 +27,50 @@ describe('OrganizationDetailService', () => {
     organizationId: orgId,
     tenant_id: tenantId,
     name: 'Teen Line',
+    logo: { url: 'https://example.com/logo.png' },
     translations: [
-      { LOCALE: 'en', DESCRIPTION: 'English description' },
+      { LOCALE: 'en', DESCRIPTION: 'English description', IS_CANONICAL: true },
       { LOCALE: 'es', DESCRIPTION: 'Descripcion' },
     ],
+    phones: [
+      {
+        ID: 'p1',
+        NUMBER: '555-1000',
+        TRANSLATIONS: [
+          { LOCALE: 'en', DESCRIPTION: 'Main', IS_CANONICAL: true },
+          { LOCALE: 'es', DESCRIPTION: 'Principal' },
+        ],
+      },
+    ],
     services: [
-      { ID: 's1', SERVICE_AT_LOCATIONS: [{ ID: salId, LOCATION_ID: 'loc1' }] },
+      {
+        ID: 's1',
+        NAME: 'Counseling',
+        ATTRIBUTE_TAXONOMIES: [{ ID: 'at1' }],
+        CUSTOM_ATTRIBUTES: [{ ID: 'ca1' }],
+        COST_OPTIONS: [{ ID: 'co1' }],
+        SERVICE_AT_LOCATIONS: [{ ID: salId, LOCATION_ID: 'loc1' }],
+        SCHEDULES: [
+          {
+            ID: 'sch1',
+            TRANSLATIONS: [
+              // No `en` row: exercises canonical fallback.
+              { LOCALE: 'vi', DESCRIPTION: 'Gio', IS_CANONICAL: true },
+              { LOCALE: 'es', DESCRIPTION: 'Horario' },
+            ],
+          },
+        ],
+        SERVICE_AREAS: [
+          {
+            ID: 'sa1',
+            NAME: 'County',
+            TRANSLATIONS: [
+              { LOCALE: 'en', DESCRIPTION: 'Area', IS_CANONICAL: true },
+              { LOCALE: 'es', DESCRIPTION: 'Zona' },
+            ],
+          },
+        ],
+      },
     ],
     ...overrides,
   });
@@ -53,45 +91,85 @@ describe('OrganizationDetailService', () => {
     service = module.get(OrganizationDetailService);
   });
 
-  it('returns the org with the locale-resolved translation and no translations array', async () => {
+  it('returns es translations where present and keeps them as arrays at every nesting level', async () => {
     aggregateExec.mockResolvedValueOnce([buildOrg()]);
 
-    const result = await service.findById(orgId, { headers });
+    const result = (await service.findById(orgId, {
+      headers: { ...headers, 'accept-language': 'es' },
+    })) as unknown as Record<string, any>;
 
     expect(mockAggregate).toHaveBeenCalledTimes(1);
     expect(result.name).toBe('Teen Line');
-    expect(result.translation).toEqual({
-      LOCALE: 'en',
-      DESCRIPTION: 'English description',
-    });
-    // translations array collapsed away; SAL references remain on services
-    expect((result as Record<string, unknown>).translations).toBeUndefined();
+
+    // Org-level: array, filtered to es.
+    expect(result.translations).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Descripcion' },
+    ]);
+    // phones[].TRANSLATIONS
+    expect(result.phones[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Principal' },
+    ]);
+    // services[].SERVICE_AREAS[].TRANSLATIONS
+    expect(result.services[0].SERVICE_AREAS[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Zona' },
+    ]);
+    // services[].SCHEDULES[].TRANSLATIONS (es present)
+    expect(result.services[0].SCHEDULES[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Horario' },
+    ]);
+    // SAL references remain on services
     expect(result.services[0].SERVICE_AT_LOCATIONS).toEqual([
       { ID: salId, LOCATION_ID: 'loc1' },
     ]);
   });
 
-  it('falls back to English when the requested locale has no org description', async () => {
-    aggregateExec.mockResolvedValueOnce([
-      buildOrg({ translations: [{ LOCALE: 'en', DESCRIPTION: 'Only EN' }] }),
-    ]);
+  it('falls back to English then canonical when the requested locale is absent, per node', async () => {
+    aggregateExec.mockResolvedValueOnce([buildOrg()]);
 
-    const result = await service.findById(orgId, {
+    const result = (await service.findById(orgId, {
       headers: { ...headers, 'accept-language': 'fr' },
-    });
+    })) as unknown as Record<string, any>;
 
-    expect(result.translation).toEqual({
-      LOCALE: 'en',
-      DESCRIPTION: 'Only EN',
-    });
+    // fr absent -> English at org level.
+    expect(result.translations).toEqual([
+      { LOCALE: 'en', DESCRIPTION: 'English description', IS_CANONICAL: true },
+    ]);
+    // Schedule has neither fr nor en -> canonical (vi) row.
+    expect(result.services[0].SCHEDULES[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'vi', DESCRIPTION: 'Gio', IS_CANONICAL: true },
+    ]);
+    // Service area has en -> English.
+    expect(result.services[0].SERVICE_AREAS[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'en', DESCRIPTION: 'Area', IS_CANONICAL: true },
+    ]);
   });
 
-  it('returns a null translation when neither the locale nor English is present', async () => {
-    aggregateExec.mockResolvedValueOnce([buildOrg({ translations: [] })]);
+  it('drops top-level _id and logo but keeps kept-per-product service fields', async () => {
+    aggregateExec.mockResolvedValueOnce([buildOrg()]);
 
-    const result = await service.findById(orgId, { headers });
+    const result = (await service.findById(orgId, {
+      headers,
+    })) as unknown as Record<string, any>;
 
-    expect(result.translation).toBeNull();
+    expect(result._id).toBeUndefined();
+    expect(result.logo).toBeUndefined();
+    expect(result.organizationId).toBe(orgId);
+
+    expect(result.services[0].ATTRIBUTE_TAXONOMIES).toEqual([{ ID: 'at1' }]);
+    expect(result.services[0].CUSTOM_ATTRIBUTES).toEqual([{ ID: 'ca1' }]);
+    expect(result.services[0].COST_OPTIONS).toEqual([{ ID: 'co1' }]);
+  });
+
+  it('returns an empty translations array when neither locale, English, nor canonical is present', async () => {
+    aggregateExec.mockResolvedValueOnce([
+      buildOrg({ translations: [{ LOCALE: 'de', DESCRIPTION: 'Nur DE' }] }),
+    ]);
+
+    const result = (await service.findById(orgId, {
+      headers,
+    })) as unknown as Record<string, any>;
+
+    expect(result.translations).toEqual([]);
   });
 
   it('walks the 3-tier fallback chain then throws NotFound', async () => {
