@@ -76,7 +76,6 @@ class ServiceDto {
   @ApiProperty({ type: [ServiceAreaDto] }) SERVICE_AREAS: ServiceAreaDto[];
   @ApiProperty({ type: [ContactDto] }) CONTACTS: ContactDto[];
   @ApiProperty({ type: [PhoneDto] }) PHONES: PhoneDto[];
-  @ApiProperty({ type: [TranslationDto] }) TRANSLATIONS: TranslationDto[];
   @ApiProperty({ nullable: true }) ASSURED_DATE?: string;
   @ApiProperty({ nullable: true }) LAST_MODIFIED?: string;
   @ApiProperty({ type: 'array', items: { type: 'object' } })
@@ -104,7 +103,6 @@ class LocationDto {
   LANGUAGES: IdWithTranslationsDto[];
   @ApiProperty({ type: [PhoneDto] }) PHONES: PhoneDto[];
   @ApiProperty({ type: [ContactDto] }) CONTACTS: ContactDto[];
-  @ApiProperty({ type: [TranslationDto] }) TRANSLATIONS: TranslationDto[];
 }
 
 export class OrganizationDetailResponseDto {
