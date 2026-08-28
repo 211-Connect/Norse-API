@@ -1,6 +1,5 @@
-// Response-time translation projection for GET /organization/:id. Storage is
-// untouched: the stored org keeps every locale; these helpers narrow the
-// response to the requested locale at every nesting level.
+// Response-time locale narrowing for GET /organization/:id; storage keeps every
+// locale.
 
 type TranslationRow = {
   LOCALE?: string;
@@ -14,9 +13,9 @@ const isTranslationRowArray = (value: unknown): value is TranslationRow[] =>
   Array.isArray(value) &&
   value.every((row) => row !== null && typeof row === 'object');
 
-// Mirrors the provider-feedback consumer's selectTranslation: preferred locale,
-// then English, then the canonical row — so a missing locale never renders blank.
-// Returns a filtered ARRAY (never a scalar); the consumer does its own selection.
+// Preferred locale, then English, then canonical, mirroring the
+// provider-feedback consumer. Returns an ARRAY (never a scalar); the consumer
+// makes the final selection.
 export const selectLocaleRows = (
   rows: TranslationRow[],
   locale: string,
@@ -33,10 +32,8 @@ export const selectLocaleRows = (
   return rows.filter((row) => row?.IS_CANONICAL === true);
 };
 
-// Walks the org graph and, wherever a `translations`/`TRANSLATIONS` array of
-// rows appears (org, services[], SCHEDULES[], LANGUAGES[], SERVICE_AREAS[],
-// REQUIRED_DOCUMENTS[], locations[], phones[], contacts[], ...), keeps only the
-// rows for the resolved locale. Mutates the passed node in place and returns it.
+// Narrows every `translations`/`TRANSLATIONS` array at any nesting level to the
+// resolved locale. Mutates the passed node in place and returns it.
 export const filterTranslationsByLocale = <T>(node: T, locale: string): T => {
   if (Array.isArray(node)) {
     for (const item of node) filterTranslationsByLocale(item, locale);

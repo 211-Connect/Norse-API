@@ -1,17 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-// OpenAPI shape for GET /organization/:id. Runtime type is OrganizationDetail.
-//
-// This DTO documents the fields the provider-feedback consumer relies on
-// (verified against apps/provider-feedback/src: mapToHsds + document-view +
-// ai-digestion). It is a documented contract, NOT a runtime allow-list: the
-// service drops only `_id` and `logo` and locale-filters translations, keeping
-// every other stored field so a consumed-but-unenumerated field is never
-// silently dropped. Deeply-nested HSDS sub-documents therefore carry more keys
-// than are typed here.
-//
-// All `translations`/`TRANSLATIONS` arrays are filtered to the requested locale
-// (preferred -> English -> canonical) but remain ARRAYS; the consumer selects.
+// OpenAPI shape for GET /organization/:id (runtime type: OrganizationDetail).
+// Documents the fields the provider-feedback consumer relies on; it is NOT a
+// runtime allow-list, so nested HSDS sub-documents carry more keys than typed
+// here (the service drops only `_id`/`logo` and locale-filters translations).
+// All `translations`/`TRANSLATIONS` stay ARRAYS filtered to the requested locale
+// (preferred -> English -> canonical); the consumer makes the final selection.
 
 class TranslationDto {
   @ApiProperty({ nullable: true }) ID?: string;

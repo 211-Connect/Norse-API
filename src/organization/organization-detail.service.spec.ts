@@ -172,6 +172,27 @@ describe('OrganizationDetailService', () => {
     expect(result.translations).toEqual([]);
   });
 
+  it('preserves duplicate rows for the resolved locale (no dedupe)', async () => {
+    aggregateExec.mockResolvedValueOnce([
+      buildOrg({
+        translations: [
+          { LOCALE: 'es', DESCRIPTION: 'Uno' },
+          { LOCALE: 'es', DESCRIPTION: 'Dos' },
+          { LOCALE: 'en', DESCRIPTION: 'English' },
+        ],
+      }),
+    ]);
+
+    const result = (await service.findById(orgId, {
+      headers: { ...headers, 'accept-language': 'es' },
+    })) as unknown as Record<string, any>;
+
+    expect(result.translations).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Uno' },
+      { LOCALE: 'es', DESCRIPTION: 'Dos' },
+    ]);
+  });
+
   it('walks the 3-tier fallback chain then throws NotFound', async () => {
     aggregateExec
       .mockResolvedValueOnce([]) // primary: tenant + organizationId

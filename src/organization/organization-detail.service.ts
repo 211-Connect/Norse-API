@@ -81,19 +81,17 @@ export class OrganizationDetailService {
     throw new NotFoundException();
   }
 
-  // Locale scoping is applied post-fetch by filterTranslationsByLocale so it can
-  // reach nested TRANSLATIONS arrays; the aggregation only resolves the document.
+  // Locale scoping is post-fetch (filterTranslationsByLocale) to reach nested
+  // TRANSLATIONS arrays, so the aggregation only resolves the document.
   private async aggregateOrganizations(
     matchQuery: FilterQuery<Organization>,
   ): Promise<AggregatedOrganization[]> {
     return this.organizationModel.aggregate([{ $match: matchQuery }]).exec();
   }
 
-  // Response-time projection: drop internal `_id`/`logo`, then filter every
-  // `translations`/`TRANSLATIONS` array to the requested locale. Storage is
-  // unchanged. Unlisted fields are kept intentionally (denylist, not allow-list)
-  // so a consumed-but-unenumerated field is never silently dropped; the DTO
-  // documents the intended contract.
+  // Drop internal `_id`/`logo`, then locale-filter translations. Denylist, not
+  // allow-list: every other stored field is kept so a consumed-but-unenumerated
+  // field is never silently dropped.
   private transformOrganization(
     organization: AggregatedOrganization,
     locale: string,
