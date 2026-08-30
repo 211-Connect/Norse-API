@@ -22,8 +22,7 @@ export class AnalyticsCdnCacheInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<Request>();
     const query = request.query as unknown as
-      | CommonAnalyticsQuery
-      | TimezoneAnalyticsQueryDto;
+      CommonAnalyticsQuery | TimezoneAnalyticsQueryDto;
 
     const startMs = Date.parse(query.start ?? '');
     const endMs = Date.parse(query.end ?? '');
