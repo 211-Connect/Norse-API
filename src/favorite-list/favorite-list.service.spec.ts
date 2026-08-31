@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FavoriteListService } from './favorite-list.service';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
+import { ResourceService } from 'src/resource/resource.service';
 
 describe('FavoriteListService', () => {
   let service: FavoriteListService;
@@ -13,10 +14,15 @@ describe('FavoriteListService', () => {
     updateOne: jest.fn(),
     deleteOne: jest.fn(),
     find: jest.fn(),
+    findOne: jest.fn(),
     findById: jest.fn(),
     aggregate: mockAggregate,
     countDocuments: jest.fn(),
     create: jest.fn(),
+  };
+
+  const mockResourceService = {
+    findManyByIds: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -27,12 +33,17 @@ describe('FavoriteListService', () => {
           provide: getModelToken(FavoriteList.name),
           useValue: mockFavoriteListModel,
         },
+        {
+          provide: ResourceService,
+          useValue: mockResourceService,
+        },
       ],
     }).compile();
 
     service = module.get<FavoriteListService>(FavoriteListService);
     jest.clearAllMocks();
   });
+
 
   it('should be defined', () => {
     expect(service).toBeDefined();

@@ -122,8 +122,7 @@ export class FavoriteListController {
     @Req() request,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<FavoriteListDetailResponseDto> {
-    const locale = headers['accept-language'];
-    const favoriteList = await this.favoriteListService.findOne(id, locale);
+    const favoriteList = await this.favoriteListService.findOne(id, headers);
 
     if (favoriteList.privacy === 'PRIVATE') {
       const authResult = await this.keycloakAuthService.verifyToken(request);
