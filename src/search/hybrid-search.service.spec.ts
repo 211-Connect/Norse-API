@@ -207,7 +207,7 @@ describe('HybridSearchService', () => {
       ]);
     });
 
-    it('honors sort=name with an alphabetical tier', async () => {
+    it('honors sort=name with a case-insensitive alphabetical tier on the hybrid-index .lc field', async () => {
       await service.searchHybrid({
         headers,
         query: { ...baseQuery, sort: 'name' },
@@ -216,7 +216,22 @@ describe('HybridSearchService', () => {
       expect(capturedMainRequest.sort).toEqual([
         { pinned: 'desc' },
         { priority: 'desc' },
-        { 'name.raw': { order: 'asc' } },
+        { 'name.lc': { order: 'asc' } },
+        { service_at_location_id: 'asc' },
+      ]);
+    });
+
+    it('honors sort=organization with provider-then-name .lc tiers', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'organization' },
+      });
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        { 'organization.name.lc': { order: 'asc' } },
+        { 'name.lc': { order: 'asc' } },
         { service_at_location_id: 'asc' },
       ]);
     });

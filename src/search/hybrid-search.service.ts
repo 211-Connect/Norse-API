@@ -598,13 +598,19 @@ export class HybridSearchService {
           ? [SearchUtilsService.getGeoDistanceSort(coords)]
           : ['_score'];
         break;
+      // Sort on the `.lc` keyword subfield, NOT `.raw`: the hybrid index is
+      // built by a separate pipeline and is only ever queried here via
+      // `.lc`/`.edge`/`.clean` — `.raw` is unverified in that index (the two
+      // indices already diverge, e.g. service_at_location_id vs .raw). `.lc` is
+      // a keyword field (sortable) and its lowercase normalizer makes the
+      // alphabetical order case-insensitive.
       case 'name':
-        orderingTiers = [{ 'name.raw': { order: 'asc' } }];
+        orderingTiers = [{ 'name.lc': { order: 'asc' } }];
         break;
       case 'organization':
         orderingTiers = [
-          { 'organization.name.raw': { order: 'asc' } },
-          { 'name.raw': { order: 'asc' } },
+          { 'organization.name.lc': { order: 'asc' } },
+          { 'name.lc': { order: 'asc' } },
         ];
         break;
       case 'relevance':
