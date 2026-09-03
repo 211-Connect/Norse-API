@@ -34,13 +34,8 @@ const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 50;
-// Proximity is a genuine relevance signal in this domain (a nearby resource is
-// usually more useful than a far one), but at 1.5 it was dwarfed by the vector
-// (~0–40 effective) and name boosts (6–15) and behaved like a negligible
-// tiebreaker. Raised so nearness can meaningfully reorder otherwise-comparable
-// matches without letting a weak match win on proximity alone. Overridable via
-// the GEO_GAUSS_WEIGHT env var so it can be tuned without a redeploy (see
-// ISS-1367); the default below is the tuned starting point.
+// Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see
+// ISS-1367); overridable via the GEO_GAUSS_WEIGHT env var.
 const GEO_GAUSS_WEIGHT = (() => {
   const parsed = Number(process.env.GEO_GAUSS_WEIGHT);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 25;
@@ -571,17 +566,10 @@ export class HybridSearchService {
   }
 
   /**
-   * Ordering for hybrid results. `sort` selects the presentation order; the
-   * hybrid query itself always decides membership (what matches). This mirrors
-   * the non-hybrid contract in SearchUtilsService.buildSort so `sort` behaves
-   * identically across query types (see ISS-1367 — previously hybrid ignored
-   * `sort` entirely and always ranked by _score).
-   *
-   * pinned/priority stay the primary tiers (a pinned resource stays on top
-   * regardless of the chosen order), except when boost_pinned_resources is
-   * enabled — then they are score contributions, not sort tiers, exactly as in
-   * the default relevance path. service_at_location_id is the deterministic
-   * page tiebreaker.
+   * Ordering for hybrid results: `sort` picks the order, the query still decides
+   * membership. Mirrors SearchUtilsService.buildSort so `sort` behaves the same
+   * across query types (ISS-1367). pinned/priority lead unless
+   * boost_pinned_resources moves them into the score.
    */
   private buildHybridSort(
     sortOption: SearchResourcesQueryDto['sort'],
@@ -596,18 +584,14 @@ export class HybridSearchService {
     let orderingTiers: SortCombinations[];
     switch (sortOption) {
       case 'distance':
-        // No coords: distance ordering is meaningless — fall back to relevance
-        // (_score) rather than silently ignoring the request or erroring.
+        // No coords: fall back to relevance rather than error.
         orderingTiers = coords
           ? [SearchUtilsService.getGeoDistanceSort(coords)]
           : ['_score'];
         break;
-      // Sort on the `.lc` keyword subfield, NOT `.raw`: the hybrid index is
-      // built by a separate pipeline and is only ever queried here via
-      // `.lc`/`.edge`/`.clean` — `.raw` is unverified in that index (the two
-      // indices already diverge, e.g. service_at_location_id vs .raw). `.lc` is
-      // a keyword field (sortable) and its lowercase normalizer makes the
-      // alphabetical order case-insensitive.
+      // `.lc`, not `.raw`: the hybrid index (built by a separate pipeline) only
+      // exposes `.lc`/`.edge`/`.clean` on these fields. `.lc` is a sortable
+      // keyword whose lowercase normalizer gives case-insensitive ordering.
       case 'name':
         orderingTiers = [{ 'name.lc': { order: 'asc' } }];
         break;

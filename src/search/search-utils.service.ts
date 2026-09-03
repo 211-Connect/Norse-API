@@ -208,9 +208,8 @@ export class SearchUtilsService {
         if (coords) {
           return [prioritySort, this.getGeoDistanceSort(coords)];
         }
-        // No coordinates: a distance sort is meaningless. Fall back to the
-        // relevance-default ordering (priority only) rather than silently
-        // dropping through to the name sort.
+        // No coords: fall back to relevance ordering (explicit return prevents
+        // an accidental fall-through into the name sort below).
         return [prioritySort];
 
       case 'name':
