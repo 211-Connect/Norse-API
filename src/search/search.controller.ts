@@ -119,6 +119,11 @@ export class SearchController {
     name: 'query_type',
     required: false,
     enum: SEARCH_QUERY_TYPES,
+    description:
+      'Matching engine used to select results: `text` (default, lexical), ' +
+      '`taxonomy` (HSIS code scope), `more_like_this`, and `hybrid` (lexical + ' +
+      'semantic vector + geographic proximity). Orthogonal to `sort`, which ' +
+      'controls result ordering.',
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -133,7 +138,14 @@ export class SearchController {
     required: false,
     enum: ['relevance', 'distance', 'name', 'organization'],
     description:
-      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), organization (alphabetical by provider name)',
+      'Presentation order of results. Independent of `query_type`: the query ' +
+      'engine decides which resources match, `sort` decides their order, and ' +
+      'pinned/prioritized resources stay on top in every mode. Values: ' +
+      '`relevance` (default — best match first; under `hybrid`, geographic ' +
+      'proximity is folded into the relevance score), `distance` (nearest ' +
+      'first; requires `coords`, otherwise falls back to `relevance`), `name` ' +
+      '(alphabetical by resource name), `organization` (alphabetical by ' +
+      'provider name). Honored for all query types, including `hybrid`.',
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
@@ -230,6 +242,11 @@ export class SearchController {
     name: 'query_type',
     required: false,
     enum: SEARCH_QUERY_TYPES,
+    description:
+      'Matching engine used to select results: `text` (default, lexical), ' +
+      '`taxonomy` (HSIS code scope), `more_like_this`, and `hybrid` (lexical + ' +
+      'semantic vector + geographic proximity). Orthogonal to `sort`, which ' +
+      'controls result ordering.',
     schema: { default: 'text' },
   })
   @ApiQuery({
@@ -244,7 +261,14 @@ export class SearchController {
     required: false,
     enum: ['relevance', 'distance', 'name', 'organization'],
     description:
-      'Sort order: relevance (default), distance (requires coords), name (alphabetical by resource name), organization (alphabetical by provider name)',
+      'Presentation order of results. Independent of `query_type`: the query ' +
+      'engine decides which resources match, `sort` decides their order, and ' +
+      'pinned/prioritized resources stay on top in every mode. Values: ' +
+      '`relevance` (default — best match first; under `hybrid`, geographic ' +
+      'proximity is folded into the relevance score), `distance` (nearest ' +
+      'first; requires `coords`, otherwise falls back to `relevance`), `name` ' +
+      '(alphabetical by resource name), `organization` (alphabetical by ' +
+      'provider name). Honored for all query types, including `hybrid`.',
     schema: { default: 'relevance' },
   })
   @ApiQueryForComplexSearch()
