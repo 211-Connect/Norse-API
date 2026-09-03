@@ -171,6 +171,80 @@ describe('HybridSearchService', () => {
     ]);
   });
 
+  describe('sort param (ISS-1367)', () => {
+    it('honors sort=distance by emitting a _geo_distance tier when coords are present', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: 'asc' },
+      ]);
+    });
+
+    it('falls back to _score for sort=distance when no coords are provided', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance' },
+      });
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        '_score',
+        { service_at_location_id: 'asc' },
+      ]);
+    });
+
+    it('honors sort=name with an alphabetical tier', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'name' },
+      });
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        { 'name.raw': { order: 'asc' } },
+        { service_at_location_id: 'asc' },
+      ]);
+    });
+
+    it('drops the pinned/priority tiers when boost_pinned_resources is enabled', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ boost_pinned_resources: true });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      expect(capturedMainRequest.sort).toEqual([
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: 'asc' },
+      ]);
+    });
+  });
+
   it('maps from/size from page and limit (no app-side slicing)', async () => {
     await service.searchHybrid({
       headers,

@@ -398,4 +398,27 @@ describe('SearchService Logic', () => {
     expect(geoDistanceSort).toBeUndefined();
     expect(idSort).toBeDefined();
   });
+
+  it('should not silently fall through to a name sort for sort=distance with no coords (ISS-1367)', async () => {
+    const query: SearchResourcesQueryDto = {
+      ...baseQuery,
+      query: 'food pantry',
+      sort: 'distance',
+    };
+
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'test-tenant' } as any,
+      query,
+    });
+
+    const callArgs = mockEsService.search.mock.calls[0][0];
+    const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
+    const nameSort = callArgs.sort.find((s) => s['name.raw']);
+
+    // No coords: distance is meaningless — fall back to the relevance default
+    // (priority only), NOT the accidental name sort of the old fall-through bug.
+    expect(geoDistanceSort).toBeUndefined();
+    expect(nameSort).toBeUndefined();
+    expect(callArgs.sort).toEqual([{ priority: 'desc' }]);
+  });
 });

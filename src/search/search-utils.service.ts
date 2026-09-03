@@ -179,7 +179,7 @@ export class SearchUtilsService {
     return filters;
   }
 
-  private static getGeoDistanceSort(coords: number[]): SortCombinations {
+  static getGeoDistanceSort(coords: number[]): SortCombinations {
     const [lon, lat] = coords;
     return {
       _geo_distance: {
@@ -208,6 +208,10 @@ export class SearchUtilsService {
         if (coords) {
           return [prioritySort, this.getGeoDistanceSort(coords)];
         }
+        // No coordinates: a distance sort is meaningless. Fall back to the
+        // relevance-default ordering (priority only) rather than silently
+        // dropping through to the name sort.
+        return [prioritySort];
 
       case 'name':
         return [prioritySort, { 'name.raw': { order: 'asc' } }];
