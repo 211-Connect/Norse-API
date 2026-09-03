@@ -38,9 +38,13 @@ const BASE_TAXONOMY_BOOST = 50;
 // usually more useful than a far one), but at 1.5 it was dwarfed by the vector
 // (~0–40 effective) and name boosts (6–15) and behaved like a negligible
 // tiebreaker. Raised so nearness can meaningfully reorder otherwise-comparable
-// matches without letting a weak match win on proximity alone. Starting point —
-// re-tune empirically against real tenant queries (see ISS-1367).
-const GEO_GAUSS_WEIGHT = 25;
+// matches without letting a weak match win on proximity alone. Overridable via
+// the GEO_GAUSS_WEIGHT env var so it can be tuned without a redeploy (see
+// ISS-1367); the default below is the tuned starting point.
+const GEO_GAUSS_WEIGHT = (() => {
+  const parsed = Number(process.env.GEO_GAUSS_WEIGHT);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 25;
+})();
 const GEO_DEFAULT_SCALE_MI = 5;
 
 // When a tenant enables boost_pinned_resources, pinned/priority stop being hard
