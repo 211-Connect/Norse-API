@@ -34,12 +34,8 @@ const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 50;
-// Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see
-// ISS-1367); overridable via the GEO_GAUSS_WEIGHT env var.
-const GEO_GAUSS_WEIGHT = (() => {
-  const parsed = Number(process.env.GEO_GAUSS_WEIGHT);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 25;
-})();
+// Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
+const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
 
 // When a tenant enables boost_pinned_resources, pinned/priority stop being hard
