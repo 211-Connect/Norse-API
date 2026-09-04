@@ -3,6 +3,7 @@ export const SEARCH_QUERY_TYPES = [
   'taxonomy',
   'more_like_this',
   'hybrid',
+  'organization',
 ] as const;
 
 export type SearchQueryType = (typeof SEARCH_QUERY_TYPES)[number];

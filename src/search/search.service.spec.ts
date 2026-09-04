@@ -121,4 +121,145 @@ describe('SearchService', () => {
       }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  describe('query_type=organization', () => {
+    it('filters by organization.name.lc term OR resource name match_phrase', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: 'Example Org',
+        query_type: 'organization',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      };
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query,
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      const orgFilter = request.query.bool.filter.find(
+        (clause: any) =>
+          clause.bool?.should &&
+          clause.bool.should.some((s: any) => s.term?.['organization.name.lc']),
+      );
+      expect(orgFilter).toBeDefined();
+      expect(orgFilter.bool.should).toContainEqual({
+        term: { 'organization.name.lc': 'example org' },
+      });
+      expect(orgFilter.bool.should).toContainEqual({
+        match_phrase: { name: 'example org' },
+      });
+      expect(orgFilter.bool.minimum_should_match).toBe(1);
+    });
+
+    it('composes the organization filter with other existing filters (e.g. coords/distance)', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: 'Example Org',
+        query_type: 'organization',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        coords: [-120.740135, 47.751076],
+        distance: 10,
+        sort: 'relevance',
+      };
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query,
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      const filterClauses = request.query.bool.filter;
+      // The compound org filter (bool.should with term+match_phrase) is one clause
+      expect(
+        filterClauses.some(
+          (clause: any) =>
+            clause.bool?.should &&
+            clause.bool.should.some(
+              (s: any) => s.term?.['organization.name.lc'],
+            ),
+        ),
+      ).toBe(true);
+      // service_area geo_shape clause from the shared filter builder should
+      // still be present alongside the org filter.
+      expect(filterClauses.some((clause: any) => 'geo_shape' in clause)).toBe(
+        true,
+      );
+    });
+
+    it('rejects an empty/whitespace query', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: '   ',
+        query_type: 'organization',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      };
+
+      await expect(
+        service.searchResources({
+          headers: {
+            'x-tenant-id': 'tenant-1',
+            'accept-language': 'en',
+          } as any,
+          query,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an array query', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: ['Example Org', 'Other Org'],
+        query_type: 'organization',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      };
+
+      await expect(
+        service.searchResources({
+          headers: {
+            'x-tenant-id': 'tenant-1',
+            'accept-language': 'en',
+          } as any,
+          query,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a complex AND/OR query object', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: { OR: ['Example Org'] },
+        query_type: 'organization',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      };
+
+      await expect(
+        service.searchResources({
+          headers: {
+            'x-tenant-id': 'tenant-1',
+            'accept-language': 'en',
+          } as any,
+          query,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });
