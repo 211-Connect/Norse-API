@@ -85,7 +85,9 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
 export class SearchResourcesQueryDto {
   @ApiPropertyOptional({
     description:
-      'Search query expression. Can be plain text, string array, or nested AND/OR object payload.',
+      'Search query expression. Can be plain text, string array, or nested AND/OR object payload. ' +
+      'When query_type=organization, this must be a plain organization name string (exact, ' +
+      'case-insensitive match against the organization that resource belongs to).',
     oneOf: [
       { type: 'string' },
       { type: 'array', items: { type: 'string' } },

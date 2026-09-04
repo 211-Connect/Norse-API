@@ -53,6 +53,7 @@ export class SearchService {
     TAXONOMY: 'taxonomy',
     MORE_LIKE_THIS: 'more_like_this',
     HYBRID: 'hybrid',
+    ORGANIZATION: 'organization',
   } as const;
 
   private isComplexQuery(query: unknown): query is ComplexQuery {
@@ -102,6 +103,15 @@ export class SearchService {
 
     if (!(isStringQuery || isStringArrayQuery || isComplexObjectQuery)) {
       throw new BadRequestException('Invalid query type');
+    }
+
+    if (
+      query_type === 'organization' &&
+      (isStringArrayQuery || isComplexObjectQuery)
+    ) {
+      throw new BadRequestException(
+        'query must be a plain organization name string when query_type=organization',
+      );
     }
 
     const { geometry } = options.body || {};
@@ -285,6 +295,8 @@ export class SearchService {
         return SearchService.QUERY_TYPE.MORE_LIKE_THIS;
       case 'hybrid':
         return SearchService.QUERY_TYPE.HYBRID;
+      case 'organization':
+        return SearchService.QUERY_TYPE.ORGANIZATION;
       default:
         this.logger.warn(
           `Rejected invalid query_type (possible injection attempt): ${queryType}`,
@@ -401,6 +413,33 @@ export class SearchService {
             },
           },
         };
+
+      case 'organization': {
+        const orgName = query.trim().toLowerCase();
+        if (!orgName) {
+          throw new BadRequestException(
+            'query must not be empty when query_type=organization',
+          );
+        }
+        return {
+          query: {
+            bool: {
+              filter: [
+                ...filters,
+                {
+                  bool: {
+                    should: [
+                      { term: { 'organization.name.lc': orgName } },
+                      { match_phrase: { name: orgName } },
+                    ],
+                    minimum_should_match: 1,
+                  },
+                },
+              ],
+            },
+          },
+        };
+      }
 
       default:
         throw new NotImplementedException(
