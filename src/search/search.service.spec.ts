@@ -122,14 +122,20 @@ describe('SearchService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  describe('query_type=organization', () => {
-    it('filters by organization.name.lc term OR resource name match_phrase', async () => {
+  describe('organization_id filter', () => {
+    const hasOrgTerm = (filterClauses: any[]) =>
+      filterClauses.some(
+        (clause: any) => clause.term?.['organization.id'] === 'org-123',
+      );
+
+    it('terminal org view: empty query + organization_id -> match_all scoped by organization.id', async () => {
       const query: SearchResourcesQueryDto = {
-        query: 'Example Org',
-        query_type: 'organization',
+        query: '',
+        query_type: 'text',
         page: 1,
         limit: 25,
         filters: {},
+        organization_id: 'org-123',
         taxonomy: [],
         distance: 0,
         sort: 'relevance',
@@ -141,28 +147,43 @@ describe('SearchService', () => {
       });
 
       const request = elasticsearchService.search.mock.calls[0][0];
-      const orgFilter = request.query.bool.filter.find(
-        (clause: any) =>
-          clause.bool?.should &&
-          clause.bool.should.some((s: any) => s.term?.['organization.name.lc']),
-      );
-      expect(orgFilter).toBeDefined();
-      expect(orgFilter.bool.should).toContainEqual({
-        term: { 'organization.name.lc': 'example org' },
-      });
-      expect(orgFilter.bool.should).toContainEqual({
-        match_phrase: { name: 'example org' },
-      });
-      expect(orgFilter.bool.minimum_should_match).toBe(1);
+      expect(request.query.bool.must).toEqual({ match_all: {} });
+      expect(hasOrgTerm(request.query.bool.filter)).toBe(true);
     });
 
-    it('composes the organization filter with other existing filters (e.g. coords/distance)', async () => {
+    it('composes with a text query: keyword search scoped by organization.id', async () => {
       const query: SearchResourcesQueryDto = {
-        query: 'Example Org',
-        query_type: 'organization',
+        query: 'housing',
+        query_type: 'text',
         page: 1,
         limit: 25,
         filters: {},
+        organization_id: 'org-123',
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      };
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query,
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      // keyword query still matches text via should clauses...
+      expect(request.query.bool.should).toBeDefined();
+      // ...and is scoped to the org by the shared filter builder.
+      expect(hasOrgTerm(request.query.bool.filter)).toBe(true);
+    });
+
+    it('composes with geo (coords/distance) alongside the org scope', async () => {
+      const query: SearchResourcesQueryDto = {
+        query: '',
+        query_type: 'text',
+        page: 1,
+        limit: 25,
+        filters: {},
+        organization_id: 'org-123',
         taxonomy: [],
         coords: [-120.740135, 47.751076],
         distance: 10,
@@ -174,29 +195,18 @@ describe('SearchService', () => {
         query,
       });
 
-      const request = elasticsearchService.search.mock.calls[0][0];
-      const filterClauses = request.query.bool.filter;
-      // The compound org filter (bool.should with term+match_phrase) is one clause
-      expect(
-        filterClauses.some(
-          (clause: any) =>
-            clause.bool?.should &&
-            clause.bool.should.some(
-              (s: any) => s.term?.['organization.name.lc'],
-            ),
-        ),
-      ).toBe(true);
-      // service_area geo_shape clause from the shared filter builder should
-      // still be present alongside the org filter.
+      const filterClauses =
+        elasticsearchService.search.mock.calls[0][0].query.bool.filter;
+      expect(hasOrgTerm(filterClauses)).toBe(true);
       expect(filterClauses.some((clause: any) => 'geo_shape' in clause)).toBe(
         true,
       );
     });
 
-    it('rejects an empty/whitespace query', async () => {
+    it('omits the organization.id term when organization_id is absent', async () => {
       const query: SearchResourcesQueryDto = {
-        query: '   ',
-        query_type: 'organization',
+        query: 'housing',
+        query_type: 'text',
         page: 1,
         limit: 25,
         filters: {},
@@ -205,61 +215,16 @@ describe('SearchService', () => {
         sort: 'relevance',
       };
 
-      await expect(
-        service.searchResources({
-          headers: {
-            'x-tenant-id': 'tenant-1',
-            'accept-language': 'en',
-          } as any,
-          query,
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query,
+      });
 
-    it('rejects an array query', async () => {
-      const query: SearchResourcesQueryDto = {
-        query: ['Example Org', 'Other Org'],
-        query_type: 'organization',
-        page: 1,
-        limit: 25,
-        filters: {},
-        taxonomy: [],
-        distance: 0,
-        sort: 'relevance',
-      };
-
-      await expect(
-        service.searchResources({
-          headers: {
-            'x-tenant-id': 'tenant-1',
-            'accept-language': 'en',
-          } as any,
-          query,
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('rejects a complex AND/OR query object', async () => {
-      const query: SearchResourcesQueryDto = {
-        query: { OR: ['Example Org'] },
-        query_type: 'organization',
-        page: 1,
-        limit: 25,
-        filters: {},
-        taxonomy: [],
-        distance: 0,
-        sort: 'relevance',
-      };
-
-      await expect(
-        service.searchResources({
-          headers: {
-            'x-tenant-id': 'tenant-1',
-            'accept-language': 'en',
-          } as any,
-          query,
-        }),
-      ).rejects.toThrow(BadRequestException);
+      const filterClauses =
+        elasticsearchService.search.mock.calls[0][0].query.bool.filter;
+      expect(
+        filterClauses.some((clause: any) => clause.term?.['organization.id']),
+      ).toBe(false);
     });
   });
 });

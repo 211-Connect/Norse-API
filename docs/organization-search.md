@@ -3,7 +3,7 @@
 This file documents three related surfaces that let a caller search for
 organizations and use an organization to scope resource search: the
 standalone `/organization` typeahead, the combined `/suggestion` typeahead,
-and `query_type=organization` on `/search`.
+and the `organization_id` filter on `/search`.
 
 ## Public endpoints
 
@@ -13,8 +13,8 @@ and `query_type=organization` on `/search`.
   Unrelated to this doc's scope.
 - `GET /suggestion` — combined taxonomy + organization typeahead, always
   returning both in one round trip.
-- `GET /search?query_type=organization&query=<name>` — scopes resource
-  search results to a single organization by exact name match.
+- `GET /search?organization_id=<id>` — scopes resource search results to a
+  single organization by its stable id. Composes with any `query_type`.
 
 All three enforce the standard `x-tenant-id` header (400 if missing/invalid)
 and the `tenant_id`/`locale` query-param-mirror-must-match-header convention
@@ -114,82 +114,54 @@ fields a typeahead item doesn't need), so this is a new definition, not a
 duplicate. Both give this endpoint's 200 response a real OpenAPI schema (it
 was `any`-typed before this feature).
 
-## `query_type=organization` on `/search`
+## `organization_id` filter on `/search`
 
-Adds `organization` as a valid `query_type` value (alongside `text`,
-`taxonomy`, `more_like_this`, `hybrid`). Composes with every other `/search`
-param — `location`/`coords`/`distance`, `filters[...]`, `sort`, `page`/
-`limit`, `age` — exactly like `taxonomy` does today, because it's
-implemented as one more entry appended to the same shared
-`SearchUtilsService.buildFilters(...)` filter array that every query type
-already uses (`SearchService.getQueryObject`, `case 'organization'`).
+`organization_id` is a top-level `/search` query param that scopes results to
+the resources (service-at-locations) belonging to a single organization, by
+its **stable id** — the same `organization_id` returned by `/organization`
+and `/suggestion`. It is **not** a `query_type`: `query_type` selects the
+matching strategy (`text`/`taxonomy`/`more_like_this`/`hybrid`), while
+`organization_id` is an orthogonal scope that composes with any of them and
+with every other `/search` param (`coords`/`distance`, `filters[...]`,
+`sort`, `page`/`limit`, `age`).
 
-### Why this matches by name, not by id
+It's implemented as one `term` clause appended to the shared
+`SearchUtilsService.buildFilters(...)` array that both the standard path
+(`SearchService`) and the hybrid path (`HybridSearchService`) already use:
 
-The task that produced this endpoint originally assumed `query` would be an
-`organization_id` (a stable id looked up via `/organization` or
-`/suggestion`). **That assumption turned out to be wrong for this codebase**:
+```
+{ term: { 'organization.id': <organization_id> } }
+```
 
-- `organization_id` does not exist anywhere on the resource/service-at-location
-  Elasticsearch index's queryable surface (confirmed: it's absent from
-  `SearchUtilsService.FIELDS_TO_QUERY`, from every sort/filter field this
-  service builds, and from `OrganizationDto`'s typed `_source` fields in
-  `src/search/dto/search-response.dto.ts`).
-- This repo owns **no** Elasticsearch mapping, index-creation, or
-  reindex/backfill tooling at all — the resource index's mapping is owned by
-  an external indexer service outside this workspace. Adding
-  `organization_id` to that mapping and backfilling existing documents is
-  not something Norse API can do; it would require a change from whatever
-  team/service owns that indexer.
+Because the scope lives in the filter array — not in the scoring query —
+it works identically for a terminal org view (empty `query` +
+`organization_id` → `match_all` scoped to the org) and for "search within an
+org" (`query=housing&organization_id=<id>`), and across all query types.
 
-Rather than block this feature on that external, out-of-repo dependency,
-`query_type=organization` instead treats `query` as the organization's
-**name** (a plain string, as returned by `/organization`'s or
-`/suggestion`'s `name` field) and uses a **compound filter** that matches
-if **either** condition is true (OR):
+### Depends on `organization.id` in the resource index
 
-- `term` on `organization.name.lc` — exact, case-insensitive match against
-  the resource's denormalized organization name field. This field exists on
-  the resource index (confirmed by its use in `hybrid-search.service.ts`'s
-  org-name-tier sorting), but is frequently **null** (the external indexer
-  often omits it).
-- `match_phrase` on `name` — full-text phrase match against the resource
-  display name. Resource names typically include the organization name as
-  part of a composite title, e.g. `"Congregate Meals/Nutrition Sites |
-  Hanul Family Alliance - Lake County Office"` contains the org name
-  `"Hanul Family Alliance"` as a searchable phrase.
+This filter matches the `organization.id` keyword field on each
+resource/service-at-location document. That field is populated by the data
+indexer (dagster `elasticsearch/main.py` + the resource mappings), which
+stamps the org's stable id — the same id space the `organizations` index
+publishes as `organization_id`. See the companion change
+`feat(elasticsearch): stamp organization.id onto resource docs`.
 
-Both conditions are wrapped in a `bool.should` with `minimum_should_match: 1`
-and pushed as one filter clause into the shared filter array, so they compose
-normally with every other `/search` param. This needs **no Elasticsearch
-mapping change and no backfill/reindex** — it works against fields that are
-already indexed.
+Rollout ordering: the indexer change must land and republish **before**
+this filter is relied on in production, otherwise `organization.id` is
+absent on existing docs and the filter matches nothing until the republish
+completes. The param itself is safe to ship early — omitting or passing an
+`organization_id` that no document carries simply returns no results for
+that scope, and all other search behavior is unchanged.
 
-`query` must be a plain string when `query_type=organization`; an array or
-a nested AND/OR object is rejected with `400` (`SearchService.searchResources`,
-early validation before dispatching to `getQueryObject`). An empty/whitespace
-name is also rejected with `400`.
+### Why id, not name
 
-### Known limitation
-
-Because this filters by name text rather than a stable id, **two
-organizations in the same tenant with the identical name are
-indistinguishable** to this filter — both would match. This directly
-undercuts the disambiguation UX that motivated showing city/state in an
-organization typeahead dropdown in the first place (names can collide,
-which is exactly why the dropdown shows a location). This is a known,
-accepted trade-off, not an oversight: without `organization_id` on the
-resource index, an id-based exact filter isn't achievable from within this
-repo. If a future need requires disambiguating same-named organizations in
-`/search`, that would require the external indexer team to add
-`organization_id` to the resource/service-at-location index mapping and
-backfill existing documents — out of scope for Norse API alone.
-
-## Written confirmation (mapping/backfill)
-
-`organization_id` was **not** added to the resource/service-at-location
-Elasticsearch index mapping, and **no backfill/reindex was performed or is
-required** for this feature. `query_type=organization` relies on two
-pre-existing fields: `organization.name.lc` (a keyword subfield, often
-null) and `name` (the resource display name, which tends to contain the
-organization name).
+An earlier iteration matched on the organization **name** (`term` on
+`organization.name.lc` OR `match_phrase` on the resource `name`) because the
+resource index did not carry the org id. Name matching is unsafe: names are
+**non-unique** (two orgs in a tenant can share a name — exactly the case the
+typeahead's city/state badge disambiguates, then a name filter re-merges),
+**mutable** (a rename silently breaks the scope), and the `match_phrase`
+fallback leaked (a resource whose *own* title contained the phrase matched
+even under a different provider). Stamping the id onto the resource doc
+removes all three, so the filter is a precise `term` on a stable key.

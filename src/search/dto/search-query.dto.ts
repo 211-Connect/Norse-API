@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   Validate,
   ValidatorConstraint,
@@ -85,9 +86,7 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
 export class SearchResourcesQueryDto {
   @ApiPropertyOptional({
     description:
-      'Search query expression. Can be plain text, string array, or nested AND/OR object payload. ' +
-      'When query_type=organization, this must be a plain organization name string (exact, ' +
-      'case-insensitive match against the organization that resource belongs to).',
+      'Search query expression. Can be plain text, string array, or nested AND/OR object payload.',
     oneOf: [
       { type: 'string' },
       { type: 'array', items: { type: 'string' } },
@@ -154,6 +153,17 @@ export class SearchResourcesQueryDto {
   @IsOptional()
   @IsObject()
   filters: Record<string, string | string[]> = {};
+
+  @ApiPropertyOptional({
+    description:
+      'Scope results to resources belonging to a single organization, by its ' +
+      'stable organization id (the `organization_id` returned by /suggestion and ' +
+      '/organization). Composes with any query_type and with filters.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  organization_id?: string;
 
   @ApiPropertyOptional({
     description: 'HSIS taxonomy scope as comma-delimited string or array',
