@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationResponseDto } from '../../common/dto/pagination-response.dto';
+import { TransformedResourceOpenApiDto } from 'src/resource/dto/transformed-resource.openapi.dto';
+import { TransformedResource } from 'src/resource/types/resource-response.types';
 
 export class FavoriteListItemDto {
   @ApiProperty()
@@ -26,10 +28,10 @@ export class FavoriteListItemDto {
 
 export class FavoriteListDetailResponseDto extends FavoriteListItemDto {
   @ApiProperty({
-    type: [Object],
-    description: 'Populated favorites (resources)',
+    type: [TransformedResourceOpenApiDto],
+    description: 'Resolved favorite resources',
   })
-  favorites: any[];
+  favorites: TransformedResource[];
 }
 
 export class FavoriteListResponseDto extends PaginationResponseDto {
