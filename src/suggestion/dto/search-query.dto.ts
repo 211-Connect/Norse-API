@@ -13,14 +13,6 @@ export class SuggestionSearchQueryDto {
   query: string = '';
 
   @ApiPropertyOptional({
-    description: 'Taxonomy code filter',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  code?: string;
-
-  @ApiPropertyOptional({
     description: 'Page number for pagination',
     minimum: 1,
     default: 1,

@@ -22,5 +22,6 @@ import { OrganizationDetailService } from './organization-detail.service';
       { name: Redirect.name, schema: RedirectSchema },
     ]),
   ],
+  exports: [OrganizationService],
 })
 export class OrganizationModule {}

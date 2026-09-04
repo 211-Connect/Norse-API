@@ -88,6 +88,7 @@ export class SearchService {
       page,
       limit,
       filters,
+      organization_id,
       coords,
       distance,
       age,
@@ -149,6 +150,7 @@ export class SearchService {
       age,
       geo_type,
       geometry,
+      organization_id,
     );
 
     const queryType: QueryType = this.getQueryType(query, query_type);

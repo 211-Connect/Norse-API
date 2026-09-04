@@ -54,8 +54,16 @@ export class SearchUtilsService {
     age: number | undefined,
     geoType: string | undefined,
     geometry: SearchResourcesBodyDto['geometry'],
+    organizationId?: string,
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
+
+    // Scope to a single organization by its stable id. Composes with every
+    // query_type (standard + hybrid both build their filters here) and with
+    // facet/geo/age filters, unlike an exclusive query_type would.
+    if (organizationId) {
+      filters.push({ term: { 'organization.id': organizationId } });
+    }
 
     for (const [key, value] of Object.entries(facets || {})) {
       const localeField = `${SearchUtilsService.FACETS_FIELD_PREFIX}${key}.keyword`;
