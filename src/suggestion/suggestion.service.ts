@@ -38,7 +38,7 @@ export class SuggestionService {
       headers['x-tenant-id'],
     );
     const organizationSearchEnabled =
-      searchConfig.organization_search_enabled ?? false;
+      searchConfig.enable_organization_search ?? false;
 
     const [taxonomyResult, organizations] = await Promise.all([
       this.taxonomyService.searchTaxonomiesV2({
