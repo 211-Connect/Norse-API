@@ -14,5 +14,5 @@ export interface SearchConfigCache {
    * When true, organization search is enabled in the suggestion service.
    * When false (default), only taxonomy search is performed.
    */
-  organization_search_enabled?: boolean;
+  enable_organization_search?: boolean;
 }
