@@ -1,101 +1,86 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SuggestionSearchQueryDto } from './dto/search-query.dto';
-import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyTermsQueryDto } from './dto/taxonomy-terms-query.dto';
+import { OrganizationService } from 'src/organization/organization.service';
+import { TaxonomyService } from 'src/taxonomy/taxonomy.service';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import {
+  OrganizationSuggestionItemDto,
+  SuggestionCombinedResponseDto,
+} from './dto/suggestion-response.dto';
 
-const isTaxonomyCode = new RegExp(
-  /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
-);
+const ORGANIZATION_SUGGESTION_LIMIT = 8;
 
+/**
+ * Combined typeahead for the Norse frontend's search bar. Always returns
+ * both taxonomy and organization matches in one round trip — this is what
+ * distinguishes `/suggestion` from `/taxonomy` (which owns taxonomy search
+ * on its own). Taxonomy lookups are delegated to `TaxonomyService` rather
+ * than reimplemented here, to avoid maintaining two copies of the same
+ * Elasticsearch query.
+ */
 @Injectable()
 export class SuggestionService {
-  constructor(private readonly elasticsearchService: ElasticsearchService) {}
+  constructor(
+    private readonly taxonomyService: TaxonomyService,
+    private readonly organizationService: OrganizationService,
+    private readonly tenantConfigService: TenantConfigService,
+  ) {}
 
-  async searchTaxonomies(options: {
+  async getSuggestions(options: {
     headers: HeadersDto;
     query: SuggestionSearchQueryDto;
-  }) {
-    try {
-      const q = options.query;
-      const skip = (q.page - 1) * 10;
+  }): Promise<SuggestionCombinedResponseDto> {
+    const { headers, query } = options;
 
-      if (!q.query && !q.code) {
-        throw { message: 'Query or code is required' };
-      }
+    const searchConfig = await this.tenantConfigService.getSearchConfig(
+      headers['x-tenant-id'],
+    );
+    const organizationSearchEnabled =
+      searchConfig.organization_search_enabled ?? false;
 
-      const isCode = q.query
-        ? isTaxonomyCode.test(q.query)
-        : q.code
-          ? true
-          : false;
-
-      const queryBuilder: any = {
-        index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
-        from: skip,
-        size: 10,
+    const [taxonomyResult, organizations] = await Promise.all([
+      this.taxonomyService.searchTaxonomiesV2({
+        headers,
         query: {
-          bool: {
-            filter: [],
-          },
+          query: query.query,
+          page: query.page,
         },
-        aggs: {},
-      };
+      }),
+      organizationSearchEnabled
+        ? this.searchOrganizations({ headers, query })
+        : [],
+    ]);
 
-      const searchQuery =
-        (!isCode && q.query) || (isCode && q.query)
-          ? q.query
-          : q.code
-            ? q.code
-            : '';
-      const fields = isCode
-        ? ['code', 'code._2gram', 'code._3gram']
-        : ['name', 'name._2gram', 'name._3gram'];
+    return { taxonomies: taxonomyResult.items, organizations };
+  }
 
-      queryBuilder.query = {
-        bool: {
-          must: {
-            multi_match: {
-              query: searchQuery,
-              type: 'bool_prefix',
-              fields: fields,
-            },
-          },
-          filter: [],
-        },
-      };
+  private async searchOrganizations(options: {
+    headers: HeadersDto;
+    query: SuggestionSearchQueryDto;
+  }): Promise<OrganizationSuggestionItemDto[]> {
+    const orgResults = await this.organizationService.search({
+      headers: options.headers,
+      query: {
+        query: options.query.query,
+        page: 1,
+        limit: ORGANIZATION_SUGGESTION_LIMIT,
+      },
+    });
 
-      const data = await this.elasticsearchService.search(queryBuilder);
-
-      return data;
-    } catch (err) {
-      throw new BadRequestException(err.message);
-    }
+    return orgResults.hits.map((hit) => ({
+      organization_id: hit._source.organization_id,
+      name: hit._source.name,
+      city: hit._source.location?.city ?? null,
+      state: hit._source.location?.state ?? null,
+    }));
   }
 
   async getTaxonomyTermsForCodes(options: {
     headers: HeadersDto;
     query: TaxonomyTermsQueryDto;
   }) {
-    const q = options.query;
-
-    const queryBuilder: any = {
-      index: `${options.headers['x-tenant-id']}-taxonomies_v2_${options.headers['accept-language']}`,
-      query: {
-        terms: {
-          'code.raw': q?.terms ?? [],
-        },
-      },
-    };
-
-    let data;
-    try {
-      data = await this.elasticsearchService.search(queryBuilder);
-    } catch (err) {
-      console.log(err);
-      data = {};
-    }
-
-    return data;
+    return this.taxonomyService.getTaxonomyTermsForCodes(options);
   }
 }

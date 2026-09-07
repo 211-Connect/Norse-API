@@ -76,6 +76,9 @@ export class LocationDto {
 }
 
 export class OrganizationDto {
+  @ApiProperty({ nullable: true })
+  id?: string | null;
+
   @ApiProperty()
   name: string;
 

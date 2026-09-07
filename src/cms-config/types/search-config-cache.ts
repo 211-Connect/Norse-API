@@ -9,4 +9,10 @@ export interface SearchConfigCache {
    * (default), pinned/priority remain hard primary sort tiers.
    */
   boost_pinned_resources?: boolean;
+
+  /**
+   * When true, organization search is enabled in the suggestion service.
+   * When false (default), only taxonomy search is performed.
+   */
+  organization_search_enabled?: boolean;
 }

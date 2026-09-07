@@ -128,8 +128,17 @@ export class HybridSearchService {
     body?: SearchResourcesBodyDto;
   }): Promise<SearchResponse> {
     const { headers, query: q } = options;
-    const { query, page, limit, filters, coords, distance, age, geo_type, sort } =
-      q;
+    const {
+      query,
+      page,
+      limit,
+      filters,
+      organization_id,
+      coords,
+      distance,
+      age,
+      geo_type,
+    } = q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
     const lang = headers['accept-language'] || 'en';
@@ -193,6 +202,7 @@ export class HybridSearchService {
       age,
       geo_type,
       geometry,
+      organization_id,
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
