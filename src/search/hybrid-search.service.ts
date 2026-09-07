@@ -11,6 +11,7 @@ import {
   QueryDslFunctionScoreContainer,
   SearchRequest,
   Sort,
+  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
@@ -33,7 +34,8 @@ const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 50;
-const GEO_GAUSS_WEIGHT = 1.5;
+// Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
+const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
 
 // When a tenant enables boost_pinned_resources, pinned/priority stop being hard
@@ -126,7 +128,8 @@ export class HybridSearchService {
     body?: SearchResourcesBodyDto;
   }): Promise<SearchResponse> {
     const { headers, query: q } = options;
-    const { query, page, limit, filters, coords, distance, age, geo_type } = q;
+    const { query, page, limit, filters, coords, distance, age, geo_type, sort } =
+      q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
     const lang = headers['accept-language'] || 'en';
@@ -211,6 +214,7 @@ export class HybridSearchService {
       limit: limit || 25,
       aggs,
       boostPinned,
+      sort,
     });
 
     const tSearchStart = performance.now();
@@ -557,6 +561,51 @@ export class HybridSearchService {
     return functions;
   }
 
+  /**
+   * Ordering for hybrid results: `sort` picks the order, the query still decides
+   * membership. Mirrors SearchUtilsService.buildSort so `sort` behaves the same
+   * across query types (ISS-1367). pinned/priority lead unless
+   * boost_pinned_resources moves them into the score.
+   */
+  private buildHybridSort(
+    sortOption: SearchResourcesQueryDto['sort'],
+    coords: number[] | undefined,
+    boostPinned: boolean,
+  ): Sort {
+    const tiebreaker: SortCombinations = { service_at_location_id: 'asc' };
+    const leadingTiers: SortCombinations[] = boostPinned
+      ? []
+      : [{ pinned: 'desc' }, { priority: 'desc' }];
+
+    let orderingTiers: SortCombinations[];
+    switch (sortOption) {
+      case 'distance':
+        // No coords: fall back to relevance rather than error.
+        orderingTiers = coords
+          ? [SearchUtilsService.getGeoDistanceSort(coords)]
+          : ['_score'];
+        break;
+      // `.lc`, not `.raw`: the hybrid index (built by a separate pipeline) only
+      // exposes `.lc`/`.edge`/`.clean` on these fields. `.lc` is a sortable
+      // keyword whose lowercase normalizer gives case-insensitive ordering.
+      case 'name':
+        orderingTiers = [{ 'name.lc': { order: 'asc' } }];
+        break;
+      case 'organization':
+        orderingTiers = [
+          { 'organization.name.lc': { order: 'asc' } },
+          { 'name.lc': { order: 'asc' } },
+        ];
+        break;
+      case 'relevance':
+      default:
+        // Blended hybrid score (proximity folded in via the geo decay function).
+        orderingTiers = ['_score'];
+    }
+
+    return [...leadingTiers, ...orderingTiers, tiebreaker];
+  }
+
   private buildHybridQuery(args: {
     index: string;
     queryStr: string;
@@ -569,6 +618,7 @@ export class HybridSearchService {
     limit: number;
     aggs: Aggregations;
     boostPinned: boolean;
+    sort: SearchResourcesQueryDto['sort'];
   }): SearchRequest {
     const {
       index,
@@ -582,6 +632,7 @@ export class HybridSearchService {
       limit,
       aggs,
       boostPinned,
+      sort: sortOption,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -607,19 +658,7 @@ export class HybridSearchService {
       : [];
     const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
 
-    // Default: pinned/priority are hard primary sort tiers; _score carries the
-    // hybrid signal within a tier. When boostPinned is set, both drop out of the
-    // sort and instead feed _score (pinned via the should clause above, priority
-    // via the field_value_factor below), so results rank purely by _score.
-    // service_at_location_id is the unique tiebreaker for deterministic pages.
-    const sort: Sort = boostPinned
-      ? ['_score', { service_at_location_id: 'asc' }]
-      : [
-          { pinned: 'desc' },
-          { priority: 'desc' },
-          '_score',
-          { service_at_location_id: 'asc' },
-        ];
+    const sort = this.buildHybridSort(sortOption, coords, boostPinned);
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
