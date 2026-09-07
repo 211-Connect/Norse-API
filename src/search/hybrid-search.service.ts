@@ -138,6 +138,7 @@ export class HybridSearchService {
       distance,
       age,
       geo_type,
+      sort,
     } = q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
