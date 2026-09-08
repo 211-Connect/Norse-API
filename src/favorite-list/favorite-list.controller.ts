@@ -155,7 +155,7 @@ export class FavoriteListController {
 
   @Delete(':id')
   @UseGuards(KeycloakGuard)
-  remove(@Param('id') id: string, @User() user: User) {
-    return this.favoriteListService.remove(id, { user });
+  async remove(@Param('id') id: string, @User() user: User): Promise<void> {
+    await this.favoriteListService.remove(id, { user });
   }
 }
