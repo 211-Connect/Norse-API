@@ -14,37 +14,46 @@ import {
   TraceIdRatioBasedSampler,
 } from '@opentelemetry/sdk-trace-node';
 
-const sdk = new NodeSDK({
-  sampler: new ParentBasedSampler({
-    root: new TraceIdRatioBasedSampler(
-      parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || '0.2'),
+if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
+  console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
+} else {
+  console.log(
+    'Initializing tracing with endpoint:',
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+  );
+
+  const sdk = new NodeSDK({
+    sampler: new ParentBasedSampler({
+      root: new TraceIdRatioBasedSampler(
+        parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || '1.0'),
+      ),
+      remoteParentSampled: new AlwaysOnSampler(),
+    }),
+    resource: defaultResource().merge(
+      resourceFromAttributes({
+        [ATTR_SERVICE_NAME]: 'norse-api',
+      }),
     ),
-    remoteParentSampled: new AlwaysOnSampler(),
-  }),
-  resource: defaultResource().merge(
-    resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: 'norse-api',
+    traceExporter: new OTLPTraceExporter({
+      url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
     }),
-  ),
-  traceExporter: new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4317',
-  }),
-  instrumentations: [
-    getNodeAutoInstrumentations({
-      '@opentelemetry/instrumentation-fs': {
-        enabled: false,
-      },
-    }),
-    new NestInstrumentation(),
-  ],
-});
+    instrumentations: [
+      getNodeAutoInstrumentations({
+        '@opentelemetry/instrumentation-fs': {
+          enabled: false,
+        },
+      }),
+      new NestInstrumentation(),
+    ],
+  });
 
-sdk.start();
+  sdk.start();
 
-process.on('SIGTERM', () => {
-  sdk
-    .shutdown()
-    .then(() => console.log('Tracing terminated'))
-    .catch((error) => console.log('Error terminating tracing', error))
-    .finally(() => process.exit(0));
-});
+  process.on('SIGTERM', () => {
+    sdk
+      .shutdown()
+      .then(() => console.log('Tracing terminated'))
+      .catch((error) => console.log('Error terminating tracing', error))
+      .finally(() => process.exit(0));
+  });
+}
