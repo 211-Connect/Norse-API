@@ -15,6 +15,7 @@ import {
   TaxonomyTermsQueryDto,
   taxonomyTermsQuerySchema,
 } from './dto/taxonomy-terms-query.dto';
+import { SuggestionCombinedResponseDto } from './dto/suggestion-response.dto';
 import { SuggestionService } from './suggestion.service';
 
 @ApiTags('Suggestion')
@@ -28,9 +29,13 @@ export class SuggestionController {
   @Version('1')
   @ApiResponse({
     status: 200,
+    description:
+      'Combined taxonomy + organization typeahead results, always returned ' +
+      'together in one round trip. Use GET /taxonomy or GET /organization directly if only ' +
+      'taxonomy or organization results are needed.',
+    type: SuggestionCombinedResponseDto,
   })
   @ApiQuery({ name: 'query', required: false })
-  @ApiQuery({ name: 'code', required: false, deprecated: true })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiHeader({ name: 'x-tenant-id', required: true })
   @ApiHeader({
@@ -39,12 +44,12 @@ export class SuggestionController {
       default: 'en',
     },
   })
-  getTaxonomies(
+  getSuggestions(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SuggestionSearchQueryDto,
   ) {
-    return this.suggestionService.searchTaxonomies({
+    return this.suggestionService.getSuggestions({
       headers,
       query,
     });

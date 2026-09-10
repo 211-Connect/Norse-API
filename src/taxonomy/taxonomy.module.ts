@@ -7,5 +7,6 @@ import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.mo
   controllers: [TaxonomyController],
   providers: [TaxonomyService],
   imports: [SharedElasticsearchModule],
+  exports: [TaxonomyService],
 })
 export class TaxonomyModule {}

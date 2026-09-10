@@ -11,7 +11,6 @@ import {
   FavoriteList,
   FavoriteListDocument,
 } from 'src/common/schemas/favorite-list.schema';
-import { ResourceDocument } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto } from './dto/pagination.dto';
@@ -22,6 +21,9 @@ import {
   FavoriteListSyncResponseDto,
 } from './dto/favorite-list.response.dto';
 import { SyncFavoriteListDto } from './dto/sync-favorite-list.dto';
+import { HeadersDto } from 'src/common/dto/headers.dto';
+import { ResourceService } from 'src/resource/resource.service';
+import { TransformedResource } from 'src/resource/types/resource-response.types';
 
 interface User {
   id: string;
@@ -53,6 +55,7 @@ export class FavoriteListService {
   constructor(
     @InjectModel(FavoriteList.name)
     private favoriteListModel: Model<FavoriteListDocument>,
+    private readonly resourceService: ResourceService,
   ) {}
 
   private buildOwnershipFilter(options: FavoriteListOptions) {
@@ -344,32 +347,29 @@ export class FavoriteListService {
 
   async findOne(
     id: string,
-    locale: string,
+    headers: HeadersDto,
   ): Promise<FavoriteListDetailResponseDto> {
-    const favoriteList = await this.favoriteListModel.findById(id).populate({
-      path: 'favorites',
-      model: 'Resource',
-      select: '-serviceArea',
-      transform: (doc: ResourceDocument | null) => {
-        if (!doc) return null;
+    const tenantId = headers['x-tenant-id'];
 
-        const translation = doc.translations.find((el) => el.locale === locale);
-
-        doc.translations = [];
-
-        if (translation) doc.translations.push(translation);
-
-        return doc;
-      },
-    });
+    const favoriteList = await this.favoriteListModel
+      .findOne({ _id: id, tenantId })
+      .exec();
 
     if (!favoriteList) {
-      this.logger.warn(`Favorite list with ID: ${id} not found.`);
+      this.logger.warn(
+        `Favorite list with ID: ${id} not found for tenant: ${tenantId}.`,
+      );
       throw new NotFoundException();
     }
 
-    favoriteList.favorites = favoriteList.favorites.filter(
-      (el: any) => el != null,
+    const resourceIds = favoriteList.favorites.map((favorite) =>
+      favorite.toString(),
+    );
+
+    const favorites = await this.resolveFavoriteResources(
+      resourceIds,
+      headers,
+      id,
     );
 
     return {
@@ -378,8 +378,43 @@ export class FavoriteListService {
       description: favoriteList.description,
       privacy: favoriteList.privacy,
       ownerId: favoriteList.ownerId,
-      favorites: favoriteList.favorites,
+      favorites,
     };
+  }
+
+  /**
+   * Resolves the resources referenced by a favorites list, using
+   * ResourceService's tenant-scoped, ID-fallback-aware batch lookup (the
+   * same one printable-directory.service.ts uses for `favorites_list`
+   * sources). Favorites that can't be resolved (deleted/redirected/not
+   * found) are dropped rather than surfaced to the client, matching prior
+   * behavior, but are logged for observability.
+   */
+  private async resolveFavoriteResources(
+    resourceIds: string[],
+    headers: HeadersDto,
+    favoriteListId: string,
+  ): Promise<TransformedResource[]> {
+    if (resourceIds.length === 0) {
+      return [];
+    }
+
+    const { data, errors } = await this.resourceService.findManyByIds(
+      resourceIds,
+      { headers },
+    );
+
+    if (errors.length > 0) {
+      this.logger.warn(
+        `Failed to resolve ${errors.length} favorite(s) for list ${favoriteListId}: ${JSON.stringify(
+          errors,
+        )}`,
+      );
+    }
+
+    return resourceIds
+      .map((resourceId) => data[resourceId])
+      .filter((resource): resource is TransformedResource => Boolean(resource));
   }
 
   async update(
