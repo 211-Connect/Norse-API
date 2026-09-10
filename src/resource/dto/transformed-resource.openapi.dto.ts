@@ -89,6 +89,9 @@ export class ResourceTranslationOpenApiDto {
   @ApiPropertyOptional()
   alert?: string;
 
+  @ApiPropertyOptional()
+  alertDate?: string;
+
   @ApiPropertyOptional({ type: [ResourceTaxonomyOpenApiDto] })
   taxonomies?: ResourceTaxonomyOpenApiDto[];
 

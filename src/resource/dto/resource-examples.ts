@@ -79,6 +79,7 @@ export const RESOURCE_EXAMPLE = {
     applicationProcess: 'Walk-In;Call',
     alert:
       'We are currently experiencing high call volumes. Please be patient and leave a message if you are unable to reach us.',
+    alertDate: 'Tuesday, 8 September 2026',
     serviceDescription:
       'Emergency financial assistance to help with:\n- Rental and utility assistance\n- Help with first month rent\n- Utility assistance \nFood Pantry including items\n- Fresh and Shelf-Stable Food\n- Personal hygiene items\n- Diapers\n- Prescriptions',
     organizationDescription:

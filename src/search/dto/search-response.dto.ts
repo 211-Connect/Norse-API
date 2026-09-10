@@ -20,6 +20,9 @@ export class ServiceDto {
   alert?: string | null;
 
   @ApiProperty({ nullable: true })
+  alert_date?: string | null;
+
+  @ApiProperty({ nullable: true })
   alternate_name?: string | null;
 
   @ApiProperty({ nullable: true })
