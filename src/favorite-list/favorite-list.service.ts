@@ -493,7 +493,10 @@ export class FavoriteListService {
     }
   }
 
-  async remove(id: string, options: { user: User }) {
+  async remove(
+    id: string,
+    options: { user: User },
+  ): Promise<{ deletedCount: number }> {
     this.logger.log(
       `Removing favorite list with ID: ${id} for user: ${options.user.id}`,
     );
