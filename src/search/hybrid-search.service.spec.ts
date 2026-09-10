@@ -125,9 +125,9 @@ describe('HybridSearchService', () => {
     const scriptFn = functions.find((f: any) => f.script_score);
     expect(scriptFn).toBeDefined();
     expect(scriptFn.script_score.script.source).toBe(
-      "cosineSimilarity(params.qv, 'embedding') + 1.0",
+      "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
     );
-    expect(scriptFn.weight).toBe(50);
+    expect(scriptFn.weight).toBe(100);
     // No knn clause anywhere on the main request.
     expect(capturedMainRequest.knn).toBeUndefined();
   });
@@ -147,11 +147,11 @@ describe('HybridSearchService', () => {
     );
     expect(codes).toEqual(['BH-1800', 'BV-8900']);
 
-    // boost = 10 * score * (1 + 0.5 / (1 + i))
+    // boost = 50 * score * (1 + 0.5 / (1 + i))
     const boost0 = taxonomyClauses[0].nested.query.constant_score.boost;
     const boost1 = taxonomyClauses[1].nested.query.constant_score.boost;
-    expect(boost0).toBeCloseTo(10 * 0.9 * (1 + 0.5 / 1));
-    expect(boost1).toBeCloseTo(10 * 0.6 * (1 + 0.5 / 2));
+    expect(boost0).toBeCloseTo(50 * 0.9 * (1 + 0.5 / 1));
+    expect(boost1).toBeCloseTo(50 * 0.6 * (1 + 0.5 / 2));
 
     // Not a single flat terms boost clause.
     const flatTerms = should.filter(
@@ -160,12 +160,10 @@ describe('HybridSearchService', () => {
     expect(flatTerms).toHaveLength(0);
   });
 
-  it('uses a 4-key deterministic sort', async () => {
+  it('uses a 2-key deterministic sort by default (boost mode)', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
     expect(capturedMainRequest.sort).toEqual([
-      { pinned: 'desc' },
-      { priority: 'desc' },
       '_score',
       { service_at_location_id: 'asc' },
     ]);
@@ -179,8 +177,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         {
           _geo_distance: {
             'location.point': { lon: -76.6122, lat: 39.2904 },
@@ -200,8 +196,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         '_score',
         { service_at_location_id: 'asc' },
       ]);
@@ -214,8 +208,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         { 'name.lc': { order: 'asc' } },
         { service_at_location_id: 'asc' },
       ]);
@@ -228,23 +220,57 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         { 'organization.name.lc': { order: 'asc' } },
         { 'name.lc': { order: 'asc' } },
         { service_at_location_id: 'asc' },
       ]);
     });
 
-    it('drops the pinned/priority tiers when boost_pinned_resources is enabled', async () => {
+    it('defaults to boost mode when pinned_resources_mode is missing', async () => {
       (service as any).tenantConfigService.getSearchConfig = jest
         .fn()
-        .mockResolvedValue({ boost_pinned_resources: true });
+        .mockResolvedValue({});
 
       await service.searchHybrid({
         headers,
         query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
       });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      expect(capturedMainRequest.sort).toEqual([
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: 'asc' },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(true);
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('boost mode drops pinned/priority tiers and adds score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'boost' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
 
       expect(capturedMainRequest.sort).toEqual([
         {
@@ -257,6 +283,84 @@ describe('HybridSearchService', () => {
         },
         { service_at_location_id: 'asc' },
       ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(true);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('top mode hard-sorts pinned/priority resources and omits score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'top' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: 'asc' },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(false);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(false);
+    });
+
+    it('ignore mode omits pinned/priority tiers and score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'ignore' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+
+      expect(capturedMainRequest.sort).toEqual([
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: 'asc' },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(false);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(false);
     });
   });
 
@@ -278,7 +382,7 @@ describe('HybridSearchService', () => {
     expect(result.search.hits.hits[0]._id).toBe('doc-1');
   });
 
-  it('omits lexical should clauses in browse mode (empty query) but keeps taxonomy boosts', async () => {
+  it('omits lexical and taxonomy boost clauses in browse mode (empty query)', async () => {
     await service.searchHybrid({
       headers,
       query: { ...baseQuery, query: '' },
@@ -293,7 +397,7 @@ describe('HybridSearchService', () => {
     const taxonomyClauses = should.filter(
       (c: any) => c.nested?.query?.constant_score,
     );
-    expect(taxonomyClauses).toHaveLength(2);
+    expect(taxonomyClauses).toHaveLength(0);
   });
 
   it('adds a hard taxonomy scope filter when the taxonomy param is provided', async () => {

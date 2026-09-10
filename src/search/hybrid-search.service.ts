@@ -24,6 +24,10 @@ import {
 import { SearchUtilsService } from './search-utils.service';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import {
+  PinnedResourcesMode,
+  SearchConfigCache,
+} from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 
@@ -38,9 +42,10 @@ const BASE_TAXONOMY_BOOST = 50;
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
 
-// When a tenant enables boost_pinned_resources, pinned/priority stop being hard
-// sort tiers and become small score contributions instead (so a large pinned
-// pool no longer floods the first pages). Tune these like the other weights.
+// When a tenant sets `pinned_resources_mode` to `boost`, pinned/priority stop
+// being hard sort tiers and become small score contributions instead (so a
+// large pinned pool no longer floods the first pages). Tune these like the
+// other weights.
 const PINNED_SCORE_BOOST = 5;
 const PRIORITY_SCORE_WEIGHT = 1;
 
@@ -173,7 +178,7 @@ export class HybridSearchService {
     ]);
 
     const queryVector = embedResult;
-    const boostPinned = searchConfig?.boost_pinned_resources ?? false;
+    const pinnedMode = this.resolvePinnedResourcesMode(searchConfig);
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
@@ -224,7 +229,7 @@ export class HybridSearchService {
       page,
       limit: limit || 25,
       aggs,
-      boostPinned,
+      pinnedMode,
       sort,
     });
 
@@ -575,18 +580,17 @@ export class HybridSearchService {
   /**
    * Ordering for hybrid results: `sort` picks the order, the query still decides
    * membership. Mirrors SearchUtilsService.buildSort so `sort` behaves the same
-   * across query types (ISS-1367). pinned/priority lead unless
-   * boost_pinned_resources moves them into the score.
+   * across query types (ISS-1367). pinned/priority lead only when
+   * `pinned_resources_mode` is `top`.
    */
   private buildHybridSort(
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
-    boostPinned: boolean,
+    pinnedMode: PinnedResourcesMode,
   ): Sort {
     const tiebreaker: SortCombinations = { service_at_location_id: 'asc' };
-    const leadingTiers: SortCombinations[] = boostPinned
-      ? []
-      : [{ pinned: 'desc' }, { priority: 'desc' }];
+    const leadingTiers: SortCombinations[] =
+      pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [];
 
     let orderingTiers: SortCombinations[];
     switch (sortOption) {
@@ -628,7 +632,7 @@ export class HybridSearchService {
     page: number;
     limit: number;
     aggs: Aggregations;
-    boostPinned: boolean;
+    pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
   }): SearchRequest {
     const {
@@ -642,7 +646,7 @@ export class HybridSearchService {
       page,
       limit,
       aggs,
-      boostPinned,
+      pinnedMode,
       sort: sortOption,
     } = args;
 
@@ -652,24 +656,27 @@ export class HybridSearchService {
       ? this.buildLexicalShouldClauses(queryStr)
       : [];
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted);
-    // When boost_pinned_resources is enabled, pinned becomes a small additive
-    // score contribution (constant_score) instead of a hard sort tier.
+    // When pinned_resources_mode is `boost`, pinned becomes a small additive
+    // score contribution (constant_score) instead of a hard sort tier. When it
+    // is `top`, the hard sort tiers handle ordering. When `ignore`, neither is
+    // applied.
 
-    this.logger.debug(`Boost pinned resources: ${boostPinned}`);
+    this.logger.debug(`Pinned resources mode: ${pinnedMode}`);
 
-    const pinnedShould: QueryDslQueryContainer[] = boostPinned
-      ? [
-          {
-            constant_score: {
-              filter: { term: { pinned: true } },
-              boost: PINNED_SCORE_BOOST,
+    const pinnedShould: QueryDslQueryContainer[] =
+      pinnedMode === 'boost'
+        ? [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
             },
-          },
-        ]
-      : [];
+          ]
+        : [];
     const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
 
-    const sort = this.buildHybridSort(sortOption, coords, boostPinned);
+    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
@@ -677,7 +684,7 @@ export class HybridSearchService {
       distance,
     );
 
-    if (boostPinned) {
+    if (pinnedMode === 'boost') {
       // priority (integer, higher = more important) as a small score boost.
       scoreFunctions.push({
         field_value_factor: {
@@ -723,6 +730,16 @@ export class HybridSearchService {
       query: esQuery,
       sort,
     };
+  }
+
+  private resolvePinnedResourcesMode(
+    searchConfig: SearchConfigCache | undefined,
+  ): PinnedResourcesMode {
+    const mode = searchConfig?.pinned_resources_mode;
+    const validModes: PinnedResourcesMode[] = ['ignore', 'boost', 'top'];
+    return validModes.includes(mode as PinnedResourcesMode)
+      ? (mode as PinnedResourcesMode)
+      : 'boost';
   }
 
   /**
