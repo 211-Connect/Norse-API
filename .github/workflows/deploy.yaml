@@ -6,6 +6,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write # required for keyless Cosign signing via GitHub Actions OIDC
 
 on:
   push:
@@ -23,57 +24,55 @@ on:
       - "Dockerfile"
       - ".dockerignore"
 
+  release:
+    types: [published]
+
   workflow_dispatch:
 
 env:
   REGISTRY: registry.digitalocean.com
   IMAGE_NAME: ${{ secrets.DO_REGISTRY_NAME }}/norse-api
-  DEPLOY_ENV: ${{ github.ref_name == 'main' && 'production' || 'development' }}
 
 jobs:
   build-and-push:
+    name: Build, sign and publish image
     runs-on: ubuntu-latest
-    outputs:
-      app_id: ${{ steps.before.outputs.app_id }}
-      deployment_id: ${{ steps.before.outputs.deployment_id }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - name: Validate release tag is semver
+        if: github.ref_type == 'tag'
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]] \
+            || { echo "::error::Release tag '${GITHUB_REF_NAME}' is not v-prefixed semver (expected vMAJOR.MINOR.PATCH)"; exit 1; }
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Checkout code
+        # actions/checkout v5.1.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Cache Docker layers
-        uses: actions/cache@v5
-        with:
-          path: ${{ runner.temp }}/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ env.DEPLOY_ENV }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-${{ env.DEPLOY_ENV }}-
+        # docker/setup-buildx-action v4.3.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
 
       - name: Log in to DigitalOcean Container Registry
-        uses: docker/login-action@v4
+        # docker/login-action v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           password: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract candidate tag and labels for Docker
         id: meta
-        uses: docker/metadata-action@v6
+        # docker/metadata-action v6.2.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,format=short
-            type=raw,value=${{ env.DEPLOY_ENV }}
+            type=raw,value=candidate-${{ github.sha }}-${{ github.run_number }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
+      - name: Build and push candidate image
+        id: build
+        # docker/build-push-action v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: ./Dockerfile
@@ -81,12 +80,41 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
-          build-args: |
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-          cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
-          cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
+      - name: Install Cosign
+        # sigstore/cosign-installer v4.1.2 (installs cosign 3.0.6)
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
 
-      - name: Move cache
+      - name: Sign image digest (keyless, GitHub Actions OIDC)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Verify image digest signature
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          rm -rf ${{ runner.temp }}/.buildx-cache
-          mv ${{ runner.temp }}/.buildx-cache-new ${{ runner.temp }}/.buildx-cache
+          cosign verify \
+            --certificate-identity "https://github.com/211-Connect/Norse-API/.github/workflows/deploy.yaml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Publish release tag on verified digest
+        if: github.ref_type == 'tag'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${IMAGE_NAME}:${RELEASE_TAG}" \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Verify release tag resolves to the signed digest
+        if: github.ref_type == 'tag'
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/211-Connect/Norse-API/.github/workflows/deploy.yaml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
