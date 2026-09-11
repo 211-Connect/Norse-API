@@ -39,4 +39,6 @@ export default () => ({
       .map((s) => s.trim())
       .filter(Boolean),
   },
+  permissionsSideChannelUrl:
+    process.env.PERMISSIONS_SIDECHANNEL_BASE_URL || 'http://unkey-auth:8081',
 });

@@ -22,6 +22,7 @@ import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import { SearchOrganizationQueryDto } from './dto/search-organization-query.dto';
 import { OrganizationSearchResponseDto } from './dto/search-organization-response.dto';
 import { OrganizationDetailResponseDto } from './dto/organization-detail-response.dto';
@@ -39,7 +40,11 @@ export class OrganizationController {
 
   @Get()
   @Version('1')
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'accept-language',
     required: false,
@@ -81,7 +86,11 @@ export class OrganizationController {
   @ApiTenantIdQuery()
   @ApiLocaleQuery()
   @ApiHeader({ name: 'accept-language', required: true })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiParam({ name: 'id', description: 'Public organizationId' })
   @ApiResponse({ status: 200, type: OrganizationDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Organization not found' })

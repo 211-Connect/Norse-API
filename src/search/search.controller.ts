@@ -39,6 +39,7 @@ import { AiSearchReRankQueryDto } from './dto/ai-search-re-rank-query.dto';
 import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { ArcjetGuard } from '../common/guards/arcjet.guard';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -50,13 +51,16 @@ const QUERY_TYPE_PARAM_DESCRIPTION =
 
 const SORT_PARAM_DESCRIPTION =
   'Presentation order of results. Independent of `query_type`: the query ' +
-  'engine decides which resources match, `sort` decides their order, and ' +
-  'pinned/prioritized resources stay on top in every mode. Values: ' +
-  '`relevance` (default — best match first; under `hybrid`, geographic ' +
-  'proximity is folded into the relevance score), `distance` (nearest ' +
-  'first; requires `coords`, otherwise falls back to `relevance`), `name` ' +
-  '(alphabetical by resource name), `organization` (alphabetical by ' +
-  'provider name). Honored for all query types, including `hybrid`.';
+  'engine decides which resources match, `sort` decides their order. For ' +
+  '`hybrid` search, pinned/prioritized resource handling is controlled by the ' +
+  "tenant's `pinned_resources_mode` setting (`boost` by default, which folds " +
+  'pinned/priority into the relevance score; `top` hard-sorts them first; ' +
+  '`ignore` disables them). Values: `relevance` (default — best match first; ' +
+  'under `hybrid`, geographic proximity is folded into the relevance score), ' +
+  '`distance` (nearest first; requires `coords`, otherwise falls back to ' +
+  '`relevance`), `name` (alphabetical by resource name), `organization` ' +
+  '(alphabetical by provider name). Honored for all query types, including ' +
+  '`hybrid`.';
 
 @ApiTags('Search')
 @Controller('search')
@@ -91,7 +95,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({
     name: 'limit',
     required: false,
@@ -197,7 +205,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'Content-Type',
     required: true,
@@ -318,7 +330,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({ name: 'query', required: true, schema: { type: 'string' } })
   @ApiQuery({
     name: 'top_k',
@@ -353,7 +369,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({
     name: 'need_weights',
     required: true,

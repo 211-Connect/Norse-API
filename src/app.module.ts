@@ -31,7 +31,11 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { CmsConfigModule } from './cms-config/cms-config.module';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { GatewayIdentityGuard } from './auth/gateway/gateway-identity.guard';
+import { GatewayPermissionsGuard } from './auth/gateway/gateway-permissions.guard';
+import { PermissionsSideChannelService } from './auth/gateway/permissions-side-channel.service';
+import { TenantScopeGuard } from './auth/gateway/tenant-scope.guard';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -86,6 +90,13 @@ import { OrganizationController } from './organization/organization.controller';
   providers: [
     AppService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+    // Gateway guard registration order matters (Nest runs global guards in registration order):
+    // GatewayIdentityGuard resolves req.authMode first, so GatewayPermissionsGuard and TenantScopeGuard
+    // (registered after it) can rely on it having already run.
+    { provide: APP_GUARD, useClass: GatewayIdentityGuard },
+    PermissionsSideChannelService,
+    { provide: APP_GUARD, useClass: GatewayPermissionsGuard },
+    { provide: APP_GUARD, useClass: TenantScopeGuard },
   ],
 })
 export class AppModule implements NestModule {

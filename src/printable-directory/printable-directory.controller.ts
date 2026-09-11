@@ -11,9 +11,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiCreatedResponse,
   ApiExtraModels,
+  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -43,6 +45,7 @@ import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 
 @ApiTags('Printable Directories')
 @ApiExtraModels(
@@ -50,12 +53,23 @@ import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
   UpdatePrintableDirectorySourceDto,
 )
 @UseGuards(KeycloakGuard)
+@ApiBearerAuth()
 @Controller({
   path: 'printable-directories',
   version: '1',
 })
 @ApiTenantIdQuery()
 @ApiLocaleQuery()
+@ApiHeader({
+  name: 'x-tenant-id',
+  required: true,
+  description: X_TENANT_ID_HEADER_DESCRIPTION,
+})
+@ApiHeader({
+  name: 'accept-language',
+  required: false,
+  schema: { default: 'en' },
+})
 export class PrintableDirectoryController {
   constructor(
     private readonly printableDirectoryService: PrintableDirectoryService,
