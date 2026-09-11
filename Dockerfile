@@ -25,5 +25,6 @@ ENV NODE_ENV=$NODE_ENV
 ARG PORT=8080
 ENV PORT=$PORT
 EXPOSE $PORT
+
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sh", "-c", "node dist/main.js"]
