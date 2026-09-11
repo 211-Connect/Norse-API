@@ -118,3 +118,26 @@ jobs:
             --certificate-identity "https://github.com/211-Connect/Norse-API/.github/workflows/deploy.yaml@${GITHUB_REF}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
+
+      - name: Publish dev tag on verified digest
+        if: github.ref_type == 'branch' && github.ref_name == 'development'
+        id: devtag
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          DEV_TAG="dev-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
+          echo "Publishing ${REGISTRY}/${IMAGE_NAME}:${DEV_TAG}"
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${IMAGE_NAME}:${DEV_TAG}" \
+            "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+          echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify dev tag resolves to the signed digest
+        if: github.ref_type == 'branch' && github.ref_name == 'development'
+        env:
+          DEV_TAG: ${{ steps.devtag.outputs.dev_tag }}
+        run: |
+          cosign verify \
+            --certificate-identity "https://github.com/211-Connect/Norse-API/.github/workflows/deploy.yaml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${REGISTRY}/${IMAGE_NAME}:${DEV_TAG}"
