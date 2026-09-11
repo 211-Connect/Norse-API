@@ -345,15 +345,38 @@ export class FavoriteListService {
     };
   }
 
+  private async findByIdWithTenantId(favoriteListId: string, tenantId: string) {
+    const favoriteListWithTenant = await this.favoriteListModel
+      .findOne({
+        _id: favoriteListId,
+        tenantId,
+      })
+      .exec();
+
+    if (favoriteListWithTenant) {
+      return favoriteListWithTenant;
+    }
+
+    const favoriteListWithoutTenant = await this.favoriteListModel
+      .findOne({
+        _id: favoriteListId,
+      })
+      .exec();
+
+    if (favoriteListWithoutTenant) {
+      return favoriteListWithoutTenant;
+    }
+
+    return null;
+  }
+
   async findOne(
     id: string,
     headers: HeadersDto,
   ): Promise<FavoriteListDetailResponseDto> {
     const tenantId = headers['x-tenant-id'];
 
-    const favoriteList = await this.favoriteListModel
-      .findOne({ _id: id, tenantId })
-      .exec();
+    const favoriteList = await this.findByIdWithTenantId(id, tenantId);
 
     if (!favoriteList) {
       this.logger.warn(
