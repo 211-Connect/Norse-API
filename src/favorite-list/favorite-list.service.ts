@@ -357,6 +357,9 @@ export class FavoriteListService {
       return favoriteListWithTenant;
     }
 
+    this.logger.debug(
+      `Favorite list ${favoriteListId} could not be found by favorite list ID with tenant ID (${tenantId})`,
+    );
     const favoriteListWithoutTenant = await this.favoriteListModel
       .findOne({
         _id: favoriteListId,
@@ -364,9 +367,13 @@ export class FavoriteListService {
       .exec();
 
     if (favoriteListWithoutTenant) {
+      this.logger.debug(
+        `Favorite list ${favoriteListId} found by favorite list ID without tenant ID (${tenantId})`,
+      );
       return favoriteListWithoutTenant;
     }
 
+    this.logger.warn(`Favorite list ${favoriteListId} could not be found`);
     return null;
   }
 
