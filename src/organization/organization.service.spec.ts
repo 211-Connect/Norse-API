@@ -46,6 +46,18 @@ describe('OrganizationService', () => {
     expect(response.hits[0]._source.name).toBe('Alpha');
   });
 
+  it('breaks score ties on organization_id so repeated searches are stable', async () => {
+    await service.search({
+      headers: { 'x-tenant-id': 'tenant-a', 'accept-language': 'en' },
+      query: { query: 'Al', page: 1, limit: 10 },
+    });
+    const request = (elasticsearch.search as jest.Mock).mock.calls[0][0];
+    expect(request.sort).toEqual([
+      { _score: { order: 'desc' } },
+      { organization_id: { order: 'asc' } },
+    ]);
+  });
+
   it('lists all organizations for a tenant when query is blank', async () => {
     await service.search({
       headers: { 'x-tenant-id': 'tenant-a', 'accept-language': 'en' },
