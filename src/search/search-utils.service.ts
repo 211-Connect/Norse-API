@@ -201,8 +201,23 @@ export class SearchUtilsService {
 
   /**
    * Build the sort clause for standard (non-hybrid) search.
-   * Priority descending is the primary sort; geo-distance is secondary when
-   * coordinates are provided.
+   *
+   * Every clause is three parts, in this order:
+   *   1. `priority` desc  - pinned resources lead (ISS-801).
+   *   2. the ordering the caller asked for - relevance (`_score`), distance,
+   *      name, or organization.
+   *   3. `service_at_location_id.raw` asc - a unique final tiebreaker.
+   *
+   * Part 2 must not be dropped. `priority` is uniform across most tenants, so
+   * a clause of `[priority]` alone leaves every document tied, and ES then
+   * falls back to Lucene's internal doc order: results are neither
+   * relevance-ranked nor stable between identical requests. That is what
+   * happened when 6304ee1 replaced the empty (score-ordered) relevance clause
+   * with `[priority]`.
+   *
+   * Part 3 must not be dropped either. Without a unique final key, any tie in
+   * part 2 is broken by internal doc order, which differs per replica shard
+   * and shifts as segments merge - so pagination can skip or repeat rows.
    */
   static buildSort(
     coords: number[] | undefined,
@@ -210,42 +225,41 @@ export class SearchUtilsService {
     queryType: QueryType,
   ): Sort {
     const prioritySort: SortCombinations = { priority: 'desc' };
+    const relevanceSort: SortCombinations = '_score';
+    const tiebreaker: SortCombinations = {
+      'service_at_location_id.raw': { order: 'asc' },
+    };
 
-    switch (sortOption) {
-      case 'distance':
-        if (coords) {
-          return [prioritySort, this.getGeoDistanceSort(coords)];
-        }
-        // No coords: fall back to relevance ordering (explicit return prevents
-        // an accidental fall-through into the name sort below).
-        return [prioritySort];
+    const orderingTiers = (): SortCombinations[] => {
+      switch (sortOption) {
+        case 'distance':
+          // No coords: distance is meaningless, so fall back to relevance
+          // rather than falling through into the name sort below (ISS-1367).
+          return coords ? [this.getGeoDistanceSort(coords)] : [relevanceSort];
 
-      case 'name':
-        return [prioritySort, { 'name.raw': { order: 'asc' } }];
+        case 'name':
+          return [{ 'name.raw': { order: 'asc' } }];
 
-      case 'organization':
-        return [
-          prioritySort,
-          { 'organization.name.raw': { order: 'asc' } },
-          { 'name.raw': { order: 'asc' } },
-        ];
+        case 'organization':
+          return [
+            { 'organization.name.raw': { order: 'asc' } },
+            { 'name.raw': { order: 'asc' } },
+          ];
 
-      case 'relevance':
-      default:
-        if (queryType === 'taxonomy') {
-          // Relevance default for taxonomy means nearest-first when we have coords.
-          if (coords) {
-            return [prioritySort, this.getGeoDistanceSort(coords)];
+        case 'relevance':
+        default:
+          if (queryType === 'taxonomy') {
+            // Taxonomy matching is effectively binary, so `_score` carries no
+            // signal here. Relevance default for taxonomy means nearest-first
+            // when we have coords, and the tiebreaker alone otherwise.
+            return coords ? [this.getGeoDistanceSort(coords)] : [];
           }
 
-          return [
-            prioritySort,
-            { 'service_at_location_id.raw': { order: 'asc' } },
-          ];
-        }
+          return [relevanceSort];
+      }
+    };
 
-        return [prioritySort];
-    }
+    return [prioritySort, ...orderingTiers(), tiebreaker];
   }
 
   static haversineDistanceMiles(
