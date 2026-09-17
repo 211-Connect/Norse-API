@@ -6,6 +6,12 @@ import { ApiProperty } from '@nestjs/swagger';
 // here (the service drops only `_id`/`logo` and locale-filters translations).
 // All `translations`/`TRANSLATIONS` stay ARRAYS filtered to the requested locale
 // (preferred -> English -> canonical); the consumer makes the final selection.
+//
+// Organization-level ASSURED_DATE/ASSURER_EMAIL are intentionally absent: the
+// columns exist in APP_ORGANIZATION_FULL but the reader's MongoOrganizationRecord
+// maps organization scalars field-by-field and does not carry them, so the
+// endpoint cannot return them yet. Nested entities are unaffected — their arrays
+// are passed through whole.
 
 class TranslationDto {
   @ApiProperty({ nullable: true }) ID?: string;
@@ -38,6 +44,7 @@ class ServiceAreaDto {
 
 class AddressDto {
   @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
   @ApiProperty({ nullable: true }) ADDRESS_1?: string;
   @ApiProperty({ nullable: true }) CITY?: string;
   @ApiProperty({ nullable: true }) REGION?: string;
@@ -48,6 +55,7 @@ class AddressDto {
 
 class PhoneDto {
   @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
   @ApiProperty({ nullable: true }) NUMBER?: string;
   @ApiProperty({ nullable: true }) TYPE?: string;
   @ApiProperty({ type: [TranslationDto] }) TRANSLATIONS: TranslationDto[];
@@ -55,6 +63,7 @@ class PhoneDto {
 
 class ContactDto {
   @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
   @ApiProperty({ nullable: true }) NAME?: string;
   @ApiProperty({ nullable: true }) TITLE?: string;
   @ApiProperty({ nullable: true }) EMAIL?: string;
@@ -62,12 +71,14 @@ class ContactDto {
 
 class ServiceDto {
   @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
   @ApiProperty({ nullable: true }) NAME?: string;
   @ApiProperty({ nullable: true }) ALTERNATE_NAME?: string;
   @ApiProperty({ nullable: true }) DESCRIPTION?: string;
   @ApiProperty({ nullable: true }) STATUS?: string;
   @ApiProperty({ nullable: true }) ELIGIBILITY_DESCRIPTION?: string;
   @ApiProperty({ nullable: true }) APPLICATION_PROCESS?: string;
+  @ApiProperty({ nullable: true }) FEES_DESCRIPTION?: string;
   @ApiProperty({ type: [ScheduleDto] }) SCHEDULES: ScheduleDto[];
   @ApiProperty({ type: [IdWithTranslationsDto] })
   REQUIRED_DOCUMENTS: IdWithTranslationsDto[];
@@ -77,6 +88,7 @@ class ServiceDto {
   @ApiProperty({ type: [ContactDto] }) CONTACTS: ContactDto[];
   @ApiProperty({ type: [PhoneDto] }) PHONES: PhoneDto[];
   @ApiProperty({ nullable: true }) ASSURED_DATE?: string;
+  @ApiProperty({ nullable: true }) ASSURER_EMAIL?: string;
   @ApiProperty({ nullable: true }) LAST_MODIFIED?: string;
   @ApiProperty({ type: 'array', items: { type: 'object' } })
   SERVICE_AT_LOCATIONS: Record<string, unknown>[];
@@ -92,12 +104,32 @@ class ServiceDto {
   FUNDING?: Record<string, unknown>[];
 }
 
+class AccessibilityTranslationDto {
+  @ApiProperty({ nullable: true }) ID?: string;
+  @ApiProperty({ nullable: true }) LOCALE?: string;
+  @ApiProperty({ nullable: true }) DESCRIPTION?: string | null;
+  @ApiProperty({ nullable: true }) DETAILS?: string | null;
+  @ApiProperty({ nullable: true }) IS_CANONICAL?: boolean;
+}
+
+class AccessibilityDto {
+  @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
+  @ApiProperty({ nullable: true }) URL?: string;
+  @ApiProperty({ type: [AccessibilityTranslationDto] })
+  TRANSLATIONS: AccessibilityTranslationDto[];
+}
+
 class LocationDto {
   @ApiProperty() ID: string;
+  @ApiProperty({ nullable: true }) ORIGINAL_ID?: string;
   @ApiProperty({ nullable: true }) NAME?: string;
   @ApiProperty({ nullable: true }) ALTERNATE_NAME?: string;
   @ApiProperty({ nullable: true }) LOCATION_TYPE?: string;
+  @ApiProperty({ nullable: true }) ASSURED_DATE?: string;
+  @ApiProperty({ nullable: true }) ASSURER_EMAIL?: string;
   @ApiProperty({ type: [AddressDto] }) ADDRESSES: AddressDto[];
+  @ApiProperty({ type: [AccessibilityDto] }) ACCESSIBILITY: AccessibilityDto[];
   @ApiProperty({ type: [ScheduleDto] }) SCHEDULES: ScheduleDto[];
   @ApiProperty({ type: [IdWithTranslationsDto] })
   LANGUAGES: IdWithTranslationsDto[];
