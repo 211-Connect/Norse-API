@@ -200,24 +200,10 @@ export class SearchUtilsService {
   }
 
   /**
-   * Build the sort clause for standard (non-hybrid) search.
-   *
-   * Every clause is three parts, in this order:
-   *   1. `priority` desc  - pinned resources lead (ISS-801).
-   *   2. the ordering the caller asked for - relevance (`_score`), distance,
-   *      name, or organization.
-   *   3. `service_at_location_id.raw` asc - a unique final tiebreaker.
-   *
-   * Part 2 must not be dropped. `priority` is uniform across most tenants, so
-   * a clause of `[priority]` alone leaves every document tied, and ES then
-   * falls back to Lucene's internal doc order: results are neither
-   * relevance-ranked nor stable between identical requests. That is what
-   * happened when 6304ee1 replaced the empty (score-ordered) relevance clause
-   * with `[priority]`.
-   *
-   * Part 3 must not be dropped either. Without a unique final key, any tie in
-   * part 2 is broken by internal doc order, which differs per replica shard
-   * and shifts as segments merge - so pagination can skip or repeat rows.
+   * Sort clause for standard (non-hybrid) search: pinned first, then the
+   * requested ordering, then a unique tiebreaker. Dropping either of the last
+   * two leaves ties resolved by Lucene doc order, which is unstable between
+   * identical requests (regression 6304ee1).
    */
   static buildSort(
     coords: number[] | undefined,
@@ -233,8 +219,7 @@ export class SearchUtilsService {
     const orderingTiers = (): SortCombinations[] => {
       switch (sortOption) {
         case 'distance':
-          // No coords: distance is meaningless, so fall back to relevance
-          // rather than falling through into the name sort below (ISS-1367).
+          // No coords: fall back to relevance, not the name sort below (ISS-1367).
           return coords ? [this.getGeoDistanceSort(coords)] : [relevanceSort];
 
         case 'name':
@@ -249,9 +234,7 @@ export class SearchUtilsService {
         case 'relevance':
         default:
           if (queryType === 'taxonomy') {
-            // Taxonomy matching is effectively binary, so `_score` carries no
-            // signal here. Relevance default for taxonomy means nearest-first
-            // when we have coords, and the tiebreaker alone otherwise.
+            // Taxonomy matching is binary, so `_score` carries no signal.
             return coords ? [this.getGeoDistanceSort(coords)] : [];
           }
 
