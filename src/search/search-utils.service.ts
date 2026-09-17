@@ -18,6 +18,31 @@ import { FacetConfig } from '../cms-config/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
 
+/**
+ * Sortable field names per index. The two indices are built by separate
+ * pipelines: `.raw` is a plain keyword, `.lc` a lowercase-normalized one, so
+ * hybrid orders names case-insensitively and standard does not.
+ */
+export interface SortFieldNames {
+  id: string;
+  name: string;
+  organizationName: string;
+}
+
+export type RelevanceMeaning = 'score' | 'proximity';
+
+export const STANDARD_SORT_FIELDS: SortFieldNames = {
+  id: 'service_at_location_id.raw',
+  name: 'name.raw',
+  organizationName: 'organization.name.raw',
+};
+
+export const HYBRID_SORT_FIELDS: SortFieldNames = {
+  id: 'service_at_location_id',
+  name: 'name.lc',
+  organizationName: 'organization.name.lc',
+};
+
 export class SearchUtilsService {
   static readonly FIELDS_TO_QUERY: string[] = [
     'name',
@@ -200,49 +225,73 @@ export class SearchUtilsService {
   }
 
   /**
-   * Sort clause for standard (non-hybrid) search: pinned first, then the
-   * requested ordering, then a unique tiebreaker. Dropping either of the last
-   * two leaves ties resolved by Lucene doc order, which is unstable between
-   * identical requests (regression 6304ee1).
+   * Sort clause: leading tiers, then the requested ordering, then a unique
+   * tiebreaker. Dropping either of the last two leaves ties resolved by Lucene
+   * doc order, which is unstable between identical requests (regression
+   * 6304ee1).
    */
-  static buildSort(
-    coords: number[] | undefined,
-    sortOption: SearchResourcesQueryDto['sort'],
-    queryType: QueryType,
-  ): Sort {
-    const prioritySort: SortCombinations = { priority: 'desc' };
-    const relevanceSort: SortCombinations = '_score';
-    const tiebreaker: SortCombinations = {
-      'service_at_location_id.raw': { order: 'asc' },
+  static buildSortClause(options: {
+    fields: SortFieldNames;
+    sortOption: SearchResourcesQueryDto['sort'];
+    coords: number[] | undefined;
+    leadingTiers?: SortCombinations[];
+    relevanceMeans?: RelevanceMeaning;
+  }): Sort {
+    const {
+      fields,
+      sortOption,
+      coords,
+      leadingTiers = [],
+      relevanceMeans = 'score',
+    } = options;
+
+    const asc = (field: string): SortCombinations => ({
+      [field]: { order: 'asc' },
+    });
+
+    const relevanceTiers = (): SortCombinations[] => {
+      if (relevanceMeans === 'proximity') {
+        return coords ? [this.getGeoDistanceSort(coords)] : [];
+      }
+
+      return ['_score'];
     };
 
     const orderingTiers = (): SortCombinations[] => {
       switch (sortOption) {
         case 'distance':
           // No coords: fall back to relevance, not the name sort below (ISS-1367).
-          return coords ? [this.getGeoDistanceSort(coords)] : [relevanceSort];
+          return coords ? [this.getGeoDistanceSort(coords)] : ['_score'];
 
         case 'name':
-          return [{ 'name.raw': { order: 'asc' } }];
+          return [asc(fields.name)];
 
         case 'organization':
-          return [
-            { 'organization.name.raw': { order: 'asc' } },
-            { 'name.raw': { order: 'asc' } },
-          ];
+          return [asc(fields.organizationName), asc(fields.name)];
 
         case 'relevance':
         default:
-          if (queryType === 'taxonomy') {
-            // Taxonomy matching is binary, so `_score` carries no signal.
-            return coords ? [this.getGeoDistanceSort(coords)] : [];
-          }
-
-          return [relevanceSort];
+          return relevanceTiers();
       }
     };
 
-    return [prioritySort, ...orderingTiers(), tiebreaker];
+    return [...leadingTiers, ...orderingTiers(), asc(fields.id)];
+  }
+
+  static buildSort(
+    coords: number[] | undefined,
+    sortOption: SearchResourcesQueryDto['sort'],
+    queryType: QueryType,
+  ): Sort {
+    return this.buildSortClause({
+      fields: STANDARD_SORT_FIELDS,
+      sortOption,
+      coords,
+      leadingTiers: [{ priority: 'desc' }],
+      // Taxonomy matching is binary, so `_score` carries no signal; nearest
+      // first is what relevance means there.
+      relevanceMeans: queryType === 'taxonomy' ? 'proximity' : 'score',
+    });
   }
 
   static haversineDistanceMiles(
