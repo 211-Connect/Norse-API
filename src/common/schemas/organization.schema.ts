@@ -13,10 +13,42 @@ export interface OrganizationTranslationEntry {
   TENANT_ID?: string;
 }
 
+/**
+ * The resolved view of one service at one location: what a seeker is actually
+ * shown for this pairing, after the tenant's own ranking rules have run.
+ *
+ * Read-only. Nothing here is a record in its own right — every value is derived
+ * from a phone, contact or schedule row that also appears, with its own ID,
+ * under the service, the location, or the organization's top-level arrays.
+ * Write feedback against those rows, never against these values.
+ */
+export interface OrganizationServiceAtLocationDisplay {
+  /** Primary number for this pairing (rank 0 of PHONE_LIST). */
+  PHONE_NUMBER?: string;
+  /** Every phone in scope for this pairing, tenant-ranked; PRIORITY 0 first. */
+  PHONE_LIST?: Record<string, unknown>[];
+  CONTACT_LIST?: Record<string, unknown>[];
+  WEBSITE?: string;
+  EMAIL?: string;
+  /**
+   * The single resolved schedule for this pairing, per locale. Named
+   * TRANSLATIONS so the document-wide locale filter reaches it too.
+   */
+  TRANSLATIONS?: { LOCALE?: string; DISPLAY_SCHEDULE?: string }[];
+}
+
 export interface OrganizationServiceAtLocation {
   // ID is the serviceAtLocationId that keys the `resources` collection.
   ID: string;
   LOCATION_ID?: string;
+  /**
+   * Schedule rows attached directly to this pairing rather than to the service
+   * or the location. They appear nowhere else in the document — HSDS allows a
+   * schedule to hang off a service_at_location, and such a row carries neither
+   * a service_id nor a location_id. Editable, unlike DISPLAY.
+   */
+  SCHEDULES?: Record<string, unknown>[];
+  DISPLAY?: OrganizationServiceAtLocationDisplay;
 }
 
 export interface OrganizationServiceEntry {

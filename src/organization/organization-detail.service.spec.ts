@@ -49,7 +49,42 @@ describe('OrganizationDetailService', () => {
         ATTRIBUTE_TAXONOMIES: [{ ID: 'at1' }],
         CUSTOM_ATTRIBUTES: [{ ID: 'ca1' }],
         COST_OPTIONS: [{ ID: 'co1' }],
-        SERVICE_AT_LOCATIONS: [{ ID: salId, LOCATION_ID: 'loc1' }],
+        SERVICE_AT_LOCATIONS: [
+          {
+            ID: salId,
+            LOCATION_ID: 'loc1',
+            // Attached to the pairing, not to the service or the location —
+            // reachable nowhere else in the document.
+            SCHEDULES: [
+              {
+                ID: 'salsch1',
+                TRANSLATIONS: [
+                  { LOCALE: 'en', DESCRIPTION: 'Pairing hours' },
+                  { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
+                ],
+              },
+            ],
+            DISPLAY: {
+              PHONE_NUMBER: '555-2000',
+              PHONE_LIST: [
+                {
+                  ID: 'p2',
+                  NUMBER: '555-2000',
+                  TRANSLATIONS: [
+                    { LOCALE: 'en', DESCRIPTION: 'Site line' },
+                    { LOCALE: 'es', DESCRIPTION: 'Linea del sitio' },
+                  ],
+                },
+              ],
+              CONTACT_LIST: [],
+              WEBSITE: 'https://example.com/site',
+              TRANSLATIONS: [
+                { LOCALE: 'en', DISPLAY_SCHEDULE: 'Mon-Fri 9-5' },
+                { LOCALE: 'es', DISPLAY_SCHEDULE: 'Lun-Vie 9-5' },
+              ],
+            },
+          },
+        ],
         SCHEDULES: [
           {
             ID: 'sch1',
@@ -117,9 +152,32 @@ describe('OrganizationDetailService', () => {
     expect(result.services[0].SCHEDULES[0].TRANSLATIONS).toEqual([
       { LOCALE: 'es', DESCRIPTION: 'Horario' },
     ]);
-    // SAL references remain on services
-    expect(result.services[0].SERVICE_AT_LOCATIONS).toEqual([
-      { ID: salId, LOCATION_ID: 'loc1' },
+    // SAL references remain on services, and the pairing keeps its id/link.
+    const sal = result.services[0].SERVICE_AT_LOCATIONS[0];
+    expect(sal.ID).toBe(salId);
+    expect(sal.LOCATION_ID).toBe('loc1');
+
+    // Schedules attached to the pairing itself are locale-filtered like any
+    // other node, and survive rather than being dropped with the `_id`/`logo`
+    // projection.
+    expect(sal.SCHEDULES[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
+    ]);
+
+    // DISPLAY is the resolved read-only view. Its nested PHONE_LIST
+    // TRANSLATIONS are reached by the same walk...
+    expect(sal.DISPLAY.PHONE_NUMBER).toBe('555-2000');
+    expect(sal.DISPLAY.PHONE_LIST[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Linea del sitio' },
+    ]);
+
+    // ...and so is DISPLAY.TRANSLATIONS itself, which is the reason that key is
+    // named TRANSLATIONS rather than SCHEDULES: filterTranslationsByLocale only
+    // descends into arrays under a key named `translations`. Rename it and the
+    // consumer silently receives every locale here while every other node in
+    // the document is filtered.
+    expect(sal.DISPLAY.TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DISPLAY_SCHEDULE: 'Lun-Vie 9-5' },
     ]);
   });
 
