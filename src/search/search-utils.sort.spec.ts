@@ -96,9 +96,6 @@ describe('SearchUtilsService.buildSort', () => {
     });
   });
 
-  // The property that makes pagination safe: whatever the caller asks for,
-  // the clause must end in a key that is unique per document. Without it a tie
-  // is broken by Lucene doc order, which differs per replica shard.
   describe('every sort clause ends with a unique tiebreaker', () => {
     const sortOptions: SortOption[] = [
       'relevance',

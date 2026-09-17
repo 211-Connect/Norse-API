@@ -415,9 +415,6 @@ describe('SearchService Logic', () => {
     const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
     const nameSort = callArgs.sort.find((s) => s['name.raw']);
 
-    // No coords: distance is meaningless — fall back to the relevance default
-    // (priority, then _score, then the unique tiebreaker), NOT the accidental
-    // name sort of the old fall-through bug.
     expect(geoDistanceSort).toBeUndefined();
     expect(nameSort).toBeUndefined();
     expect(callArgs.sort).toEqual([
