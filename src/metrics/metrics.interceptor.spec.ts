@@ -1,0 +1,127 @@
+import { CallHandler, ExecutionContext, HttpException } from '@nestjs/common';
+import { of, throwError } from 'rxjs';
+import { MetricsInterceptor } from './metrics.interceptor';
+
+describe('MetricsInterceptor', () => {
+  let metricsMock: { recordHttpRequest: jest.Mock };
+  let reflectorMock: { getAllAndOverride: jest.Mock };
+  let interceptor: MetricsInterceptor;
+
+  const createContext = (
+    headers: Record<string, string> = { 'x-tenant-id': 'tenant-1' },
+    statusCode = 200,
+  ): ExecutionContext =>
+    ({
+      getClass: () => ({ name: 'FakeController' }),
+      getHandler: () => ({ name: 'fakeHandler' }),
+      switchToHttp: () => ({
+        getRequest: () => ({ method: 'GET', headers }),
+        getResponse: () => ({ statusCode }),
+      }),
+    }) as unknown as ExecutionContext;
+
+  beforeEach(() => {
+    metricsMock = { recordHttpRequest: jest.fn() };
+    reflectorMock = { getAllAndOverride: jest.fn().mockReturnValue(false) };
+    interceptor = new MetricsInterceptor(
+      metricsMock as never,
+      reflectorMock as never,
+    );
+  });
+
+  it('records one http request on success with handler, status, tenant and duration', (done) => {
+    const next: CallHandler = { handle: () => of('value') };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      next: (value) => expect(value).toBe('value'),
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '200',
+          'tenant-1',
+          expect.any(Number),
+        );
+        const duration = metricsMock.recordHttpRequest.mock.calls[0][5];
+        expect(duration).toBeGreaterThanOrEqual(0);
+        done();
+      },
+    });
+  });
+
+  it('records status 502 for a thrown HttpException and propagates the error', (done) => {
+    const err = new HttpException('boom', 502);
+    const next: CallHandler = { handle: () => throwError(() => err) };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      error: (received) => {
+        expect(received).toBe(err);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '502',
+          'tenant-1',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+
+  it('records status 500 for a non-HttpException error and propagates it', (done) => {
+    const err = new Error('kaboom');
+    const next: CallHandler = { handle: () => throwError(() => err) };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      error: (received) => {
+        expect(received).toBe(err);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '500',
+          'tenant-1',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+
+  it('does not record metrics when the route is skipped and passes the stream through', (done) => {
+    reflectorMock.getAllAndOverride.mockReturnValue(true);
+    const next: CallHandler = { handle: () => of('skipped') };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      next: (value) => expect(value).toBe('skipped'),
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).not.toHaveBeenCalled();
+        done();
+      },
+    });
+  });
+
+  it('falls back to tenant id unknown when the header is missing', (done) => {
+    const next: CallHandler = { handle: () => of('value') };
+
+    interceptor.intercept(createContext({}), next).subscribe({
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '200',
+          'unknown',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+});

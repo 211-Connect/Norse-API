@@ -9,12 +9,16 @@ import opencage from 'opencage-api-client';
 import { IGeocodingProvider } from './geocoding-provider.interface';
 import { ConfigService } from '@nestjs/config';
 import { mapOpenCageResultToGeocodeResponse } from '../mappers/geocoding.mapper';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 @Injectable()
 export class OpenCageGeocodingProvider implements IGeocodingProvider {
   private readonly logger = new Logger(OpenCageGeocodingProvider.name);
   private readonly accessToken: string;
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {
     this.accessToken = this.configService.get<string>('OPENCAGE_API_KEY');
 
     if (!this.accessToken) {
@@ -26,12 +30,17 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
     query: ForwardGeocodeQueryDto,
   ): Promise<ForwardGeocodeResponseDto[]> {
     const { address, locale = 'en', limit = 5 } = query;
-    const response = await opencage.geocode({
-      key: this.accessToken,
-      q: address,
-      language: locale,
-      limit,
-    });
+    const response = await this.metrics.observeDownstream(
+      'opencage',
+      'forwardGeocode',
+      () =>
+        opencage.geocode({
+          key: this.accessToken,
+          q: address,
+          language: locale,
+          limit,
+        }),
+    );
     return response.results.map(mapOpenCageResultToGeocodeResponse);
   }
 
@@ -42,12 +51,17 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
     const lng = coordinates[0];
     const lat = coordinates[1];
 
-    const response = await opencage.geocode({
-      key: this.accessToken,
-      q: `${lat},${lng}`,
-      countrycode: 'us',
-      language: locale,
-    });
+    const response = await this.metrics.observeDownstream(
+      'opencage',
+      'reverseGeocode',
+      () =>
+        opencage.geocode({
+          key: this.accessToken,
+          q: `${lat},${lng}`,
+          countrycode: 'us',
+          language: locale,
+        }),
+    );
     return response.results.map(mapOpenCageResultToGeocodeResponse);
   }
 }

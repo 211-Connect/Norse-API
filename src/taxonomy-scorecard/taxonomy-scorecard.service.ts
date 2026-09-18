@@ -18,6 +18,7 @@ import { UpdateTaxonomyScorecardDto } from './dto/update-taxonomy-scorecard.dto'
 import { EnableTaxonomyScorecardDto } from './dto/enable-taxonomy-scorecard.dto';
 import { UpdateTaxonomyScorecardResponseDto } from './dto/update-taxonomy-scorecard-response.dto';
 import { TaxonomyScorecardResponseDto } from './dto/taxonomy-scorecard-response.dto';
+import { MetricsService } from 'src/metrics/metrics.service';
 import {
   buildDocumentId,
   cloneScorecardPayload,
@@ -47,6 +48,7 @@ export class TaxonomyScorecardService {
     @InjectModel(TaxonomyScorecard.name)
     private readonly taxonomyScorecardModel: Model<TaxonomyScorecardDocument>,
     private readonly elasticsearchService: ElasticsearchService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async searchTaxonomies(
@@ -81,10 +83,14 @@ export class TaxonomyScorecardService {
       },
     };
 
-    const esResponse =
-      await this.elasticsearchService.search<TaxonomyHitSource>({
-        ...baseSearchRequest,
-      });
+    const esResponse = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'search',
+      () =>
+        this.elasticsearchService.search<TaxonomyHitSource>({
+          ...baseSearchRequest,
+        }),
+    );
 
     const total =
       typeof esResponse.hits.total === 'number'
@@ -342,17 +348,22 @@ export class TaxonomyScorecardService {
     tenantId: string,
     prefixCode: string,
   ): Promise<string[]> {
-    const response = await this.elasticsearchService.search<TaxonomyHitSource>({
-      index: HYBRID_TAXONOMIES_INDEX,
-      size: 1000,
-      _source: ['code'],
-      query: {
-        bool: {
-          filter: [{ term: { tenant_id: { value: tenantId } } }],
-          must: [{ prefix: { code: prefixCode } }],
-        },
-      },
-    });
+    const response = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'search',
+      () =>
+        this.elasticsearchService.search<TaxonomyHitSource>({
+          index: HYBRID_TAXONOMIES_INDEX,
+          size: 1000,
+          _source: ['code'],
+          query: {
+            bool: {
+              filter: [{ term: { tenant_id: { value: tenantId } } }],
+              must: [{ prefix: { code: prefixCode } }],
+            },
+          },
+        }),
+    );
 
     const hits = response.hits.hits || [];
     return hits

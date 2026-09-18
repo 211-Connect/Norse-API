@@ -5,6 +5,7 @@ import {
   AUTH_LOGIN_TIMEOUT_MS,
   AUTH_VERIFY_TIMEOUT_MS,
 } from '../internal/constants';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 interface UmamiConfig {
   apiUrl: string;
@@ -24,7 +25,10 @@ export class UmamiAuthService {
   private inflight: Promise<string> | null = null;
   private tokenGeneration = 0;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async getToken(): Promise<string> {
     if (this.cachedToken && (await this.isTokenValid(this.cachedToken))) {
@@ -60,14 +64,16 @@ export class UmamiAuthService {
   private async isTokenValid(token: string): Promise<boolean> {
     const { apiUrl } = this.requireConfig();
     try {
-      const res = await fetch(`${apiUrl}/api/auth/verify`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(AUTH_VERIFY_TIMEOUT_MS),
-      });
+      const res = await this.metrics.observeDownstream('umami', 'verify', () =>
+        fetch(`${apiUrl}/api/auth/verify`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(AUTH_VERIFY_TIMEOUT_MS),
+        }),
+      );
       return res.ok;
     } catch {
       return false;
@@ -79,12 +85,14 @@ export class UmamiAuthService {
 
     let res: Response;
     try {
-      res = await fetch(`${apiUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-        signal: AbortSignal.timeout(AUTH_LOGIN_TIMEOUT_MS),
-      });
+      res = await this.metrics.observeDownstream('umami', 'login', () =>
+        fetch(`${apiUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+          signal: AbortSignal.timeout(AUTH_LOGIN_TIMEOUT_MS),
+        }),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Network error';
       this.logger.error(`Umami login network failure: ${message}`);

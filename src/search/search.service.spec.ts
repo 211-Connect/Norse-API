@@ -6,6 +6,7 @@ import { OrchestrationConfigService } from '../cms-config/orchestration-config.s
 import { HybridSearchService } from './hybrid-search.service';
 import { BadRequestException } from '@nestjs/common';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('SearchService', () => {
   let service: SearchService;
@@ -37,6 +38,14 @@ describe('SearchService', () => {
           provide: HybridSearchService,
           useValue: {
             searchHybrid: jest.fn(),
+          },
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            observeDownstream: jest.fn(
+              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
+            ),
           },
         },
       ],

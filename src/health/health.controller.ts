@@ -1,6 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { HealthService } from './health.service';
 import { ApiResponse, ApiTags } from '@nestjs/swagger';
+import { SkipMetrics } from 'src/metrics/skip-metrics.decorator';
 
 @ApiTags('Health')
 @Controller('health')
@@ -8,6 +9,7 @@ export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
   @Get()
+  @SkipMetrics()
   @ApiResponse({
     status: 200,
     example: {

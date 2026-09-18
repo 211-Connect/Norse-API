@@ -4,7 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
-import { ArcjetModule, cloudflare, detectBot, filter, shield } from '@arcjet/nest';
+import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -34,6 +34,7 @@ import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
+import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
@@ -48,19 +49,7 @@ import { OrganizationController } from './organization/organization.controller';
     ArcjetModule.forRoot({
       isGlobal: true,
       key: process.env.ARCJET_KEY!,
-      rules: [
-        detectBot({
-          mode: "LIVE",
-          allow: ["CATEGORY:SEARCH_ENGINE"],
-        }),
-        shield({
-          mode: "LIVE",
-        }),
-        filter({
-          mode: "LIVE",
-          allow: ['ip.src.country == "US"'],
-        })
-],
+      rules: [],
       proxies: [cloudflare()],
     }),
     CmsConfigModule,
@@ -98,6 +87,7 @@ import { OrganizationController } from './organization/organization.controller';
   providers: [
     AppService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
   ],
 })
 export class AppModule implements NestModule {

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AiSearchService } from './ai-search.service';
 import { HybridSearchService } from './hybrid-search.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
   'x-tenant-id': 'default',
@@ -36,6 +37,14 @@ describe('AiSearchService', () => {
           useValue: {
             embedQuery: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]),
             getDocumentsCount: jest.fn(),
+          },
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            observeDownstream: jest.fn(
+              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
+            ),
           },
         },
       ],

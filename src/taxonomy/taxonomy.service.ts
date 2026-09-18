@@ -10,6 +10,7 @@ import {
 import { getIndexName } from 'src/common/lib/utils';
 import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
 import { SearchHit } from '@elastic/elasticsearch/lib/api/types';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const isTaxonomyCode = new RegExp(
   /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
@@ -19,7 +20,10 @@ const isTaxonomyCode = new RegExp(
 export class TaxonomyService {
   private readonly logger: Logger;
 
-  constructor(private readonly elasticsearchService: ElasticsearchService) {
+  constructor(
+    private readonly elasticsearchService: ElasticsearchService,
+    private readonly metrics: MetricsService,
+  ) {
     this.logger = new Logger(TaxonomyService.name);
   }
 
@@ -88,8 +92,11 @@ export class TaxonomyService {
         `queryBuilder = ${JSON.stringify(queryBuilder, null, 2)}`,
       );
 
-      const data =
-        await this.elasticsearchService.search<TaxonomyDocument>(queryBuilder);
+      const data = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'search',
+        () => this.elasticsearchService.search<TaxonomyDocument>(queryBuilder),
+      );
 
       return data;
     } catch (err) {
@@ -143,8 +150,11 @@ export class TaxonomyService {
 
     let data;
     try {
-      data =
-        await this.elasticsearchService.search<TaxonomyDocument>(queryBuilder);
+      data = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'search',
+        () => this.elasticsearchService.search<TaxonomyDocument>(queryBuilder),
+      );
       this.logger.debug(
         `Data for code=${q?.terms}, data=${JSON.stringify(data, null, 2)}`,
       );

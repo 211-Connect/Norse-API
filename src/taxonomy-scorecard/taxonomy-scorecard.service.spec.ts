@@ -4,6 +4,7 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyScorecardService } from './taxonomy-scorecard.service';
 import { TaxonomyScorecard } from 'src/common/schemas/taxonomy-scorecard.schema';
 import { BadRequestException } from '@nestjs/common';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('TaxonomyScorecardService', () => {
   let service: TaxonomyScorecardService;
@@ -66,6 +67,14 @@ describe('TaxonomyScorecardService', () => {
         {
           provide: ElasticsearchService,
           useValue: elasticMock,
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            observeDownstream: jest.fn(
+              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
+            ),
+          },
         },
       ],
     }).compile();

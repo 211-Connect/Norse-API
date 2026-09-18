@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -10,7 +11,10 @@ export class RequestCacheService {
 
   private readonly inflight = new Map<string, Promise<unknown>>();
 
-  constructor(@Inject(CACHE_MANAGER) private readonly cacheManager: Cache) {}
+  constructor(
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async getOrSet<T>(
     key: string,
@@ -20,6 +24,7 @@ export class RequestCacheService {
     const existing = this.inflight.get(key);
     if (existing) {
       this.logger.debug(`Request coalesced: ${key}`);
+      this.metrics.recordCacheAccess('request-redis', 'coalesced');
       return existing as Promise<T>;
     }
 
@@ -46,13 +51,16 @@ export class RequestCacheService {
       const cacheHit = await this.cacheManager.get<T>(key);
       if (cacheHit !== undefined && cacheHit !== null) {
         this.logger.debug(`Redis cache hit: ${key}`);
+        this.metrics.recordCacheAccess('request-redis', 'hit');
         return cacheHit;
       }
     } catch (error) {
       this.logger.warn(`Redis cache get failed for ${key}: ${error}`);
+      this.metrics.recordCacheAccess('request-redis', 'get-error');
     }
 
     this.logger.debug(`Redis cache miss: ${key}`);
+    this.metrics.recordCacheAccess('request-redis', 'miss');
     const result = await factory();
 
     try {

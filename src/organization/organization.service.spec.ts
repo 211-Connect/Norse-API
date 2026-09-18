@@ -9,7 +9,11 @@ describe('OrganizationService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new OrganizationService(elasticsearch);
+    service = new OrganizationService(elasticsearch, {
+      observeDownstream: jest.fn(
+        (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
+      ),
+    } as never);
     (elasticsearch.search as jest.Mock).mockResolvedValue({
       took: 3,
       timed_out: false,

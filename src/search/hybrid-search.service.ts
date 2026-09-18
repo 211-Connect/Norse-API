@@ -30,6 +30,7 @@ import {
 } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -78,6 +79,7 @@ export class HybridSearchService {
     private readonly configService: ConfigService,
     private readonly tenantConfigService: TenantConfigService,
     private readonly requestCacheService: RequestCacheService,
+    private readonly metrics: MetricsService,
   ) {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
@@ -234,10 +236,15 @@ export class HybridSearchService {
     });
 
     const tSearchStart = performance.now();
-    const data = await this.elasticsearchService.search<
-      SearchSource,
-      Record<string, AggregationsStringTermsAggregate>
-    >(request);
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'search',
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(request),
+    );
     const tSearchMs = Math.round(performance.now() - tSearchStart);
 
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
@@ -334,22 +341,27 @@ export class HybridSearchService {
     tenantId: string,
   ): Promise<PredictedTaxonomy[]> {
     try {
-      const result = await this.elasticsearchService.search<{
-        code: string;
-        name: string;
-      }>({
-        index: 'hybrid_taxonomies',
-        size: TAXONOMY_K,
-        track_total_hits: false,
-        _source: ['code', 'name'],
-        knn: {
-          field: 'embedding',
-          query_vector: queryVector,
-          k: TAXONOMY_K,
-          num_candidates: TAXONOMY_NUM_CANDIDATES,
-          filter: [{ term: { tenant_id: tenantId } }],
-        },
-      });
+      const result = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'search',
+        () =>
+          this.elasticsearchService.search<{
+            code: string;
+            name: string;
+          }>({
+            index: 'hybrid_taxonomies',
+            size: TAXONOMY_K,
+            track_total_hits: false,
+            _source: ['code', 'name'],
+            knn: {
+              field: 'embedding',
+              query_vector: queryVector,
+              k: TAXONOMY_K,
+              num_candidates: TAXONOMY_NUM_CANDIDATES,
+              filter: [{ term: { tenant_id: tenantId } }],
+            },
+          }),
+      );
 
       return result.hits.hits
         .filter((h) => Boolean(h._source?.code))
