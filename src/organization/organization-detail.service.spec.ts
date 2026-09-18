@@ -157,25 +157,21 @@ describe('OrganizationDetailService', () => {
     expect(sal.ID).toBe(salId);
     expect(sal.LOCATION_ID).toBe('loc1');
 
-    // Schedules attached to the pairing itself are locale-filtered like any
-    // other node, and survive rather than being dropped with the `_id`/`logo`
-    // projection.
+    // Schedules on the pairing survive the projection and are locale-filtered.
     expect(sal.SCHEDULES[0].TRANSLATIONS).toEqual([
       { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
     ]);
 
-    // DISPLAY is the resolved read-only view. Its nested PHONE_LIST
-    // TRANSLATIONS are reached by the same walk...
+    // DISPLAY's nested PHONE_LIST TRANSLATIONS are reached by the same walk...
     expect(sal.DISPLAY.PHONE_NUMBER).toBe('555-2000');
     expect(sal.DISPLAY.PHONE_LIST[0].TRANSLATIONS).toEqual([
       { LOCALE: 'es', DESCRIPTION: 'Linea del sitio' },
     ]);
 
-    // ...and so is DISPLAY.TRANSLATIONS itself, which is the reason that key is
-    // named TRANSLATIONS rather than SCHEDULES: filterTranslationsByLocale only
-    // descends into arrays under a key named `translations`. Rename it and the
-    // consumer silently receives every locale here while every other node in
-    // the document is filtered.
+    // ...and so is DISPLAY.TRANSLATIONS, which is why that key is not named
+    // SCHEDULES: filterTranslationsByLocale only descends into arrays under a
+    // key named `translations`. Rename it and this node silently returns every
+    // locale while the rest of the document is filtered.
     expect(sal.DISPLAY.TRANSLATIONS).toEqual([
       { LOCALE: 'es', DISPLAY_SCHEDULE: 'Lun-Vie 9-5' },
     ]);

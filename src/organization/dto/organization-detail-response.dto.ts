@@ -62,49 +62,35 @@ class ContactDto {
 
 class DisplayScheduleTranslationDto {
   @ApiProperty({ nullable: true, required: false }) LOCALE?: string;
-  @ApiProperty({
-    nullable: true,
-    required: false,
-    description:
-      'The one schedule a seeker is shown for this pairing, in this locale. ' +
-      'Already narrowed from every candidate schedule by the tenant rules — ' +
-      'not a list to choose from.',
-  })
-  DISPLAY_SCHEDULE?: string;
+  @ApiProperty({ nullable: true, required: false }) DISPLAY_SCHEDULE?: string;
 }
 
 class ServiceAtLocationDisplayDto {
-  @ApiProperty({
-    nullable: true,
-    required: false,
-    description: 'Primary number for this pairing — rank 0 of PHONE_LIST.',
-  })
-  PHONE_NUMBER?: string;
+  @ApiProperty({ nullable: true, required: false }) PHONE_NUMBER?: string;
 
   @ApiProperty({
     type: [PhoneDto],
+    required: false,
     description:
-      'Every phone in scope for this pairing — the organization, service, ' +
-      'location and service-at-location phones merged, then ordered by the ' +
-      "tenant's own ranking rules. PRIORITY 0 is what the seeker sees first. " +
-      'Merged, not substituted: a location phone does not replace the ' +
-      "service's, it joins the list ahead of or behind it.",
+      'Merged from the organization, service, location and pairing, then ' +
+      'ranked. A location phone joins this list rather than replacing the ' +
+      "service's — there is no per-location override.",
   })
-  PHONE_LIST: PhoneDto[];
+  PHONE_LIST?: PhoneDto[];
 
-  @ApiProperty({ type: [ContactDto] }) CONTACT_LIST: ContactDto[];
+  @ApiProperty({ type: [ContactDto], required: false })
+  CONTACT_LIST?: ContactDto[];
   @ApiProperty({ nullable: true, required: false }) WEBSITE?: string;
   @ApiProperty({ nullable: true, required: false }) EMAIL?: string;
 
   @ApiProperty({
     type: [DisplayScheduleTranslationDto],
+    required: false,
     description:
-      'The resolved schedule for this pairing, one entry per locale. Unlike ' +
-      'PHONE_LIST this really is a substitution: the tenant rules pick a ' +
-      "single winning schedule — the service's where it has one, otherwise " +
-      "the location's — and only the winner appears here.",
+      'One winning schedule per locale; the candidates it beat are not ' +
+      'represented here.',
   })
-  TRANSLATIONS: DisplayScheduleTranslationDto[];
+  TRANSLATIONS?: DisplayScheduleTranslationDto[];
 }
 
 class ServiceAtLocationDto {
@@ -125,28 +111,22 @@ class ServiceAtLocationDto {
 
   @ApiProperty({
     type: [ScheduleDto],
+    required: false,
     description:
-      'Schedules attached to this pairing rather than to the service or the ' +
-      'location. HSDS lets a schedule hang off a service_at_location, and such ' +
-      'a row carries neither a service_id nor a location_id — so it appears ' +
-      'here and nowhere else in this document. Source rows with their own IDs: ' +
-      'editable, unlike DISPLAY.',
+      'Attached to the pairing itself, so they appear here and nowhere else ' +
+      'in this document. Editable source rows, unlike DISPLAY.',
   })
-  SCHEDULES: ScheduleDto[];
+  SCHEDULES?: ScheduleDto[];
 
   @ApiProperty({
     type: ServiceAtLocationDisplayDto,
     required: false,
     description:
-      'What a seeker is actually shown for this service at this location, ' +
-      'resolved through the same tenant rules the search index uses — so it ' +
-      'matches the public site rather than this document. ' +
-      'READ-ONLY: every value here is derived from a phone, contact or ' +
-      'schedule that also appears, with its own ID, under the service, the ' +
-      'location, or the top-level phones/contacts arrays. To propose a change, ' +
-      'target that underlying row by its ID; a value here has no record behind ' +
-      'it to write to. Absent when the tenant produced no display row for the ' +
-      'pairing, which is not an error — the pairing is still real.',
+      'What a seeker is shown for this service at this location. READ-ONLY: ' +
+      'every value is derived from a phone, contact or schedule that also ' +
+      'appears, with its own ID, elsewhere in this document — propose changes ' +
+      'against that row, not against these values. May be absent, which is ' +
+      'not an error.',
   })
   DISPLAY?: ServiceAtLocationDisplayDto;
 }
@@ -169,16 +149,7 @@ class ServiceDto {
   @ApiProperty({ type: [PhoneDto] }) PHONES: PhoneDto[];
   @ApiProperty({ nullable: true }) ASSURED_DATE?: string;
   @ApiProperty({ nullable: true }) LAST_MODIFIED?: string;
-  @ApiProperty({
-    type: [ServiceAtLocationDto],
-    description:
-      'One entry per location this service is offered at. Carries the link, ' +
-      'any schedules attached to the pairing itself, and DISPLAY — the ' +
-      'resolved, read-only view a seeker sees for this service at that ' +
-      'location. Where a service is offered at several locations, the phone ' +
-      'list and the schedule are what differ between them in practice; ' +
-      'name and description do not.',
-  })
+  @ApiProperty({ type: [ServiceAtLocationDto] })
   SERVICE_AT_LOCATIONS: ServiceAtLocationDto[];
 
   // Kept per product direction (unused by provider-feedback today).
@@ -229,11 +200,7 @@ export class OrganizationDetailResponseDto {
   @ApiProperty({
     type: [ServiceDto],
     description:
-      'HSDS services. Each service carries SERVICE_AT_LOCATIONS[], which now ' +
-      'includes the resolved per-location DISPLAY view inline — a second call ' +
-      'is no longer needed just to see what a seeker is shown. Use ' +
-      'SERVICE_AT_LOCATIONS[].ID with POST /resource/batch when you need the ' +
-      'full search document for a pairing (taxonomy, attributes, geo).',
+      'HSDS services. Use SERVICE_AT_LOCATIONS[].ID with POST /resource/batch for service-at-location detail.',
   })
   services: ServiceDto[];
 
