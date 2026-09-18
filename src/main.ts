@@ -40,6 +40,7 @@ async function bootstrap() {
   app.enableVersioning({
     type: VersioningType.HEADER,
     header: 'x-api-version',
+    defaultVersion: '1',
   });
 
   const document = SwaggerModule.createDocument(app, buildSwaggerConfig());

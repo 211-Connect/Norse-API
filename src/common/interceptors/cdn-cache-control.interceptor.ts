@@ -30,11 +30,6 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
           const response = context.switchToHttp().getResponse();
 
           if (response.statusCode === 200) {
-            response.setHeader(
-              'Vary',
-              'x-tenant-id, accept-language, x-api-version',
-            );
-
             if (ttl === 0) {
               response.setHeader(
                 'Cache-Control',
