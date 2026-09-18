@@ -42,6 +42,7 @@ const BASE_TAXONOMY_BOOST = 50;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+const EMBEDDING_TIMEOUT_MS = 10_000;
 
 // When a tenant sets `pinned_resources_mode` to `boost`, pinned/priority stop
 // being hard sort tiers and become small score contributions instead (so a
@@ -325,6 +326,7 @@ export class HybridSearchService {
               Authorization: `Bearer ${this.runpodApiKey}`,
             },
             body: JSON.stringify({ model: this.embeddingModel, input: query }),
+            signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
           }),
         (res) => (res.ok ? 'ok' : 'error'),
       );

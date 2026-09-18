@@ -15,6 +15,8 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import { FacetConfig, FacetsConfigCache, SearchConfigCache } from './types';
 import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
+const CMS_FETCH_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class TenantConfigService {
   private readonly logger = new Logger(TenantConfigService.name);
@@ -222,6 +224,7 @@ export class TenantConfigService {
             headers: {
               Authorization: `Bearer ${this.configService.get('STRAPI_TOKEN')}`,
             },
+            signal: AbortSignal.timeout(CMS_FETCH_TIMEOUT_MS),
           }),
         (res) => (res.ok ? 'ok' : 'error'),
       );

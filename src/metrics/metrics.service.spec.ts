@@ -2,7 +2,7 @@ import {
   BadGatewayException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Counter, register } from 'prom-client';
+import { Counter, Pushgateway, register } from 'prom-client';
 import { MetricsService } from './metrics.service';
 
 describe('MetricsService', () => {
@@ -178,5 +178,62 @@ describe('MetricsService', () => {
 
   it('onModuleDestroy resolves when no pushgateway is configured', async () => {
     await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+  });
+
+  it('onModuleDestroy waits for an in-flight periodic push before deleting the group', async () => {
+    jest.useFakeTimers();
+    const gatewayConfigMock = {
+      get: jest.fn((key: string) => {
+        if (key === 'PUSH_GATEWAY_URL') return 'http://gateway:9091';
+        if (key === 'PUSH_METRICS_ENABLED') return true;
+        if (key === 'PUSH_INTERVAL_MS') return 15000;
+        return undefined;
+      }),
+    };
+
+    const callOrder: string[] = [];
+    register.clear();
+    let resolveFirstPush: (value: {
+      resp?: unknown;
+      body?: unknown;
+    }) => void = () => {};
+    const firstPush = new Promise<{ resp?: unknown; body?: unknown }>(
+      (resolve) => {
+        resolveFirstPush = resolve;
+      },
+    );
+    let pushCount = 0;
+    const pushSpy = jest
+      .spyOn(Pushgateway.prototype, 'push')
+      .mockImplementation(() => {
+        pushCount += 1;
+        callOrder.push('push');
+        return pushCount === 1 ? firstPush : Promise.resolve({});
+      });
+    const deleteSpy = jest
+      .spyOn(Pushgateway.prototype, 'delete')
+      .mockImplementation(() => {
+        callOrder.push('delete');
+        return Promise.resolve({});
+      });
+
+    const gatewayService = new MetricsService(gatewayConfigMock as never);
+
+    jest.advanceTimersByTime(15000);
+    const destroy = gatewayService.onModuleDestroy();
+
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    resolveFirstPush({});
+    await destroy;
+
+    expect(callOrder).toEqual(['push', 'push', 'delete']);
+
+    // Stop the periodic interval created by this service instance.
+    await gatewayService.onModuleDestroy();
+
+    pushSpy.mockRestore();
+    deleteSpy.mockRestore();
+    jest.useRealTimers();
   });
 });

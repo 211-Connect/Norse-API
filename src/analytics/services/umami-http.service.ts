@@ -79,6 +79,7 @@ export class UmamiHttpService {
               'user-Agent': this.getUserAgent(),
             },
             body: JSON.stringify(body),
+            signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
           }),
         (res) => (res.ok ? 'ok' : 'error'),
       );

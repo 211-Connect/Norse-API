@@ -33,6 +33,7 @@ export class MetricsService implements OnModuleDestroy {
   private readonly pushIntervalMs: number;
   private readonly instanceId = `${os.hostname()}:${process.pid}`;
   private pushInterval: NodeJS.Timeout | null = null;
+  private inflightPush: Promise<void> | null = null;
 
   constructor(private readonly configService: ConfigService) {
     collectDefaultMetrics({ register });
@@ -113,6 +114,7 @@ export class MetricsService implements OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     clearInterval(this.pushInterval);
+    await this.inflightPush;
     await this.pushMetrics();
     await this.deleteInstanceGroup();
   }
@@ -123,7 +125,15 @@ export class MetricsService implements OnModuleDestroy {
     }, this.pushIntervalMs);
   }
 
-  private async pushMetrics(): Promise<void> {
+  private pushMetrics(): Promise<void> {
+    const p = this.doPush().finally(() => {
+      if (this.inflightPush === p) this.inflightPush = null;
+    });
+    this.inflightPush = p;
+    return p;
+  }
+
+  private async doPush(): Promise<void> {
     if (!this.gateway) return;
     try {
       await this.gateway.push({

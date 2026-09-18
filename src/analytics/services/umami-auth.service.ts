@@ -76,7 +76,7 @@ export class UmamiAuthService {
             },
             signal: AbortSignal.timeout(AUTH_VERIFY_TIMEOUT_MS),
           }),
-        (res) => (res.ok ? 'ok' : 'error'),
+        (res) => (res.ok || res.status === 401 ? 'ok' : 'error'),
       );
       return res.ok;
     } catch {
