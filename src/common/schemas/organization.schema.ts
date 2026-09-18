@@ -29,11 +29,8 @@ export interface OrganizationServiceAtLocationDisplay {
   CONTACT_LIST?: Record<string, unknown>[];
   WEBSITE?: string;
   EMAIL?: string;
-  /**
-   * The single resolved schedule for this pairing, per locale. Named
-   * TRANSLATIONS so the document-wide locale filter reaches it too.
-   */
-  TRANSLATIONS?: { LOCALE?: string; DISPLAY_SCHEDULE?: string }[];
+  /** The single resolved schedule for this pairing. English. */
+  SCHEDULE?: string;
 }
 
 export interface OrganizationServiceAtLocation {

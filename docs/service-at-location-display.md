@@ -20,18 +20,20 @@ what a seeker sees. Someone reporting "the phone number on this listing is
 wrong" arrived at a form showing the unresolved union of every phone on the
 organization — not the one they were complaining about.
 
-## The naming trap
+## It is English, deliberately
 
-> **`DISPLAY.TRANSLATIONS` holds schedules. Do not rename it to `SCHEDULES`.**
->
-> `filterTranslationsByLocale` (`organization-detail.transform.ts`) walks the
-> whole document and narrows every array under a key named `translations` to the
-> requested locale. Any other name makes this the one node that silently returns
-> every locale while everything around it is filtered — no error, no failing
-> request, just wrong data in one place.
->
-> Regression test: `organization-detail.service.spec.ts`. It fails if the key is
-> renamed.
+`DISPLAY.SCHEDULE` is a scalar and the `TRANSLATIONS` nested in `PHONE_LIST` and
+`CONTACT_LIST` are filtered to `en` — upstream in `app_organization_full`, not
+here. That matches the rest of this document, where the service, location,
+program and attribute translations are each already filtered to `en`, and it
+matches how the document is used: feedback is given in English, stewards steward
+in English, and translation happens downstream in the pipeline.
+
+So an `accept-language: es` request still gets the English row, via the English
+fallback in `selectLocaleRows`. That is correct — it is the only row there is.
+
+`app_display` upstream stays multi-locale, because the search index reads it and
+serves every configured locale. Don't "fix" that by widening this.
 
 ## Why there is no per-location override to edit
 

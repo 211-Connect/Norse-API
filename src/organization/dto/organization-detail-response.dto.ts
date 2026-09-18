@@ -60,11 +60,6 @@ class ContactDto {
   @ApiProperty({ nullable: true }) EMAIL?: string;
 }
 
-class DisplayScheduleTranslationDto {
-  @ApiProperty({ nullable: true, required: false }) LOCALE?: string;
-  @ApiProperty({ nullable: true, required: false }) DISPLAY_SCHEDULE?: string;
-}
-
 class ServiceAtLocationDisplayDto {
   @ApiProperty({ nullable: true, required: false }) PHONE_NUMBER?: string;
 
@@ -84,13 +79,13 @@ class ServiceAtLocationDisplayDto {
   @ApiProperty({ nullable: true, required: false }) EMAIL?: string;
 
   @ApiProperty({
-    type: [DisplayScheduleTranslationDto],
+    nullable: true,
     required: false,
     description:
-      'One winning schedule per locale; the candidates it beat are not ' +
-      'represented here.',
+      'The one winning schedule for this pairing; the candidates it beat are ' +
+      'not represented here. English — see DISPLAY on the parent.',
   })
-  TRANSLATIONS?: DisplayScheduleTranslationDto[];
+  SCHEDULE?: string;
 }
 
 class ServiceAtLocationDto {
@@ -126,7 +121,10 @@ class ServiceAtLocationDto {
       'every value is derived from a phone, contact or schedule that also ' +
       'appears, with its own ID, elsewhere in this document — propose changes ' +
       'against that row, not against these values. May be absent, which is ' +
-      'not an error.',
+      'not an error. English throughout, like the rest of this document: ' +
+      'SCHEDULE is a scalar and the TRANSLATIONS nested in PHONE_LIST and ' +
+      'CONTACT_LIST are filtered to `en`. The search index reads the ' +
+      'multi-locale form elsewhere.',
   })
   DISPLAY?: ServiceAtLocationDisplayDto;
 }

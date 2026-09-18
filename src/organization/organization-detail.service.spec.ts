@@ -66,22 +66,18 @@ describe('OrganizationDetailService', () => {
             ],
             DISPLAY: {
               PHONE_NUMBER: '555-2000',
+              // app_organization_full filters DISPLAY's nested translations to
+              // `en` upstream, so one row is what actually arrives here.
               PHONE_LIST: [
                 {
                   ID: 'p2',
                   NUMBER: '555-2000',
-                  TRANSLATIONS: [
-                    { LOCALE: 'en', DESCRIPTION: 'Site line' },
-                    { LOCALE: 'es', DESCRIPTION: 'Linea del sitio' },
-                  ],
+                  TRANSLATIONS: [{ LOCALE: 'en', DESCRIPTION: 'Site line' }],
                 },
               ],
               CONTACT_LIST: [],
               WEBSITE: 'https://example.com/site',
-              TRANSLATIONS: [
-                { LOCALE: 'en', DISPLAY_SCHEDULE: 'Mon-Fri 9-5' },
-                { LOCALE: 'es', DISPLAY_SCHEDULE: 'Lun-Vie 9-5' },
-              ],
+              SCHEDULE: 'Mon-Fri 9-5',
             },
           },
         ],
@@ -162,18 +158,14 @@ describe('OrganizationDetailService', () => {
       { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
     ]);
 
-    // DISPLAY's nested PHONE_LIST TRANSLATIONS are reached by the same walk...
+    // DISPLAY is English throughout -- the schedule is a scalar, and its nested
+    // phone/contact translations are filtered to `en` upstream rather than here.
+    // So an `es` request still yields the English row, through the English
+    // fallback in selectLocaleRows. That is correct: it is the only row there is.
     expect(sal.DISPLAY.PHONE_NUMBER).toBe('555-2000');
+    expect(sal.DISPLAY.SCHEDULE).toBe('Mon-Fri 9-5');
     expect(sal.DISPLAY.PHONE_LIST[0].TRANSLATIONS).toEqual([
-      { LOCALE: 'es', DESCRIPTION: 'Linea del sitio' },
-    ]);
-
-    // ...and so is DISPLAY.TRANSLATIONS, which is why that key is not named
-    // SCHEDULES: filterTranslationsByLocale only descends into arrays under a
-    // key named `translations`. Rename it and this node silently returns every
-    // locale while the rest of the document is filtered.
-    expect(sal.DISPLAY.TRANSLATIONS).toEqual([
-      { LOCALE: 'es', DISPLAY_SCHEDULE: 'Lun-Vie 9-5' },
+      { LOCALE: 'en', DESCRIPTION: 'Site line' },
     ]);
   });
 
