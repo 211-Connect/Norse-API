@@ -49,7 +49,38 @@ describe('OrganizationDetailService', () => {
         ATTRIBUTE_TAXONOMIES: [{ ID: 'at1' }],
         CUSTOM_ATTRIBUTES: [{ ID: 'ca1' }],
         COST_OPTIONS: [{ ID: 'co1' }],
-        SERVICE_AT_LOCATIONS: [{ ID: salId, LOCATION_ID: 'loc1' }],
+        SERVICE_AT_LOCATIONS: [
+          {
+            ID: salId,
+            LOCATION_ID: 'loc1',
+            // Attached to the pairing, not to the service or the location —
+            // reachable nowhere else in the document.
+            SCHEDULES: [
+              {
+                ID: 'salsch1',
+                TRANSLATIONS: [
+                  { LOCALE: 'en', DESCRIPTION: 'Pairing hours' },
+                  { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
+                ],
+              },
+            ],
+            DISPLAY: {
+              PHONE_NUMBER: '555-2000',
+              // app_organization_full filters DISPLAY's nested translations to
+              // `en` upstream, so one row is what actually arrives here.
+              PHONE_LIST: [
+                {
+                  ID: 'p2',
+                  NUMBER: '555-2000',
+                  TRANSLATIONS: [{ LOCALE: 'en', DESCRIPTION: 'Site line' }],
+                },
+              ],
+              CONTACT_LIST: [],
+              WEBSITE: 'https://example.com/site',
+              SCHEDULE: 'Mon-Fri 9-5',
+            },
+          },
+        ],
         SCHEDULES: [
           {
             ID: 'sch1',
@@ -117,9 +148,24 @@ describe('OrganizationDetailService', () => {
     expect(result.services[0].SCHEDULES[0].TRANSLATIONS).toEqual([
       { LOCALE: 'es', DESCRIPTION: 'Horario' },
     ]);
-    // SAL references remain on services
-    expect(result.services[0].SERVICE_AT_LOCATIONS).toEqual([
-      { ID: salId, LOCATION_ID: 'loc1' },
+    // SAL references remain on services, and the pairing keeps its id/link.
+    const sal = result.services[0].SERVICE_AT_LOCATIONS[0];
+    expect(sal.ID).toBe(salId);
+    expect(sal.LOCATION_ID).toBe('loc1');
+
+    // Schedules on the pairing survive the projection and are locale-filtered.
+    expect(sal.SCHEDULES[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'es', DESCRIPTION: 'Horario del sitio' },
+    ]);
+
+    // DISPLAY is English throughout -- the schedule is a scalar, and its nested
+    // phone/contact translations are filtered to `en` upstream rather than here.
+    // So an `es` request still yields the English row, through the English
+    // fallback in selectLocaleRows. That is correct: it is the only row there is.
+    expect(sal.DISPLAY.PHONE_NUMBER).toBe('555-2000');
+    expect(sal.DISPLAY.SCHEDULE).toBe('Mon-Fri 9-5');
+    expect(sal.DISPLAY.PHONE_LIST[0].TRANSLATIONS).toEqual([
+      { LOCALE: 'en', DESCRIPTION: 'Site line' },
     ]);
   });
 
