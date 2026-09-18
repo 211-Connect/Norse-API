@@ -50,6 +50,16 @@ class PhoneDto {
   @ApiProperty() ID: string;
   @ApiProperty({ nullable: true }) NUMBER?: string;
   @ApiProperty({ nullable: true }) TYPE?: string;
+  @ApiProperty({
+    nullable: true,
+    required: false,
+    description:
+      'Rank, not a score: **0 is the primary phone** and larger numbers are ' +
+      'progressively less preferred. 0 is always a voice line; fax appears ' +
+      'from 1 down. See docs/phone-and-address-rank.md — the equivalent field ' +
+      'on addresses is 1-based, which has already caused one bug.',
+  })
+  PRIORITY?: number;
   @ApiProperty({ type: [TranslationDto] }) TRANSLATIONS: TranslationDto[];
 }
 
