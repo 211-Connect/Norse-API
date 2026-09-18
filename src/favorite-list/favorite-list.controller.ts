@@ -18,8 +18,10 @@ import { CreateFavoriteListDto } from './dto/create-favorite-list.dto';
 import {
   ApiTags,
   ApiResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiCreatedResponse,
+  ApiHeader,
   ApiNoContentResponse,
 } from '@nestjs/swagger';
 import { UpdateFavoriteListDto } from './dto/update-favorite-list.dto';
@@ -29,6 +31,7 @@ import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import { SearchFavoriteListDto } from './dto/search-favorite-list.dto';
 import { PaginationDto, paginationSchema } from './dto/pagination.dto';
 import {
@@ -47,6 +50,16 @@ import { Request, Response } from 'express';
 })
 @ApiTenantIdQuery()
 @ApiLocaleQuery()
+@ApiHeader({
+  name: 'x-tenant-id',
+  required: true,
+  description: X_TENANT_ID_HEADER_DESCRIPTION,
+})
+@ApiHeader({
+  name: 'accept-language',
+  required: false,
+  schema: { default: 'en' },
+})
 export class FavoriteListController {
   constructor(
     private readonly favoriteListService: FavoriteListService,
@@ -55,6 +68,7 @@ export class FavoriteListController {
 
   @Post()
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   create(
     @Body() createFavoriteListDto: CreateFavoriteListDto,
     @User() user: User,
@@ -68,6 +82,7 @@ export class FavoriteListController {
 
   @Post('sync')
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   @ApiBody({ type: SyncFavoriteListDto })
   @ApiCreatedResponse({ type: FavoriteListSyncResponseDto })
   @ApiNoContentResponse({
@@ -96,6 +111,7 @@ export class FavoriteListController {
 
   @Get()
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   @ApiResponse({ type: FavoriteListResponseDto })
   findAll(
     @Query(new ZodValidationPipe(paginationSchema)) pagination: PaginationDto,
@@ -106,6 +122,7 @@ export class FavoriteListController {
 
   @Get('search')
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   @ApiResponse({ type: FavoriteListResponseDto })
   search(
     @Query() query: SearchFavoriteListDto,
@@ -139,6 +156,7 @@ export class FavoriteListController {
 
   @Put(':id')
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   update(
     @Param('id') id: string,
     @Body() updateFavoriteListDto: UpdateFavoriteListDto,
@@ -149,12 +167,14 @@ export class FavoriteListController {
 
   @Delete(':id/favorites')
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   purge(@Param('id') id: string, @User() user: User) {
     return this.favoriteListService.purge(id, { user });
   }
 
   @Delete(':id')
   @UseGuards(KeycloakGuard)
+  @ApiBearerAuth()
   async remove(@Param('id') id: string, @User() user: User): Promise<void> {
     await this.favoriteListService.remove(id, { user });
   }

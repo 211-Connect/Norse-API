@@ -36,6 +36,7 @@ import {
 } from './types/resource-response.types';
 import { TransformedResourceOpenApiDto } from './dto/transformed-resource.openapi.dto';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 
 @ApiTags('Resource')
 @ApiExtraModels(TransformedResourceOpenApiDto)
@@ -53,7 +54,11 @@ export class ResourceController {
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiHeader({ name: 'accept-language', required: true })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiParam({ name: 'id' })
   @ApiResponse({
     status: 200,
@@ -80,7 +85,11 @@ export class ResourceController {
   @Version('1')
   @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiParam({ name: 'id', description: 'Original Resource ID' }) // Updated description
   @ApiResponse({
     status: 200,
@@ -104,7 +113,11 @@ export class ResourceController {
 
   @Post('titles')
   @Version('1')
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiOperation({
     summary: 'Get resource titles by IDs',
     description:
@@ -133,7 +146,11 @@ export class ResourceController {
   @Version('1')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiHeader({ name: 'accept-language', required: true })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiOperation({
     summary: 'Batch fetch resources by IDs',
     description:
