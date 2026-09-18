@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
+import { MetricsService } from 'src/metrics/metrics.service';
 import {
   AiSearchPredictResponseDto,
   AiSearchScenario,
@@ -67,6 +68,7 @@ export class AiSearchService {
   constructor(
     private readonly configService: ConfigService,
     private readonly hybridSearchService: HybridSearchService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async predict(
@@ -146,17 +148,20 @@ export class AiSearchService {
     );
 
     try {
-      const response = await fetch(
-        `${baseUrl}/api/v1/tasks/needs-classification/${task}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        },
+      const response = await this.metrics.observeDownstream(
+        'ml_broker',
+        task,
+        () =>
+          fetch(`${baseUrl}/api/v1/tasks/needs-classification/${task}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
 
       if (!response.ok) {

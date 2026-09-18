@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import mbxGeocoding from '@mapbox/mapbox-sdk/services/geocoding';
-import { GeocodeService } from '@mapbox/mapbox-sdk/services/geocoding';
+import {
+  GeocodeService,
+  GeocodeResponse,
+} from '@mapbox/mapbox-sdk/services/geocoding';
+import { MapiResponse } from '@mapbox/mapbox-sdk/lib/classes/mapi-response';
 import { IGeocodingProvider } from './geocoding-provider.interface';
 import {
   ForwardGeocodeQueryDto,
@@ -10,13 +14,17 @@ import {
   ReverseGeocodeResponseDto,
 } from '../dto/geocoding.dto';
 import { mapMapboxFeatureToGeocodeResponse } from '../mappers/geocoding.mapper';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 @Injectable()
 export class MapboxGeocodingProvider implements IGeocodingProvider {
   private readonly logger = new Logger(MapboxGeocodingProvider.name);
   private readonly client: GeocodeService;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {
     const accessToken = this.configService.get<string>('MAPBOX_API_KEY');
 
     if (!accessToken) {
@@ -30,15 +38,19 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
   ): Promise<ForwardGeocodeResponseDto[]> {
     const { address, locale = 'en', limit = 5 } = query;
 
-    const response = await this.client
-      .forwardGeocode({
-        query: address,
-        countries: ['US'],
-        autocomplete: true,
-        language: [locale],
-        limit,
-      })
-      .send();
+    const response = await this.metrics.observeDownstream<
+      MapiResponse<GeocodeResponse>
+    >('mapbox', 'forwardGeocode', () =>
+      this.client
+        .forwardGeocode({
+          query: address,
+          countries: ['US'],
+          autocomplete: true,
+          language: [locale],
+          limit,
+        })
+        .send(),
+    );
 
     const results: ForwardGeocodeResponseDto[] = [];
 
@@ -57,15 +69,19 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
     const { coordinates, locale = 'en' } = query;
     const [lng, lat] = coordinates;
 
-    const response = await this.client
-      .reverseGeocode({
-        query: [lng, lat],
-        types: ['address'],
-        countries: ['US'],
-        language: [locale],
-        limit: 1,
-      })
-      .send();
+    const response = await this.metrics.observeDownstream<
+      MapiResponse<GeocodeResponse>
+    >('mapbox', 'reverseGeocode', () =>
+      this.client
+        .reverseGeocode({
+          query: [lng, lat],
+          types: ['address'],
+          countries: ['US'],
+          language: [locale],
+          limit: 1,
+        })
+        .send(),
+    );
 
     const results: ReverseGeocodeResponseDto[] = [];
 

@@ -38,6 +38,7 @@ import { PermissionsSideChannelService } from './auth/gateway/permissions-side-c
 import { TenantScopeGuard } from './auth/gateway/tenant-scope.guard';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
+import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
@@ -90,6 +91,7 @@ import { OrganizationController } from './organization/organization.controller';
   providers: [
     AppService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // Gateway guard registration order matters (Nest runs global guards in registration order):
     // GatewayIdentityGuard resolves req.authMode first, so GatewayPermissionsGuard and TenantScopeGuard
     // (registered after it) can rely on it having already run.

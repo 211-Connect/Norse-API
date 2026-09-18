@@ -21,6 +21,7 @@ import { SearchUtilsService } from './search-utils.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -43,6 +44,7 @@ export class SearchService {
     private readonly tenantConfigService: TenantConfigService,
     private readonly orchestrationConfigService: OrchestrationConfigService,
     private readonly hybridSearchService: HybridSearchService,
+    private readonly metrics: MetricsService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -209,10 +211,15 @@ export class SearchService {
       ...specificQuery,
     };
 
-    const data = await this.elasticsearchService.search<
-      SearchSource,
-      Record<string, AggregationsStringTermsAggregate>
-    >(finalQuery);
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      `resources_${queryType}`,
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(finalQuery),
+    );
 
     if (data.hits?.hits) {
       data.hits.hits = data.hits.hits.map((hit) => {

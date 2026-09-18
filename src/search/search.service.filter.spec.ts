@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
@@ -8,6 +9,7 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('SearchService Logic', () => {
   let service: SearchService;
@@ -64,6 +66,10 @@ describe('SearchService Logic', () => {
           useValue: {
             getOrSet: jest.fn((_key, factory) => factory()),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

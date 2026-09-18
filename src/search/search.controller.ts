@@ -12,7 +12,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
-import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiHeader,
@@ -77,7 +76,6 @@ const SORT_PARAM_DESCRIPTION =
 export class SearchController {
   constructor(
     private readonly searchService: SearchService,
-    private readonly metricsService: MetricsService,
     private readonly aiSearchService: AiSearchService,
   ) {}
 
@@ -168,12 +166,6 @@ export class SearchController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchResourcesQueryDto,
   ): Promise<SearchResponse> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'getResources',
-      headers['x-tenant-id'],
-    );
-
     try {
       return this.searchService.searchResources({
         headers,
@@ -297,12 +289,6 @@ export class SearchController {
     body: SearchResourcesBodyDto,
     @Req() req,
   ) {
-    this.metricsService.incrementSearchHit(
-      'POST',
-      'getResourcesPost',
-      headers['x-tenant-id'],
-    );
-
     // Validate Content-Type
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {
@@ -346,12 +332,6 @@ export class SearchController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: AiSearchPredictQueryDto,
   ): Promise<AiSearchPredictResponseDto> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'predictSearch',
-      headers['x-tenant-id'],
-    );
-
     return this.aiSearchService.predict(headers, query);
   }
 
@@ -391,12 +371,6 @@ export class SearchController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: AiSearchReRankQueryDto,
   ): Promise<AiSearchReRankResponseDto> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'reRankSearch',
-      headers['x-tenant-id'],
-    );
-
     return this.aiSearchService.reRank(headers, {
       need_weights: this.parseNeedWeightsQuery(query.need_weights),
       top_k: query.top_k,

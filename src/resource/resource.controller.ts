@@ -8,7 +8,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ResourceService } from './resource.service';
-import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiExtraModels,
@@ -44,10 +43,7 @@ import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descri
 @ApiTenantIdQuery()
 @ApiLocaleQuery()
 export class ResourceController {
-  constructor(
-    private readonly resourceService: ResourceService,
-    private readonly metricsService: MetricsService,
-  ) {}
+  constructor(private readonly resourceService: ResourceService) {}
 
   @Get(':id')
   @Version('1')
@@ -69,12 +65,6 @@ export class ResourceController {
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<TransformedResource> {
-    this.metricsService.incrementResourceHit(
-      'GET',
-      'getResourceById',
-      headers['x-tenant-id'],
-    );
-
     return this.resourceService.findById(id, {
       headers,
     });
@@ -100,12 +90,6 @@ export class ResourceController {
     @Param('id') id: string, // The path parameter named id, but it is original ID
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<TransformedResource> {
-    this.metricsService.incrementResourceHit(
-      'GET',
-      'getResourceByOriginalId',
-      headers['x-tenant-id'],
-    );
-
     return this.resourceService.findByOriginalId(id, {
       headers,
     });
@@ -170,12 +154,6 @@ export class ResourceController {
     @Body() dto: ResourceBatchDto,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<ResourceBatchResponse> {
-    this.metricsService.incrementResourceHit(
-      'POST',
-      'getResourcesBatch',
-      headers['x-tenant-id'],
-    );
-
     return this.resourceService.findManyByIds(dto.ids, { headers });
   }
 }

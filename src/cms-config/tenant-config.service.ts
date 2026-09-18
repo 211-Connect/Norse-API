@@ -11,6 +11,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 import { FacetConfig, FacetsConfigCache, SearchConfigCache } from './types';
 import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
@@ -34,6 +35,7 @@ export class TenantConfigService {
     private readonly cmsRedisService: CmsRedisService,
     @Inject(CACHE_MANAGER) private readonly cacheService: Cache,
     private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async getKeycloakRealmId(tenantId: string): Promise<string> {
@@ -212,11 +214,17 @@ export class TenantConfigService {
     const url = `${this.configService.get('STRAPI_URL')}/api/tenants?filters[tenantId][$eq]=${tenantId}&${strapiPopulateQuery}`;
 
     try {
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${this.configService.get('STRAPI_TOKEN')}`,
-        },
-      });
+      const response = await this.metrics.observeDownstream(
+        'cms',
+        'tenant_config',
+        () =>
+          fetch(url, {
+            headers: {
+              Authorization: `Bearer ${this.configService.get('STRAPI_TOKEN')}`,
+            },
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
+      );
 
       if (!response.ok) {
         this.logger.error(
