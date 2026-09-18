@@ -94,7 +94,7 @@ export class TaxonomyService {
 
       const data = await this.metrics.observeDownstream(
         'elasticsearch',
-        'search',
+        'taxonomy_search',
         () => this.elasticsearchService.search<TaxonomyDocument>(queryBuilder),
       );
 
@@ -152,7 +152,7 @@ export class TaxonomyService {
     try {
       data = await this.metrics.observeDownstream(
         'elasticsearch',
-        'search',
+        'taxonomy_terms_by_codes',
         () => this.elasticsearchService.search<TaxonomyDocument>(queryBuilder),
       );
       this.logger.debug(

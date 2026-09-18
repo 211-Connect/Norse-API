@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { getModelToken } from '@nestjs/mongoose';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TaxonomyScorecardService } from './taxonomy-scorecard.service';
@@ -70,11 +71,7 @@ describe('TaxonomyScorecardService', () => {
         },
         {
           provide: MetricsService,
-          useValue: {
-            observeDownstream: jest.fn(
-              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
-            ),
-          },
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

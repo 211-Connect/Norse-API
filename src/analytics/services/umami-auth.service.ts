@@ -64,15 +64,19 @@ export class UmamiAuthService {
   private async isTokenValid(token: string): Promise<boolean> {
     const { apiUrl } = this.requireConfig();
     try {
-      const res = await this.metrics.observeDownstream('umami', 'verify', () =>
-        fetch(`${apiUrl}/api/auth/verify`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(AUTH_VERIFY_TIMEOUT_MS),
-        }),
+      const res = await this.metrics.observeDownstream(
+        'umami',
+        'verify',
+        () =>
+          fetch(`${apiUrl}/api/auth/verify`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+            },
+            signal: AbortSignal.timeout(AUTH_VERIFY_TIMEOUT_MS),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
       return res.ok;
     } catch {
@@ -85,13 +89,17 @@ export class UmamiAuthService {
 
     let res: Response;
     try {
-      res = await this.metrics.observeDownstream('umami', 'login', () =>
-        fetch(`${apiUrl}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
-          signal: AbortSignal.timeout(AUTH_LOGIN_TIMEOUT_MS),
-        }),
+      res = await this.metrics.observeDownstream(
+        'umami',
+        'login',
+        () =>
+          fetch(`${apiUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+            signal: AbortSignal.timeout(AUTH_LOGIN_TIMEOUT_MS),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Network error';

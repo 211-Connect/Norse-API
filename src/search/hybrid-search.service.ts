@@ -115,10 +115,15 @@ export class HybridSearchService {
 
     return this.requestCacheService.getOrSet(cacheKey, async () => {
       try {
-        const result = await this.elasticsearchService.count({
-          index,
-          query: { bool: { filter } },
-        });
+        const result = await this.metrics.observeDownstream(
+          'elasticsearch',
+          'hybrid_documents_count',
+          () =>
+            this.elasticsearchService.count({
+              index,
+              query: { bool: { filter } },
+            }),
+        );
         return result.count;
       } catch (error) {
         this.logger.warn(
@@ -238,7 +243,7 @@ export class HybridSearchService {
     const tSearchStart = performance.now();
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
-      'search',
+      'hybrid_search',
       () =>
         this.elasticsearchService.search<
           SearchSource,
@@ -309,14 +314,20 @@ export class HybridSearchService {
     }
 
     try {
-      const response = await fetch(`${this.embeddingBaseUrl}/embeddings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.runpodApiKey}`,
-        },
-        body: JSON.stringify({ model: this.embeddingModel, input: query }),
-      });
+      const response = await this.metrics.observeDownstream(
+        'embedding',
+        'embed',
+        () =>
+          fetch(`${this.embeddingBaseUrl}/embeddings`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.runpodApiKey}`,
+            },
+            body: JSON.stringify({ model: this.embeddingModel, input: query }),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
+      );
 
       if (!response.ok) {
         const text = await response.text();
@@ -343,7 +354,7 @@ export class HybridSearchService {
     try {
       const result = await this.metrics.observeDownstream(
         'elasticsearch',
-        'search',
+        'taxonomy_knn',
         () =>
           this.elasticsearchService.search<{
             code: string;

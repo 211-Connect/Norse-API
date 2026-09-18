@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
@@ -42,11 +43,7 @@ describe('SearchService', () => {
         },
         {
           provide: MetricsService,
-          useValue: {
-            observeDownstream: jest.fn(
-              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
-            ),
-          },
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

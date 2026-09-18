@@ -77,21 +77,16 @@ export class AiSearchService {
   ): Promise<AiSearchPredictResponseDto> {
     const topK = queryParams.top_k ?? ML_BROKER_TOP_K;
 
-    const brokerResponse = await this.metrics.observeDownstream(
-      'ml_broker',
-      MlBrokerTask.PREDICT,
-      () =>
-        this.callMlBroker({
-          task: MlBrokerTask.PREDICT,
-          headers,
-          body: {
-            query: queryParams.query,
-            tenant_id: headers['x-tenant-id'],
-            top_k: topK,
-            return_all_labels: true,
-          },
-        }),
-    );
+    const brokerResponse = await this.callMlBroker({
+      task: MlBrokerTask.PREDICT,
+      headers,
+      body: {
+        query: queryParams.query,
+        tenant_id: headers['x-tenant-id'],
+        top_k: topK,
+        return_all_labels: true,
+      },
+    });
 
     this.logger.debug(
       `[predict] query="${queryParams.query}" tenant=${headers['x-tenant-id']} | ` +
@@ -108,20 +103,15 @@ export class AiSearchService {
     headers: HeadersDto,
     payload: AiSearchReRankPayload,
   ): Promise<AiSearchReRankResponseDto> {
-    const response = await this.metrics.observeDownstream(
-      'ml_broker',
-      MlBrokerTask.RERANK,
-      () =>
-        this.callMlBroker({
-          task: MlBrokerTask.RERANK,
-          headers,
-          body: {
-            tenant_id: headers['x-tenant-id'],
-            need_weights: payload.need_weights,
-            top_k: payload.top_k ?? ML_BROKER_TOP_K,
-          },
-        }),
-    );
+    const response = await this.callMlBroker({
+      task: MlBrokerTask.RERANK,
+      headers,
+      body: {
+        tenant_id: headers['x-tenant-id'],
+        need_weights: payload.need_weights,
+        top_k: payload.top_k ?? ML_BROKER_TOP_K,
+      },
+    });
 
     this.logger.debug(
       `[re-rank] tenant=${headers['x-tenant-id']} | ` +
@@ -158,17 +148,20 @@ export class AiSearchService {
     );
 
     try {
-      const response = await fetch(
-        `${baseUrl}/api/v1/tasks/needs-classification/${task}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        },
+      const response = await this.metrics.observeDownstream(
+        'ml_broker',
+        task,
+        () =>
+          fetch(`${baseUrl}/api/v1/tasks/needs-classification/${task}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
 
       if (!response.ok) {

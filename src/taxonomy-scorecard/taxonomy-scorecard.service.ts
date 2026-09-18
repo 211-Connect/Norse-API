@@ -85,7 +85,7 @@ export class TaxonomyScorecardService {
 
     const esResponse = await this.metrics.observeDownstream(
       'elasticsearch',
-      'search',
+      'scorecard_taxonomy_search',
       () =>
         this.elasticsearchService.search<TaxonomyHitSource>({
           ...baseSearchRequest,
@@ -350,7 +350,7 @@ export class TaxonomyScorecardService {
   ): Promise<string[]> {
     const response = await this.metrics.observeDownstream(
       'elasticsearch',
-      'search',
+      'scorecard_prefix_codes',
       () =>
         this.elasticsearchService.search<TaxonomyHitSource>({
           index: HYBRID_TAXONOMIES_INDEX,

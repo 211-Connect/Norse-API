@@ -124,9 +124,10 @@ describe('MetricsService', () => {
     });
   });
 
-  it('observeDownstream records outcome timeout for a 503 HttpException', async () => {
-    const err = new ServiceUnavailableException('too slow');
-
+  const expectOutcome = async (
+    err: unknown,
+    outcome: 'ok' | 'timeout' | 'error',
+  ) => {
     await expect(
       service.observeDownstream('ml_broker', 'predict', async () => {
         throw err;
@@ -139,7 +140,39 @@ describe('MetricsService', () => {
     expect(values[0].labels).toEqual({
       dependency: 'ml_broker',
       operation: 'predict',
-      outcome: 'timeout',
+      outcome,
+    });
+  };
+
+  it('observeDownstream records outcome timeout for a TimeoutError-named error', async () => {
+    await expectOutcome({ name: 'TimeoutError' }, 'timeout');
+  });
+
+  it('observeDownstream records outcome timeout for an AbortError-named error', async () => {
+    await expectOutcome({ name: 'AbortError' }, 'timeout');
+  });
+
+  it('observeDownstream records outcome error for a 503 HttpException', async () => {
+    await expectOutcome(new ServiceUnavailableException('too slow'), 'error');
+  });
+
+  it('observeDownstream classifies successful results via classifyResult and still returns them', async () => {
+    const result = await service.observeDownstream(
+      'ml_broker',
+      'predict',
+      async () => ({ ok: false }),
+      (res) => (res.ok ? 'ok' : 'error'),
+    );
+
+    expect(result).toEqual({ ok: false });
+
+    const metric = getMetric('norse_downstream_requests_total');
+    const values = (await metric.get()).values;
+    expect(values).toHaveLength(1);
+    expect(values[0].labels).toEqual({
+      dependency: 'ml_broker',
+      operation: 'predict',
+      outcome: 'error',
     });
   });
 

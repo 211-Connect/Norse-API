@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import {
   BadGatewayException,
@@ -41,11 +42,7 @@ describe('AiSearchService', () => {
         },
         {
           provide: MetricsService,
-          useValue: {
-            observeDownstream: jest.fn(
-              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
-            ),
-          },
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

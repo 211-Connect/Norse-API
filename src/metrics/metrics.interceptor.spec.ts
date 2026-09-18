@@ -1,11 +1,12 @@
 import { CallHandler, ExecutionContext, HttpException } from '@nestjs/common';
-import { of, throwError } from 'rxjs';
+import { EMPTY, Subject, of, throwError } from 'rxjs';
 import { MetricsInterceptor } from './metrics.interceptor';
 
 describe('MetricsInterceptor', () => {
   let metricsMock: { recordHttpRequest: jest.Mock };
   let reflectorMock: { getAllAndOverride: jest.Mock };
   let interceptor: MetricsInterceptor;
+  let subject: Subject<string>;
 
   const createContext = (
     headers: Record<string, string> = { 'x-tenant-id': 'tenant-1' },
@@ -27,6 +28,7 @@ describe('MetricsInterceptor', () => {
       metricsMock as never,
       reflectorMock as never,
     );
+    subject = new Subject<string>();
   });
 
   it('records one http request on success with handler, status, tenant and duration', (done) => {
@@ -123,5 +125,54 @@ describe('MetricsInterceptor', () => {
         done();
       },
     });
+  });
+
+  it('records exactly once when the observable emits multiple values', (done) => {
+    const next: CallHandler = { handle: () => of('a', 'b', 'c') };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        done();
+      },
+    });
+  });
+
+  it('records the response status for an empty observable', (done) => {
+    const next: CallHandler = { handle: () => EMPTY };
+
+    interceptor.intercept(createContext(), next).subscribe({
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '200',
+          'tenant-1',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+
+  it('records 499 when the subscriber unsubscribes before completion', () => {
+    const next: CallHandler = { handle: () => subject };
+    const subscription = interceptor
+      .intercept(createContext(), next)
+      .subscribe();
+
+    subscription.unsubscribe();
+
+    expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
+    expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+      'GET',
+      'FakeController.fakeHandler',
+      'fake',
+      '499',
+      'tenant-1',
+      expect.any(Number),
+    );
   });
 });

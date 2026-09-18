@@ -80,6 +80,7 @@ export class UmamiHttpService {
             },
             body: JSON.stringify(body),
           }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Network error';
@@ -133,14 +134,18 @@ export class UmamiHttpService {
 
     let res: Response;
     try {
-      res = await this.metrics.observeDownstream('umami', 'fetchWebsite', () =>
-        fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
-        }),
+      res = await this.metrics.observeDownstream(
+        'umami',
+        'fetchWebsite',
+        () =>
+          fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+            },
+            signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
     } catch (err) {
       if (err instanceof Error && err.name === 'TimeoutError') {
@@ -180,14 +185,18 @@ export class UmamiHttpService {
 
     let res: Response;
     try {
-      res = await this.metrics.observeDownstream('umami', 'fetch', () =>
-        fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(timeoutMs),
-        }),
+      res = await this.metrics.observeDownstream(
+        'umami',
+        'fetch',
+        () =>
+          fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+            },
+            signal: AbortSignal.timeout(timeoutMs),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
       );
     } catch (err) {
       if (err instanceof Error && err.name === 'TimeoutError') {

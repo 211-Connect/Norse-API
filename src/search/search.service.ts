@@ -213,7 +213,7 @@ export class SearchService {
 
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
-      'search',
+      `resources_${queryType}`,
       () =>
         this.elasticsearchService.search<
           SearchSource,

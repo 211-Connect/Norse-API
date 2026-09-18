@@ -1,10 +1,5 @@
 import os from 'node:os';
-import {
-  HttpException,
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Counter,
@@ -16,16 +11,24 @@ import {
   register,
 } from 'prom-client';
 
+const DURATION_BUCKETS_SECONDS = [
+  0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+];
+
+export type DownstreamOutcome = 'ok' | 'timeout' | 'error';
+
+const PUSH_JOB_NAME = 'norse_api';
+
 @Injectable()
 export class MetricsService implements OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
   private readonly pushFailuresCounter: Counter;
   private readonly lastPushSuccessGauge: Gauge;
-  private httpRequestsCounter: Counter<string> | null = null;
-  private httpDurationHistogram: Histogram<string> | null = null;
-  private downstreamRequestsCounter: Counter<string> | null = null;
-  private downstreamDurationHistogram: Histogram<string> | null = null;
-  private cacheRequestsCounter: Counter<string> | null = null;
+  private readonly httpRequestsCounter: Counter<string>;
+  private readonly httpDurationHistogram: Histogram<string>;
+  private readonly downstreamRequestsCounter: Counter<string>;
+  private readonly downstreamDurationHistogram: Histogram<string>;
+  private readonly cacheRequestsCounter: Counter;
   private readonly gateway: Pushgateway<PrometheusContentType> | null;
   private readonly pushIntervalMs: number;
   private readonly instanceId = `${os.hostname()}:${process.pid}`;
@@ -45,6 +48,43 @@ export class MetricsService implements OnModuleDestroy {
       name: 'norse_metrics_push_success_timestamp_seconds',
       help: 'Unix timestamp of the last successful Pushgateway push',
       labelNames: [],
+      registers: [register],
+    });
+
+    this.httpRequestsCounter = this.createOrGetCounter({
+      name: 'norse_http_requests_total',
+      help: 'Total HTTP requests handled by this instance',
+      labelNames: ['method', 'handler', 'status', 'tenant_id', 'domain'],
+      registers: [register],
+    });
+
+    this.httpDurationHistogram = this.createOrGetHistogram({
+      name: 'norse_http_request_duration_seconds',
+      help: 'HTTP request duration in seconds',
+      labelNames: ['method', 'handler'],
+      buckets: DURATION_BUCKETS_SECONDS,
+      registers: [register],
+    });
+
+    this.downstreamRequestsCounter = this.createOrGetCounter({
+      name: 'norse_downstream_requests_total',
+      help: 'Total requests to downstream dependencies',
+      labelNames: ['dependency', 'operation', 'outcome'],
+      registers: [register],
+    });
+
+    this.downstreamDurationHistogram = this.createOrGetHistogram({
+      name: 'norse_downstream_duration_seconds',
+      help: 'Downstream request duration in seconds',
+      labelNames: ['dependency', 'operation'],
+      buckets: DURATION_BUCKETS_SECONDS,
+      registers: [register],
+    });
+
+    this.cacheRequestsCounter = this.createOrGetCounter({
+      name: 'norse_cache_requests_total',
+      help: 'Total cache accesses by result',
+      labelNames: ['cache', 'result'],
       registers: [register],
     });
 
@@ -74,6 +114,7 @@ export class MetricsService implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     clearInterval(this.pushInterval);
     await this.pushMetrics();
+    await this.deleteInstanceGroup();
   }
 
   private startPeriodicPush(): void {
@@ -85,14 +126,29 @@ export class MetricsService implements OnModuleDestroy {
   private async pushMetrics(): Promise<void> {
     if (!this.gateway) return;
     try {
-      await this.gateway.pushAdd({
-        jobName: 'norse_api',
+      await this.gateway.push({
+        jobName: PUSH_JOB_NAME,
         groupings: { instance: this.instanceId },
       });
       this.lastPushSuccessGauge.set(Date.now() / 1000);
     } catch (err) {
       this.pushFailuresCounter.inc();
       this.logger.error('Pushgateway push failed', err);
+    }
+  }
+
+  private async deleteInstanceGroup(): Promise<void> {
+    if (!this.gateway) return;
+    try {
+      await this.gateway.delete({
+        jobName: PUSH_JOB_NAME,
+        groupings: { instance: this.instanceId },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to delete Pushgateway group ${PUSH_JOB_NAME}/instance=${this.instanceId}`,
+        err,
+      );
     }
   }
 
@@ -107,7 +163,6 @@ export class MetricsService implements OnModuleDestroy {
     tenantId: string,
     durationSeconds: number,
   ): void {
-    this.ensureHttpMetrics();
     this.httpRequestsCounter.inc({
       method,
       handler,
@@ -120,28 +175,42 @@ export class MetricsService implements OnModuleDestroy {
 
   /**
    * Observes one downstream dependency call. Rethrows the original error.
+   * The optional classifier maps a successful result to 'ok' or 'error'
+   * (e.g. HTTP responses that resolve with a non-2xx status).
    */
   async observeDownstream<T>(
     dependency: string,
     operation: string,
     fn: () => Promise<T>,
+    classifyResult?: (result: T) => DownstreamOutcome,
   ): Promise<T> {
-    this.ensureDownstreamMetrics();
     const start = performance.now();
     try {
       const result = await fn();
-      this.recordDownstream(dependency, operation, 'ok', start);
+      const outcome: DownstreamOutcome = classifyResult
+        ? classifyResult(result)
+        : 'ok';
+      this.recordDownstream(dependency, operation, outcome, start);
       return result;
     } catch (err) {
-      const outcome =
-        err instanceof HttpException
-          ? err.getStatus() === 503
-            ? 'timeout'
-            : 'error'
-          : 'error';
-      this.recordDownstream(dependency, operation, outcome, start);
+      this.recordDownstream(
+        dependency,
+        operation,
+        this.downstreamOutcomeFromError(err),
+        start,
+      );
       throw err;
     }
+  }
+
+  private downstreamOutcomeFromError(err: unknown): DownstreamOutcome {
+    if (typeof err !== 'object' || err === null || !('name' in err)) {
+      return 'error';
+    }
+    const { name } = err;
+    return name === 'TimeoutError' || name === 'AbortError'
+      ? 'timeout'
+      : 'error';
   }
 
   /**
@@ -151,68 +220,20 @@ export class MetricsService implements OnModuleDestroy {
     cache: string,
     result: 'hit' | 'miss' | 'coalesced' | 'get-error',
   ): void {
-    this.ensureCacheMetrics();
     this.cacheRequestsCounter.inc({ cache, result });
   }
 
   private recordDownstream(
     dependency: string,
     operation: string,
-    outcome: string,
+    outcome: DownstreamOutcome,
     start: number,
   ): void {
     this.downstreamRequestsCounter.inc({ dependency, operation, outcome });
     this.downstreamDurationHistogram.observe(
-      { dependency },
+      { dependency, operation },
       (performance.now() - start) / 1000,
     );
-  }
-
-  private ensureHttpMetrics(): void {
-    if (!this.httpRequestsCounter) {
-      this.httpRequestsCounter = this.createOrGetCounter({
-        name: 'norse_http_requests_total',
-        help: 'Total HTTP requests handled by this instance',
-        labelNames: ['method', 'handler', 'status', 'tenant_id', 'domain'],
-        registers: [register],
-      });
-      this.httpDurationHistogram = this.createOrGetHistogram({
-        name: 'norse_http_request_duration_seconds',
-        help: 'HTTP request duration in seconds',
-        labelNames: ['method', 'handler'],
-        buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
-        registers: [register],
-      });
-    }
-  }
-
-  private ensureDownstreamMetrics(): void {
-    if (!this.downstreamRequestsCounter) {
-      this.downstreamRequestsCounter = this.createOrGetCounter({
-        name: 'norse_downstream_requests_total',
-        help: 'Total requests to downstream dependencies',
-        labelNames: ['dependency', 'operation', 'outcome'],
-        registers: [register],
-      });
-      this.downstreamDurationHistogram = this.createOrGetHistogram({
-        name: 'norse_downstream_duration_seconds',
-        help: 'Downstream request duration in seconds',
-        labelNames: ['dependency'],
-        buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
-        registers: [register],
-      });
-    }
-  }
-
-  private ensureCacheMetrics(): void {
-    if (!this.cacheRequestsCounter) {
-      this.cacheRequestsCounter = this.createOrGetCounter({
-        name: 'norse_cache_requests_total',
-        help: 'Total cache accesses by result',
-        labelNames: ['cache', 'result'],
-        registers: [register],
-      });
-    }
   }
 
   private createOrGetCounter(

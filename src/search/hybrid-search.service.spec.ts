@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
@@ -93,11 +94,7 @@ describe('HybridSearchService', () => {
         },
         {
           provide: MetricsService,
-          useValue: {
-            observeDownstream: jest.fn(
-              (_dep: unknown, _op: unknown, fn: () => unknown) => fn(),
-            ),
-          },
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

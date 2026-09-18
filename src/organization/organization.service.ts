@@ -80,7 +80,7 @@ export class OrganizationService {
     try {
       const result = await this.metrics.observeDownstream(
         'elasticsearch',
-        'search',
+        'organization_search',
         () => this.elasticsearchService.search(request),
       );
       const total =

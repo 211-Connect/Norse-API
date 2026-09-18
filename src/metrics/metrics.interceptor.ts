@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, throwError } from 'rxjs';
-import { catchError, tap } from 'rxjs/operators';
+import { catchError, finalize, tap } from 'rxjs/operators';
 import { MetricsService } from './metrics.service';
 import { SKIP_METRICS_KEY } from './skip-metrics.decorator';
 
@@ -46,8 +46,11 @@ export class MetricsInterceptor implements NestInterceptor {
         : 'unknown';
 
     const start = performance.now();
+    let recorded = false;
 
     const record = (status: number) => {
+      if (recorded) return;
+      recorded = true;
       const durationSeconds = (performance.now() - start) / 1000;
       this.metrics.recordHttpRequest(
         method,
@@ -60,14 +63,22 @@ export class MetricsInterceptor implements NestInterceptor {
     };
 
     return next.handle().pipe(
-      tap(() => {
-        const response = context.switchToHttp().getResponse();
-        record(response?.statusCode ?? 200);
+      tap({
+        next: () => {
+          const response = context.switchToHttp().getResponse();
+          record(response?.statusCode ?? 200);
+        },
+        complete: () => {
+          record(context.switchToHttp().getResponse()?.statusCode ?? 200);
+        },
       }),
       catchError((err: unknown) => {
-        const status = err instanceof HttpException ? err.getStatus() : 500;
-        record(status);
+        record(err instanceof HttpException ? err.getStatus() : 500);
         return throwError(() => err);
+      }),
+      finalize(() => {
+        // Client disconnected / subscriber never emitted — 499 (nginx convention).
+        record(499);
       }),
     );
   }
