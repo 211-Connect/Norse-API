@@ -165,7 +165,7 @@ describe('HybridSearchService', () => {
 
     expect(capturedMainRequest.sort).toEqual([
       '_score',
-      { service_at_location_id: 'asc' },
+      { service_at_location_id: { order: 'asc' } },
     ]);
   });
 
@@ -185,7 +185,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -197,7 +197,7 @@ describe('HybridSearchService', () => {
 
       expect(capturedMainRequest.sort).toEqual([
         '_score',
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -209,7 +209,7 @@ describe('HybridSearchService', () => {
 
       expect(capturedMainRequest.sort).toEqual([
         { 'name.lc': { order: 'asc' } },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -222,7 +222,7 @@ describe('HybridSearchService', () => {
       expect(capturedMainRequest.sort).toEqual([
         { 'organization.name.lc': { order: 'asc' } },
         { 'name.lc': { order: 'asc' } },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -246,7 +246,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
       expect(
         functions.some((f: any) => f.field_value_factor?.field === 'priority'),
@@ -281,7 +281,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
       expect(
         functions.some((f: any) => f.field_value_factor?.field === 'priority'),
@@ -317,7 +317,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
       expect(
         functions.some((f: any) => f.field_value_factor?.field === 'priority'),
@@ -351,7 +351,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
       expect(
         functions.some((f: any) => f.field_value_factor?.field === 'priority'),

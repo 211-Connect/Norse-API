@@ -65,8 +65,11 @@ export class OrganizationService {
         'location',
       ],
       query: textQuery,
+      // organization_id last in both branches: without a unique final key,
+      // score ties are ordered by Lucene doc order, which is not stable
+      // between identical requests.
       sort: text
-        ? [{ _score: { order: 'desc' } }]
+        ? [{ _score: { order: 'desc' } }, { organization_id: { order: 'asc' } }]
         : [
             { 'name.raw': { order: 'asc' } },
             { organization_id: { order: 'asc' } },

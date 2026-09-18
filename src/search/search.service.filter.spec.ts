@@ -415,10 +415,12 @@ describe('SearchService Logic', () => {
     const geoDistanceSort = callArgs.sort.find((s) => s._geo_distance);
     const nameSort = callArgs.sort.find((s) => s['name.raw']);
 
-    // No coords: distance is meaningless — fall back to the relevance default
-    // (priority only), NOT the accidental name sort of the old fall-through bug.
     expect(geoDistanceSort).toBeUndefined();
     expect(nameSort).toBeUndefined();
-    expect(callArgs.sort).toEqual([{ priority: 'desc' }]);
+    expect(callArgs.sort).toEqual([
+      { priority: 'desc' },
+      '_score',
+      { 'service_at_location_id.raw': { order: 'asc' } },
+    ]);
   });
 });
