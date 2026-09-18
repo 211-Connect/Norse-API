@@ -11,7 +11,6 @@ import {
   QueryDslFunctionScoreContainer,
   SearchRequest,
   Sort,
-  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
@@ -21,7 +20,7 @@ import {
   SearchResponse,
   SearchSource,
 } from './dto/search-response.dto';
-import { SearchUtilsService } from './search-utils.service';
+import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
@@ -573,48 +572,23 @@ export class HybridSearchService {
   }
 
   /**
-   * Ordering for hybrid results: `sort` picks the order, the query still decides
-   * membership. Mirrors SearchUtilsService.buildSort so `sort` behaves the same
-   * across query types (ISS-1367). pinned/priority lead unless
-   * boost_pinned_resources moves them into the score.
+   * `sort` picks the order, the query still decides membership (ISS-1367).
+   * pinned/priority lead unless `boost_pinned_resources` moves them into the
+   * score.
    */
   private buildHybridSort(
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
     boostPinned: boolean,
   ): Sort {
-    const tiebreaker: SortCombinations = { service_at_location_id: 'asc' };
-    const leadingTiers: SortCombinations[] = boostPinned
-      ? []
-      : [{ pinned: 'desc' }, { priority: 'desc' }];
-
-    let orderingTiers: SortCombinations[];
-    switch (sortOption) {
-      case 'distance':
-        // No coords: fall back to relevance rather than error.
-        orderingTiers = coords
-          ? [SearchUtilsService.getGeoDistanceSort(coords)]
-          : ['_score'];
-        break;
-      // `.lc`, not `.raw`: the hybrid index (built by a separate pipeline) only
-      // exposes `.lc`/`.edge`/`.clean` on these fields. `.lc` is a sortable
-      // keyword whose lowercase normalizer gives case-insensitive ordering.
-      case 'name':
-        orderingTiers = [{ 'name.lc': { order: 'asc' } }];
-        break;
-      case 'organization':
-        orderingTiers = [
-          { 'organization.name.lc': { order: 'asc' } },
-          { 'name.lc': { order: 'asc' } },
-        ];
-        break;
-      case 'relevance':
-      default:
-        // Blended hybrid score (proximity folded in via the geo decay function).
-        orderingTiers = ['_score'];
-    }
-
-    return [...leadingTiers, ...orderingTiers, tiebreaker];
+    return SearchUtilsService.buildSortClause({
+      fields: HYBRID_SORT_FIELDS,
+      sortOption,
+      coords,
+      leadingTiers: boostPinned
+        ? []
+        : [{ pinned: 'desc' }, { priority: 'desc' }],
+    });
   }
 
   private buildHybridQuery(args: {

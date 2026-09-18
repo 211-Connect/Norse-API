@@ -167,7 +167,7 @@ describe('HybridSearchService', () => {
       { pinned: 'desc' },
       { priority: 'desc' },
       '_score',
-      { service_at_location_id: 'asc' },
+      { service_at_location_id: { order: 'asc' } },
     ]);
   });
 
@@ -189,7 +189,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -203,7 +203,7 @@ describe('HybridSearchService', () => {
         { pinned: 'desc' },
         { priority: 'desc' },
         '_score',
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -217,7 +217,7 @@ describe('HybridSearchService', () => {
         { pinned: 'desc' },
         { priority: 'desc' },
         { 'name.lc': { order: 'asc' } },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -232,7 +232,7 @@ describe('HybridSearchService', () => {
         { priority: 'desc' },
         { 'organization.name.lc': { order: 'asc' } },
         { 'name.lc': { order: 'asc' } },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
@@ -255,7 +255,7 @@ describe('HybridSearchService', () => {
             mode: 'min',
           },
         },
-        { service_at_location_id: 'asc' },
+        { service_at_location_id: { order: 'asc' } },
       ]);
     });
   });
