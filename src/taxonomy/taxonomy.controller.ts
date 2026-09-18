@@ -18,6 +18,7 @@ import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { TaxonomySearchQueryDto } from './dto/search-query.dto';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import {
   TaxonomyTermsQueryDto,
   taxonomyTermsQuerySchema,
@@ -137,7 +138,7 @@ export class TaxonomyController {
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
-    description: 'Tenant identifier',
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
   })
   @ApiHeader({
     name: 'accept-language',
@@ -181,7 +182,11 @@ export class TaxonomyController {
     schema: { default: 1 },
     description: 'Page number for pagination',
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'accept-language',
     schema: {
@@ -226,7 +231,7 @@ export class TaxonomyController {
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
-    description: 'Tenant identifier',
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
   })
   @ApiHeader({
     name: 'accept-language',

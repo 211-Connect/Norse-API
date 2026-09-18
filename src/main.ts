@@ -1,11 +1,13 @@
+import './tracing';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { VersioningType, LogLevel, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
+import { buildSwaggerConfig } from './common/swagger/swagger-config';
 
 const logLevelMap: Record<string, LogLevel[]> = {
   error: ['error'],
@@ -40,31 +42,7 @@ async function bootstrap() {
     header: 'x-api-version',
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Norse API')
-    .setDescription('Welcome to Norse')
-    .setVersion('1.0')
-    .addApiKey(
-      {
-        type: 'apiKey',
-        name: 'x-internal-api-key',
-        in: 'header',
-        description: 'Internal API key for protected endpoints',
-      },
-      'x-internal-api-key',
-    )
-    .addApiKey(
-      {
-        type: 'apiKey',
-        name: 'x-analytics-api-key',
-        in: 'header',
-        description: 'Analytics API key identifying the tenant',
-      },
-      'x-analytics-api-key',
-    )
-    .build();
-
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
   SwaggerModule.setup('swagger', app, document, {
     jsonDocumentUrl: 'swagger/json',
     customCss: `

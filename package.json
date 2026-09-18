@@ -56,7 +56,11 @@
     "qs": "^6.14.1",
     "redis": "^5.11.0",
     "rxjs": "^7.8.2",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@opentelemetry/auto-instrumentations-node": "^0.80.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.222.0",
+    "@opentelemetry/instrumentation-nestjs-core": "^0.68.0",
+    "@opentelemetry/sdk-node": "^0.222.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
