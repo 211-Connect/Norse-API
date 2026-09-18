@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -15,6 +16,7 @@ export class MetricsService implements OnModuleDestroy {
   private readonly resourceHitsCounter: Counter;
   private readonly gateway: Pushgateway<PrometheusContentType> | null;
   private readonly pushIntervalMs: number;
+  private readonly instanceId = `${os.hostname()}:${process.pid}`;
   private pushInterval: NodeJS.Timeout | null = null;
 
   constructor(private readonly configService: ConfigService) {
@@ -56,9 +58,7 @@ export class MetricsService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.pushInterval) {
-      clearInterval(this.pushInterval);
-    }
+    clearInterval(this.pushInterval);
     await this.pushMetrics();
   }
 
@@ -83,7 +83,10 @@ export class MetricsService implements OnModuleDestroy {
   private async pushMetrics(): Promise<void> {
     if (!this.gateway) return;
     try {
-      await this.gateway.pushAdd({ jobName: 'norse_api' });
+      await this.gateway.pushAdd({
+        jobName: 'norse_api',
+        groupings: { instance: this.instanceId },
+      });
     } catch (err) {
       this.logger.error('Pushgateway push failed', err);
     }

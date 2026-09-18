@@ -4,7 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
-import { ArcjetModule, cloudflare } from '@arcjet/nest';
+import { ArcjetModule, cloudflare, detectBot, filter, shield } from '@arcjet/nest';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
@@ -48,7 +48,19 @@ import { OrganizationController } from './organization/organization.controller';
     ArcjetModule.forRoot({
       isGlobal: true,
       key: process.env.ARCJET_KEY!,
-      rules: [],
+      rules: [
+        detectBot({
+          mode: "LIVE",
+          allow: ["CATEGORY:SEARCH_ENGINE"],
+        }),
+        shield({
+          mode: "LIVE",
+        }),
+        filter({
+          mode: "LIVE",
+          allow: ['ip.src.country == "US"'],
+        })
+],
       proxies: [cloudflare()],
     }),
     CmsConfigModule,
