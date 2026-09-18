@@ -19,6 +19,11 @@ describe('MetricsService', () => {
     service = new MetricsService(configServiceMock as never);
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
   const getMetric = (name: string): Counter<string> => {
     const metric = register.getSingleMetric(name);
     expect(metric).toBeDefined();
@@ -203,13 +208,11 @@ describe('MetricsService', () => {
       },
     );
     let pushCount = 0;
-    const pushSpy = jest
-      .spyOn(Pushgateway.prototype, 'push')
-      .mockImplementation(() => {
-        pushCount += 1;
-        callOrder.push('push');
-        return pushCount === 1 ? firstPush : Promise.resolve({});
-      });
+    jest.spyOn(Pushgateway.prototype, 'push').mockImplementation(() => {
+      pushCount += 1;
+      callOrder.push('push');
+      return pushCount === 1 ? firstPush : Promise.resolve({});
+    });
     const deleteSpy = jest
       .spyOn(Pushgateway.prototype, 'delete')
       .mockImplementation(() => {
@@ -228,12 +231,29 @@ describe('MetricsService', () => {
     await destroy;
 
     expect(callOrder).toEqual(['push', 'push', 'delete']);
+  });
 
-    // Stop the periodic interval created by this service instance.
-    await gatewayService.onModuleDestroy();
+  it('configures the pushgateway with a 5s request timeout', async () => {
+    jest.useFakeTimers();
+    const gatewayConfigMock = {
+      get: jest.fn((key: string) => {
+        if (key === 'PUSH_GATEWAY_URL') return 'http://gateway:9091';
+        if (key === 'PUSH_METRICS_ENABLED') return true;
+        if (key === 'PUSH_INTERVAL_MS') return 15000;
+        return undefined;
+      }),
+    };
+    jest.spyOn(Pushgateway.prototype, 'push').mockResolvedValue({});
+    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
 
-    pushSpy.mockRestore();
-    deleteSpy.mockRestore();
-    jest.useRealTimers();
+    register.clear();
+    const svc = new MetricsService(gatewayConfigMock as never);
+
+    const gateway = (
+      svc as unknown as { gateway: { requestOptions: { timeout?: number } } }
+    ).gateway;
+    expect(gateway.requestOptions.timeout).toBe(5000);
+
+    await svc.onModuleDestroy();
   });
 });

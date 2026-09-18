@@ -13,12 +13,10 @@ NestJS app instances push to **one** Prometheus Pushgateway:
 - Each instance pushes every `PROMETHEUS_PUSH_INTERVAL_MS` (default **15s**, set via the
   `PROMETHEUS_PUSH_INTERVAL_MS` env var).
 - Each instance pushes under its **own group** so per-replica series don't overwrite each
-  other. A push replaces the whole group, so series that stop being reported by this
-  process are removed instead of lingering (as they would with `pushAdd`). A restarted
-  instance gets a new `hostname:pid` and therefore a new group. Push URL path:
+  other. Push URL path:
 
   ```
-  /metrics/job/norse_api/instance=<hostname>:<pid>
+  /metrics/job/norse_api/instance/<hostname>:<pid>
   ```
 
 ### Group lifecycle
@@ -30,7 +28,9 @@ NestJS app instances push to **one** Prometheus Pushgateway:
 - On graceful shutdown (SIGTERM; shutdown hooks are enabled in `main.ts`) the instance
   pushes final counter values and then **deletes its group**. On shutdown the service
   first waits for any in-flight periodic push, then does the final push, then deletes the
-  group, so a late periodic push cannot recreate a deleted group.
+  group, so a late periodic push cannot recreate a deleted group. Every Pushgateway
+  request (push and delete) has a 5s timeout, so an unreachable gateway cannot block
+  shutdown.
 - History is kept in **Prometheus**, not in the gateway — configure Prometheus retention
   to at least **7 days** so weekly dashboard views keep working. Deleting a gateway group
   does not remove scraped history.
@@ -65,7 +65,9 @@ instances** (no shutdown hook ran) until their stale group is deleted (see above
 | --- | --- | --- | --- |
 | `norse_http_requests_total` | Counter | `method`, `handler`, `status`, `tenant_id`, `domain` | Auto-recorded by `MetricsInterceptor` for every route **without** `@SkipMetrics()`. `handler` is `ClassName.methodName`; `domain` is the controller class name lowercased with the `Controller` suffix stripped (e.g. `search`, `resource`, `organization`) — it exists for convenient `sum by (domain)` queries; `tenant_id` is the validated `x-tenant-id` header or `unknown`. |
 | `norse_http_request_duration_seconds` | Histogram | `method`, `handler` | HTTP request duration. Buckets: `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Deliberately **no** `tenant_id`/`status` labels (cardinality). |
-| `norse_downstream_requests_total` | Counter | `dependency`, `operation`, `outcome` | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success. Fetches to `ml_broker`, `embedding`, `cms`, and Umami carry a 10s `AbortSignal.timeout` so slow downstreams surface as `timeout`. |
+| `norse_downstream_requests_total` | Counter | `dependency`, `operation`, `outcome` | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success. Every instrumented fetch has an explicit timeout so slow downstreams
+surface as `timeout`: `ml_broker` 10s, `embedding` 10s, `cms` 10s, Umami `verify` 5s,
+Umami `login` 10s, Umami analytics fetch/send 60s (`ANALYTICS_FETCH_TIMEOUT_MS`). |
 | `norse_downstream_duration_seconds` | Histogram | `dependency`, `operation` | Downstream call duration, same buckets as the HTTP histogram. |
 | `norse_cache_requests_total` | Counter | `cache`, `result` | Cache accesses. `cache` names the cache; `result`: `hit` \| `miss` \| `coalesced` \| `get-error`. |
 | `norse_metrics_push_success_timestamp_seconds` | Gauge | — | Unix timestamp of the last successful Pushgateway push from this instance. |

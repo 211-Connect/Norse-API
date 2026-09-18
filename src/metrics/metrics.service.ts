@@ -19,6 +19,8 @@ export type DownstreamOutcome = 'ok' | 'timeout' | 'error';
 
 const PUSH_JOB_NAME = 'norse_api';
 
+const PUSH_REQUEST_TIMEOUT_MS = 5_000;
+
 @Injectable()
 export class MetricsService implements OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
@@ -99,8 +101,10 @@ export class MetricsService implements OnModuleDestroy {
     if (gatewayUrl && pushEnabled) {
       const username = this.configService.get<string>('PUSH_GATEWAY_USERNAME');
       const password = this.configService.get<string>('PUSH_GATEWAY_PASSWORD');
-      const options =
-        username && password ? { auth: `${username}:${password}` } : undefined;
+      const options = {
+        timeout: PUSH_REQUEST_TIMEOUT_MS,
+        ...(username && password ? { auth: `${username}:${password}` } : {}),
+      };
       this.gateway = new Pushgateway(gatewayUrl, options);
       this.startPeriodicPush();
       this.logger.log(
