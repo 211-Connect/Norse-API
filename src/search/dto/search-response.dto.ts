@@ -196,6 +196,69 @@ export class SearchHitsContainer {
   hits: SearchHit[];
 }
 
+/**
+ * Present only when the caller opted in with `relevance_cutoff`. Absent from
+ * every response that did not ask for it, so an existing consumer sees an
+ * unchanged document.
+ */
+export class RelevanceCutoffDto {
+  @ApiProperty({
+    enum: ['score_gap', 'relative_to_max'],
+    description: 'The strategy the caller requested.',
+  })
+  strategy: 'score_gap' | 'relative_to_max';
+
+  @ApiProperty({
+    description:
+      'Whether results were actually removed. `false` means the strategy ran ' +
+      'and declined to cut — not that it failed.',
+  })
+  applied: boolean;
+
+  @ApiProperty({
+    nullable: true,
+    enum: ['no_elbow', 'below_min_keep', 'candidate_ceiling'],
+    description:
+      'Why nothing was cut, when `applied` is false. `no_elbow`: the scores ' +
+      'are uniform, so there is no relevance cliff to cut at. ' +
+      '`below_min_keep`: the matched set is already small. ' +
+      '`candidate_ceiling`: any cliff lies beyond the probed candidate ' +
+      'window, so no cut was attempted — this is "could not determine", not ' +
+      '"nothing to cut".',
+  })
+  reason?: 'no_elbow' | 'below_min_keep' | 'candidate_ceiling' | null;
+
+  @ApiProperty({
+    description:
+      'Results kept. Equals `matched_before_cutoff` when `applied` is false.',
+  })
+  kept: number;
+
+  @ApiProperty({
+    description:
+      'Results the query matched before trimming — the number `hits.total` ' +
+      'would have reported with `relevance_cutoff=off`. Kept on the wire ' +
+      'because a cutoff hides results rather than reordering them; a ' +
+      'consumer needs to be able to say "18 of 1,200 shown".',
+  })
+  matched_before_cutoff: number;
+
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Relevance score of the last kept result. Reported so a shipped ' +
+      'threshold can be evaluated retroactively against real traffic.',
+  })
+  cutoff_score?: number | null;
+
+  @ApiProperty({
+    description:
+      'How many top-ranked results were examined to find the cut point. A cut ' +
+      'is never inferred from beyond this window.',
+  })
+  candidates_examined: number;
+}
+
 export class SearchResponseDto {
   @ApiProperty({ type: SearchHitsContainer })
   search: {
@@ -207,6 +270,9 @@ export class SearchResponseDto {
 
   @ApiProperty()
   facets: SearchFacet[];
+
+  @ApiProperty({ type: RelevanceCutoffDto, required: false, nullable: true })
+  relevance_cutoff?: RelevanceCutoffDto;
 }
 
 export type SearchResponse = SearchResponseDto;

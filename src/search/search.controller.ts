@@ -29,6 +29,7 @@ import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { SEARCH_QUERY_TYPES } from './dto/search-query-type';
+import { RELEVANCE_CUTOFF_STRATEGIES } from './internal/relevance-cutoff/types';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
@@ -61,6 +62,21 @@ const SORT_PARAM_DESCRIPTION =
   '`relevance`), `name` (alphabetical by resource name), `organization` ' +
   '(alphabetical by provider name). Honored for all query types, including ' +
   '`hybrid`.';
+
+const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
+  'Opt-in trimming of low-relevance results (hybrid search only; ignored for ' +
+  'other query types). `off` (default) returns the full matched set and leaves ' +
+  'the response document unchanged. `score_gap` keeps the results above the ' +
+  'first significant cliff in relevance score and **returns everything when no ' +
+  'such cliff exists** — a uniformly mediocre result set is reported as such ' +
+  'rather than cut arbitrarily. `relative_to_max` keeps results scoring at ' +
+  'least half the top score and always cuts. The cut is computed on semantic ' +
+  'and lexical relevance only: proximity still filters and ranks, but never ' +
+  'decides what is irrelevant, since how far someone will travel is their own ' +
+  'choice and not a property of the resource. When a cutoff applies, ' +
+  '`hits.total` reports the kept count and the pre-cutoff total is preserved ' +
+  'in `relevance_cutoff.matched_before_cutoff`. A `relevance_cutoff` object ' +
+  'is added to the response whenever this param is anything but `off`.';
 
 @ApiTags('Search')
 @Controller('search')
@@ -161,6 +177,13 @@ export class SearchController {
     enum: ['relevance', 'distance', 'name', 'organization'],
     description: SORT_PARAM_DESCRIPTION,
     schema: { default: 'relevance' },
+  })
+  @ApiQuery({
+    name: 'relevance_cutoff',
+    required: false,
+    enum: RELEVANCE_CUTOFF_STRATEGIES,
+    description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
+    schema: { default: 'off' },
   })
   @ApiQueryForComplexSearch()
   getResources(
@@ -276,6 +299,13 @@ export class SearchController {
     enum: ['relevance', 'distance', 'name', 'organization'],
     description: SORT_PARAM_DESCRIPTION,
     schema: { default: 'relevance' },
+  })
+  @ApiQuery({
+    name: 'relevance_cutoff',
+    required: false,
+    enum: RELEVANCE_CUTOFF_STRATEGIES,
+    description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
+    schema: { default: 'off' },
   })
   @ApiQueryForComplexSearch()
   @ApiBody({

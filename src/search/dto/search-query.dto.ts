@@ -15,6 +15,10 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import {
+  RELEVANCE_CUTOFF_STRATEGIES,
+  RelevanceCutoffStrategy,
+} from '../internal/relevance-cutoff/types';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -240,4 +244,21 @@ export class SearchResourcesQueryDto {
   @IsOptional()
   @IsEnum(['relevance', 'distance', 'name', 'organization'])
   sort: 'relevance' | 'distance' | 'name' | 'organization' = 'relevance';
+
+  @ApiPropertyOptional({
+    enum: RELEVANCE_CUTOFF_STRATEGIES,
+    default: 'off',
+    description:
+      'Opt-in trimming of low-relevance results. `off` (default) returns the ' +
+      'full matched set, byte-identical to previous behaviour. `score_gap` ' +
+      'keeps results above the first significant cliff in the relevance score, ' +
+      'and returns everything when no such cliff exists. `relative_to_max` ' +
+      'keeps results scoring at least half the top score, and always cuts. ' +
+      'Hybrid search only (`query_type=hybrid`); ignored for other query ' +
+      'types. When a cutoff applies, `hits.total` reports the kept count and ' +
+      'the original is preserved in `relevance_cutoff.matched_before_cutoff`.',
+  })
+  @IsOptional()
+  @IsEnum(RELEVANCE_CUTOFF_STRATEGIES)
+  relevance_cutoff?: RelevanceCutoffStrategy = 'off';
 }

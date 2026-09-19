@@ -29,6 +29,15 @@ import {
 } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
+import {
+  DEFAULT_RELATIVE_TO_MAX_OPTIONS,
+  DEFAULT_SCORE_GAP_OPTIONS,
+  detectRelativeToMaxCutoff,
+  detectScoreGapCutoff,
+} from './internal/relevance-cutoff/detect-cutoff';
+import { RelevanceCutoffStrategy } from './internal/relevance-cutoff/types';
+import { RelevanceCutoffDto } from './dto/search-response.dto';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -58,6 +67,14 @@ const BM25_TAXONOMY_USE_REF_BOOST = 12;
 
 const TAXONOMY_K = 10;
 const TAXONOMY_NUM_CANDIDATES = 500;
+
+/**
+ * How many top-ranked candidates the cutoff probe examines. A cut is never
+ * inferred from beyond this window: if no elbow is found inside it, the
+ * response says `candidate_ceiling` and nothing is trimmed. Silent partial
+ * cuts would be worse than no cut at all.
+ */
+const CUTOFF_CANDIDATE_CEILING = 300;
 
 interface PredictedTaxonomy {
   code: string;
@@ -215,6 +232,53 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
+    // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
+    // below runs, no extra Elasticsearch call is made, and the request built
+    // further down is identical to what it has always been.
+    const strategy = q.relevance_cutoff ?? 'off';
+    let cutoff: RelevanceCutoffDto | undefined;
+
+    if (strategy !== 'off') {
+      const cacheKey = relevanceCutoffCacheKey({
+        tenantId,
+        lang,
+        queryStr,
+        strategy,
+        filters,
+        taxonomies: hardScopeCodes,
+        coords,
+        distance,
+        age,
+        geoType: geo_type,
+        organizationId: organization_id,
+        geometry,
+      });
+
+      // Cached so pages 2..n of one search reuse a single probe rather than
+      // re-running it — and so the kept set cannot drift between pages.
+      const probed = await this.requestCacheService.getOrSet(cacheKey, () =>
+        this.probeRelevanceCutoff({
+          index,
+          queryStr,
+          queryVector,
+          predicted: predictedTaxonomies,
+          filters: baseFilters,
+          pinnedMode,
+          strategy,
+        }),
+      );
+
+      cutoff = probed.cutoff;
+
+      if (probed.keptIds) {
+        // Cut by relevance, then let `sort` order whatever survived. Applying
+        // the cut as a membership filter (rather than a score threshold) is
+        // what keeps this coherent under sort=distance|name|organization,
+        // where the returned hits are not in score order at all.
+        baseFilters.push({ ids: { values: probed.keptIds } });
+      }
+    }
+
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
     const request = this.buildHybridQuery({
@@ -286,6 +350,9 @@ export class HybridSearchService {
         },
       },
       facets,
+      // Omitted entirely when the caller did not opt in, so the response
+      // document is unchanged for every existing consumer.
+      ...(cutoff ? { relevance_cutoff: cutoff } : {}),
     };
   }
 
@@ -592,6 +659,132 @@ export class HybridSearchService {
       leadingTiers:
         pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [],
     });
+  }
+
+  /**
+   * Ranks the top candidates by **semantic and lexical relevance only** and
+   * asks the detector where the cliff is.
+   *
+   * Geography is deliberately absent from this query, and that is the whole
+   * point of running a separate pass rather than reading scores off the main
+   * one. In the fused hybrid score, `gauss(distance)` spans a 0–25 range that
+   * manufactures discontinuities out of *distance*, not relevance — so an
+   * elbow found there cuts on geography. That fails in both directions: dense
+   * geographies get spurious cuts at distance cliffs, and sparse ones get no
+   * cut at all because every result is far and the range compresses.
+   *
+   * It is also wrong on the merits. Someone rural may well drive 40 miles for
+   * the right resource; how far a person will travel is their decision, made
+   * through `distance`/`geo_type`, and it is not evidence that a resource is
+   * irrelevant. Proximity stays a ranking signal and a filter. It never
+   * decides what gets cut.
+   *
+   * Pinned resources carry their boost here regardless of
+   * `pinned_resources_mode`, so a tenant's curated resources rank high in the
+   * probe and survive the cut.
+   */
+  private async probeRelevanceCutoff(args: {
+    index: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    pinnedMode: PinnedResourcesMode;
+    strategy: Exclude<RelevanceCutoffStrategy, 'off'>;
+  }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
+    const { index, queryStr, queryVector, predicted, filters, pinnedMode } =
+      args;
+
+    const should = [
+      ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
+      ...this.buildTaxonomyBoostClauses(predicted),
+      ...(pinnedMode === 'ignore'
+        ? []
+        : [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
+            } as QueryDslQueryContainer,
+          ]),
+    ];
+
+    // coords omitted on purpose — see the doc comment above.
+    const scoreFunctions = this.buildScoreFunctions(queryVector, undefined, 0);
+
+    const innerBool: QueryDslQueryContainer = {
+      bool: { minimum_should_match: 0, filter: filters, should },
+    };
+
+    const probe = await this.elasticsearchService.search<SearchSource>({
+      index,
+      from: 0,
+      size: CUTOFF_CANDIDATE_CEILING,
+      track_total_hits: true,
+      _source: false,
+      sort: ['_score'],
+      query:
+        scoreFunctions.length > 0
+          ? {
+              function_score: {
+                query: innerBool,
+                functions: scoreFunctions,
+                score_mode: 'sum',
+                boost_mode: 'sum',
+              },
+            }
+          : innerBool,
+    });
+
+    const candidates = probe.hits.hits ?? [];
+    const scores = candidates.map((hit) => hit._score ?? 0);
+    const matched =
+      typeof probe.hits.total === 'number'
+        ? probe.hits.total
+        : (probe.hits.total?.value ?? 0);
+
+    const decision =
+      args.strategy === 'score_gap'
+        ? detectScoreGapCutoff(scores, DEFAULT_SCORE_GAP_OPTIONS)
+        : detectRelativeToMaxCutoff(scores, DEFAULT_RELATIVE_TO_MAX_OPTIONS);
+
+    const truncated = matched > candidates.length;
+
+    if (decision.keep === null) {
+      return {
+        keptIds: null,
+        cutoff: {
+          strategy: args.strategy,
+          applied: false,
+          // "Could not see far enough to decide" is not the same answer as
+          // "looked, and there was nothing to cut".
+          reason: truncated ? 'candidate_ceiling' : decision.reason,
+          kept: matched,
+          matched_before_cutoff: matched,
+          cutoff_score: null,
+          candidates_examined: candidates.length,
+        },
+      };
+    }
+
+    const keptIds = candidates
+      .slice(0, decision.keep)
+      .map((hit) => hit._id)
+      .filter((id): id is string => typeof id === 'string');
+
+    return {
+      keptIds,
+      cutoff: {
+        strategy: args.strategy,
+        applied: true,
+        reason: null,
+        kept: keptIds.length,
+        matched_before_cutoff: matched,
+        cutoff_score: decision.cutoffScore,
+        candidates_examined: candidates.length,
+      },
+    };
   }
 
   private buildHybridQuery(args: {
