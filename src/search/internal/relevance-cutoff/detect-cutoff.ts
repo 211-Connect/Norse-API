@@ -186,7 +186,20 @@ export function detectRelativeToMaxCutoff(
     return declineToCut('no_elbow');
   }
 
-  const effectiveKeep = Math.max(keep, minKeep);
+  let effectiveKeep = Math.max(keep, minKeep);
+
+  // The threshold itself cannot split a tie — equal scores are all above or all
+  // below it — but the minKeep clamp can land mid-group, which is the same
+  // defect fixed in detectScoreGapCutoff. Keeping two of four identically
+  // scored results and dropping two is as indefensible here as it is there,
+  // even though this strategy exists for comparison rather than production.
+  while (
+    effectiveKeep < scores.length &&
+    scores[effectiveKeep] === scores[effectiveKeep - 1]
+  ) {
+    effectiveKeep += 1;
+  }
+
   if (effectiveKeep >= scores.length) {
     return declineToCut('no_elbow');
   }

@@ -213,6 +213,21 @@ describe('detectScoreGapCutoff', () => {
 });
 
 describe('detectRelativeToMaxCutoff', () => {
+  it('never splits a group of equally-scored results either', () => {
+    // Reported in review: the minKeep clamp lands mid-tie and keeps three of
+    // four results scored 3, dropping the fourth on no distinguishing signal.
+    // score_gap already handled this input correctly; this arm did not.
+    const scores = [10, 10, 10, 3, 3, 3, 3, 1];
+
+    const decision = detectRelativeToMaxCutoff(scores, {
+      fraction: 0.5,
+      minKeep: 5,
+    });
+
+    expect(decision.keep).toBe(7);
+    expect(scores[decision.keep - 1]).not.toBe(scores[decision.keep]);
+  });
+
   it('keeps results at or above the fraction of the top score', () => {
     const scores = [100, 80, 60, 50, 49, 40, 30, 20, 10, 5, 4, 3];
 
