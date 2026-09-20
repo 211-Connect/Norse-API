@@ -65,8 +65,24 @@ Two Elasticsearch queries, only when a cutoff is requested:
    surviving documents.
 
 The probe is cached (Redis, via `RequestCacheService`) on everything that
-affects ranking but not on `page`, `limit` or `sort`, so pages 2..n of one
-search reuse a single probe and the kept set cannot drift between pages.
+affects ranking — including the tenant's `pinned_resources_mode`, which changes
+whether the pinned boost clause is emitted at all — but not on `page`, `limit`
+or `sort`, so pages 2..n of one search reuse a single probe and the kept set
+cannot drift between pages.
+
+The TTL is **5 minutes**, not `RequestCacheService`'s one-hour default. Holding
+a decision only has to outlive someone paging through results; a longer window
+is pure exposure. The readers reindex blue/green, and a reindex inside the TTL
+changes scores and can delete documents, so `relevance_cutoff.kept` would report
+a number the main query no longer returns. Document `_id`s are stable
+(`{tenant}:{sal}:{lang}`), so the `ids` filter still resolves — it resolves to a
+stale decision, silently, which is the worse failure.
+
+Two ranking inputs cannot be keyed: the query embedding and the predicted
+taxonomy codes. Both are functions of `queryStr` and tenant, so they are stable
+for a stable model, but they move when the embedding model is swapped or when
+ml-broker's per-tenant vocabulary changes (ISS-1755). The short TTL is the only
+thing bounding that staleness.
 
 ### Geography never participates in the cut
 
@@ -174,6 +190,29 @@ When (and only when) a cutoff was requested:
 - **`cutoff_score`** is on the wire from day one so a shipped threshold can be
   evaluated retroactively against real traffic, instead of requiring every query
   to be re-run once ISS-1378's labeled set exists.
+
+  **It is a probe score, and the probe is not scored like the main query.** The
+  probe deliberately omits the distance decay (0–25 points) and the priority
+  boost, so `cutoff_score` is systematically lower than the `_score` the same
+  document carries in `hits`. Comparing the two is meaningless and the field
+  name invites exactly that, so: compare `cutoff_score` across responses using
+  the same strategy, never against a `_score` in the same response.
+
+### `hits.total` changes meaning, and that is the point
+
+`total` counts kept results rather than matched ones whenever `applied` is
+`true`. This is not a stylistic choice — the cut is implemented as an `ids`
+membership filter, so the kept set *is* the population the caller can page
+through. A `total` of 1,234 over a pageable set of 18 would make any client
+computing `ceil(total / limit)` render 21 empty pages.
+
+The consequence worth planning for is downstream of the API: **anything that
+aggregates `total` across requests will mix two populations** — analytics
+comparing result counts over time, dashboards, a CDN or gateway keyed on the
+query string. The response is self-describing (the `relevance_cutoff` object is
+present exactly when the meaning changed, and `matched_before_cutoff` carries
+the other number), so the fix on the consumer side is to branch on that object's
+presence rather than to assume `total` is stable.
 
 ### `applied: false` is not a failure
 

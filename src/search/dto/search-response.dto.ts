@@ -246,8 +246,14 @@ export class RelevanceCutoffDto {
   @ApiProperty({
     nullable: true,
     description:
-      'Relevance score of the last kept result. Reported so a shipped ' +
-      'threshold can be evaluated retroactively against real traffic.',
+      'Score of the last kept result **on the cutoff probe’s scale, which ' +
+      'is not the scale of `_score` in `hits`**. The probe ranks on semantic ' +
+      'and lexical signal only — it omits the distance decay (0–25 ' +
+      'points) and the priority boost that the main query adds — so this ' +
+      'value is systematically lower than the score of the same document in ' +
+      'the response, and the two must not be compared. It is comparable ' +
+      'across responses using the same strategy, which is what it is for: ' +
+      'evaluating a shipped threshold retroactively against real traffic.',
   })
   cutoff_score?: number | null;
 

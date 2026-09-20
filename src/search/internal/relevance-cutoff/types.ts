@@ -36,9 +36,12 @@ export interface RelevanceCutoffDecision {
   /** Populated exactly when `keep` is null. */
   reason: RelevanceCutoffSkipReason | null;
   /**
-   * Score of the last kept result. Reported for observability so a shipped
-   * threshold can be evaluated retroactively against real traffic (ISS-1378)
-   * rather than requiring the queries to be re-run.
+   * Score of the last kept result, **on the probe's scale**. The probe omits
+   * the distance decay and the priority boost that the main query adds, so this
+   * is not comparable to a `_score` in the response — only to another
+   * `cutoffScore` from the same strategy. Reported for observability so a
+   * shipped threshold can be evaluated retroactively against real traffic
+   * (ISS-1378) rather than requiring the queries to be re-run.
    */
   cutoffScore: number | null;
 }

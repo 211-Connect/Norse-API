@@ -76,6 +76,21 @@ const TAXONOMY_NUM_CANDIDATES = 500;
  */
 const CUTOFF_CANDIDATE_CEILING = 300;
 
+/**
+ * How long a probe decision is reused, in ms.
+ *
+ * The cache exists for one narrow reason — pages 2..n of a single search must
+ * see the same kept set — so it only has to outlive a user paging through
+ * results, not an hour of traffic. `RequestCacheService`'s one-hour default is
+ * far longer than that, and the extra window is all downside: the readers
+ * reindex blue/green, and a reindex inside the TTL changes scores and can
+ * delete documents, leaving `relevance_cutoff.kept` reporting a number the main
+ * query no longer returns. Document `_id`s are stable (`{tenant}:{sal}:{lang}`)
+ * so the ids filter still resolves — it just resolves to a stale decision, and
+ * silently.
+ */
+const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
+
 interface PredictedTaxonomy {
   code: string;
   name: string;
@@ -252,12 +267,15 @@ export class HybridSearchService {
         geoType: geo_type,
         organizationId: organization_id,
         geometry,
+        pinnedMode,
       });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages.
-      const probed = await this.requestCacheService.getOrSet(cacheKey, () =>
-        this.probeRelevanceCutoff({
+      const probed = await this.requestCacheService.getOrSet(
+        cacheKey,
+        () =>
+          this.probeRelevanceCutoff({
           index,
           queryStr,
           queryVector,
@@ -265,7 +283,8 @@ export class HybridSearchService {
           filters: baseFilters,
           pinnedMode,
           strategy,
-        }),
+          }),
+        CUTOFF_PROBE_TTL_MS,
       );
 
       cutoff = probed.cutoff;
