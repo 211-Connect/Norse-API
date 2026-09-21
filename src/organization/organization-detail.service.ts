@@ -7,7 +7,24 @@ import { Redirect } from 'src/common/schemas/redirect.schema';
 import { OrganizationDetail } from './types/organization-response.types';
 import { filterTranslationsByLocale } from './organization-detail.transform';
 
-type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
+/**
+ * `fallback_no_tenant` is deliberately absent (ISS-1778).
+ *
+ * A third tier used to retry `{ organizationId }` with NO tenant filter, so a
+ * caller presenting tenant B's `x-tenant-id` received tenant A's organization
+ * whenever B did not own the id. Confirmed against a running instance on
+ * 2026-09-21: HTTP 200, 6,308 bytes, document `tenant_id` differing from the
+ * requested one. It was logged and not refused.
+ *
+ * `x-tenant-id` is the only thing scoping this read, so a tier that ignores it
+ * is not a fallback — it is the absence of the control.
+ *
+ * `/resource/:id` still has the equivalent tier. It is NOT changed here: it was
+ * added deliberately by #133 ("fix: correct cross-tenant fallback lookup for
+ * resource") and is asserted by its own test, and that PR records no reason.
+ * Removing it needs the reason first. See ISS-1778.
+ */
+type LookupPath = 'primary' | 'fallback';
 
 type AggregatedOrganization = Organization & { _id: string };
 
@@ -50,11 +67,6 @@ export class OrganizationDetailService {
         _id: urlId,
       });
       lookupPath = 'fallback';
-    }
-
-    if (!results[0]) {
-      results = await this.aggregateOrganizations({ organizationId: urlId });
-      lookupPath = 'fallback_no_tenant';
     }
 
     const organization = results[0];
