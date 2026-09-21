@@ -65,7 +65,19 @@ const keepRows = (translations: unknown, locale: string) => ({
   },
 });
 
-/** An array of entries, each with its `TRANSLATIONS` narrowed. */
+/**
+ * An array of entries, each with its translation arrays narrowed.
+ *
+ * `TAXONOMY_NAME_TRANSLATIONS` is narrowed alongside `TRANSLATIONS` because it
+ * is one too, and it is the key both layers originally missed: the JavaScript
+ * transform matched the key name exactly, so anything ending in
+ * `_TRANSLATIONS` went through untouched. Measured on a live document, that
+ * one key carried four extra locales while every `TRANSLATIONS` beside it was
+ * correctly reduced to one row.
+ *
+ * `$mergeObjects` only replaces the keys named, so an entry without either is
+ * passed through unchanged rather than gaining empty arrays.
+ */
 const narrowArray = (arrayExpr: unknown, locale: string) => ({
   $map: {
     input: { $ifNull: [arrayExpr, []] },
@@ -74,6 +86,18 @@ const narrowArray = (arrayExpr: unknown, locale: string) => ({
       $mergeObjects: [
         '$$e',
         { TRANSLATIONS: keepRows('$$e.TRANSLATIONS', locale) },
+        {
+          $cond: [
+            { $eq: [{ $type: '$$e.TAXONOMY_NAME_TRANSLATIONS' }, 'missing'] },
+            {},
+            {
+              TAXONOMY_NAME_TRANSLATIONS: keepRows(
+                '$$e.TAXONOMY_NAME_TRANSLATIONS',
+                locale,
+              ),
+            },
+          ],
+        },
       ],
     },
   },

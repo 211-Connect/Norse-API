@@ -113,6 +113,50 @@ describe('ServiceDetailService', () => {
     expect(json).toContain('missing');
   });
 
+  /**
+   * `TAXONOMY_NAME_TRANSLATIONS` is a translation array whose name is not
+   * exactly `TRANSLATIONS`, and both layers originally missed it: the pipeline
+   * did not name it, and the shared JS transform matched the key exactly.
+   * Verified against a live document — `accept-language: en` returned `yue`,
+   * `vi`, `es` and `ar` under that key while every `TRANSLATIONS` beside it
+   * was correctly reduced to one English row.
+   */
+  it('narrows TAXONOMY_NAME_TRANSLATIONS, not only TRANSLATIONS', async () => {
+    aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
+    await service.findById(serviceId, { headers: headers() });
+    expect(JSON.stringify(stageNamed('$addFields'))).toContain(
+      'TAXONOMY_NAME_TRANSLATIONS',
+    );
+  });
+
+  it('selects the locale for any key ending in translations', async () => {
+    aggregateExec.mockResolvedValue([
+      {
+        serviceId,
+        tenant_id: tenantId,
+        attributeTaxonomies: [
+          {
+            CODE: 'BD-1800',
+            TRANSLATIONS: [{ LOCALE: 'en', NAME: 'Food' }],
+            TAXONOMY_NAME_TRANSLATIONS: [
+              { LOCALE: 'en', NAME: 'Human Services' },
+              { LOCALE: 'es', NAME: 'Servicios Humanos' },
+              { LOCALE: 'vi', NAME: 'Dich vu' },
+            ],
+          },
+        ],
+      },
+    ]);
+    const result = await service.findById(serviceId, { headers: headers() });
+    const taxonomies = result.attributeTaxonomies as Record<string, unknown>[];
+    const names = taxonomies[0].TAXONOMY_NAME_TRANSLATIONS as Record<
+      string,
+      unknown
+    >[];
+    expect(names).toHaveLength(1);
+    expect(names[0].LOCALE).toBe('en');
+  });
+
   it('drops the Mongo _id', async () => {
     aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
     await service.findById(serviceId, { headers: headers() });
