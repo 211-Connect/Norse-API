@@ -10,8 +10,6 @@ describe('OrganizationDetailService', () => {
   let service: OrganizationDetailService;
 
   const aggregateExec = jest.fn();
-  // Captures each pipeline so the tenant-scope assertion below can inspect the
-  // `$match` of every query issued, not just the outcome.
   let seenPipelines: { $match?: Record<string, unknown> }[][] = [];
   const mockAggregate = jest.fn(
     (pipeline: { $match?: Record<string, unknown> }[]) => {
@@ -236,22 +234,11 @@ describe('OrganizationDetailService', () => {
     await expect(service.findById(orgId, { headers })).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    // TWO, not three. The third used to retry without a tenant filter.
     expect(mockAggregate).toHaveBeenCalledTimes(2);
   });
 
-  /**
-   * ISS-1778. A third tier used to retry `{ organizationId }` with NO tenant
-   * filter, so a caller presenting tenant B's `x-tenant-id` received tenant A's
-   * organization whenever B did not own the id. Confirmed against a running
-   * instance on 2026-09-21: HTTP 200, 6,308 bytes, and the response carried the
-   * OTHER tenant's `tenant_id`.
-   *
-   * This asserts the shape of every query issued rather than the outcome. A
-   * miss returning 404 is necessary and not sufficient — the defect was a query
-   * that should never have been sent, and an implementation could pass an
-   * outcome-only test while still sending it.
-   */
+  // Asserts the query, not the outcome: a 404 on a miss would also pass while
+  // the unscoped query was still being sent (ISS-1778).
   it('never issues a query without a tenant filter', async () => {
     aggregateExec.mockResolvedValue([]);
     mockRedirectModel.findById.mockReturnValue({
@@ -270,12 +257,7 @@ describe('OrganizationDetailService', () => {
     }
   });
 
-  /**
-   * The behaviour a caller sees: an id belonging to another tenant is a 404,
-   * not that tenant's document.
-   */
   it("refuses an organization the caller's tenant does not own", async () => {
-    // Both tenant-scoped lookups miss, because the document belongs elsewhere.
     aggregateExec.mockResolvedValue([]);
     mockRedirectModel.findById.mockReturnValue({
       exec: jest.fn().mockResolvedValue(null),
