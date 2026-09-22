@@ -203,12 +203,6 @@ export class SearchHitsContainer {
  */
 export class RelevanceCutoffDto {
   @ApiProperty({
-    enum: ['score_gap', 'relative_to_max'],
-    description: 'The strategy the caller requested.',
-  })
-  strategy: 'score_gap' | 'relative_to_max';
-
-  @ApiProperty({
     description:
       'Whether results were actually removed. `false` means the strategy ran ' +
       'and declined to cut — not that it failed.',
@@ -217,23 +211,17 @@ export class RelevanceCutoffDto {
 
   @ApiProperty({
     nullable: true,
-    enum: ['no_elbow', 'below_min_keep', 'candidate_ceiling', 'cut_too_large'],
+    enum: ['no_elbow', 'below_min_keep', 'cut_too_large'],
     description:
-      'Why nothing was cut, when `applied` is false. `no_elbow`: the scores ' +
-      'are uniform, so there is no relevance cliff to cut at. ' +
-      '`below_min_keep`: the matched set is already small. ' +
-      '`candidate_ceiling`: any cliff lies beyond the probed candidate ' +
-      'window, so no cut was attempted — this is "could not determine", not ' +
-      '"nothing to cut". `cut_too_large`: the cut point was located exactly, ' +
-      'but keeps more results than are worth enumerating, so nothing was ' +
-      'trimmed.',
+      'Why nothing was cut, when `applied` is false. `no_elbow`: nothing ' +
+      'scored meaningfully below the threshold, so the distribution is flat ' +
+      'and returning everything is the honest answer. `below_min_keep`: the ' +
+      'matched set is already smaller than the floor. `cut_too_large`: the ' +
+      'cut point was located exactly, but keeps more results than are worth ' +
+      'enumerating, so nothing was trimmed — "found it, too big", not ' +
+      '"could not find it".',
   })
-  reason?:
-    | 'no_elbow'
-    | 'below_min_keep'
-    | 'candidate_ceiling'
-    | 'cut_too_large'
-    | null;
+  reason?: 'no_elbow' | 'below_min_keep' | 'cut_too_large' | null;
 
   @ApiProperty({
     description:
@@ -259,15 +247,16 @@ export class RelevanceCutoffDto {
       'points) and the priority boost that the main query adds — so this ' +
       'value is systematically lower than the score of the same document in ' +
       'the response, and the two must not be compared. It is comparable ' +
-      'across responses using the same strategy, which is what it is for: ' +
-      'evaluating a shipped threshold retroactively against real traffic.',
+      'across responses, which is what it is for: evaluating the shipped ' +
+      'threshold retroactively against real traffic.',
   })
   cutoff_score?: number | null;
 
   @ApiProperty({
     description:
-      'How many top-ranked results were examined to find the cut point. A cut ' +
-      'is never inferred from beyond this window.',
+      'How many results scored above the threshold — the size of the cut ' +
+      'that was located, whether or not it was applied. Counted over the ' +
+      'whole matched set, not a fixed window.',
   })
   candidates_examined: number;
 }

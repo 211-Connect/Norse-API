@@ -4,7 +4,6 @@ const base = {
   tenantId: 'tenant-a',
   lang: 'en',
   queryStr: 'free dental care',
-  strategy: 'score_gap',
   filters: { category: ['health'] },
   taxonomies: ['LV-1600'],
   coords: [-122.03, 36.97],
@@ -21,9 +20,9 @@ describe('relevanceCutoffCacheKey', () => {
     expect(relevanceCutoffCacheKey(base)).toBe(relevanceCutoffCacheKey(base));
   });
 
-  it('carries tenant, strategy and language in the clear', () => {
+  it('carries tenant and language in the clear', () => {
     expect(relevanceCutoffCacheKey(base)).toMatch(
-      /^search:cutoff:score_gap:tenant-a:en:/,
+      /^search:cutoff:tenant-a:en:/,
     );
   });
 

@@ -5,66 +5,51 @@
  * small enough to review. It does NOT reorder: the best result can still sit
  * at position 900, and if it does, a cutoff hides it rather than surfacing it.
  * Read that trade as agreed-and-known, not as relevance being solved.
+ *
+ * ONE STRATEGY, NOT TWO
+ * ---------------------
+ * This shipped with a choice of `score_gap` (first significant cliff in the
+ * score sequence) and `relative_to_max` (keep everything within a fraction of
+ * the top score), so the two could be compared on identical queries. They were,
+ * and the comparison is not close:
+ *
+ *   across 42 real score sequences, 2 tenants x 21 queries, 300 deep
+ *     score_gap         cut inside the unscoped top 20 on 30 of 37 cuts
+ *     relative_to_max   on 4 of 30
+ *
+ *   live, recall of the unscoped top-20 within the kept set
+ *     score_gap         7 of 10 query/tenant pairs discarded 15 of the top 20
+ *     relative_to_max   19 of 20 pairs returned it complete
+ *
+ * score_gap also cuts noise: `purple monkey dishwasher` came back as 14
+ * confident results, because a flat distribution still contains
+ * discontinuities and they are not relevance boundaries.
+ *
+ * So the parameter is now `off` | `on`, and `on` is the measured strategy.
+ * Keeping the loser selectable meant publishing an option we had measured as
+ * worse, which no consumer reading the OpenAPI document could have known.
+ *
+ * Re-introducing a choice later is additive — a new value alongside `on` —
+ * whereas supporting a strategy we know over-cuts is a commitment.
  */
 
-export const RELEVANCE_CUTOFF_STRATEGIES = [
-  'off',
-  'score_gap',
-  'relative_to_max',
-] as const;
+export const RELEVANCE_CUTOFF_VALUES = ['off', 'on'] as const;
 
-export type RelevanceCutoffStrategy =
-  (typeof RELEVANCE_CUTOFF_STRATEGIES)[number];
+export type RelevanceCutoffValue = (typeof RELEVANCE_CUTOFF_VALUES)[number];
 
 /**
  * Why a cutoff did not reduce the set. Reported on the wire so a consumer can
- * tell "nothing was cut because nothing needed cutting" apart from "the
- * detector could not see far enough to decide" — silence and green are
- * different answers.
+ * tell "nothing was cut because nothing needed cutting" apart from "a cut
+ * exists but we would not enumerate it" — silence and green are different
+ * answers.
  */
 export type RelevanceCutoffSkipReason =
-  /** No gap cleared the significance guards: the scores are uniform. */
+  /** Nothing scored meaningfully below the threshold: the distribution is flat. */
   | 'no_elbow'
-  /** Fewer candidates than `minKeep`, so there is nothing to trim. */
+  /** Fewer matches than the floor, so there is nothing to trim. */
   | 'below_min_keep'
-  /** The elbow, if any, lies beyond the probed candidate ceiling. */
-  | 'candidate_ceiling'
   /**
-   * A cut exists and was located exactly, but keeps more results than we are
-   * willing to enumerate into an `ids` filter. Distinct from
-   * `candidate_ceiling`: there the cut point was never found, here it was
-   * found and is simply too large to be worth making.
+   * The cut point was located exactly, but keeps more results than we will put
+   * into an `ids` filter. Distinct from "no cut was found".
    */
   | 'cut_too_large';
-
-export interface RelevanceCutoffDecision {
-  /** Number of leading results to keep, or null when declining to cut. */
-  keep: number | null;
-  /** Populated exactly when `keep` is null. */
-  reason: RelevanceCutoffSkipReason | null;
-  /**
-   * Score of the last kept result, **on the probe's scale**. The probe omits
-   * the distance decay and the priority boost that the main query adds, so this
-   * is not comparable to a `_score` in the response — only to another
-   * `cutoffScore` from the same strategy. Reported for observability so a
-   * shipped threshold can be evaluated retroactively against real traffic
-   * (ISS-1378) rather than requiring the queries to be re-run.
-   */
-  cutoffScore: number | null;
-}
-
-export interface ScoreGapOptions {
-  /** Never cut below this many results. */
-  minKeep: number;
-  /** The winning gap must exceed this multiple of the median adjacent gap. */
-  significance: number;
-  /** ...and must also drop at least this fraction of the preceding score. */
-  minRelativeDrop: number;
-}
-
-export interface RelativeToMaxOptions {
-  /** Keep results scoring at least this fraction of the top score. */
-  fraction: number;
-  /** Never cut below this many results. */
-  minKeep: number;
-}

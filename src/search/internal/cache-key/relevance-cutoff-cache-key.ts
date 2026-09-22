@@ -24,7 +24,6 @@ export const relevanceCutoffCacheKey = (args: {
   tenantId: string;
   lang: string;
   queryStr: string;
-  strategy: string;
   filters: unknown;
   taxonomies: string[];
   coords: number[] | undefined;
@@ -35,7 +34,7 @@ export const relevanceCutoffCacheKey = (args: {
   geometry: unknown;
   pinnedMode: string;
 }): string => {
-  const { tenantId, lang, strategy } = args;
+  const { tenantId, lang } = args;
 
   const fingerprint = hashCacheKey({
     queryStr: args.queryStr,
@@ -50,5 +49,5 @@ export const relevanceCutoffCacheKey = (args: {
     pinnedMode: args.pinnedMode,
   });
 
-  return `search:cutoff:${strategy}:${tenantId}:${lang}:${fingerprint}`;
+  return `search:cutoff:${tenantId}:${lang}:${fingerprint}`;
 };

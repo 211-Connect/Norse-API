@@ -30,13 +30,6 @@ import {
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
-import {
-  DEFAULT_RELATIVE_TO_MAX_OPTIONS,
-  DEFAULT_SCORE_GAP_OPTIONS,
-  detectRelativeToMaxCutoff,
-  detectScoreGapCutoff,
-} from './internal/relevance-cutoff/detect-cutoff';
-import { RelevanceCutoffStrategy } from './internal/relevance-cutoff/types';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 
@@ -84,18 +77,32 @@ const TAXONOMY_K = 10;
 const TAXONOMY_NUM_CANDIDATES = 500;
 
 /**
- * How many top-ranked candidates the cutoff probe examines. A cut is never
- * inferred from beyond this window: if no elbow is found inside it, the
- * response says `candidate_ceiling` and nothing is trimmed. Silent partial
- * cuts would be worse than no cut at all.
+ * Keep everything scoring at least this fraction of the top score.
+ *
+ * Lax on purpose. At 0.5 the cut landed inside the unscoped top 20 on 30 of 37
+ * queries — it was removing results a labeller called relevant. At 0.2 that is
+ * 4 of 30, and 19 of 20 query/tenant pairs return the unscoped top 20 complete.
+ * The cut's job is to remove the tail that only matched on one weak signal, not
+ * to second-guess the ranking.
  */
-const CUTOFF_CANDIDATE_CEILING = 300;
+const CUTOFF_FRACTION_OF_MAX = 0.2;
+
+/**
+ * Smallest result set worth cutting down to.
+ *
+ * Denominated in services, not documents. The index is service-at-location, so
+ * one service with N locations is N documents scoring near-identically and
+ * ranking adjacently — every flat run in a real score sequence is exactly one
+ * service. A floor of 5 documents was a floor of 2 choices on Santa Cruz
+ * `substance abuse treatment`.
+ */
+const CUTOFF_MIN_KEEP_SERVICES = 5;
 
 /**
  * Largest cut we will enumerate into an `ids` filter.
  *
- * `relative_to_max` locates its cut point with a `min_score` count rather than
- * by walking a candidate window, so it is not limited to the first 300 results
+ * The cut point is located with a `min_score` count rather than by walking a
+ * candidate window, so it is not limited to the first 300 results
  * and routinely finds cuts beyond them — on Nebraska 211 the 0.2 threshold
  * survives at 388 documents of 27,452, which the window could never see. What
  * still has to be bounded is the id list handed to the main query, so beyond
@@ -295,15 +302,14 @@ export class HybridSearchService {
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
-    const strategy = q.relevance_cutoff ?? 'off';
+    const cutoffRequested = (q.relevance_cutoff ?? 'off') === 'on';
     let cutoff: RelevanceCutoffDto | undefined;
 
-    if (strategy !== 'off') {
+    if (cutoffRequested) {
       const cacheKey = relevanceCutoffCacheKey({
         tenantId,
         lang,
         queryStr,
-        strategy,
         filters,
         taxonomies: hardScopeCodes,
         coords,
@@ -327,7 +333,6 @@ export class HybridSearchService {
             predicted: predictedTaxonomies,
             filters: baseFilters,
             pinnedMode,
-            strategy,
           }),
         CUTOFF_PROBE_TTL_MS,
       );
@@ -734,8 +739,7 @@ export class HybridSearchService {
   }
 
   /**
-   * Ranks the top candidates by **semantic and lexical relevance only** and
-   * asks the detector where the cliff is.
+   * Locates the cutoff on **semantic and lexical relevance only**.
    *
    * Geography is deliberately absent from this query, and that is the whole
    * point of running a separate pass rather than reading scores off the main
@@ -762,7 +766,6 @@ export class HybridSearchService {
     predicted: PredictedTaxonomy[];
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
-    strategy: Exclude<RelevanceCutoffStrategy, 'off'>;
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
     const { index, queryStr, queryVector, predicted, filters, pinnedMode } =
       args;
@@ -789,7 +792,7 @@ export class HybridSearchService {
       bool: { minimum_should_match: 0, filter: filters, should },
     };
 
-    const probeQuery: QueryDslQueryContainer =
+    const query: QueryDslQueryContainer =
       scoreFunctions.length > 0
         ? {
             function_score: {
@@ -801,107 +804,26 @@ export class HybridSearchService {
           }
         : innerBool;
 
-    if (args.strategy === 'relative_to_max') {
-      return this.probeRelativeToMax(index, probeQuery);
-    }
-
-    // `service_id` only — the grouping key for the distinct-service floor. One
-    // service with N locations is N adjacent documents, and a floor counted in
-    // documents can be filled entirely by one provider's branches.
-    const probe = await this.elasticsearchService.search<{
-      service_id?: string;
-    }>({
-      index,
-      from: 0,
-      size: CUTOFF_CANDIDATE_CEILING,
-      track_total_hits: true,
-      _source: ['service_id'],
-      sort: ['_score'],
-      query: probeQuery,
-    });
-
-    const candidates = probe.hits.hits ?? [];
-    const scores = candidates.map((hit) => hit._score ?? 0);
-    const groups = candidates.map((hit) =>
-      String(hit._source?.service_id ?? hit._id),
-    );
-    const matched =
-      typeof probe.hits.total === 'number'
-        ? probe.hits.total
-        : (probe.hits.total?.value ?? 0);
-
-    const decision =
-      args.strategy === 'score_gap'
-        ? detectScoreGapCutoff(scores, DEFAULT_SCORE_GAP_OPTIONS, groups)
-        : detectRelativeToMaxCutoff(
-            scores,
-            DEFAULT_RELATIVE_TO_MAX_OPTIONS,
-            groups,
-          );
-
-    const truncated = matched > candidates.length;
-
-    if (decision.keep === null) {
-      return {
-        keptIds: null,
-        cutoff: {
-          strategy: args.strategy,
-          applied: false,
-          // "Could not see far enough to decide" is not the same answer as
-          // "looked, and there was nothing to cut".
-          reason: truncated ? 'candidate_ceiling' : decision.reason,
-          kept: matched,
-          matched_before_cutoff: matched,
-          cutoff_score: null,
-          candidates_examined: candidates.length,
-        },
-      };
-    }
-
-    const keptIds = candidates
-      .slice(0, decision.keep)
-      .map((hit) => hit._id)
-      .filter((id): id is string => typeof id === 'string');
-
-    return {
-      keptIds,
-      cutoff: {
-        strategy: args.strategy,
-        applied: true,
-        reason: null,
-        kept: keptIds.length,
-        matched_before_cutoff: matched,
-        cutoff_score: decision.cutoffScore,
-        candidates_examined: candidates.length,
-      },
-    };
-  }
-
-  /**
-   * Locates a `relative_to_max` cut without a candidate window.
-   *
-   * The rule only needs two numbers — the top score, and how many results sit
-   * above a fraction of it — and Elasticsearch answers both without collecting
-   * documents. `size: 0` with `min_score` returns a count in about a
-   * millisecond over a 27,000-result population, where fetching a 300-document
-   * window costs ~250ms and still cannot see a cut that lands at 388.
-   *
-   * Documents are fetched only once the cut is known to be worth making, so the
-   * expensive call is proportional to the cut rather than to a fixed window.
-   *
-   * `min_score` is inclusive, so a group of results tied exactly at the
-   * threshold is kept or dropped whole. The tie-walk the sequence-based
-   * detectors need has no equivalent here because the boundary cannot split.
-   */
-  private async probeRelativeToMax(
-    index: string,
-    query: QueryDslQueryContainer,
-  ): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
+    /**
+     * The rule needs two numbers — the top score, and how many results sit
+     * above a fraction of it — and Elasticsearch answers both without
+     * collecting documents. `size: 0` with `min_score` returns a count in about
+     * a millisecond over a 27,000-result population, where fetching a
+     * 300-document window costs ~250ms and still cannot see a cut that lands at
+     * 388.
+     *
+     * Documents are fetched only once the cut is known to be worth making, so
+     * the expensive call is proportional to the cut rather than to a fixed
+     * window.
+     *
+     * `min_score` is inclusive, so a group of results tied exactly at the
+     * threshold is kept or dropped whole — the boundary cannot split a tie.
+     */
     // A private projection, not the response shape: the probe asks only for the
     // grouping key, so it must not borrow the public `SearchSource` DTO.
     type ProbeSource = { service_id?: string };
-    const strategy = 'relative_to_max' as const;
-    const { fraction, minKeep } = DEFAULT_RELATIVE_TO_MAX_OPTIONS;
+    const fraction = CUTOFF_FRACTION_OF_MAX;
+    const minKeep = CUTOFF_MIN_KEEP_SERVICES;
 
     const head = await this.elasticsearchService.search<SearchSource>({
       index,
@@ -924,7 +846,6 @@ export class HybridSearchService {
     ): { keptIds: null; cutoff: RelevanceCutoffDto } => ({
       keptIds: null,
       cutoff: {
-        strategy,
         applied: false,
         reason,
         kept: matched,
@@ -1007,7 +928,6 @@ export class HybridSearchService {
     return {
       keptIds,
       cutoff: {
-        strategy,
         applied: true,
         reason: null,
         kept: keptIds.length,

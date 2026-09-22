@@ -16,8 +16,8 @@ import {
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
 import {
-  RELEVANCE_CUTOFF_STRATEGIES,
-  RelevanceCutoffStrategy,
+  RELEVANCE_CUTOFF_VALUES,
+  RelevanceCutoffValue,
 } from '../internal/relevance-cutoff/types';
 
 interface ComplexQuery {
@@ -246,21 +246,22 @@ export class SearchResourcesQueryDto {
   sort: 'relevance' | 'distance' | 'name' | 'organization' = 'relevance';
 
   @ApiPropertyOptional({
-    enum: RELEVANCE_CUTOFF_STRATEGIES,
+    enum: RELEVANCE_CUTOFF_VALUES,
     default: 'off',
     description:
       'Opt-in trimming of low-relevance results. `off` (default) returns the ' +
-      'full matched set, byte-identical to previous behaviour. `score_gap` ' +
-      'keeps results above the first significant cliff in the relevance score, ' +
-      'and returns everything when no such cliff exists. `relative_to_max` ' +
-      '(recommended) keeps results scoring at least a fifth of the top score, ' +
-      'and also returns everything when the scores are too flat for that to ' +
-      'remove anything meaningful. ' +
-      'Hybrid search only (`query_type=hybrid`); ignored for other query ' +
-      'types. When a cutoff applies, `hits.total` reports the kept count and ' +
-      'the original is preserved in `relevance_cutoff.matched_before_cutoff`.',
+      'full matched set, byte-identical to previous behaviour. `on` keeps ' +
+      'results scoring at least a fifth of the top score, and returns ' +
+      'everything when the scores are too flat for that to remove anything ' +
+      'meaningful — a uniformly weak result set is reported as such rather ' +
+      'than cut arbitrarily. The cut is computed on semantic and lexical ' +
+      'relevance only: proximity still filters and ranks, but never decides ' +
+      'what is irrelevant. Hybrid search only (`query_type=hybrid`); ignored ' +
+      'for other query types. When a cutoff applies, `hits.total` reports the ' +
+      'kept count and the original is preserved in ' +
+      '`relevance_cutoff.matched_before_cutoff`.',
   })
   @IsOptional()
-  @IsEnum(RELEVANCE_CUTOFF_STRATEGIES)
-  relevance_cutoff?: RelevanceCutoffStrategy = 'off';
+  @IsEnum(RELEVANCE_CUTOFF_VALUES)
+  relevance_cutoff?: RelevanceCutoffValue = 'off';
 }
