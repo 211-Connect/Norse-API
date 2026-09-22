@@ -38,6 +38,7 @@ import {
 } from './internal/relevance-cutoff/detect-cutoff';
 import { RelevanceCutoffStrategy } from './internal/relevance-cutoff/types';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
+import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -593,6 +594,24 @@ export class HybridSearchService {
       (f) => f !== 'organization.name' && f !== 'organization.description',
     );
 
+    const recallClause: QueryDslQueryContainer = {
+      multi_match: {
+        operator: 'or',
+        minimum_should_match: '2<75%',
+        fields: generalFields,
+        query: queryStr,
+      },
+    };
+    const nestedRecallClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'or',
+        minimum_should_match: '2<75%',
+        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
+        query: queryStr,
+      },
+    };
+
     return [
       // Top-level name: highest signal — edge-ngram + phrase on .clean
       ...this.buildNameTierClauses('name', BM25_NAME_BOOST, queryStr, {
@@ -614,27 +633,17 @@ export class HybridSearchService {
         { includePhrase: isMultiToken },
       ),
       // General stemmed recall fallback on analyzed fields (low implicit boost)
-      {
-        multi_match: {
-          operator: 'or',
-          minimum_should_match: '2<75%',
-          fields: generalFields,
-          query: queryStr,
-        },
-      },
+      recallClause,
+      // Typo tolerance belongs on the recall clause: the name tiers above are
+      // phrase/prefix by design, and the use_references clause below is
+      // curated, where an approximate match defeats the curation.
+      fuzzyFallbackFor(recallClause),
       // Nested taxonomy name/description boost
+      { nested: { path: 'taxonomies', query: nestedRecallClause } },
       {
         nested: {
           path: 'taxonomies',
-          query: {
-            multi_match: {
-              analyzer: 'standard',
-              operator: 'or',
-              minimum_should_match: '2<75%',
-              fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
-              query: queryStr,
-            },
-          },
+          query: fuzzyFallbackFor(nestedRecallClause),
         },
       },
       // Nested taxonomy use_references (curated aliases) — dedicated higher

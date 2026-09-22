@@ -17,6 +17,7 @@ import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
+import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
@@ -307,6 +308,23 @@ export class SearchService {
       ...customAttributeFields,
     ];
 
+    const exactClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'AND',
+        fields: fieldsWithCustomAttributes,
+        query,
+      },
+    };
+    const nestedExactClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'AND',
+        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
+        query,
+      },
+    };
+
     switch (queryType) {
       case 'keyword':
         return {
@@ -314,25 +332,22 @@ export class SearchService {
             bool: {
               ...baseBool,
               should: [
+                exactClause,
+                // `operator: AND` requires every token to match and this index
+                // has no stemming, so one transposed letter returned nothing at
+                // all. The fallback is de-boosted far enough that it only
+                // decides anything when the clause above matched nothing.
+                fuzzyFallbackFor(exactClause),
                 {
-                  multi_match: {
-                    analyzer: 'standard',
-                    operator: 'AND',
-                    fields: fieldsWithCustomAttributes,
-                    query,
+                  nested: {
+                    path: 'taxonomies',
+                    query: nestedExactClause,
                   },
                 },
                 {
                   nested: {
                     path: 'taxonomies',
-                    query: {
-                      multi_match: {
-                        analyzer: 'standard',
-                        operator: 'AND',
-                        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
-                        query,
-                      },
-                    },
+                    query: fuzzyFallbackFor(nestedExactClause),
                   },
                 },
               ],
