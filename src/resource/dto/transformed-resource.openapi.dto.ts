@@ -30,7 +30,12 @@ export class ResourceAddressOpenApiDto {
   @ApiPropertyOptional()
   type?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      "Rank of this address among the resource's addresses. **One-based** " +
+      '— the primary address is rank 1, not 0. This differs from the ' +
+      'zero-based `rank` on phone numbers. See docs/phone-and-address-rank.md.',
+  })
   rank?: number;
 }
 
@@ -41,7 +46,18 @@ export class ResourcePhoneNumberOpenApiDto {
   @ApiPropertyOptional()
   number?: string;
 
-  @ApiPropertyOptional()
+  /**
+   * Zero-based — unlike the 1-based `rank` on addresses. See
+   * docs/phone-and-address-rank.md.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Rank, not a score: **0 is the primary phone**, larger is less ' +
+      'preferred. Zero-based, unlike the 1-based `rank` on addresses. ' +
+      'The array is NOT guaranteed to be sorted by it — sort before ' +
+      'rendering, and never take element 0 as the primary. ' +
+      'See docs/phone-and-address-rank.md.',
+  })
   rank?: number;
 }
 

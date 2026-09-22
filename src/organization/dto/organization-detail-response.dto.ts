@@ -50,6 +50,16 @@ class PhoneDto {
   @ApiProperty() ID: string;
   @ApiProperty({ nullable: true }) NUMBER?: string;
   @ApiProperty({ nullable: true }) TYPE?: string;
+  @ApiProperty({
+    nullable: true,
+    required: false,
+    description:
+      'Rank, not a score: **0 is the primary phone** and larger numbers are ' +
+      'progressively less preferred. 0 is always a voice line; fax appears ' +
+      'from 1 down. See docs/phone-and-address-rank.md — the equivalent field ' +
+      'on addresses is 1-based, which has already caused one bug.',
+  })
+  PRIORITY?: number;
   @ApiProperty({ type: [TranslationDto] }) TRANSLATIONS: TranslationDto[];
 }
 
@@ -58,6 +68,75 @@ class ContactDto {
   @ApiProperty({ nullable: true }) NAME?: string;
   @ApiProperty({ nullable: true }) TITLE?: string;
   @ApiProperty({ nullable: true }) EMAIL?: string;
+}
+
+class ServiceAtLocationDisplayDto {
+  @ApiProperty({ nullable: true, required: false }) PHONE_NUMBER?: string;
+
+  @ApiProperty({
+    type: [PhoneDto],
+    required: false,
+    description:
+      'Merged from the organization, service, location and pairing, then ' +
+      'ranked. A location phone joins this list rather than replacing the ' +
+      "service's — there is no per-location override.",
+  })
+  PHONE_LIST?: PhoneDto[];
+
+  @ApiProperty({ type: [ContactDto], required: false })
+  CONTACT_LIST?: ContactDto[];
+  @ApiProperty({ nullable: true, required: false }) WEBSITE?: string;
+  @ApiProperty({ nullable: true, required: false }) EMAIL?: string;
+
+  @ApiProperty({
+    nullable: true,
+    required: false,
+    description:
+      'The one winning schedule for this pairing; the candidates it beat are ' +
+      'not represented here. English — see DISPLAY on the parent.',
+  })
+  SCHEDULE?: string;
+}
+
+class ServiceAtLocationDto {
+  @ApiProperty({
+    description:
+      'The serviceAtLocationId. Keys the `resources` collection — pass it to ' +
+      'POST /resource/batch for the full search-facing document.',
+  })
+  ID: string;
+
+  // `required: false` on the genuinely optional fields below: @ApiProperty
+  // defaults required to true, which would tell the generated SDK these are
+  // always present. Older DTO classes in this file predate that care.
+  @ApiProperty({ nullable: true, required: false }) LOCATION_ID?: string;
+  @ApiProperty({ nullable: true, required: false }) ORIGINAL_ID?: string;
+  @ApiProperty({ nullable: true, required: false }) ASSURED_DATE?: string;
+  @ApiProperty({ nullable: true, required: false }) ASSURER_EMAIL?: string;
+
+  @ApiProperty({
+    type: [ScheduleDto],
+    required: false,
+    description:
+      'Attached to the pairing itself, so they appear here and nowhere else ' +
+      'in this document. Editable source rows, unlike DISPLAY.',
+  })
+  SCHEDULES?: ScheduleDto[];
+
+  @ApiProperty({
+    type: ServiceAtLocationDisplayDto,
+    required: false,
+    description:
+      'What a seeker is shown for this service at this location. READ-ONLY: ' +
+      'every value is derived from a phone, contact or schedule that also ' +
+      'appears, with its own ID, elsewhere in this document — propose changes ' +
+      'against that row, not against these values. May be absent, which is ' +
+      'not an error. English throughout, like the rest of this document: ' +
+      'SCHEDULE is a scalar and the TRANSLATIONS nested in PHONE_LIST and ' +
+      'CONTACT_LIST are filtered to `en`. The search index reads the ' +
+      'multi-locale form elsewhere.',
+  })
+  DISPLAY?: ServiceAtLocationDisplayDto;
 }
 
 class ServiceDto {
@@ -78,8 +157,8 @@ class ServiceDto {
   @ApiProperty({ type: [PhoneDto] }) PHONES: PhoneDto[];
   @ApiProperty({ nullable: true }) ASSURED_DATE?: string;
   @ApiProperty({ nullable: true }) LAST_MODIFIED?: string;
-  @ApiProperty({ type: 'array', items: { type: 'object' } })
-  SERVICE_AT_LOCATIONS: Record<string, unknown>[];
+  @ApiProperty({ type: [ServiceAtLocationDto] })
+  SERVICE_AT_LOCATIONS: ServiceAtLocationDto[];
 
   // Kept per product direction (unused by provider-feedback today).
   @ApiProperty({ type: 'array', items: { type: 'object' }, required: false })
