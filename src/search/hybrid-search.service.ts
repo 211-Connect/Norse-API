@@ -61,9 +61,23 @@ const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
 const BM25_ORG_NAME_BOOST = 6;
 // use_references are curated taxonomy aliases (e.g. "Girl Scouts", "Scouts",
-// "Scouting" for Scouting Programs). A match there is a strong intent signal —
-// stronger than a generic name/description token hit — so it gets its own boost.
-const BM25_TAXONOMY_USE_REF_BOOST = 12;
+// "Scouting" for Scouting Programs). A match there is an intent signal, but at 12
+// it outweighed name and description hits badly enough to return a pet service as
+// the best match for "prescription assistance" (EXP-019 traced the contamination
+// to this clause alone; EXP-021 swept 12/6/3/0).
+//
+// 6 removes that result with nothing else degraded. Re-measured 2026-09-22 on two
+// tenants with cutoff off: alias-benefit queries 0/6 changed on both; top-1 churn
+// 2/20 Santa Cruz (the fixed query plus "transportation", which moved between two
+// transportation services) and 1/20 Nebraska ("free dental care", which improved
+// from a general clinic to a dental one). Membership totals unchanged, as expected
+// for a ranking-only change. Only at 0 does an alias query break ("food stamps").
+//
+// Note it removes a wrong answer without producing a right one: Santa Cruz has no
+// prescription-assistance resource, so that query still returns something unrelated,
+// just not absurdly so. Nebraska, which does have one, was unaffected at either
+// setting — where a correct answer exists this clause was not what surfaced it.
+const BM25_TAXONOMY_USE_REF_BOOST = 6;
 
 const TAXONOMY_K = 10;
 const TAXONOMY_NUM_CANDIDATES = 500;
