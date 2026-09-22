@@ -1,10 +1,5 @@
-/**
- * The runtime shape of `GET /service/:id`.
- *
- * Deliberately loose below the named scalars, matching `OrganizationDetail`:
- * the nested HSDS sub-documents are `OBJECT_CONSTRUCT(obj.*)` over dbt views,
- * so their key sets are declared nowhere and may gain a column upstream.
- */
+// Loose below the named scalars, matching `OrganizationDetail`: nested key sets
+// come from `OBJECT_CONSTRUCT(obj.*)` over dbt views and are declared nowhere.
 export interface ServiceDetail {
   serviceId: string;
   tenant_id: string;

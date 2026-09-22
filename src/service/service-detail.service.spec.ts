@@ -9,11 +9,7 @@ describe('ServiceDetailService', () => {
   let service: ServiceDetailService;
 
   const aggregateExec = jest.fn();
-  // Captured rather than read back off the mock: the pipeline IS what these
-  // tests inspect, and typing it here keeps every assertion below plain.
   let seenPipeline: Record<string, unknown>[] | undefined;
-  // Typed to receive the pipeline, because the pipeline IS what these tests
-  // inspect: `mock.calls[0][0]` is the stage array.
   const mockAggregate = jest.fn((pipeline: unknown[]) => {
     seenPipeline = pipeline as Record<string, unknown>[];
     return { exec: aggregateExec };
@@ -50,11 +46,6 @@ describe('ServiceDetailService', () => {
     });
   });
 
-  /**
-   * The organization endpoint falls back to an unscoped lookup when the
-   * tenant-scoped one misses, and will answer from ANY tenant. This endpoint
-   * must not: `serviceId` is unique per writer, not across writers.
-   */
   it('has no no-tenant fallback', async () => {
     aggregateExec.mockResolvedValue([]);
     await expect(
@@ -63,20 +54,12 @@ describe('ServiceDetailService', () => {
     expect(mockAggregate).toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * The whole point of the endpoint. Nine locales per translation-bearing
-   * array is roughly half the bytes of these documents, and filtering after
-   * the fetch — which is what the organization endpoint does — does not
-   * reduce what crosses the wire.
-   */
   it('narrows translations inside the pipeline, before transfer', async () => {
     aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
     await service.findById(serviceId, { headers: headers('es') });
     const addFields = stageNamed('$addFields');
     expect(addFields).toBeDefined();
     const json = JSON.stringify(addFields);
-    // The requested locale, English and canonical rows are what the JS
-    // selection can still choose between; everything else is dropped in Mongo.
     expect(json).toContain('"$$t.LOCALE","es"');
     expect(json).toContain('"$$t.LOCALE","en"');
     expect(json).toContain('IS_CANONICAL');
@@ -95,16 +78,11 @@ describe('ServiceDetailService', () => {
     ]) {
       expect(json).toContain(path);
     }
-    // Two levels: a location's own arrays carry translations too, and one
-    // MD211_V2 service spans 666 locations.
+    // Two levels: a location's own arrays carry translations too.
     expect(json).toContain('$$loc.SCHEDULES');
     expect(json).toContain('$$loc.LANGUAGES');
   });
 
-  /**
-   * `$mergeObjects` over a null organization would manufacture an object —
-   * the `{}`-is-truthy hazard the dbt model guards against with its own CASE.
-   */
   it('leaves an orphan service null rather than inventing an organization', async () => {
     aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
     await service.findById(serviceId, { headers: headers() });
@@ -113,14 +91,6 @@ describe('ServiceDetailService', () => {
     expect(json).toContain('missing');
   });
 
-  /**
-   * `TAXONOMY_NAME_TRANSLATIONS` is a translation array whose name is not
-   * exactly `TRANSLATIONS`, and both layers originally missed it: the pipeline
-   * did not name it, and the shared JS transform matched the key exactly.
-   * Verified against a live document — `accept-language: en` returned `yue`,
-   * `vi`, `es` and `ar` under that key while every `TRANSLATIONS` beside it
-   * was correctly reduced to one English row.
-   */
   it('narrows TAXONOMY_NAME_TRANSLATIONS, not only TRANSLATIONS', async () => {
     aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
     await service.findById(serviceId, { headers: headers() });
@@ -163,11 +133,6 @@ describe('ServiceDetailService', () => {
     expect(stageNamed('$project')).toEqual({ $project: { _id: 0 } });
   });
 
-  /**
-   * The pipeline keeps a SUPERSET; the JS transform makes the final pick. This
-   * asserts the two compose — otherwise the endpoint would return English
-   * alongside the requested locale.
-   */
   it('returns only the selected locale after the JS pass', async () => {
     aggregateExec.mockResolvedValue([
       {

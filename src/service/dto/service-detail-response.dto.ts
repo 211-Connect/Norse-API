@@ -2,20 +2,11 @@ import { ApiProperty } from '@nestjs/swagger';
 
 // OpenAPI shape for GET /service/:id (runtime type: ServiceDetail).
 //
-// NOT a runtime allow-list. The nested HSDS sub-documents are
-// `OBJECT_CONSTRUCT(obj.*)` over dbt views and carry more keys than are typed
-// here; the endpoint drops only `_id` and narrows translations.
+// NOT a runtime allow-list: nested HSDS sub-documents carry more keys than are
+// typed here. The endpoint drops only `_id` and narrows translations.
 //
-// Every `TRANSLATIONS` array is filtered to the requested locale
-// (preferred -> English -> canonical) and stays an ARRAY, matching
-// `OrganizationDetailResponseDto`. The narrowing happens in the database as
-// well as in JS — see `service-detail.transform.ts` — but the response shape
-// is unchanged by that, which is the point of doing it as a superset.
-//
-// Service-level `translations` is intentionally absent: the dbt model's header
-// lists it, its `final` CTE selects no such column, and the reader's record
-// model has no such field, so it never reaches the document. Nested
-// `TRANSLATIONS` inside phones, contacts and schedules do arrive.
+// Service-level `translations` is absent because it never reaches the document,
+// despite the dbt model's header listing it.
 
 class TranslationDto {
   @ApiProperty({ nullable: true }) ID?: string;
@@ -81,8 +72,6 @@ class OrganizationSummaryDto {
   @ApiProperty({ nullable: true }) WEBSITE?: string;
   @ApiProperty({ nullable: true }) LEGAL_STATUS?: string;
   @ApiProperty({ nullable: true }) YEAR_INCORPORATED?: string;
-  // The raw source-system provider key, NOT an organization id: measured on
-  // DUPAGEC211, 0 of 637 resolve to any row's `id`. Never dereference it.
   @ApiProperty({
     nullable: true,
     description:

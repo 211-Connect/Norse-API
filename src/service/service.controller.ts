@@ -20,16 +20,6 @@ export class ServiceController {
     private readonly metrics: MetricsService,
   ) {}
 
-  /**
-   * One service document, with its parent Organization and every Location it
-   * is delivered at — the HSDS `service_full` shape.
-   *
-   * `accept-language` selects the translations returned, and it is not
-   * cosmetic: the stored documents carry nine locales on every
-   * translation-bearing array, which is roughly half their bytes. The locales
-   * the caller did not ask for are dropped in the database, so they never
-   * cross the wire. See `service-detail.transform.ts`.
-   */
   @Get(':id')
   @Version('1')
   @UseGuards(ArcjetGuard)
@@ -40,7 +30,7 @@ export class ServiceController {
     name: 'accept-language',
     required: true,
     description:
-      'Selects which translations are returned. Falls back to English, then to the canonical locale. Other locales are filtered out in the database and never transferred.',
+      'Selects which translations are returned. Falls back to English, then to the canonical locale.',
   })
   @ApiHeader({
     name: 'x-tenant-id',

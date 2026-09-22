@@ -7,19 +7,7 @@ type TranslationRow = {
   [key: string]: unknown;
 };
 
-/**
- * Any key whose name ENDS in `translations`, not only the key named exactly
- * that.
- *
- * This was an exact match, and `TAXONOMY_NAME_TRANSLATIONS` therefore went
- * through unfiltered — verified against a live document on 2026-09-21, where
- * `GET /service/:id` with `accept-language: en` returned `yue`, `vi`, `es` and
- * `ar` rows under that one key while every `TRANSLATIONS` array beside it was
- * correctly reduced to one English row.
- *
- * `/organization/:id` carries the same key through `app_organization_full`'s
- * embedded services, so it had the same leak.
- */
+// Suffix, not exact: `TAXONOMY_NAME_TRANSLATIONS` went unfiltered before.
 const TRANSLATIONS_KEY_SUFFIX = 'translations';
 
 const isTranslationRowArray = (value: unknown): value is TranslationRow[] =>

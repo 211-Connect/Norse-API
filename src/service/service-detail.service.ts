@@ -16,14 +16,6 @@ export class ServiceDetailService {
     private readonly serviceModel: Model<Service>,
   ) {}
 
-  /**
-   * One service document, narrowed to the requested locale in the database.
-   *
-   * Two filters, and the order is the point. The aggregation drops the locales
-   * nobody asked for before the driver transfers anything; the JavaScript
-   * transform then makes the final requested -> English -> canonical selection
-   * from what survives. See `service-detail.transform.ts` for why the split.
-   */
   async findById(
     id: string,
     options: { headers: HeadersDto },
@@ -32,11 +24,8 @@ export class ServiceDetailService {
     const locale = options.headers['accept-language'];
 
     const pipeline: PipelineStage[] = [
-      // Tenant-scoped, ALWAYS. `serviceId` is unique per writer and not across
-      // them, so an unscoped match can return another tenant's document for a
-      // shared id. There is no no-tenant fallback here, deliberately: the
-      // organization endpoint has one and it will answer from any tenant when
-      // the scoped lookup misses, which is a cross-tenant read.
+      // No unscoped fallback: `serviceId` is unique per Resource Writer, not
+      // across them. See ISS-1778 for what that fallback did elsewhere.
       { $match: { tenant_id: tenantId, serviceId: id } },
       { $limit: 1 },
       narrowTranslationsStage(locale),

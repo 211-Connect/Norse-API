@@ -3,21 +3,13 @@ import { HydratedDocument } from 'mongoose';
 
 export type ServiceDocument = HydratedDocument<Service>;
 
-/**
- * The service-rooted HSDS document (Mongo `services`).
- *
- * Written by `dagster-data-orchestration`'s `configurable-readers` from the
- * `APP_SERVICE_FULL` dbt model — one document per service carrying its parent
- * Organization and the Locations it is delivered at. Distinct from the
- * service-at-LOCATION grained `resources` collection, which carries no service
- * id at all.
- *
- * Deeply-nested HSDS sub-documents are stored as Mixed, matching
- * `organization.schema.ts`: only the fields the detail endpoint addresses are
- * typed precisely. The nested shapes are `OBJECT_CONSTRUCT(obj.*)` over dbt
- * views, so their key sets are not declared anywhere and may gain a column
- * upstream; typing them would invent a contract the producer never agreed to.
- */
+// One document per service, carrying its parent Organization and Locations.
+// Distinct from `resources`, which is service-at-LOCATION grain and carries no
+// service id.
+//
+// Nested sub-documents are Mixed, as in `organization.schema.ts`: their key
+// sets come from `OBJECT_CONSTRUCT(obj.*)` over dbt views and are declared
+// nowhere.
 @Schema({ collection: 'services' })
 export class Service {
   @Prop()
