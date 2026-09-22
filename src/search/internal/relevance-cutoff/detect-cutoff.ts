@@ -171,7 +171,7 @@ export function detectScoreGapCutoff(
     return declineToCut('no_elbow');
   }
 
-  let keep = Math.max(bestKeep, minKeep);
+  let keep = Math.max(bestKeep, floorIndex(minKeep, scores.length, groups));
 
   // Never split a group of equally-scored results. The floor (and, for
   // relative_to_max, the fraction) can land mid-tie, which drops one document
@@ -238,7 +238,10 @@ export function detectRelativeToMaxCutoff(
     return declineToCut('no_elbow');
   }
 
-  let effectiveKeep = Math.max(keep, minKeep);
+  let effectiveKeep = Math.max(
+    keep,
+    floorIndex(minKeep, scores.length, groups),
+  );
 
   // The threshold itself cannot split a tie — equal scores are all above or all
   // below it — but the minKeep clamp can land mid-group, which is the same

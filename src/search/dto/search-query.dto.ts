@@ -253,7 +253,9 @@ export class SearchResourcesQueryDto {
       'full matched set, byte-identical to previous behaviour. `score_gap` ' +
       'keeps results above the first significant cliff in the relevance score, ' +
       'and returns everything when no such cliff exists. `relative_to_max` ' +
-      'keeps results scoring at least half the top score, and always cuts. ' +
+      '(recommended) keeps results scoring at least a fifth of the top score, ' +
+      'and also returns everything when the scores are too flat for that to ' +
+      'remove anything meaningful. ' +
       'Hybrid search only (`query_type=hybrid`); ignored for other query ' +
       'types. When a cutoff applies, `hits.total` reports the kept count and ' +
       'the original is preserved in `relevance_cutoff.matched_before_cutoff`.',

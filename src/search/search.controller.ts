@@ -69,8 +69,10 @@ const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
   'the response document unchanged. `score_gap` keeps the results above the ' +
   'first significant cliff in relevance score and **returns everything when no ' +
   'such cliff exists** — a uniformly mediocre result set is reported as such ' +
-  'rather than cut arbitrarily. `relative_to_max` keeps results scoring at ' +
-  'least half the top score and always cuts. The cut is computed on semantic ' +
+  'rather than cut arbitrarily. `relative_to_max` (recommended) keeps results ' +
+  'scoring at least a fifth of the top score, and likewise returns everything ' +
+  'when the distribution is too flat for that to remove anything meaningful. ' +
+  'The cut is computed on semantic ' +
   'and lexical relevance only: proximity still filters and ranks, but never ' +
   'decides what is irrelevant, since how far someone will travel is their own ' +
   'choice and not a property of the resource. When a cutoff applies, ' +

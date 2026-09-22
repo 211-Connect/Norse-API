@@ -41,11 +41,21 @@ what a published API returns to a consumer who never asked.
 | --- | --- |
 | `off` (default) | No cut. Response unchanged. |
 | `score_gap` | Keep results above the first significant cliff ("elbow") in relevance score. **Can decline to cut.** |
-| `relative_to_max` | Keep results scoring ≥ 50% of the top score. Always cuts. |
+| `relative_to_max` | **Recommended.** Keep results scoring ≥ 20% of the top score. **Can decline to cut.** |
 
-The difference that matters: `score_gap` can decline. When every result is
-uniformly mediocre there is no elbow, and returning everything is the honest
-answer. `relative_to_max` has no way to express "nothing here is good enough" —
+Both can decline, and an earlier version of this document said only `score_gap`
+could. That was measured wrong. A fraction-of-max rule cannot express "nothing
+here is good enough" *at a strict fraction* — but at 0.2 a flat distribution
+leaves every result above the threshold, nothing is removed, and it reports
+`no_elbow`. Real noise is flat: `purple monkey dishwasher` on Santa Cruz bottoms
+out at 0.34 of its top score across all 300 candidates, so it declines, while
+`score_gap` finds a discontinuity in that noise and cuts it to 14 unrelated
+services.
+
+`relative_to_max` is the strategy to use. Measured across two tenants, it
+returns the complete unscoped top-20 on 19 of 20 query/tenant pairs where
+`score_gap` discarded 15 of the top 20 on 7 of 10. The superseded text follows
+for context on why the original default was chosen —
 by construction its top result is always 1.0. Both ship so they can be compared
 on identical queries, as agreed at standup 2026-09-17.
 

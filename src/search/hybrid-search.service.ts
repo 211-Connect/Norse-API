@@ -320,13 +320,13 @@ export class HybridSearchService {
         cacheKey,
         () =>
           this.probeRelevanceCutoff({
-          index,
-          queryStr,
-          queryVector,
-          predicted: predictedTaxonomies,
-          filters: baseFilters,
-          pinnedMode,
-          strategy,
+            index,
+            queryStr,
+            queryVector,
+            predicted: predictedTaxonomies,
+            filters: baseFilters,
+            pinnedMode,
+            strategy,
           }),
         CUTOFF_PROBE_TTL_MS,
       );
@@ -746,6 +746,128 @@ export class HybridSearchService {
    * `pinned_resources_mode`, so a tenant's curated resources rank high in the
    * probe and survive the cut.
    */
+  private async probeRelevanceCutoff(args: {
+    index: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    pinnedMode: PinnedResourcesMode;
+    strategy: Exclude<RelevanceCutoffStrategy, 'off'>;
+  }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
+    const { index, queryStr, queryVector, predicted, filters, pinnedMode } =
+      args;
+
+    const should = [
+      ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
+      ...this.buildTaxonomyBoostClauses(predicted),
+      ...(pinnedMode === 'ignore'
+        ? []
+        : [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
+            } as QueryDslQueryContainer,
+          ]),
+    ];
+
+    // coords omitted on purpose — see the doc comment above.
+    const scoreFunctions = this.buildScoreFunctions(queryVector, undefined, 0);
+
+    const innerBool: QueryDslQueryContainer = {
+      bool: { minimum_should_match: 0, filter: filters, should },
+    };
+
+    const probeQuery: QueryDslQueryContainer =
+      scoreFunctions.length > 0
+        ? {
+            function_score: {
+              query: innerBool,
+              functions: scoreFunctions,
+              score_mode: 'sum',
+              boost_mode: 'sum',
+            },
+          }
+        : innerBool;
+
+    if (args.strategy === 'relative_to_max') {
+      return this.probeRelativeToMax(index, probeQuery);
+    }
+
+    // `service_id` only — the grouping key for the distinct-service floor. One
+    // service with N locations is N adjacent documents, and a floor counted in
+    // documents can be filled entirely by one provider's branches.
+    const probe = await this.elasticsearchService.search<{
+      service_id?: string;
+    }>({
+      index,
+      from: 0,
+      size: CUTOFF_CANDIDATE_CEILING,
+      track_total_hits: true,
+      _source: ['service_id'],
+      sort: ['_score'],
+      query: probeQuery,
+    });
+
+    const candidates = probe.hits.hits ?? [];
+    const scores = candidates.map((hit) => hit._score ?? 0);
+    const groups = candidates.map((hit) =>
+      String(hit._source?.service_id ?? hit._id),
+    );
+    const matched =
+      typeof probe.hits.total === 'number'
+        ? probe.hits.total
+        : (probe.hits.total?.value ?? 0);
+
+    const decision =
+      args.strategy === 'score_gap'
+        ? detectScoreGapCutoff(scores, DEFAULT_SCORE_GAP_OPTIONS, groups)
+        : detectRelativeToMaxCutoff(
+            scores,
+            DEFAULT_RELATIVE_TO_MAX_OPTIONS,
+            groups,
+          );
+
+    const truncated = matched > candidates.length;
+
+    if (decision.keep === null) {
+      return {
+        keptIds: null,
+        cutoff: {
+          strategy: args.strategy,
+          applied: false,
+          // "Could not see far enough to decide" is not the same answer as
+          // "looked, and there was nothing to cut".
+          reason: truncated ? 'candidate_ceiling' : decision.reason,
+          kept: matched,
+          matched_before_cutoff: matched,
+          cutoff_score: null,
+          candidates_examined: candidates.length,
+        },
+      };
+    }
+
+    const keptIds = candidates
+      .slice(0, decision.keep)
+      .map((hit) => hit._id)
+      .filter((id): id is string => typeof id === 'string');
+
+    return {
+      keptIds,
+      cutoff: {
+        strategy: args.strategy,
+        applied: true,
+        reason: null,
+        kept: keptIds.length,
+        matched_before_cutoff: matched,
+        cutoff_score: decision.cutoffScore,
+        candidates_examined: candidates.length,
+      },
+    };
+  }
+
   /**
    * Locates a `relative_to_max` cut without a candidate window.
    *
@@ -883,126 +1005,6 @@ export class HybridSearchService {
         matched_before_cutoff: matched,
         cutoff_score: cutoffScore,
         candidates_examined: survivors,
-      },
-    };
-  }
-
-  private async probeRelevanceCutoff(args: {
-    index: string;
-    queryStr: string;
-    queryVector: number[] | undefined;
-    predicted: PredictedTaxonomy[];
-    filters: QueryDslQueryContainer[];
-    pinnedMode: PinnedResourcesMode;
-    strategy: Exclude<RelevanceCutoffStrategy, 'off'>;
-  }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
-    const { index, queryStr, queryVector, predicted, filters, pinnedMode } =
-      args;
-
-    const should = [
-      ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
-      ...this.buildTaxonomyBoostClauses(predicted),
-      ...(pinnedMode === 'ignore'
-        ? []
-        : [
-            {
-              constant_score: {
-                filter: { term: { pinned: true } },
-                boost: PINNED_SCORE_BOOST,
-              },
-            } as QueryDslQueryContainer,
-          ]),
-    ];
-
-    // coords omitted on purpose — see the doc comment above.
-    const scoreFunctions = this.buildScoreFunctions(queryVector, undefined, 0);
-
-    const innerBool: QueryDslQueryContainer = {
-      bool: { minimum_should_match: 0, filter: filters, should },
-    };
-
-    const probeQuery: QueryDslQueryContainer =
-      scoreFunctions.length > 0
-        ? {
-            function_score: {
-              query: innerBool,
-              functions: scoreFunctions,
-              score_mode: 'sum',
-              boost_mode: 'sum',
-            },
-          }
-        : innerBool;
-
-    if (args.strategy === 'relative_to_max') {
-      return this.probeRelativeToMax(index, probeQuery);
-    }
-
-    const probe = await this.elasticsearchService.search<SearchSource>({
-      index,
-      from: 0,
-      size: CUTOFF_CANDIDATE_CEILING,
-      track_total_hits: true,
-      _source: false,
-      sort: ['_score'],
-      query:
-        scoreFunctions.length > 0
-          ? {
-              function_score: {
-                query: innerBool,
-                functions: scoreFunctions,
-                score_mode: 'sum',
-                boost_mode: 'sum',
-              },
-            }
-          : innerBool,
-    });
-
-    const candidates = probe.hits.hits ?? [];
-    const scores = candidates.map((hit) => hit._score ?? 0);
-    const matched =
-      typeof probe.hits.total === 'number'
-        ? probe.hits.total
-        : (probe.hits.total?.value ?? 0);
-
-    const decision =
-      args.strategy === 'score_gap'
-        ? detectScoreGapCutoff(scores, DEFAULT_SCORE_GAP_OPTIONS)
-        : detectRelativeToMaxCutoff(scores, DEFAULT_RELATIVE_TO_MAX_OPTIONS);
-
-    const truncated = matched > candidates.length;
-
-    if (decision.keep === null) {
-      return {
-        keptIds: null,
-        cutoff: {
-          strategy: args.strategy,
-          applied: false,
-          // "Could not see far enough to decide" is not the same answer as
-          // "looked, and there was nothing to cut".
-          reason: truncated ? 'candidate_ceiling' : decision.reason,
-          kept: matched,
-          matched_before_cutoff: matched,
-          cutoff_score: null,
-          candidates_examined: candidates.length,
-        },
-      };
-    }
-
-    const keptIds = candidates
-      .slice(0, decision.keep)
-      .map((hit) => hit._id)
-      .filter((id): id is string => typeof id === 'string');
-
-    return {
-      keptIds,
-      cutoff: {
-        strategy: args.strategy,
-        applied: true,
-        reason: null,
-        kept: keptIds.length,
-        matched_before_cutoff: matched,
-        cutoff_score: decision.cutoffScore,
-        candidates_examined: candidates.length,
       },
     };
   }

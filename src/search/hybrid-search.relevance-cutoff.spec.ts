@@ -43,6 +43,7 @@ const probeResponse = (total: number, count: number, cliffAt: number) => ({
     hits: Array.from({ length: count }, (_, i) => ({
       _id: `doc-${i}`,
       _score: i < cliffAt ? 90 - i * 0.5 : 12 - i * 0.05,
+      _source: { service_id: `svc-${i}` },
     })),
   },
 });
@@ -54,6 +55,7 @@ const flatProbeResponse = (total: number, count: number) => ({
     hits: Array.from({ length: count }, (_, i) => ({
       _id: `doc-${i}`,
       _score: Number((42 - i * 0.3).toFixed(4)),
+      _source: { service_id: `svc-${i}` },
     })),
   },
 });
@@ -71,8 +73,9 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         return Promise.resolve(taxonomyResponse);
       }
       requests.push(req);
-      // The probe is the one that asks for no _source.
-      if (req._source === false) {
+      // The probe is the one that asks for a projection (the grouping key only);
+      // the main query asks for the document with excludes.
+      if (Array.isArray(req._source)) {
         return Promise.resolve(probeResult);
       }
       return Promise.resolve(mainResponse);
@@ -128,8 +131,8 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     taxonomy: [] as string[],
   } as any;
 
-  const mainRequest = () => requests.find((r) => r._source !== false);
-  const probeRequest = () => requests.find((r) => r._source === false);
+  const mainRequest = () => requests.find((r) => !Array.isArray(r._source));
+  const probeRequest = () => requests.find((r) => Array.isArray(r._source));
 
   describe('when the caller does not opt in', () => {
     // This is the guard against existing consumers' behaviour shifting. If it
@@ -250,7 +253,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       ).toContain('geo_distance');
     });
 
-    it('fetches no _source and orders strictly by score', async () => {
+    it('fetches only the grouping key and orders strictly by score', async () => {
       await service.searchHybrid({
         headers,
         query: {
@@ -260,7 +263,9 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         },
       });
 
-      expect(probeRequest()._source).toBe(false);
+      // The grouping key and nothing else: the probe never needs the document,
+      // only enough to tell one service's locations apart from another's.
+      expect(probeRequest()._source).toEqual(['service_id']);
       expect(probeRequest().sort).toEqual(['_score']);
       expect(probeRequest().size).toBe(300);
     });
@@ -518,3 +523,95 @@ describe('HybridSearchService — relative_to_max via min_score', () => {
   });
 });
 
+/**
+ * The window probe feeds a grouping key to the detector, so `minKeep` means
+ * distinct services. Without it a floor of five documents was a floor of two
+ * choices whenever one provider's branches filled the slots.
+ */
+describe('HybridSearchService — score_gap service floor', () => {
+  it("extends the floor past one provider's branches", async () => {
+    const requests: any[] = [];
+    // A cliff at rank 1, so the floor decides everything. The first six
+    // documents are two services; the seventh is the third distinct one.
+    const services = [
+      'a',
+      'a',
+      'a',
+      'b',
+      'b',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+      'h',
+    ];
+    const esSearch = jest.fn((req: any) => {
+      if (req.index === 'hybrid_taxonomies')
+        return Promise.resolve(taxonomyResponse);
+      requests.push(req);
+      if (Array.isArray(req._source)) {
+        return Promise.resolve({
+          hits: {
+            total: { value: 1234, relation: 'eq' },
+            hits: services.map((svc, i) => ({
+              _id: `doc-${i}`,
+              _score: i === 0 ? 900 : 20 - i * 0.01,
+              _source: { service_id: svc },
+            })),
+          },
+        });
+      }
+      return Promise.resolve(mainResponse);
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        HybridSearchService,
+        {
+          provide: ElasticsearchService,
+          useValue: { search: esSearch, count: jest.fn() },
+        },
+        { provide: ConfigService, useValue: { get: jest.fn(() => 'x') } },
+        {
+          provide: TenantConfigService,
+          useValue: {
+            getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: RequestCacheService,
+          useValue: { getOrSet: jest.fn((_k: any, f: any) => f()) },
+        },
+      ],
+    }).compile();
+    const service = module.get<HybridSearchService>(HybridSearchService);
+    jest.spyOn(service, 'embedQuery').mockResolvedValue([0.1, 0.2]);
+
+    const res: any = await service.searchHybrid({
+      headers,
+      query: {
+        query: 'food shelf',
+        page: 1,
+        limit: 25,
+        filters: {},
+        distance: 0,
+        taxonomy: [],
+        relevance_cutoff: 'score_gap',
+      } as any,
+    });
+
+    // Five distinct services first appear at index 8, so nine documents are
+    // kept. Stop passing `groups` and this drops to five — three services.
+    expect(res.relevance_cutoff.kept).toBe(9);
+    const ids = requests
+      .find((r) => !Array.isArray(r._source))
+      .query.function_score.query.bool.filter.find((f: any) => f.ids)
+      .ids.values;
+    expect(new Set(ids.map((_: string, i: number) => services[i])).size).toBe(
+      5,
+    );
+  });
+});

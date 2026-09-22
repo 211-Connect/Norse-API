@@ -266,9 +266,9 @@ describe('detectRelativeToMaxCutoff', () => {
 
     // score_gap finds the rank-14 cliff and presents 14 arbitrary services as a
     // curated short list. Noise has discontinuities; they are not relevance.
-    expect(detectScoreGapCutoff(REAL_NOISE, DEFAULT_SCORE_GAP_OPTIONS).keep).toBe(
-      14,
-    );
+    expect(
+      detectScoreGapCutoff(REAL_NOISE, DEFAULT_SCORE_GAP_OPTIONS).keep,
+    ).toBe(14);
   });
 
   it('declines when nothing falls below the threshold', () => {

@@ -217,12 +217,7 @@ export class RelevanceCutoffDto {
 
   @ApiProperty({
     nullable: true,
-    enum: [
-      'no_elbow',
-      'below_min_keep',
-      'candidate_ceiling',
-      'cut_too_large',
-    ],
+    enum: ['no_elbow', 'below_min_keep', 'candidate_ceiling', 'cut_too_large'],
     description:
       'Why nothing was cut, when `applied` is false. `no_elbow`: the scores ' +
       'are uniform, so there is no relevance cliff to cut at. ' +
