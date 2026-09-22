@@ -35,31 +35,48 @@ keep v1 behaviour until they opt in themselves. Norse-API does not read a tenant
 config to turn this on, deliberately — a flag flipped in a CMS should not change
 what a published API returns to a consumer who never asked.
 
-## Strategies
+## Values
 
 | Value | Behaviour |
 | --- | --- |
-| `off` (default) | No cut. Response unchanged. |
-| `score_gap` | Keep results above the first significant cliff ("elbow") in relevance score. **Can decline to cut.** |
-| `relative_to_max` | **Recommended.** Keep results scoring ≥ 20% of the top score. **Can decline to cut.** |
+| `off` (default) | No cut. Response unchanged, no probe issued, no `relevance_cutoff` key. |
+| `on` | Keep results scoring ≥ 20% of the top score. **Can decline to cut.** |
 
-Both can decline, and an earlier version of this document said only `score_gap`
-could. That was measured wrong. A fraction-of-max rule cannot express "nothing
-here is good enough" *at a strict fraction* — but at 0.2 a flat distribution
-leaves every result above the threshold, nothing is removed, and it reports
-`no_elbow`. Real noise is flat: `purple monkey dishwasher` on Santa Cruz bottoms
-out at 0.34 of its top score across all 300 candidates, so it declines, while
-`score_gap` finds a discontinuity in that noise and cuts it to 14 unrelated
-services.
+There is no strategy menu. The parameter shipped as one — `score_gap` (first
+significant cliff in the score sequence) alongside the fraction-of-max rule —
+and measurement settled the question, so the choice is no longer the caller's to
+make.
 
-`relative_to_max` is the strategy to use. Measured across two tenants, it
-returns the complete unscoped top-20 on 19 of 20 query/tenant pairs where
-`score_gap` discarded 15 of the top 20 on 7 of 10. The superseded text follows
-for context on why the original default was chosen —
-by construction its top result is always 1.0. Both ship so they can be compared
-on identical queries, as agreed at standup 2026-09-17.
+### Why `score_gap` was removed
 
-`relative_to_max` needs a true result-set maximum. `hits.max_score` on the
+`score_gap` read the largest arithmetic gap in a score sequence as a relevance
+boundary. Real distributions do not contain one. On Santa Cruz `homeless
+shelter` the largest gap sits between two relevant shelters; on the same tenant
+an Animal Shelter outranks four legitimate ones. A gap in the scores is a gap in
+the scores.
+
+Measured on two tenants, 2026-09-19:
+
+| | cut landed inside the unscoped top 20 |
+| --- | --- |
+| `score_gap` | 30 of 37 cuts |
+| fraction-of-max (0.2) | 4 of 30 |
+
+| | returned the unscoped top 20 complete |
+| --- | --- |
+| `score_gap` | discarded 15 of the top 20 on 7 of 10 query/tenant pairs |
+| fraction-of-max (0.2) | 19 of 20 pairs complete |
+
+The unscoped top 20 is a labeller-free stand-in for relevance: a cut that
+removes results the ranking itself put at the top is removing results no one
+asked it to touch. `score_gap` did have one property the fraction rule lacks —
+it cuts noise hard, taking `purple monkey dishwasher` down to 14 services — but
+it bought that by cutting real queries just as hard.
+
+The threshold is lax on purpose. At 0.5 the cut landed inside the top 20 on 30
+of 37 queries; 0.2 is where it stops removing things the ranking called good.
+
+A fraction-of-max rule needs a true result-set maximum. `hits.max_score` on the
 response is the **page** maximum
 ([ISS-1751](https://linear.app/connect211/issue/ISS-1751)) and is the wrong
 denominator; this implementation computes its own from the probe rather than
@@ -67,12 +84,26 @@ reading that field.
 
 ## How the cut is computed
 
-Two Elasticsearch queries, only when a cutoff is requested:
+Only when a cutoff is requested. The probe never walks a fixed window — it asks
+Elasticsearch two questions that cost nothing, and only then pays for documents:
 
-1. **Probe** — same filters, ranked by relevance, `size: 300`, `_source: false`,
-   `sort: ['_score']`. Returns a score sequence and the pre-cutoff total.
-2. **Main query** — today's query plus an `ids` filter restricting it to the
+1. **Head** — same filters, ranked by relevance, `size: 1`, `_source: false`.
+   Returns the top score and the pre-cutoff total.
+2. **Count** — `size: 0` with `min_score: 0.2 × top`. Returns how many results
+   clear the threshold, in about a millisecond over a 27,000-result population,
+   with no documents collected. If that count is ≥ 90% of the matched set the
+   distribution is flat and nothing is cut (`no_elbow`); if it exceeds 1,000 the
+   cut is located but too large to enumerate (`cut_too_large`).
+3. **Survivors** — the same `min_score`, `_source: ['service_id']`, sized to the
+   count from step 2. The expensive call is proportional to the cut, not to a
+   fixed window.
+4. **Main query** — today's query plus an `ids` filter restricting it to the
    surviving documents.
+
+Because the cut point comes from a count rather than a window, it is not limited
+to the first N results: on Nebraska 211 the threshold survives at 388 documents
+of 27,452 matched, which a 300-candidate window could never have seen. There is
+no `candidate_ceiling` outcome any more, because there is no ceiling to hit.
 
 The probe is cached (Redis, via `RequestCacheService`) on everything that
 affects ranking — including the tenant's `pinned_resources_mode`, which changes
@@ -126,51 +157,24 @@ it also stays coherent under `sort=distance|name|organization`, where the
 returned hits are not in score order and a cut walking the response list would be
 measuring nothing.
 
-### The detector
+### The distinct-service floor
 
-`src/search/internal/relevance-cutoff/detect-cutoff.ts`. Pure, no Elasticsearch,
-unit-tested in `detect-cutoff.spec.ts`.
+The index is service-at-location grain: one service offered at N locations is N
+documents that score near-identically and rank adjacently. A floor counted in
+documents is therefore a floor that one provider's branches can fill on their
+own — five documents was two actual choices on Santa Cruz `substance abuse
+treatment`.
 
-For `score_gap`, a split is accepted only if it clears two guards:
+So the floor (`CUTOFF_MIN_KEEP_SERVICES`, 5) is counted in distinct
+`service_id`s. When a threshold cut lands on fewer than five services, the probe
+fetches a small window (200) and extends the kept set down the ranking until the
+fifth distinct service appears. That is the only case in which a window is
+fetched at all.
 
-| Guard | Default | Purpose |
-| --- | --- | --- |
-| `significance` | 3 | The gap must exceed 3× the median adjacent gap. |
-| `minRelativeDrop` | 0.15 | ...and must drop ≥15% of the score it falls from. |
-| `minKeep` | 5 | Floor: the accepted split is raised to this, never lowered. |
-
-`significance` is what buys the decline-to-cut property: on a flat distribution
-every gap is close to the median gap, the ratio sits near 1, and the detector
-returns "no elbow". `minRelativeDrop` rejects the opposite failure — a
-numerically large gap that is trivial relative to the scores around it.
-
-**The detector takes the first qualifying cliff, not the largest one.** Largest
-gap is the obvious reading of "biggest discontinuity" and it does not survive
-contact with the data. Measured against Santa Cruz County (tenant `303ba4e4…`)
-on 2026-09-18, one `food` query's cut moved as the search radius grew by a mile
-at a time:
-
-| radius | 6 mi | 7 mi | 8 mi | 9 mi | 15 mi | 20 mi |
-| --- | --- | --- | --- | --- | --- | --- |
-| kept (largest gap) | 10 | 19 | **6** | **40** | 10 | 13 |
-| kept (first cliff) | 6 | 6 | 6 | 7 | 9 | 13 |
-
-Whichever single gap happens to be widest wins under argmax, so admitting a
-handful of documents into the leading gap collapses it and the choice jumps to
-an unrelated split deep in the tail. Under the first-cliff rule every radius cuts
-at the same semantic boundary — the last real food pantry — and the count grows
-only as more food pantries come into range.
-
-`minKeep` is a floor applied **after** the cliff is chosen. Searching only from
-the floor downward was the original implementation and it was wrong in a way
-worth recording: when the true elbow sat above the floor, the detector skipped it
-and settled on a far weaker split below, silently and with `applied: true`. On
-the live `food` query that produced a 43-result cut that kept a bilingual
-education program and dropped a meal delivery service.
-
-Each guard, and the clamp, has a test that fails when only that behaviour is
-reverted; they were verified by breaking each one and watching the right test go
-red.
+This is *not* deduplication — the duplicate locations are still returned and
+still ranked. It only stops the cut from mistaking N locations of one service
+for a healthy result set. Deduplication of the leading positions is tracked
+separately.
 
 ## Response
 
@@ -181,13 +185,12 @@ When (and only when) a cutoff was requested:
   "search": { "hits": { "total": { "value": 18 }, "hits": [ /* ... */ ] } },
   "facets": [],
   "relevance_cutoff": {
-    "strategy": "score_gap",
     "applied": true,
     "reason": null,
     "kept": 18,
     "matched_before_cutoff": 1234,
     "cutoff_score": 81.5,
-    "candidates_examined": 300
+    "candidates_examined": 18
   }
 }
 ```
@@ -205,8 +208,8 @@ When (and only when) a cutoff was requested:
   probe deliberately omits the distance decay (0–25 points) and the priority
   boost, so `cutoff_score` is systematically lower than the `_score` the same
   document carries in `hits`. Comparing the two is meaningless and the field
-  name invites exactly that, so: compare `cutoff_score` across responses using
-  the same strategy, never against a `_score` in the same response.
+  name invites exactly that, so: compare `cutoff_score` across responses, never
+  against a `_score` in the same response.
 
 ### `hits.total` changes meaning, and that is the point
 
@@ -228,13 +231,20 @@ presence rather than to assume `total` is stable.
 
 | `reason` | Meaning |
 | --- | --- |
-| `no_elbow` | The detector looked and there was no cliff. Returning everything is correct. |
-| `below_min_keep` | The matched set is already small. |
-| `candidate_ceiling` | Any cliff lies beyond the 300 examined candidates. **This is "could not determine", not "nothing to cut".** |
+| `no_elbow` | Nothing scored meaningfully below the threshold. The distribution is flat, and returning everything is correct. |
+| `below_min_keep` | The matched set is already smaller than the floor. |
+| `cut_too_large` | The cut point was located exactly, but keeps more than 1,000 results — more than we will enumerate into an `ids` filter. **This is "found it, too big", not "could not find it".** |
 
-`candidate_ceiling` is reported separately on purpose. A checker that returns
-green when it could not look is worse than none, because callers stop looking
-themselves.
+`cut_too_large` is reported separately on purpose, and is the only surviving
+member of that family: the old `candidate_ceiling` meant "could not see far
+enough to decide", which the `min_score` probe can no longer be in. A checker
+that returns green when it could not look is worse than none, because callers
+stop looking themselves.
+
+`cut_too_large` is not always a miss. On Nebraska 211 at rank ~1,250, half the
+documents come from organizations with a food word in the name and the 988
+Suicide & Crisis Lifeline outranks soup kitchens — the outcome there is the
+threshold correctly refusing to hand back a cut that big.
 
 ## Pagination
 
@@ -264,11 +274,11 @@ tenant that pinned a resource does not expect a relevance heuristic to drop it.
   both false-positive (dropped a good result) and false-negative (kept junk)
   rates. The geo coupling above predicts the two diverge; a threshold validated
   on urban queries alone tells you nothing about rural ones.
-- **The 300-candidate ceiling** means a cliff at position 900 is never found.
-  Reported honestly as `candidate_ceiling` rather than approximated.
-- **Two Elasticsearch round trips** on the first page of a cutoff search. The
-  probe carries no `_source` and no aggregations, and is cached for subsequent
-  pages.
+- **Cuts above 1,000 results are not applied**, only reported. The limit is the
+  `ids` filter, not the detection.
+- **Two to four Elasticsearch round trips** on the first page of a cutoff
+  search — two of them collect no documents at all, and the whole decision is
+  cached for subsequent pages.
 
 ## Contract
 
