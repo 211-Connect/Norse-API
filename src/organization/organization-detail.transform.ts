@@ -7,7 +7,8 @@ type TranslationRow = {
   [key: string]: unknown;
 };
 
-const TRANSLATIONS_KEY = 'translations';
+// Suffix, not exact: `TAXONOMY_NAME_TRANSLATIONS` went unfiltered before.
+const TRANSLATIONS_KEY_SUFFIX = 'translations';
 
 const isTranslationRowArray = (value: unknown): value is TranslationRow[] =>
   Array.isArray(value) &&
@@ -48,7 +49,7 @@ export const filterTranslationsByLocale = <T>(node: T, locale: string): T => {
     for (const key of Object.keys(record)) {
       const value = record[key];
       if (
-        key.toLowerCase() === TRANSLATIONS_KEY &&
+        key.toLowerCase().endsWith(TRANSLATIONS_KEY_SUFFIX) &&
         isTranslationRowArray(value)
       ) {
         record[key] = selectLocaleRows(value, locale);
