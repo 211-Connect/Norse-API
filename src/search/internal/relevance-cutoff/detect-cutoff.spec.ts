@@ -241,19 +241,33 @@ describe('detectRelativeToMaxCutoff', () => {
     expect(decision.cutoffScore).toBe(50);
   });
 
-  it('cuts a uniformly mediocre set anyway — it cannot express "no elbow"', () => {
-    // The same flat distribution score-gap correctly leaves alone. Documented
-    // as the behavioural difference between the two strategies, not a bug.
-    const scores = decay(42, 120, 0.3);
+  // Real probe scores for "purple monkey dishwasher" on Santa Cruz, measured
+  // 2026-09-22. A query that matches nothing lexically still scores on vector
+  // similarity alone, and the result is flat: across all 300 candidates the
+  // lowest score is 0.34 of the highest. The synthetic `decay()` fixtures in
+  // this file fall away far faster than real noise does, which is why they made
+  // relative_to_max look like it always cuts.
+  const REAL_NOISE = [
+    89.8, 84.4, 80.0, 76.9, 73.8, 72.2, 70.3, 69.9, 68.8, 68.7, 68.6, 67.5,
+    67.5, 67.3, 40.9, 40.6, 40.3, 39.6, 39.5, 39.2, 38.6, 38.5, 38.5, 37.7,
+    37.7, 37.7, 37.4, 37.4, 37.2, 37.1,
+  ];
 
-    const decision = detectRelativeToMaxCutoff(
-      scores,
+  it('declines on a real nonsense query, where score_gap cuts', () => {
+    // The property this strategy was said not to have. At the shipped fraction
+    // nothing falls below 0.2 x max, `keep` runs past the end, and it declines.
+    // Raise DEFAULT_RELATIVE_FRACTION back to 0.5 and this goes red: the drop at
+    // rank 15 crosses 0.5 x 89.8 and it cuts to 14 unrelated results.
+    const lax = detectRelativeToMaxCutoff(
+      REAL_NOISE,
       DEFAULT_RELATIVE_TO_MAX_OPTIONS,
     );
+    expect(lax.keep).toBeNull();
 
-    expect(decision.keep).not.toBeNull();
-    expect(detectScoreGapCutoff(scores, DEFAULT_SCORE_GAP_OPTIONS).keep).toBe(
-      null,
+    // score_gap finds the rank-14 cliff and presents 14 arbitrary services as a
+    // curated short list. Noise has discontinuities; they are not relevance.
+    expect(detectScoreGapCutoff(REAL_NOISE, DEFAULT_SCORE_GAP_OPTIONS).keep).toBe(
+      14,
     );
   });
 

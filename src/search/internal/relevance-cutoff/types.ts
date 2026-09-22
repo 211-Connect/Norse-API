@@ -28,7 +28,14 @@ export type RelevanceCutoffSkipReason =
   /** Fewer candidates than `minKeep`, so there is nothing to trim. */
   | 'below_min_keep'
   /** The elbow, if any, lies beyond the probed candidate ceiling. */
-  | 'candidate_ceiling';
+  | 'candidate_ceiling'
+  /**
+   * A cut exists and was located exactly, but keeps more results than we are
+   * willing to enumerate into an `ids` filter. Distinct from
+   * `candidate_ceiling`: there the cut point was never found, here it was
+   * found and is simply too large to be worth making.
+   */
+  | 'cut_too_large';
 
 export interface RelevanceCutoffDecision {
   /** Number of leading results to keep, or null when declining to cut. */

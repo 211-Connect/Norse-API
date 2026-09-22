@@ -331,3 +331,190 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
   });
 });
+
+/**
+ * `relative_to_max` does not walk a candidate window. It asks Elasticsearch for
+ * the top score, then for a count above a fraction of it, and only fetches
+ * documents once the cut is known to be worth making. These tests drive that
+ * path directly, because the window-probe mock above cannot: the calls have
+ * different shapes and there are three of them.
+ */
+describe('HybridSearchService — relative_to_max via min_score', () => {
+  let service: HybridSearchService;
+  let requests: any[];
+  let plan: {
+    matched: number;
+    topScore: number;
+    survivors: number;
+    keptServices?: string[];
+    widenedServices?: string[];
+  };
+
+  const build = async () => {
+    requests = [];
+    const esSearch = jest.fn((req: any) => {
+      if (req.index === 'hybrid_taxonomies') {
+        return Promise.resolve(taxonomyResponse);
+      }
+      requests.push(req);
+
+      // 1. head — top score and the matched total
+      if (req.size === 1 && req._source === false) {
+        return Promise.resolve({
+          hits: {
+            total: { value: plan.matched, relation: 'eq' },
+            hits: [{ _id: 'top', _score: plan.topScore }],
+          },
+        });
+      }
+      // 2. count above the threshold, no documents collected
+      if (req.size === 0 && req.min_score != null) {
+        return Promise.resolve({
+          hits: { total: { value: plan.survivors, relation: 'eq' }, hits: [] },
+        });
+      }
+      // 3. the survivors themselves
+      if (req.min_score != null && Array.isArray(req._source)) {
+        const svc = plan.keptServices ?? [];
+        return Promise.resolve({
+          hits: {
+            hits: Array.from({ length: plan.survivors }, (_, i) => ({
+              _id: `keep-${i}`,
+              _score: plan.topScore * 0.2,
+              _source: { service_id: svc[i] ?? `svc-${i}` },
+            })),
+          },
+        });
+      }
+      // 4. the widening window, used only to satisfy the service floor
+      if (req.size === 200 && Array.isArray(req._source)) {
+        const svc = plan.widenedServices ?? [];
+        return Promise.resolve({
+          hits: {
+            hits: Array.from({ length: 200 }, (_, i) => ({
+              _id: `wide-${i}`,
+              _score: 100 - i,
+              _source: { service_id: svc[i] ?? `svc-${Math.floor(i / 3)}` },
+            })),
+          },
+        });
+      }
+      return Promise.resolve(mainResponse);
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        HybridSearchService,
+        {
+          provide: ElasticsearchService,
+          useValue: { search: esSearch, count: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn(() => 'x') },
+        },
+        {
+          provide: TenantConfigService,
+          useValue: {
+            getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
+          },
+        },
+        {
+          provide: RequestCacheService,
+          useValue: { getOrSet: jest.fn((_k: any, f: any) => f()) },
+        },
+      ],
+    }).compile();
+    service = module.get(HybridSearchService);
+    jest.spyOn(service, 'embedQuery').mockResolvedValue([0.1, 0.2]);
+  };
+
+  const run = async () => {
+    await build();
+    const res: any = await service.searchHybrid({
+      headers,
+      query: {
+        query: 'food shelf',
+        page: 1,
+        limit: 25,
+        filters: {},
+        distance: 0,
+        taxonomy: [],
+        relevance_cutoff: 'relative_to_max',
+      } as any,
+    });
+    return res.relevance_cutoff;
+  };
+
+  it('finds a cut that lies far beyond the old 300-result window', async () => {
+    // The case the candidate ceiling could not see. Measured on Nebraska 211:
+    // 27,452 matched, 388 above 0.2 x max — 88 past where the window ended.
+    plan = { matched: 27452, topScore: 100, survivors: 388 };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(true);
+    expect(cutoff.kept).toBe(388);
+    expect(cutoff.matched_before_cutoff).toBe(27452);
+    // and it never asked for a fixed window
+    expect(requests.some((r) => r.size === 300)).toBe(false);
+  });
+
+  it('declines when almost nothing falls below the threshold', async () => {
+    // Found by running it: asdfqwerzxcv on Santa Cruz kept 567 of 568 and
+    // reported applied:true with a cutoff_score. Removing one document is not a
+    // cut. Drop MIN_CUT_REDUCTION and this goes red.
+    plan = { matched: 568, topScore: 100, survivors: 567 };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(false);
+    expect(cutoff.reason).toBe('no_elbow');
+    expect(cutoff.kept).toBe(568);
+  });
+
+  it('declines on a flat distribution, where every result clears the threshold', async () => {
+    plan = { matched: 900, topScore: 100, survivors: 900 };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(false);
+    expect(cutoff.reason).toBe('no_elbow');
+  });
+
+  it('reports cut_too_large rather than trimming a cut it will not enumerate', async () => {
+    // Distinct from candidate_ceiling: the cut point was located exactly, it is
+    // simply larger than we will put in an ids filter.
+    plan = { matched: 27452, topScore: 100, survivors: 1500 };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(false);
+    expect(cutoff.reason).toBe('cut_too_large');
+    expect(cutoff.candidates_examined).toBe(1500);
+  });
+
+  it('widens the cut until the floor holds in services, not documents', async () => {
+    // Eight survivors, but they are two providers' branches. A floor of five
+    // documents would have been a floor of two choices.
+    plan = {
+      matched: 900,
+      topScore: 100,
+      survivors: 8,
+      keptServices: Array.from({ length: 8 }, (_, i) => `dup-${i % 2}`),
+    };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(true);
+    // widened window groups every three documents into one service, so the
+    // fifth distinct service first appears at index 12 -> 13 documents kept
+    expect(cutoff.kept).toBe(13);
+    expect(requests.some((r) => r.size === 200)).toBe(true);
+  });
+
+  it('declines when the matched set is already smaller than the floor', async () => {
+    plan = { matched: 4, topScore: 100, survivors: 2 };
+    const cutoff = await run();
+
+    expect(cutoff.applied).toBe(false);
+    expect(cutoff.reason).toBe('below_min_keep');
+  });
+});
+

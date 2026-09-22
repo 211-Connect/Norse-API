@@ -91,6 +91,36 @@ const TAXONOMY_NUM_CANDIDATES = 500;
 const CUTOFF_CANDIDATE_CEILING = 300;
 
 /**
+ * Largest cut we will enumerate into an `ids` filter.
+ *
+ * `relative_to_max` locates its cut point with a `min_score` count rather than
+ * by walking a candidate window, so it is not limited to the first 300 results
+ * and routinely finds cuts beyond them — on Nebraska 211 the 0.2 threshold
+ * survives at 388 documents of 27,452, which the window could never see. What
+ * still has to be bounded is the id list handed to the main query, so beyond
+ * this the response says `cut_too_large` rather than trimming partially.
+ */
+const MAX_ENUMERATED_CUT = 1000;
+
+/**
+ * Window used only to satisfy the distinct-service floor when a threshold cut
+ * lands on too few services. Small, and fetched only in that case.
+ */
+const SERVICE_FLOOR_WINDOW = 200;
+
+/**
+ * A cut has to actually reduce the set to be worth calling a cut.
+ *
+ * Found by running it: `asdfqwerzxcv` on Santa Cruz kept 567 of 568 — one
+ * document above the threshold, reported as `applied: true` with a
+ * `cutoff_score`, which reads as a considered decision and is nothing of the
+ * sort. Anything retaining more than this fraction of the matched set is a flat
+ * distribution with a rounding error on the end, and the honest answer is that
+ * there was no elbow.
+ */
+const MIN_CUT_REDUCTION = 0.9;
+
+/**
  * How long a probe decision is reused, in ms.
  *
  * The cache exists for one narrow reason — pages 2..n of a single search must
@@ -716,6 +746,147 @@ export class HybridSearchService {
    * `pinned_resources_mode`, so a tenant's curated resources rank high in the
    * probe and survive the cut.
    */
+  /**
+   * Locates a `relative_to_max` cut without a candidate window.
+   *
+   * The rule only needs two numbers — the top score, and how many results sit
+   * above a fraction of it — and Elasticsearch answers both without collecting
+   * documents. `size: 0` with `min_score` returns a count in about a
+   * millisecond over a 27,000-result population, where fetching a 300-document
+   * window costs ~250ms and still cannot see a cut that lands at 388.
+   *
+   * Documents are fetched only once the cut is known to be worth making, so the
+   * expensive call is proportional to the cut rather than to a fixed window.
+   *
+   * `min_score` is inclusive, so a group of results tied exactly at the
+   * threshold is kept or dropped whole. The tie-walk the sequence-based
+   * detectors need has no equivalent here because the boundary cannot split.
+   */
+  private async probeRelativeToMax(
+    index: string,
+    query: QueryDslQueryContainer,
+  ): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
+    // A private projection, not the response shape: the probe asks only for the
+    // grouping key, so it must not borrow the public `SearchSource` DTO.
+    type ProbeSource = { service_id?: string };
+    const strategy = 'relative_to_max' as const;
+    const { fraction, minKeep } = DEFAULT_RELATIVE_TO_MAX_OPTIONS;
+
+    const head = await this.elasticsearchService.search<SearchSource>({
+      index,
+      size: 1,
+      track_total_hits: true,
+      _source: false,
+      sort: ['_score'],
+      query,
+    });
+
+    const matched =
+      typeof head.hits.total === 'number'
+        ? head.hits.total
+        : (head.hits.total?.value ?? 0);
+    const topScore = head.hits.hits[0]?._score ?? 0;
+
+    const decline = (
+      reason: RelevanceCutoffDto['reason'],
+      examined: number,
+    ): { keptIds: null; cutoff: RelevanceCutoffDto } => ({
+      keptIds: null,
+      cutoff: {
+        strategy,
+        applied: false,
+        reason,
+        kept: matched,
+        matched_before_cutoff: matched,
+        cutoff_score: null,
+        candidates_examined: examined,
+      },
+    });
+
+    if (matched <= minKeep) return decline('below_min_keep', matched);
+    if (topScore <= 0) return decline('no_elbow', 1);
+
+    const threshold = fraction * topScore;
+    const counted = await this.elasticsearchService.search<SearchSource>({
+      index,
+      size: 0,
+      track_total_hits: true,
+      min_score: threshold,
+      query,
+    });
+    const survivors =
+      typeof counted.hits.total === 'number'
+        ? counted.hits.total
+        : (counted.hits.total?.value ?? 0);
+
+    // Nothing meaningful scored below the threshold: the distribution is flat
+    // and the honest answer is to return everything. This is the case a strict
+    // fraction cannot express, and a lax one can.
+    if (survivors >= matched * MIN_CUT_REDUCTION)
+      return decline('no_elbow', matched);
+    if (survivors > MAX_ENUMERATED_CUT)
+      return decline('cut_too_large', survivors);
+
+    const kept = await this.elasticsearchService.search<ProbeSource>({
+      index,
+      size: Math.max(survivors, 1),
+      track_total_hits: false,
+      min_score: threshold,
+      _source: ['service_id'],
+      sort: ['_score'],
+      query,
+    });
+
+    let hits = kept.hits.hits;
+    let cutoffScore = hits[hits.length - 1]?._score ?? null;
+    const services = new Set(
+      hits.map((h) => String(h._source?.service_id ?? h._id)),
+    );
+
+    // The floor is denominated in services, not documents: one provider's
+    // branches must not fill every slot while other providers are cut.
+    if (services.size < minKeep) {
+      const widened = await this.elasticsearchService.search<ProbeSource>({
+        index,
+        size: SERVICE_FLOOR_WINDOW,
+        track_total_hits: false,
+        _source: ['service_id'],
+        sort: ['_score'],
+        query,
+      });
+      const seen = new Set<string>();
+      const take: typeof widened.hits.hits = [];
+      for (const hit of widened.hits.hits) {
+        seen.add(String(hit._source?.service_id ?? hit._id));
+        take.push(hit);
+        if (seen.size >= minKeep) break;
+      }
+      if (take.length >= matched) return decline('below_min_keep', matched);
+      hits = take;
+      cutoffScore = take[take.length - 1]?._score ?? null;
+    }
+
+    const keptIds = hits
+      .map((h) => h._id)
+      .filter((id): id is string => typeof id === 'string');
+
+    if (keptIds.length === 0 || keptIds.length >= matched)
+      return decline('no_elbow', matched);
+
+    return {
+      keptIds,
+      cutoff: {
+        strategy,
+        applied: true,
+        reason: null,
+        kept: keptIds.length,
+        matched_before_cutoff: matched,
+        cutoff_score: cutoffScore,
+        candidates_examined: survivors,
+      },
+    };
+  }
+
   private async probeRelevanceCutoff(args: {
     index: string;
     queryStr: string;
@@ -749,6 +920,22 @@ export class HybridSearchService {
     const innerBool: QueryDslQueryContainer = {
       bool: { minimum_should_match: 0, filter: filters, should },
     };
+
+    const probeQuery: QueryDslQueryContainer =
+      scoreFunctions.length > 0
+        ? {
+            function_score: {
+              query: innerBool,
+              functions: scoreFunctions,
+              score_mode: 'sum',
+              boost_mode: 'sum',
+            },
+          }
+        : innerBool;
+
+    if (args.strategy === 'relative_to_max') {
+      return this.probeRelativeToMax(index, probeQuery);
+    }
 
     const probe = await this.elasticsearchService.search<SearchSource>({
       index,

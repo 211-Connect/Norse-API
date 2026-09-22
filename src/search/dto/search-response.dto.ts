@@ -217,16 +217,28 @@ export class RelevanceCutoffDto {
 
   @ApiProperty({
     nullable: true,
-    enum: ['no_elbow', 'below_min_keep', 'candidate_ceiling'],
+    enum: [
+      'no_elbow',
+      'below_min_keep',
+      'candidate_ceiling',
+      'cut_too_large',
+    ],
     description:
       'Why nothing was cut, when `applied` is false. `no_elbow`: the scores ' +
       'are uniform, so there is no relevance cliff to cut at. ' +
       '`below_min_keep`: the matched set is already small. ' +
       '`candidate_ceiling`: any cliff lies beyond the probed candidate ' +
       'window, so no cut was attempted — this is "could not determine", not ' +
-      '"nothing to cut".',
+      '"nothing to cut". `cut_too_large`: the cut point was located exactly, ' +
+      'but keeps more results than are worth enumerating, so nothing was ' +
+      'trimmed.',
   })
-  reason?: 'no_elbow' | 'below_min_keep' | 'candidate_ceiling' | null;
+  reason?:
+    | 'no_elbow'
+    | 'below_min_keep'
+    | 'candidate_ceiling'
+    | 'cut_too_large'
+    | null;
 
   @ApiProperty({
     description:

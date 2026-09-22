@@ -16,8 +16,52 @@ export const DEFAULT_MIN_KEEP = 5;
 export const DEFAULT_SIGNIFICANCE = 3;
 /** ...and must also drop at least this fraction of the preceding score. */
 export const DEFAULT_MIN_RELATIVE_DROP = 0.15;
-/** Keep results scoring at least this fraction of the top score. */
-export const DEFAULT_RELATIVE_FRACTION = 0.5;
+/**
+ * Keep results scoring at least this fraction of the top score.
+ *
+ * 0.2, not 0.5. Measured across 42 real score sequences (2 tenants x 21 queries,
+ * 300 deep, probe-shaped): at 0.5 the rule cut inside the unscoped top 20 on 24
+ * of 40 queries — the same over-cutting `score_gap` shows. At 0.2 it cuts on 30
+ * of 42 with a median keep of 38 and lands inside the top 20 only 4 times.
+ *
+ * The cost of laxness is queries where nothing is trimmed. That is the intended
+ * trade: the complaint this feature answers is "1,200 results is unreviewable",
+ * not "give me the best five", and those need very different precision.
+ */
+export const DEFAULT_RELATIVE_FRACTION = 0.2;
+
+/**
+ * How many leading entries it takes to see `minKeep` distinct groups.
+ *
+ * The index is service-at-location, so one service with N locations is N
+ * documents scoring near-identically and ranking adjacently. A floor of 5
+ * *documents* was a floor of 2 *services* on `substance abuse treatment`
+ * (Santa Cruz, 2026-09-22) — the slots were filled by one provider's branches
+ * while four other treatment centres were cut. The floor is meant to guarantee
+ * a reviewable number of choices, and a choice is a service.
+ *
+ * With no groups supplied this is exactly `minKeep`, so callers that do not
+ * know about grouping behave as before.
+ */
+const floorIndex = (
+  minKeep: number,
+  length: number,
+  groups?: readonly string[],
+): number => {
+  if (!groups || groups.length === 0) {
+    return minKeep;
+  }
+
+  const seen = new Set<string>();
+  for (let i = 0; i < length && i < groups.length; i += 1) {
+    seen.add(groups[i]);
+    if (seen.size >= minKeep) {
+      return i + 1;
+    }
+  }
+
+  return length;
+};
 
 export const DEFAULT_SCORE_GAP_OPTIONS: ScoreGapOptions = {
   minKeep: DEFAULT_MIN_KEEP,
@@ -67,6 +111,7 @@ const median = (values: number[]): number => {
 export function detectScoreGapCutoff(
   scores: number[],
   options: ScoreGapOptions,
+  groups?: readonly string[],
 ): RelevanceCutoffDecision {
   const { minKeep, significance, minRelativeDrop } = options;
 
@@ -149,10 +194,16 @@ export function detectScoreGapCutoff(
  * Keeps results scoring at least `fraction` of the top score.
  *
  * Shipped alongside score-gap so the two can be compared on identical queries,
- * as agreed at standup 2026-09-17. Note what it cannot do: a query where every
- * result is poor still yields a 1.0 at the top, so this always cuts at the same
- * fraction whatever the distribution's shape. It is a comparability tool, not a
- * quality signal (ISS-1375).
+ * as agreed at standup 2026-09-17.
+ *
+ * An earlier version of this comment claimed the rule "always cuts" and has no
+ * way to express "nothing here is good enough", because its top result is 1.0 by
+ * construction. That holds at a strict fraction and is false at a lax one. On a
+ * flat distribution — a nonsense query scoring on vector noise alone — every
+ * result sits above 0.2 x max, `keep` runs past the end of the sequence, and the
+ * rule declines. Measured: `asdfqwerzxcv` and `purple monkey dishwasher` both
+ * decline at 0.2 and both are cut to 7-14 results by `score_gap`, which was
+ * chosen over this rule precisely for the property it turns out not to have.
  *
  * The caller must supply a genuine result-set maximum. `hits.max_score` on the
  * response is the *page* maximum (ISS-1751) and is the wrong denominator here.
@@ -160,6 +211,7 @@ export function detectScoreGapCutoff(
 export function detectRelativeToMaxCutoff(
   scores: number[],
   options: RelativeToMaxOptions,
+  groups?: readonly string[],
 ): RelevanceCutoffDecision {
   const { fraction, minKeep } = options;
 
