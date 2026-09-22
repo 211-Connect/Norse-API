@@ -10,7 +10,13 @@ describe('OrganizationDetailService', () => {
   let service: OrganizationDetailService;
 
   const aggregateExec = jest.fn();
-  const mockAggregate = jest.fn(() => ({ exec: aggregateExec }));
+  let seenPipelines: { $match?: Record<string, unknown> }[][] = [];
+  const mockAggregate = jest.fn(
+    (pipeline: { $match?: Record<string, unknown> }[]) => {
+      seenPipelines.push(pipeline);
+      return { exec: aggregateExec };
+    },
+  );
   const mockOrganizationModel = { aggregate: mockAggregate };
   const mockRedirectModel = { findById: jest.fn(() => ({ exec: jest.fn() })) };
 
@@ -77,6 +83,7 @@ describe('OrganizationDetailService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    seenPipelines = [];
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrganizationDetailService,
@@ -216,11 +223,10 @@ describe('OrganizationDetailService', () => {
     ]);
   });
 
-  it('walks the 3-tier fallback chain then throws NotFound', async () => {
+  it('walks the tenant-scoped lookups then throws NotFound', async () => {
     aggregateExec
       .mockResolvedValueOnce([]) // primary: tenant + organizationId
-      .mockResolvedValueOnce([]) // fallback: tenant + _id
-      .mockResolvedValueOnce([]); // fallback_no_tenant: organizationId
+      .mockResolvedValueOnce([]); // fallback: tenant + _id
     mockRedirectModel.findById.mockReturnValueOnce({
       exec: jest.fn().mockResolvedValueOnce(null),
     });
@@ -228,7 +234,38 @@ describe('OrganizationDetailService', () => {
     await expect(service.findById(orgId, { headers })).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(mockAggregate).toHaveBeenCalledTimes(3);
+    expect(mockAggregate).toHaveBeenCalledTimes(2);
+  });
+
+  // Asserts the query, not the outcome: a 404 on a miss would also pass while
+  // the unscoped query was still being sent (ISS-1778).
+  it('never issues a query without a tenant filter', async () => {
+    aggregateExec.mockResolvedValue([]);
+    mockRedirectModel.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(service.findById(orgId, { headers })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    expect(seenPipelines.length).toBeGreaterThan(0);
+    for (const pipeline of seenPipelines) {
+      const match = pipeline.find((stage) => '$match' in stage)?.$match ?? {};
+      expect(Object.keys(match)).toContain('tenant_id');
+      expect(match.tenant_id).toBe(tenantId);
+    }
+  });
+
+  it("refuses an organization the caller's tenant does not own", async () => {
+    aggregateExec.mockResolvedValue([]);
+    mockRedirectModel.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(
+      service.findById('an-id-owned-by-another-tenant', { headers }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('throws NotFound with a redirect hint when a redirect exists', async () => {
