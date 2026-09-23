@@ -36,7 +36,9 @@ const keepRows = (translations: unknown, locale: string) => ({
     as: 't',
     cond: {
       $or: [
-        { $eq: ['$$t.LOCALE', locale] },
+        // `$literal`: the locale is caller-controlled, and a bare `$`/`$$`
+        // string is a field path or variable to Mongo.
+        { $eq: ['$$t.LOCALE', { $literal: locale }] },
         { $eq: ['$$t.LOCALE', 'en'] },
         { $eq: ['$$t.IS_CANONICAL', true] },
       ],

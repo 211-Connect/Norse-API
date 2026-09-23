@@ -60,9 +60,34 @@ describe('ServiceDetailService', () => {
     const addFields = stageNamed('$addFields');
     expect(addFields).toBeDefined();
     const json = JSON.stringify(addFields);
-    expect(json).toContain('"$$t.LOCALE","es"');
+    expect(json).toContain('"$$t.LOCALE",{"$literal":"es"}');
     expect(json).toContain('"$$t.LOCALE","en"');
     expect(json).toContain('IS_CANONICAL');
+  });
+
+  // `accept-language` is caller-controlled. Unwrapped, Mongo reads `$x` as a
+  // field path and `$$x` as a variable — an unknown one fails the whole
+  // pipeline, a 500 on any id.
+  it('passes the locale to Mongo as a literal, never as an expression', async () => {
+    aggregateExec.mockResolvedValue([{ serviceId, tenant_id: tenantId }]);
+    const locale = '$$x';
+    await service.findById(serviceId, { headers: headers(locale) });
+
+    const unwrapped: string[] = [];
+    const walk = (node: unknown, parentKey?: string) => {
+      if (node === locale && parentKey !== '$literal') {
+        unwrapped.push(String(parentKey));
+      } else if (Array.isArray(node)) {
+        node.forEach((item) => walk(item, parentKey));
+      } else if (node !== null && typeof node === 'object') {
+        for (const [key, value] of Object.entries(node)) walk(value, key);
+      }
+    };
+    const addFields = stageNamed('$addFields');
+    walk(addFields);
+
+    expect(JSON.stringify(addFields)).toContain(`{"$literal":"${locale}"}`);
+    expect(unwrapped).toEqual([]);
   });
 
   it('narrows the heavy arrays and the nested location arrays', async () => {
