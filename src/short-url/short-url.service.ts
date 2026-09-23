@@ -9,7 +9,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ShortenedUrl } from 'src/common/schemas/shortened-url.schema';
 import { nanoid } from 'nanoid';
-import { ShortUrlResponse, FindShortUrlOptions } from './short-url.dto';
+import { ShortUrlResponseDto } from './dto/short-url-response.dto';
+import { FindShortUrlOptions } from './types/find-short-url-options.types';
 
 @Injectable()
 export class ShortUrlService {
@@ -180,7 +181,7 @@ export class ShortUrlService {
    * @returns The original URL
    * @throws NotFoundException if the short URL doesn't exist
    */
-  async findById(id: string): Promise<ShortUrlResponse> {
+  async findById(id: string): Promise<ShortUrlResponseDto> {
     this.validateInput(id, 'Short ID');
 
     try {
@@ -216,7 +217,7 @@ export class ShortUrlService {
    * @returns The shortened URL
    * @throws BadRequestException if the URL is invalid
    */
-  async getOrCreateShortUrl(originalUrl: string): Promise<ShortUrlResponse> {
+  async getOrCreateShortUrl(originalUrl: string): Promise<ShortUrlResponseDto> {
     this.validateInput(originalUrl, 'URL');
     this.validateUrl(originalUrl);
 

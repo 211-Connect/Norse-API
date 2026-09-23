@@ -45,6 +45,7 @@ import { PrintableDirectoryController } from './printable-directory/printable-di
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
+import { ServiceModule } from './service/service.module';
 import { OrganizationController } from './organization/organization.controller';
 
 @Module({
@@ -86,6 +87,7 @@ import { OrganizationController } from './organization/organization.controller';
     TaxonomyScorecardModule,
     PrintableDirectoryModule,
     OrganizationModule,
+    ServiceModule,
   ],
   controllers: [AppController],
   providers: [

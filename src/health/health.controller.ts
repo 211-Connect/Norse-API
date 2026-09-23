@@ -1,11 +1,11 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { HealthService } from './health.service';
 import { ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SkipMetrics } from 'src/metrics/skip-metrics.decorator';
 import { Public } from 'src/auth/gateway/gateway-principal';
 
 @ApiTags('Health')
-@Controller('health')
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 

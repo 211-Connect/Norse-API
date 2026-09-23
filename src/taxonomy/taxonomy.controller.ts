@@ -35,130 +35,6 @@ export class TaxonomyController {
 
   @Get()
   @Version('1')
-  @ApiOperation({
-    summary: 'Search taxonomies',
-    description:
-      'Search for taxonomies by name or code using prefix matching. Supports pagination.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Successfully retrieved taxonomy search results',
-    schema: {
-      type: 'object',
-      properties: {
-        hits: {
-          type: 'object',
-          properties: {
-            total: {
-              oneOf: [
-                { type: 'number' },
-                {
-                  type: 'object',
-                  properties: {
-                    value: { type: 'number' },
-                    relation: { type: 'string', example: 'eq' },
-                  },
-                },
-              ],
-            },
-            max_score: { type: 'number', nullable: true },
-            hits: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  _index: { type: 'string' },
-                  _id: { type: 'string' },
-                  _score: { type: 'number' },
-                  _source: {
-                    type: 'object',
-                    properties: {
-                      name: { type: 'string', description: 'Taxonomy name' },
-                      description: {
-                        type: 'string',
-                        description: 'Taxonomy description',
-                      },
-                      id: { type: 'string', description: 'Taxonomy ID' },
-                      taxonomy: {
-                        type: 'string',
-                        description: 'Taxonomy classification',
-                      },
-                      tenant_id: {
-                        type: 'string',
-                        description: 'Tenant identifier',
-                      },
-                      code: { type: 'string', description: 'Taxonomy code' },
-                      type: { type: 'string', description: 'Taxonomy type' },
-                      created_at: {
-                        type: 'string',
-                        format: 'date-time',
-                        description: 'Creation timestamp',
-                      },
-                      updated_at: {
-                        type: 'string',
-                        format: 'date-time',
-                        description: 'Last update timestamp',
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        took: { type: 'number', description: 'Query execution time in ms' },
-        timed_out: { type: 'boolean', description: 'Whether query timed out' },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad request - query or code parameter is required',
-  })
-  @ApiQuery({
-    name: 'query',
-    required: false,
-    description:
-      'Search query for taxonomy name or code. Uses prefix matching.',
-    example: 'NAICS',
-  })
-  @ApiQuery({
-    name: 'code',
-    required: false,
-    deprecated: true,
-    description: 'Deprecated: Use query parameter instead',
-  })
-  @ApiQuery({
-    name: 'page',
-    required: false,
-    schema: { default: 1 },
-    description: 'Page number for pagination (10 results per page)',
-    example: 1,
-  })
-  @ApiHeader({
-    name: 'x-tenant-id',
-    required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
-  })
-  @ApiHeader({
-    name: 'accept-language',
-    required: false,
-    schema: { default: 'en' },
-    description: 'Language preference for results',
-  })
-  getTaxonomies(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
-    query: TaxonomySearchQueryDto,
-  ): Promise<TaxonomySearchResponse> {
-    return this.taxonomyService.searchTaxonomies({
-      headers,
-      query,
-    });
-  }
-
-  @Get()
-  @Version('2')
   @ApiResponse({
     status: 200,
     description:
@@ -196,15 +72,15 @@ export class TaxonomyController {
   @ApiHeader({
     name: 'x-api-version',
     schema: {
-      default: '2',
+      default: '1',
     },
   })
-  getTaxonomiesV2(
+  getTaxonomies(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: TaxonomySearchQueryDto,
   ): Promise<TaxonomyResponseDto> {
-    return this.taxonomyService.searchTaxonomiesV2({
+    return this.taxonomyService.searchTaxonomies({
       headers,
       query,
     });

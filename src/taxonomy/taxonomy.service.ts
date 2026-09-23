@@ -27,7 +27,7 @@ export class TaxonomyService {
     this.logger = new Logger(TaxonomyService.name);
   }
 
-  async searchTaxonomies(options: {
+  private async searchTaxonomiesInElastic(options: {
     headers: HeadersDto;
     query: TaxonomySearchQueryDto;
   }): Promise<TaxonomySearchResponse> {
@@ -104,11 +104,11 @@ export class TaxonomyService {
     }
   }
 
-  async searchTaxonomiesV2(options: {
+  async searchTaxonomies(options: {
     headers: HeadersDto;
     query: TaxonomySearchQueryDto;
   }): Promise<TaxonomyResponseDto> {
-    const data = await this.searchTaxonomies(options);
+    const data = await this.searchTaxonomiesInElastic(options);
 
     const response: TaxonomyResponseDto = {
       total:
