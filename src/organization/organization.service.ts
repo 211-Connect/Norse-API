@@ -13,19 +13,34 @@ export class OrganizationService {
 
   constructor(private readonly elasticsearchService: ElasticsearchService) {}
 
+  /**
+   * @param options.onlyWithResources Exclude organizations Dagster counted at 0
+   *   service-at-locations in the tenant's directory. Internal only, not on the
+   *   DTO: `/suggestion` sets it so the search bar never offers an organization
+   *   whose selection finds nothing, while `GET /organization` (ServiceNet
+   *   provider-feedback, INTEG-011) keeps returning every organization.
+   */
   async search(options: {
     headers: HeadersDto;
     query: SearchOrganizationQueryDto;
+    onlyWithResources?: boolean;
   }): Promise<OrganizationSearchResponseDto> {
     const text = options.query.query?.trim() ?? '';
     const { page, limit } = options.query;
     const tenantFilter = {
       term: { tenant_id: options.headers['x-tenant-id'] },
     };
+    // `must_not term 0`, not `range gt 0`: fails open, so a document indexed
+    // before Dagster wrote the count (or while the field is still unmapped)
+    // stays suggestible instead of vanishing until its tenant republishes.
+    const resourceFilter = options.onlyWithResources
+      ? { must_not: [{ term: { service_at_location_count: 0 } }] }
+      : {};
     const textQuery = text
       ? {
           bool: {
             filter: [tenantFilter],
+            ...resourceFilter,
             should: [
               { match_phrase: { name: { query: text, boost: 12 } } },
               { match_phrase: { alternate_name: { query: text, boost: 8 } } },
@@ -48,7 +63,7 @@ export class OrganizationService {
             minimum_should_match: 1,
           },
         }
-      : { bool: { filter: [tenantFilter] } };
+      : { bool: { filter: [tenantFilter], ...resourceFilter } };
     const request: SearchRequest = {
       index: ORGANIZATIONS_INDEX,
       from: (page - 1) * limit,
