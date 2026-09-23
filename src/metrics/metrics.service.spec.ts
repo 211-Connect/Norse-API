@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Counter, Pushgateway, register } from 'prom-client';
@@ -198,6 +199,140 @@ describe('MetricsService', () => {
     ).toBeUndefined();
     // Scrape surface still exists.
     expect(typeof disabled.getContentType()).toBe('string');
+  });
+
+  it('does not register push metrics or warn when gateway URL is empty even if push is enabled', () => {
+    register.clear();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'PUSH_METRICS_ENABLED'
+          ? true
+          : key === 'METRICS_ENDPOINT_ENABLED'
+            ? true
+            : undefined,
+      ),
+    };
+    new MetricsService(config as never);
+
+    expect(
+      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
+    ).toBeUndefined();
+    expect(
+      register.getSingleMetric('norse_metrics_push_failures_total'),
+    ).toBeUndefined();
+    expect(
+      warnSpy.mock.calls.some(([msg]) =>
+        String(msg).includes('both push and scrape'),
+      ),
+    ).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('does not register push metrics or warn when push is disabled with a gateway URL', () => {
+    register.clear();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'PUSH_GATEWAY_URL'
+          ? 'http://gw:9091'
+          : key === 'PUSH_METRICS_ENABLED'
+            ? false
+            : key === 'METRICS_ENDPOINT_ENABLED'
+              ? true
+              : undefined,
+      ),
+    };
+    new MetricsService(config as never);
+
+    expect(
+      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
+    ).toBeUndefined();
+    expect(
+      register.getSingleMetric('norse_metrics_push_failures_total'),
+    ).toBeUndefined();
+    expect(
+      warnSpy.mock.calls.some(([msg]) =>
+        String(msg).includes('both push and scrape'),
+      ),
+    ).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('registers push metrics and warns about double counting when push and scrape are both active', async () => {
+    register.clear();
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
+    const pushSpy = jest
+      .spyOn(Pushgateway.prototype, 'push')
+      .mockResolvedValue({});
+    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'PUSH_GATEWAY_URL'
+          ? 'http://gw:9091'
+          : key === 'PUSH_METRICS_ENABLED'
+            ? true
+            : key === 'METRICS_ENDPOINT_ENABLED'
+              ? true
+              : key === 'PUSH_INTERVAL_MS'
+                ? 15000
+                : undefined,
+      ),
+    };
+    const svc = new MetricsService(config as never);
+
+    expect(
+      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
+    ).toBeDefined();
+    expect(
+      register.getSingleMetric('norse_metrics_push_failures_total'),
+    ).toBeDefined();
+    expect(
+      warnSpy.mock.calls.some(([msg]) =>
+        String(msg).includes('both push and scrape'),
+      ),
+    ).toBe(true);
+
+    await svc.onModuleDestroy();
+    expect(pushSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('registers push metrics without warning when scrape endpoint is disabled', () => {
+    register.clear();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
+    jest.spyOn(Pushgateway.prototype, 'push').mockResolvedValue({});
+    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'PUSH_GATEWAY_URL'
+          ? 'http://gw:9091'
+          : key === 'PUSH_METRICS_ENABLED'
+            ? true
+            : key === 'METRICS_ENDPOINT_ENABLED'
+              ? false
+              : key === 'PUSH_INTERVAL_MS'
+                ? 15000
+                : undefined,
+      ),
+    };
+    const svc = new MetricsService(config as never);
+
+    expect(
+      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
+    ).toBeDefined();
+    expect(
+      register.getSingleMetric('norse_metrics_push_failures_total'),
+    ).toBeDefined();
+    expect(
+      warnSpy.mock.calls.some(([msg]) =>
+        String(msg).includes('both push and scrape'),
+      ),
+    ).toBe(false);
+
+    void svc.onModuleDestroy();
+    warnSpy.mockRestore();
   });
 
   it('onModuleDestroy resolves when no pushgateway is configured', async () => {

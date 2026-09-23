@@ -40,13 +40,17 @@ export class MetricsService implements OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {
     collectDefaultMetrics({ register });
 
+    const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
     const pushEnabled = this.configService.get<boolean>(
       'PUSH_METRICS_ENABLED',
       true,
     );
+    // Push is only active when a gateway URL is configured AND pushes are
+    // enabled; a scrape-only pod must not register push status metrics.
+    const pushActive = Boolean(gatewayUrl) && pushEnabled;
     // Push self-observability metrics only make sense when push is on; in
     // scrape mode exporting them as 0 would fire push-staleness alerts.
-    if (pushEnabled) {
+    if (pushActive) {
       this.pushFailuresCounter = this.createOrGetCounter({
         name: 'norse_metrics_push_failures_total',
         help: 'Total failed Pushgateway pushes from this instance',
@@ -104,8 +108,7 @@ export class MetricsService implements OnModuleDestroy {
 
     this.pushIntervalMs = this.configService.get<number>('PUSH_INTERVAL_MS');
 
-    const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
-    if (gatewayUrl && pushEnabled) {
+    if (pushActive) {
       const username = this.configService.get<string>('PUSH_GATEWAY_USERNAME');
       const password = this.configService.get<string>('PUSH_GATEWAY_PASSWORD');
       const options = {
@@ -126,7 +129,7 @@ export class MetricsService implements OnModuleDestroy {
       'METRICS_ENDPOINT_ENABLED',
       false,
     );
-    if (pushEnabled && scrapeEnabled) {
+    if (pushActive && scrapeEnabled) {
       this.logger.warn(
         'both push and scrape enabled; series will be double-counted if Prometheus scrapes both',
       );

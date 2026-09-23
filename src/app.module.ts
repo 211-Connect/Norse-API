@@ -46,6 +46,7 @@ import { PrintableDirectoryPublicController } from './printable-directory/printa
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ServiceModule } from './service/service.module';
+import { ServiceController } from './service/service.controller';
 import { OrganizationController } from './organization/organization.controller';
 
 @Module({
@@ -110,19 +111,20 @@ export class AppModule implements NestModule {
       method: RequestMethod.ALL,
     });
 
-    consumer
-      .apply(TenantMiddleware)
-      .forRoutes(
-        TaxonomyController,
-        SearchController,
-        ResourceController,
-        FavoriteController,
-        FavoriteListController,
-        SuggestionController,
-        PrintableDirectoryController,
-        PrintableDirectoryPublicController,
-        OrganizationController,
-      );
+    consumer.apply(TenantMiddleware).forRoutes(
+      TaxonomyController,
+      SearchController,
+      ResourceController,
+      FavoriteController,
+      FavoriteListController,
+      SuggestionController,
+      PrintableDirectoryController,
+      PrintableDirectoryPublicController,
+      OrganizationController,
+      // Also enforces ?tenant_id= vs x-tenant-id consistency on a
+      // CDN-cached route (cache keys on URL, ignoring Vary).
+      ServiceController,
+    );
 
     consumer
       .apply(LocaleMiddleware)
