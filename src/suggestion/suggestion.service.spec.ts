@@ -94,6 +94,7 @@ describe('SuggestionService', () => {
       expect(organizationSearch).toHaveBeenCalledWith({
         headers,
         query: { query: 'hous', page: 1, limit: 8 },
+        onlyWithResources: true,
       });
       expect(response).toEqual({
         taxonomies: [{ id: 'tax-1', code: 'BH-1800', name: 'Housing' }],
