@@ -227,4 +227,40 @@ describe('SearchService', () => {
       ).toBe(false);
     });
   });
+
+  // Typo tolerance has to reach the query, not just exist as a helper. With
+  // `operator: AND` and no stemming on resources_*, one transposed letter
+  // returned zero results out of 63,580 — see internal/text-matching.
+  it('pairs every lexical clause with a de-boosted fuzzy fallback', async () => {
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+      query: {
+        // 'text' with a non-empty query resolves to the internal KEYWORD
+        // branch (getQueryType), which is the clause 51 of 59 tenants hit.
+        query: 'hosuing assistance',
+        query_type: 'text',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      } as SearchResourcesQueryDto,
+    });
+
+    const request = elasticsearchService.search.mock.calls[0][0];
+    const clauses: string[] =
+      JSON.stringify(request).match(/"multi_match":\{.*?\}/g) ?? [];
+    const fuzzy = clauses.filter((c) => c.includes('"fuzziness":"AUTO"'));
+    const exact = clauses.filter((c) => !c.includes('"fuzziness":"AUTO"'));
+
+    // One fallback per exact clause — never a replacement, or queries with no
+    // typo get reordered for no reason.
+    expect(exact.length).toBeGreaterThan(0);
+    expect(fuzzy.length).toBe(exact.length);
+    for (const c of fuzzy) {
+      expect(c).toContain('"prefix_length":2');
+      expect(c).toContain('"boost":0.01');
+    }
+  });
 });

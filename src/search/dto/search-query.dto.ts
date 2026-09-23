@@ -15,6 +15,10 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import {
+  RELEVANCE_CUTOFF_VALUES,
+  RelevanceCutoffValue,
+} from '../internal/relevance-cutoff/types';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -240,4 +244,24 @@ export class SearchResourcesQueryDto {
   @IsOptional()
   @IsEnum(['relevance', 'distance', 'name', 'organization'])
   sort: 'relevance' | 'distance' | 'name' | 'organization' = 'relevance';
+
+  @ApiPropertyOptional({
+    enum: RELEVANCE_CUTOFF_VALUES,
+    default: 'off',
+    description:
+      'Opt-in trimming of low-relevance results. `off` (default) returns the ' +
+      'full matched set, byte-identical to previous behaviour. `on` keeps ' +
+      'results scoring at least a fifth of the top score, and returns ' +
+      'everything when the scores are too flat for that to remove anything ' +
+      'meaningful — a uniformly weak result set is reported as such rather ' +
+      'than cut arbitrarily. The cut is computed on semantic and lexical ' +
+      'relevance only: proximity still filters and ranks, but never decides ' +
+      'what is irrelevant. Hybrid search only (`query_type=hybrid`); ignored ' +
+      'for other query types. When a cutoff applies, `hits.total` reports the ' +
+      'kept count and the original is preserved in ' +
+      '`relevance_cutoff.matched_before_cutoff`.',
+  })
+  @IsOptional()
+  @IsEnum(RELEVANCE_CUTOFF_VALUES)
+  relevance_cutoff?: RelevanceCutoffValue = 'off';
 }
