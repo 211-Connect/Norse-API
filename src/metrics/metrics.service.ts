@@ -48,8 +48,6 @@ export class MetricsService implements OnModuleDestroy {
     // Push is only active when a gateway URL is configured AND pushes are
     // enabled; a scrape-only pod must not register push status metrics.
     const pushActive = Boolean(gatewayUrl) && pushEnabled;
-    // Push self-observability metrics only make sense when push is on; in
-    // scrape mode exporting them as 0 would fire push-staleness alerts.
     if (pushActive) {
       this.pushFailuresCounter = this.createOrGetCounter({
         name: 'norse_metrics_push_failures_total',

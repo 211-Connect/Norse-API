@@ -76,7 +76,6 @@ describe('ServiceController tenant middleware (e2e)', () => {
 
   it('GET /service/:id without x-tenant-id -> 400', async () => {
     const res = await request(app.getHttpServer()).get('/service/svc-1');
-    console.log('CASE', JSON.stringify(res.body));
     expect(res.status).toBe(400);
   });
 
@@ -84,7 +83,6 @@ describe('ServiceController tenant middleware (e2e)', () => {
     const res = await request(app.getHttpServer())
       .get('/service/svc-1')
       .set('x-tenant-id', 'not-a-uuid');
-    console.log('CASE', JSON.stringify(res.body));
     expect(res.status).toBe(400);
   });
 

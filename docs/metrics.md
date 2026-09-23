@@ -85,8 +85,8 @@ so the app does not add them itself.
 
 The push self-observability metrics
 (`norse_metrics_push_success_timestamp_seconds`,
-`norse_metrics_push_failures_total`) are **not registered** when a Pushgateway
-URL is set and push is enabled — in a scrape-only pod neither is true, so
+`norse_metrics_push_failures_total`) are registered only when a Pushgateway URL is set and push is enabled.
+In a scrape-only pod neither is true, so
 push-staleness alerts do not fire for every pod. Alert on `up == 0` for the
 scrape target instead. Setting `PROMETHEUS_PUSH_METRICS_ENABLED=false` is still
 recommended, but leaving `PROMETHEUS_PUSHGATEWAY_URL` empty is enough to turn
@@ -154,7 +154,7 @@ DigitalOcean, leave the endpoint disabled (the default).
 
 ### Downstream timeouts
 
-Every instrumented fetch has an explicit timeout so slow downstreams surface as
+The fetch-based calls below has an explicit timeout so slow downstreams surface as
 `outcome="timeout"` rather than hanging:
 
 | Dependency / operation       | Timeout                            |
