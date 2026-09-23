@@ -39,10 +39,11 @@ export class MetricsInterceptor implements NestInterceptor {
         .getClass()
         .name.replace(/Controller$/, '')
         .toLowerCase() || 'unknown';
-    const tenantHeader = request.headers?.['x-tenant-id'];
+    // Use the tenant id validated by TenantMiddleware (request.tenantId).
+    // The raw header is unbounded on controllers without TenantMiddleware.
     const tenantId =
-      typeof tenantHeader === 'string' && tenantHeader
-        ? tenantHeader
+      typeof request.tenantId === 'string' && request.tenantId
+        ? request.tenantId
         : 'unknown';
 
     const start = performance.now();

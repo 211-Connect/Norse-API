@@ -24,8 +24,8 @@ const PUSH_REQUEST_TIMEOUT_MS = 5_000;
 @Injectable()
 export class MetricsService implements OnModuleDestroy {
   private readonly logger = new Logger(MetricsService.name);
-  private readonly pushFailuresCounter: Counter;
-  private readonly lastPushSuccessGauge: Gauge;
+  private readonly pushFailuresCounter: Counter | null;
+  private readonly lastPushSuccessGauge: Gauge | null;
   private readonly httpRequestsCounter: Counter<string>;
   private readonly httpDurationHistogram: Histogram<string>;
   private readonly downstreamRequestsCounter: Counter<string>;
@@ -40,19 +40,30 @@ export class MetricsService implements OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {
     collectDefaultMetrics({ register });
 
-    this.pushFailuresCounter = this.createOrGetCounter({
-      name: 'norse_metrics_push_failures_total',
-      help: 'Total failed Pushgateway pushes from this instance',
-      labelNames: [],
-      registers: [register],
-    });
+    const pushEnabled = this.configService.get<boolean>(
+      'PUSH_METRICS_ENABLED',
+      true,
+    );
+    // Push self-observability metrics only make sense when push is on; in
+    // scrape mode exporting them as 0 would fire push-staleness alerts.
+    if (pushEnabled) {
+      this.pushFailuresCounter = this.createOrGetCounter({
+        name: 'norse_metrics_push_failures_total',
+        help: 'Total failed Pushgateway pushes from this instance',
+        labelNames: [],
+        registers: [register],
+      });
 
-    this.lastPushSuccessGauge = this.createOrGetGauge({
-      name: 'norse_metrics_push_success_timestamp_seconds',
-      help: 'Unix timestamp of the last successful Pushgateway push',
-      labelNames: [],
-      registers: [register],
-    });
+      this.lastPushSuccessGauge = this.createOrGetGauge({
+        name: 'norse_metrics_push_success_timestamp_seconds',
+        help: 'Unix timestamp of the last successful Pushgateway push',
+        labelNames: [],
+        registers: [register],
+      });
+    } else {
+      this.pushFailuresCounter = null;
+      this.lastPushSuccessGauge = null;
+    }
 
     this.httpRequestsCounter = this.createOrGetCounter({
       name: 'norse_http_requests_total',
@@ -94,10 +105,6 @@ export class MetricsService implements OnModuleDestroy {
     this.pushIntervalMs = this.configService.get<number>('PUSH_INTERVAL_MS');
 
     const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
-    const pushEnabled = this.configService.get<boolean>(
-      'PUSH_METRICS_ENABLED',
-      true,
-    );
     if (gatewayUrl && pushEnabled) {
       const username = this.configService.get<string>('PUSH_GATEWAY_USERNAME');
       const password = this.configService.get<string>('PUSH_GATEWAY_PASSWORD');
@@ -114,6 +121,28 @@ export class MetricsService implements OnModuleDestroy {
       this.gateway = null;
       this.logger.warn('Pushgateway push is disabled or unconfigured');
     }
+
+    const scrapeEnabled = this.configService.get<boolean>(
+      'METRICS_ENDPOINT_ENABLED',
+      false,
+    );
+    if (pushEnabled && scrapeEnabled) {
+      this.logger.warn(
+        'both push and scrape enabled; series will be double-counted if Prometheus scrapes both',
+      );
+    }
+  }
+
+  /**
+   * Exposes the Prometheus text exposition of the global register.
+   * Used by MetricsController for GET /metrics (scrape mode).
+   */
+  getMetrics(): Promise<string> {
+    return register.metrics();
+  }
+
+  getContentType(): string {
+    return register.contentType;
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -144,9 +173,9 @@ export class MetricsService implements OnModuleDestroy {
         jobName: PUSH_JOB_NAME,
         groupings: { instance: this.instanceId },
       });
-      this.lastPushSuccessGauge.set(Date.now() / 1000);
+      this.lastPushSuccessGauge?.set(Date.now() / 1000);
     } catch (err) {
-      this.pushFailuresCounter.inc();
+      this.pushFailuresCounter?.inc();
       this.logger.error('Pushgateway push failed', err);
     }
   }

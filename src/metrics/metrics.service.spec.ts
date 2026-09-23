@@ -181,6 +181,25 @@ describe('MetricsService', () => {
     });
   });
 
+  it('does not register push self-observability metrics when push is disabled', () => {
+    register.clear();
+    const disabledConfig = {
+      get: jest.fn((key: string) =>
+        key === 'PUSH_METRICS_ENABLED' ? false : undefined,
+      ),
+    };
+    const disabled = new MetricsService(disabledConfig as never);
+
+    expect(
+      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
+    ).toBeUndefined();
+    expect(
+      register.getSingleMetric('norse_metrics_push_failures_total'),
+    ).toBeUndefined();
+    // Scrape surface still exists.
+    expect(typeof disabled.getContentType()).toBe('string');
+  });
+
   it('onModuleDestroy resolves when no pushgateway is configured', async () => {
     await expect(service.onModuleDestroy()).resolves.toBeUndefined();
   });

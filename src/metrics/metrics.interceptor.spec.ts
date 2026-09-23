@@ -16,7 +16,11 @@ describe('MetricsInterceptor', () => {
       getClass: () => ({ name: 'FakeController' }),
       getHandler: () => ({ name: 'fakeHandler' }),
       switchToHttp: () => ({
-        getRequest: () => ({ method: 'GET', headers }),
+        getRequest: () => ({
+          method: 'GET',
+          headers,
+          tenantId: 'tenant-1',
+        }),
         getResponse: () => ({ statusCode }),
       }),
     }) as unknown as ExecutionContext;
@@ -108,10 +112,17 @@ describe('MetricsInterceptor', () => {
     });
   });
 
-  it('falls back to tenant id unknown when the header is missing', (done) => {
+  it('falls back to tenant id unknown when TenantMiddleware did not set one', (done) => {
+    const request = { method: 'GET', headers: {} };
+    const context = createContext();
+    context.switchToHttp = () =>
+      ({
+        getRequest: () => request,
+        getResponse: () => ({ statusCode: 200 }),
+      }) as never;
     const next: CallHandler = { handle: () => of('value') };
 
-    interceptor.intercept(createContext({}), next).subscribe({
+    interceptor.intercept(context, next).subscribe({
       complete: () => {
         expect(metricsMock.recordHttpRequest).toHaveBeenCalledTimes(1);
         expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
@@ -120,6 +131,63 @@ describe('MetricsInterceptor', () => {
           'fake',
           '200',
           'unknown',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+
+  it('falls back to unknown when only the raw header is present and request.tenantId is not set', (done) => {
+    const request = {
+      method: 'GET',
+      headers: { 'x-tenant-id': 'attacker-controlled-value' },
+    };
+    const context = createContext();
+    context.switchToHttp = () =>
+      ({
+        getRequest: () => request,
+        getResponse: () => ({ statusCode: 200 }),
+      }) as never;
+    const next: CallHandler = { handle: () => of('value') };
+
+    interceptor.intercept(context, next).subscribe({
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '200',
+          'unknown',
+          expect.any(Number),
+        );
+        done();
+      },
+    });
+  });
+
+  it('uses request.tenantId set by TenantMiddleware over the raw header', (done) => {
+    const request = {
+      method: 'GET',
+      headers: { 'x-tenant-id': 'raw-unvalidated' },
+      tenantId: 'validated-uuid',
+    };
+    const context = createContext();
+    context.switchToHttp = () =>
+      ({
+        getRequest: () => request,
+        getResponse: () => ({ statusCode: 200 }),
+      }) as never;
+    const next: CallHandler = { handle: () => of('value') };
+
+    interceptor.intercept(context, next).subscribe({
+      complete: () => {
+        expect(metricsMock.recordHttpRequest).toHaveBeenCalledWith(
+          'GET',
+          'FakeController.fakeHandler',
+          'fake',
+          '200',
+          'validated-uuid',
           expect.any(Number),
         );
         done();
