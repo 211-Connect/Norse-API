@@ -15,6 +15,7 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -106,11 +107,19 @@ export class SearchResourcesQueryDto {
   @IsEnum(SEARCH_QUERY_TYPES)
   query_type: SearchQueryType = 'text';
 
-  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @ApiPropertyOptional({
+    minimum: 1,
+    default: 1,
+    description:
+      'Result offset must stay within Elasticsearch max_result_window: ' +
+      'page * limit may not exceed 10000 (ES can only return the first ' +
+      '10000 hits), e.g. with the default limit of 25 the highest page is 400.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Validate(IsWithinMaxResultWindowConstraint)
   page: number = 1;
 
   @ApiPropertyOptional({
