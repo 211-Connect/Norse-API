@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
   'x-tenant-id': 'tenant-a',
@@ -89,6 +91,10 @@ describe('HybridSearchService', () => {
           useValue: {
             getOrSet: jest.fn((_key, factory) => factory()),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

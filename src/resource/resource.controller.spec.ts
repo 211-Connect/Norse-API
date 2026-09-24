@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ResourceController } from './resource.controller';
 import { ResourceService } from './resource.service';
-import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('ResourceController', () => {
   let controller: ResourceController;
@@ -13,10 +12,6 @@ describe('ResourceController', () => {
     findManyByIds: jest.fn(),
   };
 
-  const metricsServiceMock = {
-    incrementResourceHit: jest.fn(),
-  };
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ResourceController],
@@ -24,10 +19,6 @@ describe('ResourceController', () => {
         {
           provide: ResourceService,
           useValue: resourceServiceMock,
-        },
-        {
-          provide: MetricsService,
-          useValue: metricsServiceMock,
         },
       ],
     }).compile();

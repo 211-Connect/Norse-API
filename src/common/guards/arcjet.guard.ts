@@ -28,6 +28,16 @@ export class ArcjetGuard implements CanActivate {
       });
     }
 
+    if (decision.isErrored()) {
+      this.logger.error({
+        event: 'arcjet_error',
+        reason: decision.reason,
+        ip: decision.ip,
+        tenantId: req.headers['x-tenant-id'],
+        pathName: req.url,
+      });
+    }
+
     return true;
   }
 }

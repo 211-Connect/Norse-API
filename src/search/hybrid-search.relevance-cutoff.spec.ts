@@ -4,6 +4,8 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
   'x-tenant-id': 'tenant-a',
@@ -135,6 +137,10 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         {
           provide: RequestCacheService,
           useValue: { getOrSet: jest.fn((_k: any, f: any) => f()) },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

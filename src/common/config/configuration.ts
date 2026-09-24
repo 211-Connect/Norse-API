@@ -15,6 +15,15 @@ export default () => ({
   PUSH_GATEWAY_PASSWORD: process.env.PROMETHEUS_PUSHGATEWAY_PASSWORD || '',
   PUSH_INTERVAL_MS:
     parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
+  PUSH_METRICS_ENABLED: !['false', '0', 'no', 'off'].includes(
+    (process.env.PROMETHEUS_PUSH_METRICS_ENABLED ?? '').trim().toLowerCase(),
+  ),
+  METRICS_ENDPOINT_ENABLED: ['true', '1', 'yes', 'on'].includes(
+    (process.env.PROMETHEUS_METRICS_ENDPOINT_ENABLED ?? '')
+      .trim()
+      .toLowerCase(),
+  ),
+  METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,

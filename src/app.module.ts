@@ -5,7 +5,9 @@ import {
   RequestMethod,
 } from '@nestjs/common';
 import { ArcjetModule, cloudflare } from '@arcjet/nest';
+import { TracingShutdownService } from './common/lifecycle/tracing-shutdown.service';
 import { AppController } from './app.controller';
+
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { HealthModule } from 'src/health/health.module';
@@ -38,6 +40,7 @@ import { PermissionsSideChannelService } from './auth/gateway/permissions-side-c
 import { TenantScopeGuard } from './auth/gateway/tenant-scope.guard';
 import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
+import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
@@ -45,6 +48,7 @@ import { PrintableDirectoryPublicController } from './printable-directory/printa
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ServiceModule } from './service/service.module';
+import { ServiceController } from './service/service.controller';
 import { OrganizationController } from './organization/organization.controller';
 
 @Module({
@@ -91,7 +95,9 @@ import { OrganizationController } from './organization/organization.controller';
   controllers: [AppController],
   providers: [
     AppService,
+    TracingShutdownService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // Gateway guard registration order matters (Nest runs global guards in registration order):
     // GatewayIdentityGuard resolves req.authMode first, so GatewayPermissionsGuard and TenantScopeGuard
     // (registered after it) can rely on it having already run.
@@ -108,19 +114,20 @@ export class AppModule implements NestModule {
       method: RequestMethod.ALL,
     });
 
-    consumer
-      .apply(TenantMiddleware)
-      .forRoutes(
-        TaxonomyController,
-        SearchController,
-        ResourceController,
-        FavoriteController,
-        FavoriteListController,
-        SuggestionController,
-        PrintableDirectoryController,
-        PrintableDirectoryPublicController,
-        OrganizationController,
-      );
+    consumer.apply(TenantMiddleware).forRoutes(
+      TaxonomyController,
+      SearchController,
+      ResourceController,
+      FavoriteController,
+      FavoriteListController,
+      SuggestionController,
+      PrintableDirectoryController,
+      PrintableDirectoryPublicController,
+      OrganizationController,
+      // Also enforces ?tenant_id= vs x-tenant-id consistency on a
+      // CDN-cached route (cache keys on URL, ignoring Vary).
+      ServiceController,
+    );
 
     consumer
       .apply(LocaleMiddleware)
