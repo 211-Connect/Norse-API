@@ -5,7 +5,9 @@ import {
   RequestMethod,
 } from '@nestjs/common';
 import { ArcjetModule, cloudflare } from '@arcjet/nest';
+import { TracingShutdownService } from './common/lifecycle/tracing-shutdown.service';
 import { AppController } from './app.controller';
+
 import { AppService } from './app.service';
 import { TaxonomyModule } from './taxonomy/taxonomy.module';
 import { HealthModule } from 'src/health/health.module';
@@ -93,6 +95,7 @@ import { OrganizationController } from './organization/organization.controller';
   controllers: [AppController],
   providers: [
     AppService,
+    TracingShutdownService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // Gateway guard registration order matters (Nest runs global guards in registration order):

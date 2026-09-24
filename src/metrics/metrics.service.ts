@@ -17,6 +17,16 @@ const DURATION_BUCKETS_SECONDS = [
 
 export type DownstreamOutcome = 'ok' | 'timeout' | 'error';
 
+export type CacheName =
+  | 'request-redis' // RequestCacheService (Redis)
+  | 'analytics-lru' // AnalyticsCacheService L1, in-process LRU
+  | 'analytics-redis' // AnalyticsCacheService L2, app Redis
+  | 'tenant-config-lru' // TenantConfigService in-process LRUs
+  | 'tenant-config-redis' // TenantConfigService CMS Redis (DB 2, written by PayloadCMS)
+  | 'tenant-config-app-redis'; // TenantConfigService app-Redis fallback (Keycloak realm id only)
+
+export type CacheResult = 'hit' | 'miss' | 'coalesced' | 'get-error';
+
 const PUSH_JOB_NAME = 'norse_api';
 
 const PUSH_REQUEST_TIMEOUT_MS = 5_000;
@@ -260,10 +270,7 @@ export class MetricsService implements OnModuleDestroy {
   /**
    * Records one cache access outcome.
    */
-  recordCacheAccess(
-    cache: string,
-    result: 'hit' | 'miss' | 'coalesced' | 'get-error',
-  ): void {
+  recordCacheAccess(cache: CacheName, result: CacheResult): void {
     this.cacheRequestsCounter.inc({ cache, result });
   }
 

@@ -40,6 +40,10 @@ NestJS app instances push to **one** Prometheus Pushgateway:
   group, so a late periodic push cannot recreate a deleted group. Every Pushgateway
   request (push and delete) has a 5s timeout, so an unreachable gateway cannot block
   shutdown.
+- Shutdown order: Nest runs `onModuleDestroy` (final push, then group delete) before
+  `onApplicationShutdown`, where the OpenTelemetry SDK is flushed
+  (`TracingShutdownService`). Nothing else may call `process.exit` on SIGTERM, or the
+  group delete is skipped.
 - History is kept in **Prometheus**, not in the gateway — configure Prometheus retention
   to at least **7 days** so weekly dashboard views keep working. Deleting a gateway group
   does not remove scraped history.
@@ -82,6 +86,8 @@ Environment variables:
 
 The Prometheus scrape adds the `instance`, `pod`, and `namespace` target labels,
 so the app does not add them itself.
+
+`/metrics` and `/health` requests are not traced.
 
 The push self-observability metrics
 (`norse_metrics_push_success_timestamp_seconds`,
@@ -142,15 +148,15 @@ DigitalOcean, leave the endpoint disabled (the default).
 
 ## Metric inventory
 
-| Metric                                         | Type      | Labels                                               | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------------- | --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `norse_http_requests_total`                    | Counter   | `method`, `handler`, `status`, `tenant_id`, `domain` | Auto-recorded by `MetricsInterceptor` for every route **without** `@SkipMetrics()`. `handler` is `ClassName.methodName`; `domain` is the controller class name lowercased with the `Controller` suffix stripped (e.g. `search`, `resource`, `organization`) — it exists for convenient `sum by (domain)` queries; `tenant_id` is `request.tenantId` as validated by TenantMiddleware, otherwise `unknown`.                           |
-| `norse_http_request_duration_seconds`          | Histogram | `method`, `handler`                                  | HTTP request duration. Buckets: `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Deliberately **no** `tenant_id`/`status` labels (cardinality).                                                                                                                                                                                                                                                                          |
-| `norse_downstream_requests_total`              | Counter   | `dependency`, `operation`, `outcome`                 | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success. |
-| `norse_downstream_duration_seconds`            | Histogram | `dependency`, `operation`                            | Downstream call duration, same buckets as the HTTP histogram.                                                                                                                                                                                                                                                                                                                                                                        |
-| `norse_cache_requests_total`                   | Counter   | `cache`, `result`                                    | Cache accesses. `cache` names the cache; `result`: `hit` \| `miss` \| `coalesced` \| `get-error`.                                                                                                                                                                                                                                                                                                                                    |
-| `norse_metrics_push_success_timestamp_seconds` | Gauge     | —                                                    | Unix timestamp of the last successful Pushgateway push from this instance. **Registered only when a Pushgateway URL is set and push is enabled** — absent in scrape mode.                                                                                                                                                                                                                                                            |
-| `norse_metrics_push_failures_total`            | Counter   | —                                                    | Failed Pushgateway pushes from this instance. **Registered only when a Pushgateway URL is set and push is enabled** — absent in scrape mode.                                                                                                                                                                                                                                                                                         |
+| Metric                                         | Type      | Labels                                               | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------- | --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `norse_http_requests_total`                    | Counter   | `method`, `handler`, `status`, `tenant_id`, `domain` | Auto-recorded by `MetricsInterceptor` for every route **without** `@SkipMetrics()`. `handler` is `ClassName.methodName`; `domain` is the controller class name lowercased with the `Controller` suffix stripped (e.g. `search`, `resource`, `organization`) — it exists for convenient `sum by (domain)` queries; `tenant_id` is `request.tenantId` as validated by TenantMiddleware, otherwise `unknown`.                                                                                                                                                                                                                                 |
+| `norse_http_request_duration_seconds`          | Histogram | `method`, `handler`                                  | HTTP request duration. Buckets: `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Deliberately **no** `tenant_id`/`status` labels (cardinality).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `norse_downstream_requests_total`              | Counter   | `dependency`, `operation`, `outcome`                 | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success.                                                                                                                                                                                                       |
+| `norse_downstream_duration_seconds`            | Histogram | `dependency`, `operation`                            | Downstream call duration, same buckets as the HTTP histogram.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `norse_cache_requests_total`                   | Counter   | `cache`, `result`                                    | Cache accesses. `cache` names the cache; `result`: `hit` \| `miss` \| `coalesced` \| `get-error`. `cache` values are a fixed TypeScript union (`CacheName` in `src/metrics/metrics.service.ts`), so the label stays bounded: `request-redis` (RequestCacheService, Redis), `analytics-lru` (AnalyticsCacheService L1, in-process LRU), `analytics-redis` (AnalyticsCacheService L2, app Redis), `tenant-config-lru` (TenantConfigService in-process LRUs), `tenant-config-redis` (TenantConfigService CMS Redis, DB 2, written by PayloadCMS), `tenant-config-app-redis` (TenantConfigService app-Redis fallback, Keycloak realm id only). |
+| `norse_metrics_push_success_timestamp_seconds` | Gauge     | —                                                    | Unix timestamp of the last successful Pushgateway push from this instance. **Registered only when a Pushgateway URL is set and push is enabled** — absent in scrape mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `norse_metrics_push_failures_total`            | Counter   | —                                                    | Failed Pushgateway pushes from this instance. **Registered only when a Pushgateway URL is set and push is enabled** — absent in scrape mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Downstream timeouts
 
@@ -206,9 +212,22 @@ sum by (operation) (increase(norse_downstream_requests_total{dependency="elastic
 
 ## Cache metric caveats
 
+- Two-tier caches record **per tier**: an L1 `analytics-lru` miss is followed by an
+  `analytics-redis` lookup, so compute hit ratios **per `cache`**:
+
+  ```promql
+    sum by (cache) (rate(norse_cache_requests_total{result="hit"}[5m]))
+  /
+    sum by (cache) (rate(norse_cache_requests_total{result=~"hit|miss|coalesced"}[5m]))
+  ```
+
+- `tenant-config-redis` misses on every search when a tenant has no facets or locales in
+  CMS Redis, because misses are not cached in the LRU.
+- `tenant-config-app-redis` only applies to the Keycloak realm id fallback.
+
 A Redis GET failure records `get-error` **and then** `miss` for the same access (a failed
-get always falls through to the miss path). Therefore compute the hit ratio as
-`hit / (hit + miss + coalesced)` and **do not** add `get-error` to the denominator.
+get always falls through to the miss path). Therefore do **not** add `get-error` to the
+denominator of the hit-ratio query above.
 
 ## Cardinality rules
 

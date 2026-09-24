@@ -45,33 +45,40 @@ export class TenantConfigService {
 
     const inMemoryCached = this.keycloakRealmIdCache.get(tenantId);
     if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
       this.logger.debug(
         `In-memory cache hit for Keycloak Realm ID: ${tenantId}`,
       );
       return inMemoryCached;
     }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
 
     const redisKey = `keycloak_realm_id:${tenantId}`;
 
     try {
       const cmsRedisValue = await this.cmsRedisService.get(redisKey);
       if (cmsRedisValue && typeof cmsRedisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
         this.logger.debug(`Redis DB 2 hit for Keycloak Realm ID: ${tenantId}`);
         this.keycloakRealmIdCache.set(tenantId, cmsRedisValue);
         return cmsRedisValue;
       }
     } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
       this.logger.warn(
         `Error fetching Keycloak Realm ID from Redis DB 2 for ${tenantId}: ${error.message}`,
       );
     }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
 
     const cachedRealmId = await this.cacheService.get<string>(redisKey);
     if (cachedRealmId) {
+      this.metrics.recordCacheAccess('tenant-config-app-redis', 'hit');
       this.logger.debug(`Cache hit for Keycloak Realm ID: ${tenantId}`);
       this.keycloakRealmIdCache.set(tenantId, cachedRealmId);
       return cachedRealmId;
     }
+    this.metrics.recordCacheAccess('tenant-config-app-redis', 'miss');
 
     this.logger.debug(
       `Falling back to Strapi for Keycloak Realm ID: ${tenantId}`,
@@ -95,15 +102,18 @@ export class TenantConfigService {
 
     const inMemoryCached = this.facetsCache.get(tenantId);
     if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
       this.logger.debug(`In-memory cache hit for facets: ${tenantId}`);
       return inMemoryCached;
     }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
 
     try {
       const redisKey = `facets:${tenantId}`;
       const redisValue = await this.cmsRedisService.get(redisKey);
 
       if (redisValue && typeof redisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
         this.logger.debug(`Redis DB 2 hit for facets: ${tenantId}`);
         const facetsCache = JSON.parse(redisValue) as FacetsConfigCache;
         if (!facetsCache.facets || !Array.isArray(facetsCache.facets)) {
@@ -118,10 +128,12 @@ export class TenantConfigService {
         return facetsCache.facets;
       }
     } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
       this.logger.error(
         `Error fetching facets from Redis DB 2 for ${tenantId}: ${error.message}`,
       );
     }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
 
     return [];
   }
@@ -131,25 +143,30 @@ export class TenantConfigService {
 
     const inMemoryCached = this.localesCache.get(tenantId);
     if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
       this.logger.debug(`In-memory cache hit for locales: ${tenantId}`);
       return inMemoryCached;
     }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
 
     try {
       const redisKey = `enabled_locales:${tenantId}`;
       const redisValue = await this.cmsRedisService.get(redisKey);
 
       if (redisValue && typeof redisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
         this.logger.debug(`Redis DB 2 hit for locales: ${tenantId}`);
         const locales: string[] = JSON.parse(redisValue);
         this.localesCache.set(tenantId, locales);
         return locales;
       }
     } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
       this.logger.error(
         `Error fetching locales from Redis DB 2 for ${tenantId}: ${error.message}`,
       );
     }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
 
     this.logger.warn(`No enabled locales found for tenant: ${tenantId}`);
     return [];
@@ -165,16 +182,19 @@ export class TenantConfigService {
 
     const inMemoryCached = this.searchConfigCache.get(tenantId);
     if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
       this.logger.debug(`In-memory cache hit for search config: ${tenantId}`);
 
       return inMemoryCached;
     }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
 
     try {
       const redisKey = `search_config:${tenantId}`;
       const redisValue = await this.cmsRedisService.get(redisKey);
 
       if (redisValue) {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
         this.logger.debug(`Redis DB 2 hit for search config: ${tenantId}`);
         const searchConfig =
           typeof redisValue === 'string' ? JSON.parse(redisValue) : redisValue;
@@ -182,10 +202,12 @@ export class TenantConfigService {
         return searchConfig;
       }
     } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
       this.logger.error(
         `Error fetching search config from Redis DB 2 for ${tenantId}: ${error.message}`,
       );
     }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
 
     const emptyConfig: SearchConfigCache = {};
     this.searchConfigCache.set(tenantId, emptyConfig);
