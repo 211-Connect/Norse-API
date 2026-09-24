@@ -454,4 +454,30 @@ describe('HybridSearchService', () => {
       expect(esCount).not.toHaveBeenCalled();
     });
   });
+
+  // Same guard on the hybrid path. Only the recall clauses get a fallback:
+  // the name tiers are phrase/prefix by design and the use_references clause is
+  // curated, where an approximate match defeats the curation.
+  it('pairs each recall clause with a de-boosted fuzzy fallback', async () => {
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const all = [
+      ...should
+        .filter((c: any) => c.multi_match)
+        .map((c: any) => c.multi_match),
+      ...should
+        .filter((c: any) => c.nested?.query?.multi_match)
+        .map((c: any) => c.nested.query.multi_match),
+    ];
+    const fuzzy = all.filter((m: any) => m.fuzziness === 'AUTO');
+    const exact = all.filter((m: any) => m.fuzziness === undefined);
+
+    expect(exact.length).toBeGreaterThan(0);
+    expect(fuzzy.length).toBe(exact.length);
+    for (const m of fuzzy) {
+      expect(m.prefix_length).toBe(2);
+      expect(m.boost).toBe(0.01);
+    }
+  });
 });
