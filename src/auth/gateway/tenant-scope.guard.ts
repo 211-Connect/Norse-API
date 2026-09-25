@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import { PUBLIC_KEY } from './gateway-principal';
+import { NOT_TENANT_SCOPED_KEY, PUBLIC_KEY } from './gateway-principal';
 import { requiredSlug, resolveTargetTenant } from './tenant-scope.util';
 
 const PLATFORM_ADMIN_SLUG = 'norse-api.admin';
@@ -53,6 +53,14 @@ export class TenantScopeGuard implements CanActivate {
     }
     if (!request.gatewayPermissions) {
       throw new ServiceUnavailableException('permissions_unavailable');
+    }
+
+    const isNotTenantScoped = this.reflector.getAllAndOverride<boolean>(
+      NOT_TENANT_SCOPED_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (isNotTenantScoped) {
+      return true;
     }
 
     let target: string | undefined;

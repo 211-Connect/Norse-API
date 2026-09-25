@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Query, Version } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  UseGuards,
+  Version,
+} from '@nestjs/common';
 import {
   ApiExcludeController,
   ApiOperation,
@@ -10,15 +17,20 @@ import {
   RegionSearchQueryDto,
   RegionSearchResponseDto,
 } from './dto';
+import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
+import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 import { RegionService } from './region.service';
 
 /**
  * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024).
  * Internal and unpublished: left out of the OpenAPI document the Norse SDK is
- * generated from. No auth yet (ISS-1876), so they must not be exposed through
- * the gateway (ISS-1887).
+ * generated from. Regions are not tenant data, so the routes are not
+ * tenant-scoped; the internal key (`x-internal-api-key`) guards them on every
+ * path — see docs/geography-filter.md.
  */
 @ApiExcludeController()
+@NotTenantScoped()
+@UseGuards(InternalApiGuard)
 @Controller('internal/regions')
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}

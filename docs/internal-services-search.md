@@ -10,7 +10,8 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 | `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds`, `filter.virtual`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
 | `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
 
-Send `x-api-version: 1`, as for every versioned route. No `x-tenant-id`: the
+Send `x-api-version: 1`, as for every versioned route, and
+`x-internal-api-key`. No `x-tenant-id`: the
 writer set is the scope, as it was in the Mongo query, and one writer's records
 can sit under several tenants.
 
@@ -19,9 +20,12 @@ can sit under several tenants.
 - **Unpublished.** `@ApiExcludeController()` keeps both routes out of
   `/swagger/json`, so the Norse SDK never sees them.
   `service-search.controller.spec.ts` checks the generated document.
-- **Unauthenticated.** They trust the writer set they are given. Auth is
-  ISS-1876. ISS-1887 blocks `/internal/*` at the gateway, and these
-  routes must not deploy before it lands.
+- **Internal key, not tenant scope.** They trust the writer set they are
+  given, so they are not tenant-scoped (`@NotTenantScoped()`). Every call
+  needs `x-internal-api-key` equal to `INTERNAL_API_KEY`, on the gateway path
+  (a key with `norse-api.invoke`) and on `api.c211.io` / `api-dev.c211.io`
+  alike; an unset key rejects everything. ISS-1887 is defence in depth. See
+  [geography-filter.md](geography-filter.md#auth-the-internal-key-not-a-tenant).
 
 ## Semantics
 

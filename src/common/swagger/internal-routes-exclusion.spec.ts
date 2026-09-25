@@ -14,6 +14,8 @@ import { RegionInternalModule } from 'src/region/internal/region.module';
 import { ServiceSearchInternalModule } from 'src/service/internal/service-search.module';
 import { buildSwaggerConfig } from './swagger-config';
 
+const INTERNAL_API_KEY = 'internal-key-for-tests';
+
 /** A published route, so an empty document cannot pass the exclusion check. */
 @ApiTags('Control')
 @Controller('published-control')
@@ -35,7 +37,11 @@ describe('Geography filter internal routes, mounted together', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
         ServiceSearchInternalModule,
         RegionInternalModule,
       ],
@@ -71,11 +77,13 @@ describe('Geography filter internal routes, mounted together', () => {
     await request(server)
       .post('/internal/services/facets')
       .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
       .send({ resourceWriterIds: ['writer-a'] })
       .expect(200);
     await request(server)
       .get('/internal/regions?q=jack')
       .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
       .expect(200);
   });
 

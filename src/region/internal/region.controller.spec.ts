@@ -13,6 +13,8 @@ import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { RegionInternalModule } from './region.module';
 
+const INTERNAL_API_KEY = 'internal-key-for-tests';
+
 /** A published route, so an empty document cannot pass the exclusion check. */
 @ApiTags('Control')
 @Controller('published-control')
@@ -32,7 +34,11 @@ describe('RegionController (internal/regions)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
         RegionInternalModule,
       ],
       controllers: [PublishedControlController],
@@ -69,7 +75,10 @@ describe('RegionController (internal/regions)', () => {
   });
 
   const get = (path: string) =>
-    request(app.getHttpServer()).get(path).set('x-api-version', '1');
+    request(app.getHttpServer())
+      .get(path)
+      .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY);
 
   it('serves the internal routes (so their absence from the document is meaningful)', async () => {
     await get('/internal/regions?q=jack').expect(200);

@@ -14,6 +14,8 @@ import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { ServiceSearchInternalModule } from './service-search.module';
 
+const INTERNAL_API_KEY = 'internal-key-for-tests';
+
 /** A published route, so an empty document cannot pass the exclusion check. */
 @ApiTags('Control')
 @Controller('published-control')
@@ -32,7 +34,11 @@ describe('ServiceSearchController (internal/services)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
         ServiceSearchInternalModule,
       ],
       controllers: [PublishedControlController],
@@ -77,6 +83,7 @@ describe('ServiceSearchController (internal/services)', () => {
     await request(app.getHttpServer())
       .post('/internal/services/facets')
       .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
       .send({ resourceWriterIds: [] })
       .expect(200);
   });
@@ -100,6 +107,7 @@ describe('ServiceSearchController (internal/services)', () => {
       const res = await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
           filter: { statuses: ['active'] },
@@ -155,6 +163,7 @@ describe('ServiceSearchController (internal/services)', () => {
       await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send(body)
         .expect(400);
       expect(search).not.toHaveBeenCalled();
@@ -165,6 +174,7 @@ describe('ServiceSearchController (internal/services)', () => {
       await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
           filter: {
@@ -188,6 +198,7 @@ describe('ServiceSearchController (internal/services)', () => {
       const res = await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
           filter: { geography: { regionIds: ['zip:00000'] } },
@@ -203,6 +214,7 @@ describe('ServiceSearchController (internal/services)', () => {
       await request(app.getHttpServer())
         .post('/internal/services/facets')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({})
         .expect(400);
     });
@@ -214,6 +226,7 @@ describe('ServiceSearchController (internal/services)', () => {
       await request(app.getHttpServer())
         .post('/internal/services/facets')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({ resourceWriterIds: ['writer-a'], filter })
         .expect(400);
       expect(search).not.toHaveBeenCalled();
@@ -224,6 +237,7 @@ describe('ServiceSearchController (internal/services)', () => {
       const res = await request(app.getHttpServer())
         .post('/internal/services/facets')
         .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({ resourceWriterIds: ['writer-a'] })
         .expect(200);
       expect(res.body).toEqual({

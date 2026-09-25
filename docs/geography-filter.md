@@ -22,14 +22,39 @@ Dagster [#601](https://github.com/211-Connect/dagster-data-orchestration/pull/60
 [#604](https://github.com/211-Connect/dagster-data-orchestration/pull/604)
 (publish-before-delete, orphan guards, real-ES integration suite).
 
-## Do not deploy before ISS-1887
+## Auth: the internal key, not a tenant
 
-> **These routes have no auth (ISS-1876) and must not be reachable from the
-> API gateway.** ISS-1887 blocks `/internal/*` at the gateway. Do not deploy
-> a build containing them until ISS-1887 is live.
->
-> Also wait for Dagster #604. Until it merges, the `services` publish is
-> delete-first, and a reader sees a tenant's slice empty during every reload.
+The four routes are not tenant-scoped: the writer set scopes services, and
+Regions are not tenant data. They are guarded by the internal key instead, on
+every path:
+
+- **Internal key, always.** Both controllers carry
+  `@UseGuards(InternalApiGuard)`: every call sends `x-internal-api-key`, equal
+  to Norse-API's `INTERNAL_API_KEY`. A missing or wrong key is `401`. So is
+  every call when `INTERNAL_API_KEY` is unset or empty: the guard fails closed.
+  The comparison is constant-time.
+- **Through the gateway.** A gateway key holding `norse-api.invoke`, plus the
+  internal key. No `x-tenant-id`: both controllers carry `@NotTenantScoped()`,
+  which exempts them from `TenantScopeGuard` and from nothing else.
+  `GatewayIdentityGuard` and `GatewayPermissionsGuard` still run.
+- **Direct.** `api.c211.io` and `api-dev.c211.io` (App Platform, no gateway)
+  reach the routes on the legacy path, where the internal key is the only
+  protection.
+
+ISS-1887 (block `/internal/*` at the gateway) is now defence in depth, not a
+precondition for deploying these routes.
+
+`src/auth/gateway/internal-geography-routes.spec.ts` mounts the two modules
+behind the global gateway guards and checks each route in gateway and legacy
+mode: the key passes without `x-tenant-id`, a missing or wrong key is `401`,
+an unset or empty `INTERNAL_API_KEY` rejects everything, and an existing
+tenant-scoped route still needs a tenant.
+
+ServiceNet sends the same value as `NORSE_INTERNAL_API_KEY`.
+
+> **Do not deploy before Dagster #604.** Until it merges, the `services`
+> publish is delete-first, and a reader sees a tenant's slice empty during
+> every reload.
 
 Both controllers carry `@ApiExcludeController()`, so none of the four routes
 reaches `/swagger/json` or the Norse SDK. `src/common/swagger/internal-routes-exclusion.spec.ts`
@@ -38,8 +63,8 @@ published. Each controller's own spec checks the same for its module.
 
 ## The four routes
 
-Send `x-api-version: 1` on every call. No `x-tenant-id`: the writer set scopes
-services, and Regions are not tenant data.
+Send `x-api-version: 1` and `x-internal-api-key` on every call. No
+`x-tenant-id`: the writer set scopes services, and Regions are not tenant data.
 
 | Route | Input | Returns |
 | --- | --- | --- |

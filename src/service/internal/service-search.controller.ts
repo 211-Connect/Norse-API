@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, Post, Version } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Post,
+  UseGuards,
+  Version,
+} from '@nestjs/common';
 import {
   ApiBody,
   ApiExcludeController,
@@ -11,15 +18,20 @@ import {
   ServicesSearchRequestDto,
   ServicesSearchResponseDto,
 } from './dto';
+import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
+import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 import { ServiceSearchService } from './service-search.service';
 
 /**
  * ServiceNet's record selector reads services through these routes (ADR 0023).
  * Internal and unpublished: left out of the OpenAPI document the Norse SDK is
- * generated from. They trust the writer set they are given and carry no auth
- * yet (ISS-1876), so they must not be exposed through the gateway.
+ * generated from. They trust the writer set they are given, so they are not
+ * tenant-scoped; the internal key (`x-internal-api-key`) guards them on every
+ * path — see docs/geography-filter.md.
  */
 @ApiExcludeController()
+@NotTenantScoped()
+@UseGuards(InternalApiGuard)
 @Controller('internal/services')
 export class ServiceSearchController {
   constructor(private readonly searchService: ServiceSearchService) {}

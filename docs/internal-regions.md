@@ -11,16 +11,20 @@ INTEG-024.
 | `GET /internal/regions` | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state }] }` |
 | `GET /internal/regions/:id` | — | `{ id, type, name, state, fips?, zip?, geometry, attribution? }` |
 
-Send `x-api-version: 1`, as for every versioned route. No `x-tenant-id`:
-Regions are not tenant data.
+Send `x-api-version: 1`, as for every versioned route, and
+`x-internal-api-key`. No `x-tenant-id`: Regions are not tenant data.
 
 ## Status
 
 - **Unpublished.** `@ApiExcludeController()` keeps both routes out of
   `/swagger/json`, so the Norse SDK never sees them.
   `region.controller.spec.ts` checks the generated document.
-- **Unauthenticated.** Auth is ISS-1876. ISS-1887 blocks `/internal/*` at the
-  gateway, and these routes must not deploy before it lands.
+- **Internal key, not tenant scope.** Not tenant-scoped
+  (`@NotTenantScoped()`). Every call needs `x-internal-api-key` equal to
+  `INTERNAL_API_KEY`, on the gateway path (a key with `norse-api.invoke`) and
+  on `api.c211.io` / `api-dev.c211.io` alike; an unset key rejects
+  everything. ISS-1887 is defence in depth. See
+  [geography-filter.md](geography-filter.md#auth-the-internal-key-not-a-tenant).
 
 ## Region ids
 

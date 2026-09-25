@@ -46,6 +46,8 @@ import {
 import { ReadOnlyCollection } from 'src/common/testing/read-only-mongo';
 import { interiorGrid, pointsAtDepth } from './interior-points';
 
+const INTERNAL_API_KEY = 'internal-key-for-tests';
+
 const LIVE = process.env.NORSE_LIVE_ES === '1';
 const LIVE_MONGO = LIVE && process.env.NORSE_LIVE_MONGO === '1';
 const describeLive = LIVE ? describe : describe.skip;
@@ -151,9 +153,16 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
   };
 
   const post = (path: string, body: object) =>
-    request(baseUrl).post(path).set('x-api-version', '1').send(body);
+    request(baseUrl)
+      .post(path)
+      .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
+      .send(body);
   const get = (path: string) =>
-    request(baseUrl).get(path).set('x-api-version', '1');
+    request(baseUrl)
+      .get(path)
+      .set('x-api-version', '1')
+      .set('x-internal-api-key', INTERNAL_API_KEY);
 
   async function searchPage(body: object): Promise<Page> {
     const res = await post('/internal/services/search', body);
@@ -280,7 +289,11 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
 
     const moduleRef = await Test.createTestingModule({
       imports: [
-        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
         ServiceSearchInternalModule,
         RegionInternalModule,
       ],
