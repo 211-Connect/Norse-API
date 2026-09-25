@@ -27,6 +27,7 @@ class PublishedControlController {
 describe('ServiceSearchController (internal/services)', () => {
   let app: INestApplication;
   const search = jest.fn();
+  const mget = jest.fn();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -37,7 +38,7 @@ describe('ServiceSearchController (internal/services)', () => {
       controllers: [PublishedControlController],
     })
       .overrideProvider(ElasticsearchService)
-      .useValue({ search })
+      .useValue({ search, mget })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -66,6 +67,10 @@ describe('ServiceSearchController (internal/services)', () => {
   beforeEach(() => {
     search.mockReset();
     search.mockResolvedValue({ hits: { total: { value: 0 }, hits: [] } });
+    mget.mockReset();
+    mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+      docs: ids.map((_id) => ({ _id, found: true })),
+    }));
   });
 
   it('serves the internal routes (so their absence from the document is meaningful)', async () => {
@@ -85,7 +90,7 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(paths).toContain('/published-control');
       expect(paths.filter((p) => p.includes('internal/services'))).toEqual([]);
       expect(JSON.stringify(res.body)).not.toMatch(
-        /ServicesSearch|ServicesFacets|ServiceListItem/,
+        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem/,
       );
     });
   });
@@ -118,12 +123,77 @@ describe('ServiceSearchController (internal/services)', () => {
       [{ resourceWriterIds: ['w'], cursor: 'x'.repeat(2049) }],
       [{ resourceWriterIds: ['w'], cursor: 'not-a-cursor' }],
       [{ resourceWriterIds: ['w'], filter: { statuses: 'active' } }],
+      [{ resourceWriterIds: ['w'], filter: { geography: {} } }],
+      [{ resourceWriterIds: ['w'], filter: { geography: { regionIds: [] } } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          filter: { geography: { regionIds: ['county:29510', 'St. Louis'] } },
+        },
+      ],
+      [
+        {
+          resourceWriterIds: ['w'],
+          filter: { geography: { regionIds: ['state:mo'] } },
+        },
+      ],
+      [
+        {
+          resourceWriterIds: ['w'],
+          filter: {
+            geography: {
+              regionIds: Array.from(
+                { length: 21 },
+                (_, i) => `zip:${String(63100 + i)}`,
+              ),
+            },
+          },
+        },
+      ],
+      [{ resourceWriterIds: ['w'], filter: { virtual: 'yes' } }],
     ])('rejects %j with 400', async (body) => {
       await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
         .send(body)
         .expect(400);
+      expect(search).not.toHaveBeenCalled();
+      expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('accepts 20 Regions and a virtual mode', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .send({
+          resourceWriterIds: ['writer-a'],
+          filter: {
+            geography: {
+              regionIds: Array.from(
+                { length: 20 },
+                (_, i) => `zip:${63100 + i}`,
+              ),
+            },
+            virtual: 'exclude',
+          },
+        })
+        .expect(200);
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers an unknown Region with 400 listing it', async () => {
+      mget.mockResolvedValueOnce({
+        docs: [{ _id: 'zip:00000', found: false }],
+      });
+      const res = await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .send({
+          resourceWriterIds: ['writer-a'],
+          filter: { geography: { regionIds: ['zip:00000'] } },
+        })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toContain('zip:00000');
       expect(search).not.toHaveBeenCalled();
     });
   });
@@ -135,6 +205,18 @@ describe('ServiceSearchController (internal/services)', () => {
         .set('x-api-version', '1')
         .send({})
         .expect(400);
+    });
+
+    it.each([
+      [{ geography: { regionIds: ['nowhere'] } }],
+      [{ virtual: 'maybe' }],
+    ])('rejects filter %j with 400', async (filter) => {
+      await request(app.getHttpServer())
+        .post('/internal/services/facets')
+        .set('x-api-version', '1')
+        .send({ resourceWriterIds: ['writer-a'], filter })
+        .expect(400);
+      expect(search).not.toHaveBeenCalled();
     });
 
     it('serves facets for a writer set', async () => {

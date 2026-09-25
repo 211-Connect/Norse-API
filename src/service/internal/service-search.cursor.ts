@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import { FieldValue } from '@elastic/elasticsearch/lib/api/types';
+import { VirtualMode } from './dto';
 import { SortMode } from './service-search.query';
 
 /**
@@ -19,6 +20,8 @@ export interface CursorQuery {
   resourceWriterIds: readonly string[];
   taxonomyCodes?: readonly string[];
   statuses?: readonly string[];
+  regionIds?: readonly string[];
+  virtual?: VirtualMode;
   text?: string;
 }
 
@@ -35,6 +38,8 @@ export function queryFingerprint(query: CursorQuery): string {
     query.taxonomyCodes ?? [],
     query.statuses ?? [],
     query.text?.trim() ?? '',
+    query.regionIds ?? [],
+    query.virtual ?? 'all',
   ]);
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

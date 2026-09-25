@@ -1,6 +1,6 @@
 # Geography filter (internal routes)
 
-ServiceNet's record selector lists, facets and (next) geography-filters
+ServiceNet's record selector lists, facets and geography-filters
 services through four internal Norse-API routes over Elasticsearch. This page
 ties them together. The detail lives in two docs:
 
@@ -43,8 +43,8 @@ services, and Regions are not tenant data.
 
 | Route | Input | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | body: `resourceWriterIds` (required) | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` (1 to 20), `filter.virtual`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
+| `POST /internal/services/facets` | body: `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
 | `GET /internal/regions` | query: `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state }] }` |
 | `GET /internal/regions/:id` | `state:MO`, `county:29095` or `zip:64130` | `{ id, type, name, state, fips?, zip?, geometry, attribution? }` |
 
@@ -55,7 +55,7 @@ Only these fields are read from the index (`SERVICE_LIST_SOURCE_FIELDS`), so
 Dagster's `loadRunId` and the `service_area` shape are never returned.
 
 Errors: a malformed request, cursor or Region id is 400; an unknown Region is
-404; an ES timeout is 503; any other ES failure is 502.
+404 on `GET /internal/regions/:id` and 400 in a services `filter.geography`; an ES timeout is 503; any other ES failure is 502.
 
 ## How a Geography filter uses them
 
@@ -64,12 +64,81 @@ Errors: a malformed request, cursor or Region id is 400; an unknown Region is
 2. The user picks a Region. ServiceNet keeps its id (`county:29095`).
 3. To draw it, ServiceNet calls `GET /internal/regions/:id` for the GeoJSON
    geometry. For counties it must show the returned `attribution`.
-4. To filter services, the Region ids go into the services search. **This
-   clause is not built yet (ISS-1873).** Per ADR 0023, several Regions are
-   OR'ed and AND'ed with every other filter. A Region matches a service when
-   it intersects the service's `service_area`, and services with no area
-   never match. The query should use `geo_shape` with `indexed_shape` against
-   index `regions` and id = the Region id, not the fetched geometry.
+4. To filter services, ServiceNet sends the Region ids as
+   `filter.geography.regionIds` on the services search **and** facets
+   (ISS-1873). See [Geography and virtual clauses](#geography-and-virtual-clauses).
+
+## Geography and virtual clauses
+
+ISS-1873 (geography) and ISS-1874 (virtual) add two optional fields to
+`filter` on both services routes:
+
+```json
+POST /internal/services/search
+{
+  "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
+  "filter": {
+    "taxonomyCodes": ["BD-1800"],
+    "statuses": ["active"],
+    "geography": { "regionIds": ["county:29510", "zip:63110"] },
+    "virtual": "exclude"
+  },
+  "text": "food",
+  "limit": 50
+}
+```
+
+```json
+POST /internal/services/facets
+{
+  "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
+  "filter": {
+    "geography": { "regionIds": ["state:MO"] },
+    "virtual": "only"
+  }
+}
+```
+
+**Geography.**
+- `regionIds`: 1 to 20 Region ids, each `state:XX`, `county:NNNNN` or
+  `zip:NNNNN` (the pattern `GET /internal/regions/:id` validates). A
+  repeated id is dropped.
+- Regions are OR'ed, and the clause is AND'ed with every other filter
+  (ADR 0023). The clause is a `bool.should` of one `geo_shape` per Region on
+  `service_area`, `indexed_shape: { index: "regions", id, path: "geometry" }`,
+  `relation: "intersects"`, `minimum_should_match: 1`. ES reads each shape
+  from the index, so no geometry crosses the wire.
+- `intersects` counts border contact (a v1 decision). A service whose area
+  only touches a Region's edge matches. For example, every UWGSL211 service
+  that matches St. Louis City (`county:29510`) also matches St. Louis County
+  (`county:29189`), which borders it.
+- A service without a `service_area` never matches.
+- **Unknown Region id: 400.** Before searching, one `mget` on `regions`
+  (`_source: false`) checks every id, and the 400 lists each unknown one:
+  `Unknown Region id(s): zip:00000`. ES itself answers an `indexed_shape`
+  with a missing id as a 400 `illegal_argument_exception` ("Shape with ID
+  [zip:00000] not found"). That error is also mapped to the same 400, in case
+  a Region disappears between the check and the search. It is never a 502.
+
+**Virtual** (`locationTypes`):
+
+| `virtual` | Matches |
+| --- | --- |
+| `all` (default) | no clause |
+| `only` | some location is virtual (`locationTypes` contains `virtual`) |
+| `exclude` | some location is physical (`locationTypes` contains `physical`) |
+
+A service with both kinds of location appears under `only` **and** under
+`exclude`. A service with neither (postal only, or no locations) appears only
+under `all`.
+
+**Facets** take `geography` and `virtual` but not `taxonomyCodes` or
+`statuses`, which are the options being counted. Send the same geography and
+virtual mode as the list, so each count matches what the list would show.
+
+**Cursors.** The fingerprint covers `regionIds` and `virtual`. A cursor from
+one geography or virtual mode is 400 against another. `virtual: "all"` and no
+`virtual` are the same query.
 
 ## Cursor paging (services search)
 

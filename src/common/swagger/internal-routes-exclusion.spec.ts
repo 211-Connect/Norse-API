@@ -87,7 +87,7 @@ describe('Geography filter internal routes, mounted together', () => {
     expect(paths).toContain('/published-control');
     expect(paths.filter((p) => p.includes('internal'))).toEqual([]);
     expect(JSON.stringify(res.body)).not.toMatch(
-      /ServicesSearch|ServicesFacets|ServiceListItem|RegionSummary|RegionSearch|RegionDetail|RegionAttribution|RegionIdParam/,
+      /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|RegionSummary|RegionSearch|RegionDetail|RegionAttribution|RegionIdParam/,
     );
   });
 });
