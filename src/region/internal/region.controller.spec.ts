@@ -100,7 +100,12 @@ describe('RegionController (internal/regions)', () => {
       expect(req.query.bool.filter).toEqual([
         { terms: { type: ['state', 'county'] } },
       ]);
-      expect(req.query.bool.should[0].terms.state).toEqual(['MO', 'KS']);
+      expect(req.query.bool.should).toContainEqual({
+        constant_score: {
+          filter: { terms: { state: ['MO', 'KS'] } },
+          boost: 2,
+        },
+      });
     });
 
     it('accepts repeated types params', async () => {

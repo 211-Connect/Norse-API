@@ -6,7 +6,12 @@ import {
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { errors } from '@elastic/elasticsearch';
 import { RegionService } from './region.service';
-import { EXACT_STATE_BOOST, NEAR_STATE_BOOST } from './region.query';
+import {
+  EXACT_STATE_BOOST,
+  NEAR_STATE_BOOST,
+  STATE_PREFIX_BOOST,
+  TYPE_BOOSTS,
+} from './region.query';
 
 const JACKSON = {
   id: 'county:29095',
@@ -28,6 +33,16 @@ const JACKSON = {
   },
   attribution: { text: 'County data © simplemaps.com, CC BY 4.0', url: 'u' },
 };
+
+const flat = (boost: number, filter: object) => ({
+  constant_score: { filter, boost },
+});
+const TYPE_BOOST_CLAUSES = [
+  flat(3, { term: { type: 'state' } }),
+  flat(2, { term: { type: 'county' } }),
+];
+const stateClauses = (req: any) =>
+  req.query.bool.must[0].bool?.should.slice(1) ?? [];
 
 describe('RegionService', () => {
   const search = jest.fn();
@@ -90,7 +105,7 @@ describe('RegionService', () => {
         },
       ]);
       expect(req.query.bool.filter).toEqual([]);
-      expect(req.query.bool.should).toEqual([]);
+      expect(req.query.bool.should).toEqual(TYPE_BOOST_CLAUSES);
       expect(req.sort).toEqual([
         { _score: { order: 'desc' } },
         { id: { order: 'asc' } },
@@ -115,14 +130,14 @@ describe('RegionService', () => {
       await service.search({ q });
       const must = lastRequest().query.bool.must[0];
       expect(must.bool.minimum_should_match).toBe(1);
-      expect(must.bool.should[1]).toEqual({
-        term: { id: { value: `state:${code}`, boost: EXACT_STATE_BOOST } },
-      });
+      expect(must.bool.should.slice(1)).toEqual([
+        flat(EXACT_STATE_BOOST, { term: { id: `state:${code}` } }),
+      ]);
       expect(must.bool.should[0].multi_match.query).toBe(q.trim());
     });
 
-    it.each(['jackson mo', 'miss', 'kansas city', 'm'])(
-      'does not boost a state for partial text %j',
+    it.each(['jackson mo', 'kansas city', 'york', 'm', 'ka'])(
+      'does not boost a state for text that names none %j',
       async (q) => {
         await service.search({ q });
         expect(JSON.stringify(lastRequest())).not.toContain('state:');
@@ -133,10 +148,75 @@ describe('RegionService', () => {
       await service.search({ q: 'jack', states: ['MO', 'KS'] });
       const { bool } = lastRequest().query;
       expect(bool.should).toEqual([
-        { terms: { state: ['MO', 'KS'], boost: NEAR_STATE_BOOST } },
+        ...TYPE_BOOST_CLAUSES,
+        flat(NEAR_STATE_BOOST, { terms: { state: ['MO', 'KS'] } }),
       ]);
       expect(JSON.stringify(bool.filter)).not.toContain('MO');
       expect(bool.minimum_should_match).toBeUndefined();
+    });
+  });
+
+  describe('search: state name prefix', () => {
+    it.each([
+      ['kan', ['KS']],
+      ['miss', ['MO', 'MS']],
+      ['new', ['NH', 'NJ', 'NM', 'NY']],
+      ['New Y', ['NY']],
+      ['north', ['NC', 'ND']],
+    ])('lifts the states whose name starts with %j', async (q, codes) => {
+      await service.search({ q });
+      expect(stateClauses(lastRequest())).toEqual([
+        flat(STATE_PREFIX_BOOST, {
+          terms: { id: codes.map((c) => `state:${c}`) },
+        }),
+      ]);
+    });
+
+    it('ranks a prefix below an exact code or name', () => {
+      expect(STATE_PREFIX_BOOST).toBeLessThan(EXACT_STATE_BOOST);
+    });
+
+    it('does not repeat the exact state as a prefix match', async () => {
+      await service.search({ q: 'missouri' });
+      expect(stateClauses(lastRequest())).toEqual([
+        flat(EXACT_STATE_BOOST, { term: { id: 'state:MO' } }),
+      ]);
+    });
+
+    it.each([
+      ['ok', 'OK'],
+      ['ne', 'NE'],
+      ['mi', 'MI'],
+    ])(
+      'applies only the exact-code rule to 2-character %j',
+      async (q, code) => {
+        await service.search({ q });
+        expect(stateClauses(lastRequest())).toEqual([
+          flat(EXACT_STATE_BOOST, { term: { id: `state:${code}` } }),
+        ]);
+      },
+    );
+  });
+
+  describe('search: type order on close scores', () => {
+    it('boosts state over county over zip', async () => {
+      await service.search({ q: 'jack' });
+      expect(lastRequest().query.bool.should).toEqual(TYPE_BOOST_CLAUSES);
+      expect(TYPE_BOOSTS.zip).toBeUndefined();
+    });
+
+    it('puts Jackson County, MO above the Jackson, MO ZIP for "jackson mo"', () => {
+      // Live name scores (regions_v1): zip:63755 8.50, county:29095 7.50.
+      const zipName = 8.502409;
+      const countyName = 7.5024095;
+      const county = countyName + (TYPE_BOOSTS.county ?? 0);
+      const zip = zipName + (TYPE_BOOSTS.zip ?? 0);
+      expect(county).toBeGreaterThan(zip);
+    });
+
+    it('keeps type boosts well below a state match', () => {
+      const largest = Math.max(...Object.values(TYPE_BOOSTS));
+      expect(largest).toBeLessThan(STATE_PREFIX_BOOST);
     });
   });
 

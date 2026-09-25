@@ -1,4 +1,7 @@
-import { SearchRequest } from '@elastic/elasticsearch/lib/api/types';
+import {
+  QueryDslQueryContainer,
+  SearchRequest,
+} from '@elastic/elasticsearch/lib/api/types';
 import { RegionType } from './dto';
 
 /**
@@ -18,8 +21,17 @@ export const REGION_DETAIL_FIELDS = [
 
 /** Lifts the named state far above any name match score. */
 export const EXACT_STATE_BOOST = 100;
+/** Lifts states whose name starts with the text above other name matches. */
+export const STATE_PREFIX_BOOST = 10;
+/** Shorter text would lift too many states ("n" → eight of them). */
+export const STATE_PREFIX_MIN_LENGTH = 3;
 /** Enough to reorder ties and near-ties, not to bury a clearly better match. */
 export const NEAR_STATE_BOOST = 2;
+/** When scores are close, state ranks above county above ZIP. */
+export const TYPE_BOOSTS: Partial<Record<RegionType, number>> = {
+  state: 3,
+  county: 2,
+};
 
 const ZIP_PREFIX = /^\d{1,5}$/;
 
@@ -92,6 +104,29 @@ export function exactStateCode(text: string): string | undefined {
   return STATE_BY_TEXT.get(normalize(text));
 }
 
+/**
+ * Codes of the states whose full name starts with the text, other than an
+ * exact match. Empty below STATE_PREFIX_MIN_LENGTH characters.
+ */
+export function statePrefixCodes(text: string): string[] {
+  const prefix = normalize(text);
+  if (prefix.length < STATE_PREFIX_MIN_LENGTH) return [];
+  return Object.entries(STATE_NAMES)
+    .filter(([, name]) => {
+      const full = normalize(name);
+      return full !== prefix && full.startsWith(prefix);
+    })
+    .map(([code]) => code);
+}
+
+/**
+ * Adds exactly `boost` when the filter matches. A boosted `term` would scale
+ * with the term's rarity instead: a `type: state` term scored about 20.
+ */
+function flat(boost: number, filter: QueryDslQueryContainer) {
+  return { constant_score: { filter, boost } };
+}
+
 export function isZipPrefix(text: string): boolean {
   return ZIP_PREFIX.test(text);
 }
@@ -139,22 +174,29 @@ export function buildRegionSearch(
       operator: 'and' as const,
     },
   };
-  const state = exactStateCode(q);
-  const must = state
+  const exact = exactStateCode(q);
+  const prefixed = statePrefixCodes(q);
+  const stateMatches = [
+    ...(exact
+      ? [flat(EXACT_STATE_BOOST, { term: { id: `state:${exact}` } })]
+      : []),
+    ...(prefixed.length
+      ? [
+          flat(STATE_PREFIX_BOOST, {
+            terms: { id: prefixed.map((code) => `state:${code}`) },
+          }),
+        ]
+      : []),
+  ];
+  const must = stateMatches.length
     ? {
-        bool: {
-          should: [
-            nameMatch,
-            {
-              term: {
-                id: { value: `state:${state}`, boost: EXACT_STATE_BOOST },
-              },
-            },
-          ],
-          minimum_should_match: 1,
-        },
+        bool: { should: [nameMatch, ...stateMatches], minimum_should_match: 1 },
       }
     : nameMatch;
+
+  const typeBoosts = Object.entries(TYPE_BOOSTS).map(([type, boost]) =>
+    flat(boost, { term: { type } }),
+  );
 
   return {
     ...base,
@@ -162,9 +204,12 @@ export function buildRegionSearch(
       bool: {
         must: [must],
         filter: input.types ? [{ terms: { type: input.types } }] : [],
-        should: input.states?.length
-          ? [{ terms: { state: input.states, boost: NEAR_STATE_BOOST } }]
-          : [],
+        should: [
+          ...typeBoosts,
+          ...(input.states?.length
+            ? [flat(NEAR_STATE_BOOST, { terms: { state: input.states } })]
+            : []),
+        ],
       },
     },
     sort: [{ _score: { order: 'desc' } }, { id: { order: 'asc' } }],

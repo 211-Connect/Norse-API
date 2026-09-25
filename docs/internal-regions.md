@@ -39,16 +39,34 @@ well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
   `bool_prefix` `multi_match` over `name`, `name._2gram` and `name._3gram`,
   `operator: and`: every word must match, the last may be a prefix. Ordered by
   score, then `id` ascending.
-- **The named state first.** When the whole text is a state's postal code or
-  name ("MO", "missouri", "new york"), that state's Region gets a boost of 100
-  and ranks first. The boost is an alternative to the name match, so "DC"
-  finds District of Columbia although its name holds no "dc" word.
-- **`states` is a bias, not a filter.** `states=MO,KS` adds 2 to the score of
-  Regions in those states, so a tenant's own area ranks first among similar
-  matches; other states still appear.
+- **Boosts.** Each boost adds a fixed amount through `constant_score`. A
+  boosted `term` would instead scale with how rare the term is: a boost of 3
+  on `type: state` scored about 20.
+
+  | Boost | Adds | When |
+  | --- | --- | --- |
+  | Exact state | 100 | The whole text is a state's postal code or name ("MO", "missouri", "new york"). |
+  | State name prefix | 10 | At least 3 characters, and a state's full name starts with the text ("kan" → Kansas; "miss" → Mississippi, Missouri; "new" → the four New states). The exact state is not counted again here. |
+  | Type order | state 3, county 2, ZIP 0 | Always, on the text branch, so state > county > ZIP when name scores are close. "jackson mo" puts Jackson County, MO (7.5 + 2) above the ZIP for Jackson, MO (8.5 + 0). |
+  | `states` | 2 | The Region is in one of the listed states. |
+
+  The two state boosts are alternatives to the name match: a state can match
+  on them alone. That is how "DC" finds District of Columbia although its
+  name holds no "dc" word. Text of 1 or 2 characters gets only the exact-code
+  rule, so "ok" lifts Oklahoma and nothing else.
+- **`states` is a bias, not a filter.** Other states still appear. It lets a
+  tenant's own area rank first among similar matches.
 - **`types`** (`state`, `county`, `zip`) filters. `types` and `states` take a
   comma list or repeated params.
 - **No geometry.** Typeahead asks ES for `id`, `type`, `name`, `state` only.
+
+## Known limitations
+
+- **"Saint" does not match "St."** Names are stored as "St. Louis County,
+  MO", and the index has no synonym for it. "st louis" finds it, "saint
+  louis" finds nothing. Not planned for v1.
+- **No city Regions** (ADR 0023). "kansas city" returns the ZIPs whose name
+  carries the city.
 
 ## Lookup
 
