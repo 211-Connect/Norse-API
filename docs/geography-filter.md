@@ -147,7 +147,12 @@ one geography or virtual mode is 400 against another. `virtual: "all"` and no
 - A cursor encodes the last hit's `search_after` values, the sort mode and a
   fingerprint of the query. One from another query or sort mode is 400. It is
   not signed; see the detail doc for why that is safe.
-- `serviceId` is the last sort key, so ties never skip or repeat a record.
+- `serviceId` is the last sort key, and every request of one query (first
+  page included) sends the same ES `preference`, derived from the query
+  fingerprint. Both are needed for pages not to skip or repeat a record:
+  primary and replica copies score text differently (different deleted-doc
+  counts), so without the preference score-ordered pages can come from
+  different copies. See the detail doc.
 - There is no point-in-time. A Dagster reload between pages shows up on the
   next page.
 - `total` counts every match (`track_total_hits: true`), and there is no

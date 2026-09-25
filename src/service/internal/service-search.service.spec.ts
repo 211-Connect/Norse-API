@@ -331,6 +331,71 @@ describe('ServiceSearchService', () => {
       });
     });
 
+    describe('shard-copy preference', () => {
+      const scored = (serviceId: string, score: number) => ({
+        _id: `t:${serviceId}`,
+        _source: { serviceId },
+        sort: [score, serviceId],
+      });
+
+      /** Walks three pages of one text query; returns each request sent. */
+      const walk = async (request: {
+        resourceWriterIds: string[];
+        text?: string;
+        filter?: { statuses?: string[] };
+      }) => {
+        search.mockClear();
+        const pages = [
+          [scored('s1', 3), scored('s2', 2)],
+          [scored('s2', 2), scored('s3', 1)],
+          [scored('s3', 1)],
+        ];
+        let cursor: string | undefined;
+        for (const hits of pages) {
+          search.mockResolvedValueOnce({ hits: { total: { value: 3 }, hits } });
+          const page = await service.search({
+            ...request,
+            text: request.text ?? 'food pantry',
+            limit: 1,
+            cursor,
+          });
+          cursor = page.nextCursor ?? undefined;
+        }
+        return search.mock.calls.map(([body]) => body);
+      };
+
+      it('pins every page of one query, the first included, to the same shard copies', async () => {
+        const requests = await walk({ resourceWriterIds: [WRITER_A] });
+        expect(requests).toHaveLength(3);
+        const preferences = requests.map((r) => r.preference);
+        expect(preferences[0]).toEqual(expect.any(String));
+        expect(preferences[0]).not.toMatch(/^_/);
+        expect(new Set(preferences).size).toBe(1);
+      });
+
+      it('sends a preference on a name-order search too', async () => {
+        await service.search({ resourceWriterIds: [WRITER_A] });
+        expect(lastRequest().preference).toEqual(expect.any(String));
+      });
+
+      it('uses a different preference for a different query', async () => {
+        const [base] = await walk({ resourceWriterIds: [WRITER_A] });
+        const [otherText] = await walk({
+          resourceWriterIds: [WRITER_A],
+          text: 'food*',
+        });
+        const [otherWriters] = await walk({ resourceWriterIds: [WRITER_B] });
+        const [otherFilter] = await walk({
+          resourceWriterIds: [WRITER_A],
+          filter: { statuses: ['active'] },
+        });
+        const preferences = [base, otherText, otherWriters, otherFilter].map(
+          (r) => r.preference,
+        );
+        expect(new Set(preferences).size).toBe(4);
+      });
+    });
+
     it('returns list-row fields and the total', async () => {
       search.mockResolvedValue({
         hits: {
@@ -511,6 +576,38 @@ describe('ServiceSearchService', () => {
       });
       expect(result.taxonomy).toHaveLength(FACET_PAGE_SIZE + 1);
       expect(result.taxonomy.map((n) => n.code)).toContain('ZZ');
+    });
+
+    it('pins every composite page to the shard copies its unfiltered listing uses', async () => {
+      const fullPage = Array.from(
+        { length: FACET_PAGE_SIZE },
+        (_, i) => [`AA-${i}`, 1] as [string, number],
+      );
+      search
+        .mockResolvedValueOnce({
+          aggregations: {
+            contributors: composite([[WRITER_A, 1001]]),
+            statuses: composite([]),
+            taxonomyPath: composite(fullPage, 'AA-999'),
+            taxonomyCodes: composite([]),
+          },
+        })
+        .mockResolvedValueOnce({
+          aggregations: { taxonomyPath: composite([['ZZ', 1001]]) },
+        });
+      await service.facets({ resourceWriterIds: [WRITER_A] });
+      const facetPreferences = search.mock.calls.map(([b]) => b.preference);
+
+      search.mockResolvedValue(emptyPage);
+      await service.search({ resourceWriterIds: [WRITER_A] });
+      const listing = lastRequest().preference;
+
+      expect(facetPreferences).toEqual([listing, listing]);
+      expect(listing).toEqual(expect.any(String));
+
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({ resourceWriterIds: [WRITER_B] });
+      expect(lastRequest().preference).not.toBe(listing);
     });
   });
 

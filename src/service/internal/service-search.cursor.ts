@@ -44,6 +44,17 @@ export function queryFingerprint(query: CursorQuery): string {
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
+/**
+ * ES `preference` for every request of one query, first page included. Primary
+ * and replica copies of a shard hold different deleted-doc counts, so BM25
+ * scores differ between them; if each page may hit another copy, `search_after`
+ * on `_score` skips and repeats records. Pinning by query (never by page) makes
+ * every page, and every composite facet page, read the same copies.
+ */
+export function shardPreference(query: CursorQuery): string {
+  return `services-${queryFingerprint(query)}`;
+}
+
 export function encodeCursor(
   mode: SortMode,
   query: CursorQuery,

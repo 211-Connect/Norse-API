@@ -36,6 +36,7 @@ import {
   CursorQuery,
   decodeCursor,
   encodeCursor,
+  shardPreference,
 } from './service-search.cursor';
 
 /** Buckets per composite page; facets page until exhausted, never truncate. */
@@ -95,6 +96,7 @@ export class ServiceSearchService {
 
     const body: SearchRequest = {
       index: SERVICES_INDEX,
+      preference: shardPreference(cursorQuery),
       // One extra hit says whether a next page exists, so the last page
       // returns a null cursor instead of one that leads to an empty page.
       size: limit + 1,
@@ -138,7 +140,10 @@ export class ServiceSearchService {
     if (scope === null) return { contributors: [], statuses: [], taxonomy: [] };
     await this.assertRegionsExist(input.regionIds);
 
-    const buckets = await this.collectFacetBuckets({ bool: scope });
+    const buckets = await this.collectFacetBuckets(
+      { bool: scope },
+      shardPreference(input),
+    );
 
     // Normalized as the path is: codes are stored as written ("BD-1800."), the
     // path as its canonical key, so comparing raw would mark a directly coded
@@ -173,6 +178,7 @@ export class ServiceSearchService {
    */
   private async collectFacetBuckets(
     query: SearchRequest['query'],
+    preference: string,
   ): Promise<Record<FacetName, { key: string; count: number }[]>> {
     const out: Record<FacetName, { key: string; count: number }[]> = {
       contributors: [],
@@ -200,6 +206,7 @@ export class ServiceSearchService {
       const result = await this.call('facets', () =>
         this.elasticsearch.search({
           index: SERVICES_INDEX,
+          preference,
           size: 0,
           track_total_hits: false,
           query,

@@ -87,7 +87,30 @@ over one fixture and compares the results.
 - The service asks ES for `limit + 1` hits. That extra hit tells it whether a
   next page exists, so a full last page still returns a null cursor.
 - `serviceId` is the final sort key in both orders. Without it, a page
-  boundary inside a tie would skip or repeat records.
+  boundary inside a tie would skip or repeat records. That tie-breaker is
+  necessary but not sufficient: it only holds while every page reads the
+  same shard copies (next point).
+- **Every search request carries `preference`**, the first page included:
+  `services-<query fingerprint>`. It is derived from the query, never from
+  the page, so all pages of one query go to the same shard copies, and
+  different queries still spread across copies.
+  - Why: a primary and its replica hold different numbers of deleted docs
+    (measured on production: 117k vs 96k), so BM25 gives the same document a
+    different `_score` on each copy. Without a preference each page could
+    hit a different copy, and `search_after` on `_score` then skips and
+    repeats records. Measured before the fix: "food*" had a total of 1,686,
+    one walk returned 229 duplicates and never showed about 150 records, and
+    two walks of "food pantry" returned different pages.
+  - Name order has no score, but carries the preference too, so a copy that
+    lags on a refresh cannot shift a page boundary either.
+  - Facets send the preference of their unfiltered listing (the fingerprint
+    with no text, taxonomy or statuses) on every composite page, so facet
+    counts and that listing's `total` read the same copies.
+  - If a pinned copy goes away (node restart, relocation), ES falls back to
+    another copy and paging can skip or repeat once. Restarting the walk fixes it.
+  - Not point-in-time: the read-only live-test guard refuses PIT, and a PIT
+    needs open/close lifecycle management that these stateless routes do
+    not have.
 - No point-in-time is held. If Dagster reloads the index while someone is
   paging, the next page reflects the new data.
 
