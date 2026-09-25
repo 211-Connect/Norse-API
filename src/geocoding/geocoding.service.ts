@@ -47,7 +47,14 @@ export class GeocodingService {
   ): Promise<ForwardGeocodeResponseDto[]> {
     const { address, locale = 'en', limit = 5 } = query;
     const providerKey = query.provider ?? GeocodingProvider.MAPBOX;
-    const cacheKey = `geocode:forward:${providerKey}:${address}:${locale}:${limit}`;
+    if (query.types && providerKey !== GeocodingProvider.MAPBOX) {
+      throw new BadRequestException(
+        `types is supported only by the ${GeocodingProvider.MAPBOX} provider`,
+      );
+    }
+    const types = query.types ? [...query.types].sort().join(',') : '';
+    const proximity = query.proximity?.join(',') ?? '';
+    const cacheKey = `geocode:forward:${providerKey}:${address}:${locale}:${limit}:${types}:${proximity}`;
 
     const cachedResult =
       await this.cacheManager.get<ForwardGeocodeResponseDto[]>(cacheKey);
