@@ -72,11 +72,11 @@ export interface ServiceFilterInput {
 export const SERVICE_AREA_FIELD = 'service_area';
 
 /**
- * A Virtual Service that publishes no Service Area serves every Place
+ * A Virtual Service that publishes no Service Area serves every Region
  * (ADR 0025). A physical service with no Service Area serves none: its extent
  * is missing data, not a claim.
  */
-const GLOBAL_VIRTUAL_SERVICE: QueryDslQueryContainer = {
+const VIRTUAL_WITHOUT_SERVICE_AREA: QueryDslQueryContainer = {
   bool: {
     filter: [{ term: { locationTypes: 'virtual' } }],
     must_not: [{ exists: { field: SERVICE_AREA_FIELD } }],
@@ -100,7 +100,7 @@ export function geographyClause(
       },
     },
   }));
-  if (virtual !== 'exclude') serves.push(GLOBAL_VIRTUAL_SERVICE);
+  if (virtual !== 'exclude') serves.push(VIRTUAL_WITHOUT_SERVICE_AREA);
   return { bool: { should: serves, minimum_should_match: 1 } };
 }
 

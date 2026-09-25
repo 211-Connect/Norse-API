@@ -31,7 +31,7 @@ export class ServicesGeographyFilterDto {
     maxItems: SERVICES_SEARCH_MAX_REGIONS,
     example: ['county:29510', 'zip:63110'],
     description:
-      "Region ids, OR'ed. A service matches when its service_area intersects any of them; a service without one never matches. An unknown id is 400.",
+      "Region ids, OR'ed. A service matches when its service_area intersects any of them. A service with a virtual location and no service_area matches every Region unless virtual is exclude; any other service without a service_area never matches. An unknown id is 400.",
   })
   @IsArray()
   @ArrayMinSize(1)
@@ -54,7 +54,7 @@ export class ServicesScopeFilterDto {
     required: false,
     default: 'all',
     description:
-      'only: some location is virtual. exclude: some location is physical (a service with both appears under both).',
+      'only: some location is virtual. exclude: some location is physical (a service with both appears under both); with geography, exclude also stops a service with no service_area from matching every Region.',
   })
   @IsOptional()
   @IsIn(VIRTUAL_MODES)

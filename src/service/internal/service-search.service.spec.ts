@@ -48,7 +48,7 @@ describe('ServiceSearchService', () => {
       minimum_should_match: 1,
     },
   });
-  // ADR 0025: a Virtual Service with no Service Area serves every Place.
+  // ADR 0025: a Virtual Service with no Service Area serves every Region.
   const globalVirtual = {
     bool: {
       filter: [{ term: { locationTypes: 'virtual' } }],
