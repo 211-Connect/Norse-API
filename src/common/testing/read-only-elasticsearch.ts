@@ -17,7 +17,7 @@ import {
  * Connection, on the exact method and path that would go on the wire.
  *
  * Allowed: GET and HEAD on any path, and POST to a path whose last segment is
- * `_search` or `_count`. Everything else throws `ReadOnlyViolationError`,
+ * `_search`, `_count` or `_mget` (the services' Region existence check). Everything else throws `ReadOnlyViolationError`,
  * including `_bulk`, `_doc` writes, `_update_by_query`, `_delete_by_query`,
  * `_reindex`, index/alias/settings/mapping/pipeline/script changes, scroll and
  * point-in-time.
@@ -37,7 +37,7 @@ export class RequestBudgetExceededError extends Error {
   }
 }
 
-const READ_POST_ENDPOINTS = new Set(['_search', '_count']);
+const READ_POST_ENDPOINTS = new Set(['_search', '_count', '_mget']);
 
 export function isReadOnlyRequest(method: string, path: string): boolean {
   const verb = method.toUpperCase();

@@ -109,6 +109,7 @@ describe('read-only Elasticsearch client', () => {
   it('lets reads through', async () => {
     await client.search({ index: 'services', query: { match_all: {} } });
     await client.count({ index: 'services', query: { match_all: {} } });
+    await client.mget({ index: 'regions', ids: ['state:MO'], _source: false });
     await client.indices.getMapping({ index: 'services' });
     await client.cat.indices({ index: 'services' });
     await client
@@ -117,6 +118,7 @@ describe('read-only Elasticsearch client', () => {
     expect(wire.map((r) => `${r.method} ${r.path}`)).toEqual([
       'POST /services/_search',
       'POST /services/_count',
+      'POST /regions/_mget',
       'GET /services/_mapping',
       'GET /_cat/indices/services',
       'GET /regions/_doc/state%3AMO',
@@ -156,6 +158,7 @@ describe('read-only Elasticsearch client', () => {
     ['POST', '/services/_search', true],
     ['POST', '/_search', true],
     ['POST', '/services/_count?q=x', true],
+    ['POST', '/regions/_mget', true],
     ['GET', '/_cat/indices', true],
     ['POST', '/_search/scroll', false],
     ['POST', '/_search/template', false],
