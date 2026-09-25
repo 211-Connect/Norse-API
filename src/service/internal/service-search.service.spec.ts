@@ -817,6 +817,30 @@ describe('ServiceSearchService', () => {
         );
       });
 
+      it('counts facets under the same Located In clause as the list', async () => {
+        const filter = {
+          geography: { regionIds: ['county:37063'], points: [point] },
+          virtual: 'exclude' as const,
+          match: 'located' as const,
+        };
+        await service.search({ resourceWriterIds: [WRITER_A], filter });
+        const listed = lastRequest().query.bool.filter;
+        search.mockResolvedValue({ aggregations: {} });
+        await service.facets({ resourceWriterIds: [WRITER_A], filter });
+        expect(JSON.stringify(lastRequest().query)).toContain(
+          JSON.stringify(listed[2]),
+        );
+      });
+
+      it('ignores match without a Place', async () => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: { match: 'located' },
+        });
+        expect(lastRequest().query.bool.filter).toHaveLength(2);
+      });
+
       it('treats an absent match as Serves Area', async () => {
         search.mockClear();
         await service.search({
