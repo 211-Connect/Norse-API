@@ -60,11 +60,18 @@ export function serviceListSort(mode: SortMode): Sort {
       ];
 }
 
+export interface GeoPoint {
+  lat: number;
+  lng: number;
+  radiusMiles: number;
+}
+
 export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
   taxonomyCodes?: readonly string[];
   statuses?: readonly string[];
   regionIds?: readonly string[];
+  points?: readonly GeoPoint[];
   virtual?: VirtualMode;
 }
 
@@ -84,22 +91,38 @@ const VIRTUAL_WITHOUT_SERVICE_AREA: QueryDslQueryContainer = {
 };
 
 /**
- * Regions OR'ed; `intersects` counts border contact (v1). ES reads each shape
- * from `regions` by id, so no geometry crosses the wire. Excluding virtual
- * services drops the global branch, so only a real overlap matches.
+ * Regions and points OR'ed; `intersects` counts border contact (v1). ES reads
+ * each Region's shape from `regions` by id, so no geometry crosses the wire; a
+ * point is a query-time circle. Excluding virtual services drops the global
+ * branch, so only a real overlap matches.
  */
 export function geographyClause(
   regionIds: readonly string[],
+  points: readonly GeoPoint[],
   virtual: VirtualMode | undefined,
 ): QueryDslQueryContainer {
-  const serves: QueryDslQueryContainer[] = regionIds.map((id) => ({
-    geo_shape: {
-      [SERVICE_AREA_FIELD]: {
-        indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-        relation: 'intersects',
+  const serves: QueryDslQueryContainer[] = [
+    ...regionIds.map((id) => ({
+      geo_shape: {
+        [SERVICE_AREA_FIELD]: {
+          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+          relation: 'intersects' as const,
+        },
       },
-    },
-  }));
+    })),
+    ...points.map(({ lat, lng, radiusMiles }) => ({
+      geo_shape: {
+        [SERVICE_AREA_FIELD]: {
+          shape: {
+            type: 'circle',
+            coordinates: [lng, lat],
+            radius: `${radiusMiles}mi`,
+          },
+          relation: 'intersects' as const,
+        },
+      },
+    })),
+  ];
   if (virtual !== 'exclude') serves.push(VIRTUAL_WITHOUT_SERVICE_AREA);
   return { bool: { should: serves, minimum_should_match: 1 } };
 }
@@ -149,8 +172,10 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   if (input.statuses && input.statuses.length > 0) {
     filter.push({ terms: { status: [...input.statuses] } });
   }
-  if (input.regionIds && input.regionIds.length > 0) {
-    filter.push(geographyClause(input.regionIds, input.virtual));
+  const regionIds = input.regionIds ?? [];
+  const points = input.points ?? [];
+  if (regionIds.length + points.length > 0) {
+    filter.push(geographyClause(regionIds, points, input.virtual));
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);

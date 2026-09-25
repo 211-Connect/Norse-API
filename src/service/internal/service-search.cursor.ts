@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import { FieldValue } from '@elastic/elasticsearch/lib/api/types';
-import { ServiceFilterInput, SortMode } from './service-search.query';
+import { GeoPoint, ServiceFilterInput, SortMode } from './service-search.query';
 
 /**
  * An opaque, unsigned `search_after` cursor. The writer set is the caller's own
@@ -23,6 +23,9 @@ interface CursorPayload {
 const asSet = (values: readonly string[] | undefined) =>
   [...new Set(values ?? [])].sort();
 
+const pointKey = ({ lat, lng, radiusMiles }: GeoPoint) =>
+  `${lat},${lng},${radiusMiles}`;
+
 /**
  * Every query field, required by the mapped type: a new filter field does not
  * compile until it is fingerprinted. Set-like lists are sorted so the same set
@@ -35,6 +38,7 @@ const FINGERPRINT_PARTS: {
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),
   regionIds: (q) => asSet(q.regionIds),
+  points: (q) => asSet(q.points?.map(pointKey)),
   virtual: (q) => q.virtual ?? 'all',
   text: (q) => q.text?.trim() ?? '',
 };

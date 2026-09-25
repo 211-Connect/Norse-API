@@ -55,6 +55,18 @@ describe('ServiceSearchService', () => {
       must_not: [{ exists: { field: 'service_area' } }],
     },
   };
+  const circle = (lat: number, lng: number, radiusMiles: number) => ({
+    geo_shape: {
+      service_area: {
+        shape: {
+          type: 'circle',
+          coordinates: [lng, lat],
+          radius: `${radiusMiles}mi`,
+        },
+        relation: 'intersects',
+      },
+    },
+  });
   const servesClause = (...ids: string[]) => {
     const regions = regionClause(...ids);
     return {
@@ -658,6 +670,73 @@ describe('ServiceSearchService', () => {
         regionClause('state:MO'),
         { term: { locationTypes: 'physical' } },
       ]);
+    });
+
+    it('ORs a point, as a circle intersecting service_area, with the Regions (ISS-1897)', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: {
+            regionIds: ['state:MO'],
+            points: [{ lat: 35.994, lng: -78.8986, radiusMiles: 10 }],
+          },
+        },
+      });
+      const regions = regionClause('state:MO');
+      expect(lastRequest().query.bool.filter[2]).toEqual({
+        bool: {
+          ...regions.bool,
+          should: [
+            ...regions.bool.should,
+            circle(35.994, -78.8986, 10),
+            globalVirtual,
+          ],
+        },
+      });
+    });
+
+    it('searches points alone without an mget, and drops a repeated point', async () => {
+      const point = { lat: 35.994, lng: -78.8986, radiusMiles: 10 };
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { points: [point, { ...point }] },
+          virtual: 'exclude',
+        },
+      });
+      expect(mget).not.toHaveBeenCalled();
+      expect(lastRequest().query.bool.filter[2]).toEqual({
+        bool: {
+          should: [circle(35.994, -78.8986, 10)],
+          minimum_should_match: 1,
+        },
+      });
+    });
+
+    it('answers a geography with no Places, or more than 20, with 400', async () => {
+      const point = (i: number) => ({
+        lat: 35 + i / 100,
+        lng: -78.9,
+        radiusMiles: 5,
+      });
+      await expect(
+        service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: { geography: { regionIds: [], points: [] } },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.facets({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: {
+              regionIds: ['state:MO'],
+              points: Array.from({ length: 20 }, (_, i) => point(i)),
+            },
+          },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
     });
 
     it('counts facets under the same geography clause as the list', async () => {

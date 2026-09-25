@@ -2,10 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
@@ -19,26 +19,68 @@ import { REGION_ID_PATTERN, regionIdMessage } from '../../../region/internal';
 export const SERVICES_SEARCH_DEFAULT_LIMIT = 50;
 export const SERVICES_SEARCH_MAX_LIMIT = 200;
 export const SERVICES_SEARCH_MAX_WRITERS = 100;
-export const SERVICES_SEARCH_MAX_REGIONS = 20;
+/** Regions and points together (ADR 0025). */
+export const SERVICES_SEARCH_MAX_PLACES = 20;
+export const POINT_RADIUS_MIN_MILES = 0.1;
+export const POINT_RADIUS_MAX_MILES = 100;
 
 export const VIRTUAL_MODES = ['all', 'only', 'exclude'] as const;
 export type VirtualMode = (typeof VIRTUAL_MODES)[number];
 
+export class ServicesGeoPointDto {
+  @ApiProperty({ minimum: -90, maximum: 90, example: 35.994 })
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-90)
+  @Max(90)
+  lat: number;
+
+  @ApiProperty({ minimum: -180, maximum: 180, example: -78.8986 })
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-180)
+  @Max(180)
+  lng: number;
+
+  @ApiProperty({
+    minimum: POINT_RADIUS_MIN_MILES,
+    maximum: POINT_RADIUS_MAX_MILES,
+    example: 10,
+  })
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(POINT_RADIUS_MIN_MILES)
+  @Max(POINT_RADIUS_MAX_MILES)
+  radiusMiles: number;
+}
+
+/** Regions and points, OR'ed: 1 to 20 Places in total. */
 export class ServicesGeographyFilterDto {
   @ApiProperty({
     type: [String],
-    minItems: 1,
-    maxItems: SERVICES_SEARCH_MAX_REGIONS,
+    required: false,
+    maxItems: SERVICES_SEARCH_MAX_PLACES,
     example: ['county:29510', 'zip:63110'],
     description:
-      "Region ids, OR'ed. A service matches when its service_area intersects any of them. A service with a virtual location and no service_area matches every Region unless virtual is exclude; any other service without a service_area never matches. An unknown id is 400.",
+      "Region ids, OR'ed with the points. A service matches when its service_area intersects any of them. A service with a virtual location and no service_area matches every Region unless virtual is exclude; any other service without a service_area never matches. An unknown id is 400.",
   })
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(SERVICES_SEARCH_MAX_REGIONS)
+  @ArrayMaxSize(SERVICES_SEARCH_MAX_PLACES)
   @IsString({ each: true })
   @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
-  regionIds: string[];
+  regionIds?: string[];
+
+  @ApiProperty({
+    type: [ServicesGeoPointDto],
+    required: false,
+    maxItems: SERVICES_SEARCH_MAX_PLACES,
+    description:
+      "Points with a radius in miles, OR'ed with the Regions. A service matches when its service_area intersects the circle, under the same rule for Virtual Services with no service_area as a Region.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_SEARCH_MAX_PLACES)
+  @ValidateNested({ each: true })
+  @Type(() => ServicesGeoPointDto)
+  points?: ServicesGeoPointDto[];
 }
 
 /** The clauses that also narrow facets, so a facet count matches the list. */

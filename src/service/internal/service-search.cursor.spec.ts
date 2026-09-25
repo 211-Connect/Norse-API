@@ -16,6 +16,10 @@ const FULL: Required<CursorQuery> = {
   taxonomyCodes: ['BD-1800', 'LV-1000'],
   statuses: ['active', 'inactive'],
   regionIds: ['county:29510', 'state:MO'],
+  points: [
+    { lat: 35.994, lng: -78.8986, radiusMiles: 10 },
+    { lat: 39.0997, lng: -94.5786, radiusMiles: 5 },
+  ],
   virtual: 'only',
   text: 'food',
 };
@@ -25,6 +29,7 @@ const OTHER: Required<CursorQuery> = {
   taxonomyCodes: ['BD-18'],
   statuses: ['pending'],
   regionIds: ['zip:63110'],
+  points: [{ lat: 35.994, lng: -78.8986, radiusMiles: 25 }],
   virtual: 'exclude',
   text: 'shelter',
 };
@@ -51,6 +56,14 @@ describe('queryFingerprint', () => {
     },
   );
 
+  it('ignores the order and repeats of points', () => {
+    const shuffled = {
+      ...FULL,
+      points: [...FULL.points].reverse().concat(FULL.points[0]),
+    };
+    expect(queryFingerprint(shuffled)).toBe(queryFingerprint(FULL));
+  });
+
   it('accepts a cursor replayed with the same sets in another order', () => {
     const cursor = encodeCursor('score', FULL, [1.5, 's1']);
     const reordered: CursorQuery = {
@@ -69,6 +82,7 @@ describe('queryFingerprint', () => {
         taxonomyCodes: [],
         statuses: [],
         regionIds: [],
+        points: [],
         virtual: 'all',
         text: '  ',
       }),

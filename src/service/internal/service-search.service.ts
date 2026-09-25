@@ -1,4 +1,9 @@
-import { HttpException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { errors } from '@elastic/elasticsearch';
 import {
@@ -9,6 +14,7 @@ import {
 import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
 import {
   SERVICES_SEARCH_DEFAULT_LIMIT,
+  SERVICES_SEARCH_MAX_PLACES,
   ServiceListItemDto,
   ServicesFacetsRequestDto,
   ServicesFacetsResponseDto,
@@ -21,6 +27,7 @@ import { RegionService, unknownRegionsError } from '../../region/internal';
 import {
   SERVICE_LIST_SOURCE_FIELDS,
   SERVICES_INDEX,
+  GeoPoint,
   ServiceFilterInput,
   buildServiceFilter,
   serviceListSort,
@@ -246,12 +253,37 @@ function scopeFilterInput(request: {
   resourceWriterIds: string[];
   filter?: ServicesScopeFilterDto;
 }): ServiceFilterInput {
-  const regionIds = request.filter?.geography?.regionIds;
-  return {
+  const scope: ServiceFilterInput = {
     resourceWriterIds: request.resourceWriterIds,
-    regionIds: regionIds ? [...new Set(regionIds)] : undefined,
     virtual: request.filter?.virtual,
   };
+  const geography = request.filter?.geography;
+  if (!geography) return scope;
+  const regionIds = [...new Set(geography.regionIds ?? [])];
+  const points = distinctPoints(geography.points ?? []);
+  assertPlaceCount(regionIds.length + points.length);
+  return { ...scope, regionIds, points };
+}
+
+function distinctPoints(points: readonly GeoPoint[]): GeoPoint[] {
+  const seen = new Map<string, GeoPoint>();
+  for (const p of points) {
+    seen.set(`${p.lat},${p.lng},${p.radiusMiles}`, {
+      lat: p.lat,
+      lng: p.lng,
+      radiusMiles: p.radiusMiles,
+    });
+  }
+  return [...seen.values()];
+}
+
+/** A geography clause names 1 to 20 Places, Regions and points together. */
+function assertPlaceCount(count: number): void {
+  if (count < 1 || count > SERVICES_SEARCH_MAX_PLACES) {
+    throw new BadRequestException(
+      `geography needs 1 to ${SERVICES_SEARCH_MAX_PLACES} Places (Region ids and points together); got ${count}`,
+    );
+  }
 }
 
 const MISSING_SHAPE = /Shape with ID \[([^\]]+)\][^"]*not found/;

@@ -68,8 +68,8 @@ Send `x-api-version: 1` and `x-internal-api-key` on every call. No
 
 | Route | Input | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` (1 to 20), `filter.virtual`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | body: `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 together), `filter.virtual`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
+| `POST /internal/services/facets` | body: `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
 | `GET /internal/regions` | query: `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state }] }` |
 | `GET /internal/regions/:id` | `state:MO`, `county:29095` or `zip:64130` | `{ id, type, name, state, fips?, zip?, geometry, attribution? }` |
 
@@ -147,6 +147,13 @@ POST /internal/services/facets
   `service_area`, `indexed_shape: { index: "regions", id, path: "geometry" }`,
   `relation: "intersects"`, `minimum_should_match: 1`. ES reads each shape
   from the index, so no geometry crosses the wire.
+- `points` (ISS-1897, ADR 0025): each `{ lat, lng, radiusMiles }`, with
+  `lat` in ±90, `lng` in ±180 and `radiusMiles` from 0.1 to 100. A point is a
+  query-time `circle` on `service_area` (`coordinates: [lng, lat]`,
+  `radius: "<r>mi"`, `relation: "intersects"`), OR'ed with the Regions in the
+  same `bool.should`. A repeated point is dropped. Regions and points count
+  together toward the 20; `geography` with none, or more than 20, is 400. A
+  points-only clause skips the Region existence check.
 - `intersects` counts border contact (a v1 decision). A service whose area
   only touches a Region's edge matches. See
   [Known behaviour: border contact](#known-behaviour-border-contact).
@@ -179,7 +186,7 @@ under `all`.
 `statuses`, which are the options being counted. Send the same geography and
 virtual mode as the list, so each count matches what the list would show.
 
-**Cursors.** The fingerprint covers `regionIds` and `virtual`. A cursor from
+**Cursors.** The fingerprint covers `regionIds`, `points` and `virtual`. A cursor from
 one geography or virtual mode is 400 against another. `virtual: "all"` and no
 `virtual` are the same query, and so is the same set of Region ids in another
 order.
