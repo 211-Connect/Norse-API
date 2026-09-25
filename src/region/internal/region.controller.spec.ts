@@ -103,7 +103,7 @@ describe('RegionController (internal/regions)', () => {
       expect(req.query.bool.should).toContainEqual({
         constant_score: {
           filter: { terms: { state: ['MO', 'KS'] } },
-          boost: 2,
+          boost: 4,
         },
       });
     });

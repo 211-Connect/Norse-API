@@ -214,6 +214,14 @@ describe('RegionService', () => {
       expect(county).toBeGreaterThan(zip);
     });
 
+    it('puts an in-state ZIP above an out-of-state county on an equal name match ("jack" + states=MO)', () => {
+      // A one-word prefix scores 1.0 on every match, live.
+      const inStateZip = 1 + (TYPE_BOOSTS.zip ?? 0) + NEAR_STATE_BOOST;
+      const outOfStateCounty = 1 + (TYPE_BOOSTS.county ?? 0);
+      expect(inStateZip).toBeGreaterThan(outOfStateCounty);
+      expect(NEAR_STATE_BOOST).toBeLessThan(STATE_PREFIX_BOOST);
+    });
+
     it('keeps type boosts well below a state match', () => {
       const largest = Math.max(...Object.values(TYPE_BOOSTS));
       expect(largest).toBeLessThan(STATE_PREFIX_BOOST);

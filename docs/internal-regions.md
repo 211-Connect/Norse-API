@@ -48,7 +48,7 @@ well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
   | Exact state | 100 | The whole text is a state's postal code or name ("MO", "missouri", "new york"). |
   | State name prefix | 10 | At least 3 characters, and a state's full name starts with the text ("kan" → Kansas; "miss" → Mississippi, Missouri; "new" → the four New states). The exact state is not counted again here. |
   | Type order | state 3, county 2, ZIP 0 | Always, on the text branch, so state > county > ZIP when name scores are close. "jackson mo" puts Jackson County, MO (7.5 + 2) above the ZIP for Jackson, MO (8.5 + 0). |
-  | `states` | 2 | The Region is in one of the listed states. |
+  | `states` | 4 | The Region is in one of the listed states. Enough for an in-state ZIP (0 + 4) to beat an out-of-state county (+2) on an equal name match. |
 
   The two state boosts are alternatives to the name match: a state can match
   on them alone. That is how "DC" finds District of Columbia although its

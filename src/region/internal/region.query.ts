@@ -25,8 +25,11 @@ export const EXACT_STATE_BOOST = 100;
 export const STATE_PREFIX_BOOST = 10;
 /** Shorter text would lift too many states ("n" → eight of them). */
 export const STATE_PREFIX_MIN_LENGTH = 3;
-/** Enough to reorder ties and near-ties, not to bury a clearly better match. */
-export const NEAR_STATE_BOOST = 2;
+/**
+ * Puts an in-state ZIP (0) above an out-of-state county (+2) on an equal
+ * name match, without burying a clearly better match.
+ */
+export const NEAR_STATE_BOOST = 4;
 /** When scores are close, state ranks above county above ZIP. */
 export const TYPE_BOOSTS: Partial<Record<RegionType, number>> = {
   state: 3,
