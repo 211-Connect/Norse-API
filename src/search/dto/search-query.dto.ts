@@ -251,8 +251,11 @@ export class SearchResourcesQueryDto {
     description:
       'Opt-in trimming of low-relevance results. `off` (default) returns the ' +
       'full matched set, byte-identical to previous behaviour. `on` keeps ' +
-      'results scoring at least a fifth of the top score, and returns ' +
-      'everything when the scores are too flat for that to remove anything ' +
+      'results scoring at least a fraction of the top score — 0.2 of the top, ' +
+      'tightened stepwise (up to 0.5) when more than 1,000 results would ' +
+      'survive, and never less than the top-20 results own scores — and ' +
+      'returns everything when the scores are too flat for that to remove ' +
+      'anything ' +
       'meaningful — a uniformly weak result set is reported as such rather ' +
       'than cut arbitrarily. The cut is computed on semantic and lexical ' +
       'relevance only: proximity still filters and ranks, but never decides ' +

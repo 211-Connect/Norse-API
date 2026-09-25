@@ -40,7 +40,7 @@ what a published API returns to a consumer who never asked.
 | Value | Behaviour |
 | --- | --- |
 | `off` (default) | No cut. Response unchanged, no probe issued, no `relevance_cutoff` key. |
-| `on` | Keep results scoring ≥ 20% of the top score. **Can decline to cut.** |
+| `on` | Keep results scoring ≥ 20% of the top score, clamped so the probe's own top-20 always survive, and tightened stepwise (up to 0.5) when more than 1,000 results would survive. **Can decline to cut.** |
 
 There is no strategy menu. The parameter shipped as one — `score_gap` (first
 significant cliff in the score sequence) alongside the fraction-of-max rule —
@@ -87,13 +87,31 @@ reading that field.
 Only when a cutoff is requested. The probe never walks a fixed window — it asks
 Elasticsearch two questions that cost nothing, and only then pays for documents:
 
-1. **Head** — same filters, ranked by relevance, `size: 1`, `_source: false`.
-   Returns the top score and the pre-cutoff total.
+1. **Head** — same filters, ranked by relevance, `size: 21`, `_source: false`.
+   Returns the top score, the top-20 score (the clamp anchor), and the
+   pre-cutoff total.
 2. **Count** — `size: 0` with `min_score: 0.2 × top`. Returns how many results
    clear the threshold, in about a millisecond over a 27,000-result population,
    with no documents collected. If that count is ≥ 90% of the matched set the
    distribution is flat and nothing is cut (`no_elbow`); if it exceeds 1,000 the
    cut is located but too large to enumerate (`cut_too_large`).
+
+   Two refinements measured on the 28-pair matrix, both of which fix pairs the
+   plain fraction mishandled:
+
+   - **Top-20 clamp.** The head call fetches the top 21 scores in the same
+     pass, and the threshold is `min(fraction × top, top-20 score)`. The cut
+     can therefore never remove the probe's own top-20 — the metric the plain
+     fraction violated on exactly three pairs (Washington/Iowa `homeless
+     shelter`, Santa Cruz `dental`, recall 15/20, 13/20, 13/20), each fixed
+     with a kept set of 20.
+   - **Fraction ladder.** When the clamped 0.2 threshold leaves more than
+     1,000 survivors, the fraction climbs `[0.25, 0.3, 0.4, 0.5]` and the
+     first rung that enumerates is applied. The eight pairs that previously
+     declined with `cut_too_large` (14,744–16,341 matched, no cut at all) now
+     apply a cut of 490–976 documents; recall@20 stays 20/20 on every rung.
+     The ladder is a bounded enumeration aid, not a relevance judgment — if
+     no rung fits, the probe declines with `cut_too_large` as before.
 3. **Survivors** — the same `min_score`, `_source: ['service_id']`, sized to the
    count from step 2. The expensive call is proportional to the cut, not to a
    fixed window.

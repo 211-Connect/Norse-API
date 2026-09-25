@@ -111,6 +111,29 @@ const CUTOFF_MIN_KEEP_SERVICES = 5;
 const MAX_ENUMERATED_CUT = 1000;
 
 /**
+ * The cut must never remove the probe's own top-N documents. Measured on the
+ * 28-pair matrix (e2e/out/CUTOFF_IMPROVEMENTS.md rev 4): the 0.2 threshold
+ * exceeded the probe's 20th score on exactly the three pairs where the cutoff
+ * removed intended top-20 results (Washington/Iowa Q3, Santa Cruz Q4), and on
+ * no other pair. Clamping the threshold to this score fixed all three with
+ * kept sets of 20 documents — smaller than any rescue fraction.
+ */
+const CUTOFF_TOP_DOCS_FLOOR = 20;
+
+/**
+ * When the base fraction leaves more survivors than MAX_ENUMERATED_CUT, try
+ * these fractions in order and apply the first that enumerates. Measured on
+ * the eight `cut_too_large` pairs: each rung keeps recall@20 = 20/20, and
+ * 0.5 enumerates on all eight. This is not a knee detector — no ≥30% drop
+ * exists in the class (largest single-rank drop in ranks [50,1000] is
+ * −1.5%…−23.0%); the rungs are fixed, explainable fractions ("within 2–5× of
+ * the best match"), and the count only gates enumeration. If none fit,
+ * decline with `cut_too_large` as today. Do not extend past 0.5 without
+ * re-measuring recall@20 on the matrix.
+ */
+const CUTOFF_FRACTION_LADDER = [0.25, 0.3, 0.4, 0.5] as const;
+
+/**
  * Window used only to satisfy the distinct-service floor when a threshold cut
  * lands on too few services. Small, and fetched only in that case.
  */
@@ -805,12 +828,22 @@ export class HybridSearchService {
         : innerBool;
 
     /**
-     * The rule needs two numbers — the top score, and how many results sit
-     * above a fraction of it — and Elasticsearch answers both without
-     * collecting documents. `size: 0` with `min_score` returns a count in about
-     * a millisecond over a 27,000-result population, where fetching a
-     * 300-document window costs ~250ms and still cannot see a cut that lands at
-     * 388.
+     * The rule needs three numbers — the top score, the top-20 score, and how
+     * many results sit above a fraction of the top — and Elasticsearch answers
+     * all of them without collecting documents. The head call returns the top
+     * `CUTOFF_TOP_DOCS_FLOOR + 1` scores in one pass: rank 0 for `topScore`,
+     * rank 20 for the clamp. `size: 0` with `min_score` returns a count in
+     * about a millisecond over a 27,000-result population, where fetching a
+     * 300-document window costs ~250ms and still cannot see a cut that lands
+     * at 388.
+     *
+     * The threshold is `min(fraction × topScore, top-20 score)` — the clamp
+     * guarantees the probe's own top-20 survive the cut, which is the metric
+     * the fraction rule alone was measured to violate (Washington/Iowa Q3,
+     * Santa Cruz Q4). When the clamped fraction leaves more survivors than
+     * MAX_ENUMERATED_CUT, the fraction climbs the ladder and the first rung
+     * that enumerates is applied; past the ladder the probe declines with
+     * `cut_too_large` as before.
      *
      * Documents are fetched only once the cut is known to be worth making, so
      * the expensive call is proportional to the cut rather than to a fixed
@@ -827,7 +860,7 @@ export class HybridSearchService {
 
     const head = await this.elasticsearchService.search<SearchSource>({
       index,
-      size: 1,
+      size: CUTOFF_TOP_DOCS_FLOOR + 1,
       track_total_hits: true,
       _source: false,
       sort: ['_score'],
@@ -839,6 +872,12 @@ export class HybridSearchService {
         ? head.hits.total
         : (head.hits.total?.value ?? 0);
     const topScore = head.hits.hits[0]?._score ?? 0;
+    // Clamp anchor: the score the probe's own top-20 ends at. Absent when the
+    // matched set is smaller than the floor window — nothing to protect there.
+    const s20 =
+      head.hits.hits.length > CUTOFF_TOP_DOCS_FLOOR
+        ? head.hits.hits[CUTOFF_TOP_DOCS_FLOOR]?._score
+        : undefined;
 
     const decline = (
       reason: RelevanceCutoffDto['reason'],
@@ -858,26 +897,49 @@ export class HybridSearchService {
     if (matched <= minKeep) return decline('below_min_keep', matched);
     if (topScore <= 0) return decline('no_elbow', 1);
 
-    const threshold = fraction * topScore;
-    const counted = await this.elasticsearchService.search<SearchSource>({
-      index,
-      size: 0,
-      track_total_hits: true,
-      min_score: threshold,
-      query,
-    });
-    const survivors =
-      typeof counted.hits.total === 'number'
+    const thresholdFor = (f: number): number =>
+      Math.min(f * topScore, s20 ?? Infinity);
+
+    const countSurvivors = async (threshold: number): Promise<number> => {
+      const counted = await this.elasticsearchService.search<SearchSource>({
+        index,
+        size: 0,
+        track_total_hits: true,
+        min_score: threshold,
+        query,
+      });
+      return typeof counted.hits.total === 'number'
         ? counted.hits.total
         : (counted.hits.total?.value ?? 0);
+    };
+
+    let threshold = thresholdFor(fraction);
+    let survivors = await countSurvivors(threshold);
 
     // Nothing meaningful scored below the threshold: the distribution is flat
     // and the honest answer is to return everything. This is the case a strict
     // fraction cannot express, and a lax one can.
     if (survivors >= matched * MIN_CUT_REDUCTION)
       return decline('no_elbow', matched);
-    if (survivors > MAX_ENUMERATED_CUT)
-      return decline('cut_too_large', survivors);
+    // The two failure branches are provably disjoint: if survivors@0.2 exceed
+    // MAX_ENUMERATED_CUT then rank 20 sits inside the survivors, so s20 >=
+    // threshold and the clamp cannot bind on the ladder path; if the clamp
+    // binds at the base fraction, survivors <= 20 + ties and the ladder never
+    // runs.
+    if (survivors > MAX_ENUMERATED_CUT) {
+      let ladder: { threshold: number; survivors: number } | null = null;
+      for (const f of CUTOFF_FRACTION_LADDER) {
+        const rungThreshold = thresholdFor(f);
+        const rungSurvivors = await countSurvivors(rungThreshold);
+        if (rungSurvivors <= MAX_ENUMERATED_CUT) {
+          ladder = { threshold: rungThreshold, survivors: rungSurvivors };
+          break;
+        }
+      }
+      if (!ladder) return decline('cut_too_large', survivors);
+      threshold = ladder.threshold;
+      survivors = ladder.survivors;
+    }
 
     const kept = await this.elasticsearchService.search<ProbeSource>({
       index,
