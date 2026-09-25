@@ -9,8 +9,9 @@
  *
  * The routes run for real: both internal modules are mounted in a Nest app
  * with the production ValidationPipe and versioning, and only the ES client is
- * swapped for the guarded one. The geography queries are ISS-1873 previews,
- * built from `buildServiceFilter` plus an `indexed_shape` clause.
+ * swapped for the guarded one. Scenario 6 measures raw `indexed_shape`
+ * clauses (border contact, Q53); scenario 8 drives the shipped geography and
+ * virtual filters through the routes.
  */
 import { writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -143,6 +144,8 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
   let lastRaw: {
     hits: { hits: { _id: string; _score: number | null; sort?: unknown[] }[] };
   };
+  /** The body of the last search the services sent, for its `preference`. */
+  let lastSent: { preference?: string } | undefined;
   const report: Record<string, unknown> = {
     startedAt: new Date().toISOString(),
   };
@@ -164,16 +167,46 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
   async function walk(body: object, maxPages: number) {
     const pages: Page[] = [];
     const raw: (typeof lastRaw)['hits']['hits'][] = [];
+    const preferences = new Set<string | undefined>();
     let cursor: string | undefined;
     do {
       const page = await searchPage({ ...body, ...(cursor ? { cursor } : {}) });
       pages.push(page);
+      preferences.add(lastSent?.preference);
       // ES returns limit + 1 hits; the extra one opens the next page.
       raw.push(lastRaw.hits.hits.slice(0, page.items.length));
       cursor = page.nextCursor ?? undefined;
       if (cursor) await pause(PAGE_DELAY_MS);
     } while (cursor && pages.length < maxPages);
-    return { pages, raw, complete: cursor === undefined };
+    return { pages, raw, preferences, complete: cursor === undefined };
+  }
+
+  /** Two full walks of one query: duplicates, missing and cross-walk drift. */
+  async function walkTwice(body: object, maxPages: number) {
+    const first = await walk(body, maxPages);
+    const again = await walk(body, maxPages);
+    const items = first.pages.flatMap((p) => p.items);
+    const distinct = new Set(items.map((i) => i.id));
+    const total = first.pages[0].total;
+    const pageIds = (w: typeof first) =>
+      w.pages.map((p) => p.items.map((x) => x.id).join());
+    const preferences = new Set([...first.preferences, ...again.preferences]);
+    return {
+      first,
+      items,
+      distinct,
+      entry: {
+        total,
+        pagesWalked: first.pages.length,
+        complete: first.complete && again.complete,
+        distinct: distinct.size,
+        duplicateIds: items.length - distinct.size,
+        missingVsTotal: total - distinct.size,
+        identicalAcrossWalks:
+          JSON.stringify(pageIds(first)) === JSON.stringify(pageIds(again)),
+        preferences: [...preferences],
+      },
+    };
   }
 
   const scope = () => {
@@ -237,6 +270,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     jest.spyOn(client, 'search').mockImplementation((async (
       ...args: unknown[]
     ) => {
+      lastSent = args[0] as typeof lastSent;
       const res = await (
         original as (...a: unknown[]) => Promise<typeof lastRaw>
       )(...args);
@@ -463,7 +497,10 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     expect(orderMismatches).toBe(0);
   });
 
-  it('2. text search: sane totals, score order with serviceId tiebreak, stable pages', async () => {
+  it('2. text search: sane totals, score order, every page from the same shard copies', async () => {
+    // The multi-word and punctuated texts are the ones whose BM25 scores
+    // differed between primary and replica before `preference` pinned a query
+    // to one set of copies: "food*" repeated 229 records and hid ~150.
     const texts = [
       'food',
       'housing',
@@ -471,6 +508,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
       'FOOD',
       'food pantry',
       'food*',
+      'mental health',
       '?',
     ];
     const out: Record<string, unknown> = {};
@@ -478,8 +516,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
 
     for (const text of texts) {
       const body = { resourceWriterIds: writers, text, limit: 200 };
-      const first = await walk(body, 25);
-      const items = first.pages.flatMap((p) => p.items);
+      const { first, items, distinct, entry } = await walkTwice(body, 25);
       const hits = first.raw.flat();
       let sortViolations = 0;
       for (let i = 1; i < hits.length; i++) {
@@ -488,22 +525,11 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
         if (sb > sa || (sb === sa && byteCompare(ia, ib) >= 0))
           sortViolations++;
       }
-      const again = await walk(body, 3);
-      const stable = again.pages.every(
-        (p, i) =>
-          p.items.map((x) => x.id).join() ===
-          first.pages[i].items.map((x) => x.id).join(),
-      );
-      esSets[text] = new Set(items.map((i) => i.id));
+      esSets[text] = distinct;
 
-      const entry: Record<string, unknown> = {
-        total: first.pages[0].total,
-        pagesWalked: first.pages.length,
-        complete: first.complete,
-        distinct: esSets[text].size,
+      const e: Record<string, unknown> = {
+        ...entry,
         sortViolations,
-        duplicateIds: items.length - esSets[text].size,
-        stableAcrossWalks: stable,
         topScores: hits.slice(0, 3).map((h) => h._score),
         top5: items.slice(0, 5).map((i) => i.name),
       };
@@ -519,25 +545,36 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
         const missing = mongoContains.filter(
           (d) => !esSets[text].has(String(d._id)),
         );
-        entry.mongoNameContains = mongoContains.length;
-        entry.mongoMatchesMissingFromEs = missing.length;
-        entry.missingSamples = missing.slice(0, 5).map((d) => d.name);
-        entry.esOnlyViaMultiMatch =
+        e.mongoNameContains = mongoContains.length;
+        e.mongoMatchesMissingFromEs = missing.length;
+        e.missingSamples = missing.slice(0, 5).map((d) => d.name);
+        e.esOnlyViaMultiMatch =
           esSets[text].size - (mongoContains.length - missing.length);
       }
-      out[text] = entry;
+      out[text] = e;
     }
     report.s2_text = out;
+    const preferenceOwners = new Map<string, string>();
     for (const text of texts) {
       const entry = out[text] as {
+        complete: boolean;
         duplicateIds: number;
+        missingVsTotal: number;
         sortViolations: number;
-        stableAcrossWalks: boolean;
+        identicalAcrossWalks: boolean;
+        preferences: (string | undefined)[];
       };
+      expect(entry.complete).toBe(true);
       expect(entry.duplicateIds).toBe(0);
+      expect(entry.missingVsTotal).toBe(0);
       expect(entry.sortViolations).toBe(0);
-      expect(entry.stableAcrossWalks).toBe(true);
+      expect(entry.identicalAcrossWalks).toBe(true);
+      // One preference per query, on every page of both walks.
+      expect(entry.preferences).toEqual([expect.any(String)]);
+      preferenceOwners.set(entry.preferences[0]!, text);
     }
+    // 'food' and 'FOOD' differ in the fingerprint, so every text has its own.
+    expect(preferenceOwners.size).toBe(texts.length);
 
     const food = out.food as { total: number };
     const upper = out.FOOD as { total: number };
@@ -979,6 +1016,128 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     expect(c('state:KS')).toBeLessThan(c('state:MO'));
     expect(anyOf).toBeLessThanOrEqual(withArea);
     expect(anyOf).toBeGreaterThanOrEqual(c('state:MO'));
+  });
+
+  it('8. geography and virtual filters through the routes (ISS-1873, ISS-1874)', async () => {
+    const totalFor = async (filter: object) =>
+      (await searchPage({ resourceWriterIds: writers, filter, limit: 1 }))
+        .total;
+    const facetSum = async (filter: object) => {
+      const res = await post('/internal/services/facets', {
+        resourceWriterIds: writers,
+        filter,
+      });
+      expect(res.status).toBe(200);
+      return (res.body.contributors as { recordCount: number }[]).reduce(
+        (n, c) => n + c.recordCount,
+        0,
+      );
+    };
+
+    const regions: Record<string, unknown> = {};
+    for (const id of ['county:29510', 'zip:63110', 'state:MO']) {
+      const filter = { geography: { regionIds: [id] } };
+      const route = await totalFor(filter);
+      const direct = await countWhere([shapeClause(id)]);
+      regions[id] = {
+        route,
+        direct,
+        facetContributorSum: await facetSum(filter),
+      };
+      await pause(PAGE_DELAY_MS);
+    }
+    const cityOrCounty = await totalFor({
+      geography: { regionIds: ['county:29510', 'county:29189'] },
+    });
+    const county = await countWhere([shapeClause('county:29189')]);
+
+    const virtual: Record<string, unknown> = {};
+    for (const [mode, term] of [
+      ['only', 'virtual'],
+      ['exclude', 'physical'],
+    ] as const) {
+      const route = await totalFor({ virtual: mode });
+      const direct = await countWhere([{ term: { locationTypes: term } }]);
+      virtual[mode] = { route, direct };
+    }
+    virtual.all = await totalFor({ virtual: 'all' });
+    const combined = await totalFor({
+      geography: { regionIds: ['state:MO'] },
+      virtual: 'exclude',
+    });
+    const combinedDirect = await countWhere([
+      shapeClause('state:MO'),
+      { term: { locationTypes: 'physical' } },
+    ]);
+
+    // Paging under a geography filter, with text: the preference covers it.
+    const paged = await walkTwice(
+      {
+        resourceWriterIds: writers,
+        filter: { geography: { regionIds: ['county:29510'] } },
+        text: 'food pantry',
+        limit: 50,
+      },
+      25,
+    );
+
+    const before = meter.sent;
+    const malformed = await post('/internal/services/search', {
+      resourceWriterIds: writers,
+      filter: { geography: { regionIds: ['city:x'] } },
+    });
+    const esCallsForMalformed = meter.sent - before;
+    const unknown = await post('/internal/services/search', {
+      resourceWriterIds: writers,
+      filter: { geography: { regionIds: ['county:29510', 'county:99999'] } },
+    });
+    const unknownFacets = await post('/internal/services/facets', {
+      resourceWriterIds: writers,
+      filter: { geography: { regionIds: ['zip:00000'] } },
+    });
+
+    report.s8_geography_routes = {
+      regions,
+      cityOrCounty,
+      county,
+      virtual,
+      stateMoExcludeVirtual: { route: combined, direct: combinedDirect },
+      pagedCountyFoodPantry: paged.entry,
+      malformed: { status: malformed.status, esCallsForMalformed },
+      unknown: { status: unknown.status, message: unknown.body?.message },
+      unknownFacets: {
+        status: unknownFacets.status,
+        message: unknownFacets.body?.message,
+      },
+    };
+
+    for (const id of Object.keys(regions)) {
+      const r = regions[id] as {
+        route: number;
+        direct: number;
+        facetContributorSum: number;
+      };
+      expect(r.route).toBe(r.direct);
+      expect(r.route).toBeGreaterThan(0);
+      expect(r.facetContributorSum).toBe(r.route);
+    }
+    expect(cityOrCounty).toBe(county);
+    for (const mode of ['only', 'exclude']) {
+      const v = virtual[mode] as { route: number; direct: number };
+      expect(v.route).toBe(v.direct);
+    }
+    expect(virtual.all).toBe(await countWhere([]));
+    expect(combined).toBe(combinedDirect);
+    expect(paged.entry.complete).toBe(true);
+    expect(paged.entry.duplicateIds).toBe(0);
+    expect(paged.entry.missingVsTotal).toBe(0);
+    expect(paged.entry.identicalAcrossWalks).toBe(true);
+    expect(malformed.status).toBe(400);
+    expect(esCallsForMalformed).toBe(0);
+    expect(unknown.status).toBe(400);
+    expect(String(unknown.body?.message)).toContain('county:99999');
+    expect(String(unknown.body?.message)).not.toContain('county:29510');
+    expect(unknownFacets.status).toBe(400);
   });
 
   it('7. latency', async () => {

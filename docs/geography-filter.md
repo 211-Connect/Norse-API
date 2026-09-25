@@ -211,16 +211,22 @@ Elasticsearch, production included. It is skipped unless `NORSE_LIVE_ES=1`,
 so `npm test` never touches a cluster.
 
 It mounts both internal modules in a Nest app with the production
-`ValidationPipe` and versioning, and swaps in only the ES client. The
-geography scenario previews ISS-1873: it builds `buildServiceFilter` plus a
-`geo_shape` `indexed_shape` clause, and measures how many matches only touch
-a Region's edge (Q53).
+`ValidationPipe` and versioning, and swaps in only the ES client.
+
+- Scenario 2 walks every text query twice, in full. It fails on a duplicate,
+  on a record missing against `total`, on pages that differ between the two
+  walks, or on a page sent without the query's single `preference`.
+- Scenario 6 measures raw `geo_shape` `indexed_shape` clauses, including how
+  many matches only touch a Region's edge (Q53).
+- Scenario 8 drives the geography and virtual filters through the routes. It
+  checks each total against a direct count, facet sums against the list, a
+  paged walk under a Region, and the 400s for malformed and unknown ids.
 
 **It is read-only by construction.** The client comes from
 `src/common/testing/read-only-elasticsearch.ts`:
 
-- Only GET and HEAD, and POST to a path ending in `_search` or `_count`, are
-  allowed. Anything else throws `ReadOnlyViolationError` before it is sent:
+- Only GET and HEAD, and POST to a path ending in `_search`, `_count` or
+  `_mget` (the Region existence check), are allowed. Anything else throws `ReadOnlyViolationError` before it is sent:
   `_doc` writes, `_bulk`, `_update_by_query`, `_delete_by_query`, `_reindex`,
   index, alias, settings, mapping, pipeline and script changes, scroll and PIT.
 - The check runs twice: in the Transport, then in the Connection on the exact
