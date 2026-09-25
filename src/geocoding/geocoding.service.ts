@@ -53,7 +53,11 @@ export class GeocodingService {
       );
     }
     const types = query.types ? [...query.types].sort().join(',') : '';
-    const proximity = query.proximity?.join(',') ?? '';
+    // ~100 m: nearby biases share an entry. OpenCage ignores proximity.
+    const proximity =
+      query.proximity && providerKey === GeocodingProvider.MAPBOX
+        ? query.proximity.map((n) => n.toFixed(3)).join(',')
+        : '';
     const cacheKey = `geocode:forward:${providerKey}:${address}:${locale}:${limit}:${types}:${proximity}`;
 
     const cachedResult =

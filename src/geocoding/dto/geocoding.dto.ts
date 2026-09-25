@@ -13,6 +13,7 @@ import {
   Validate,
   ValidatorConstraint,
   ValidatorConstraintInterface,
+  type ValidationArguments,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
@@ -48,8 +49,8 @@ class LngLatConstraint implements ValidatorConstraintInterface {
     );
   }
 
-  defaultMessage(): string {
-    return 'proximity must be "longitude,latitude" with longitude in ±180 and latitude in ±90';
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} must be "longitude,latitude" with longitude in ±180 and latitude in ±90`;
   }
 }
 
@@ -98,10 +99,12 @@ export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
   limit?: number = 5;
 
   @ApiProperty({
-    description: `Comma-separated feature types to return, from: ${Object.values(GeocodingPlaceType).join(', ')}. Mapbox only; with the OpenCage provider this is a 400.`,
-    example: 'address,poi',
+    description:
+      'Feature types to return, repeated or comma-separated (e.g. "address,poi"). Mapbox only; with the OpenCage provider this is a 400.',
+    example: ['address', 'poi'],
     required: false,
-    type: String,
+    enum: GeocodingPlaceType,
+    isArray: true,
   })
   @Transform(commaList)
   @IsArray()
@@ -118,9 +121,10 @@ export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
     required: false,
     type: String,
   })
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.split(',').map(Number) : value,
-  )
+  @Transform((params) => {
+    const parts = commaList(params);
+    return Array.isArray(parts) ? parts.map(Number) : parts;
+  })
   @Validate(LngLatConstraint)
   @IsOptional()
   proximity?: [number, number];

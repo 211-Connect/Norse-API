@@ -15,6 +15,12 @@ describe('ForwardGeocodeQueryDto types and proximity (ISS-1875)', () => {
     expect(query.types).toEqual(['address', 'poi']);
   });
 
+  it('also reads types sent as a repeated param, as an SDK may send an array', async () => {
+    const query = dto({ address: 'x', types: ['address', 'poi'] });
+    expect(await validate(query)).toEqual([]);
+    expect(query.types).toEqual(['address', 'poi']);
+  });
+
   it('refuses a type Mapbox does not have', async () => {
     const errors = await validate(dto({ address: 'x', types: 'address,city' }));
     expect(errors.map((e) => e.property)).toEqual(['types']);
@@ -26,7 +32,7 @@ describe('ForwardGeocodeQueryDto types and proximity (ISS-1875)', () => {
     expect(query.proximity).toEqual([-78.8986, 35.994]);
   });
 
-  it.each(['35.994', '-181,35', '-78.9,91', 'a,b'])(
+  it.each(['35.994', '-181,35', '-78.9,91', 'a,b', '-78.9,', ',35.9'])(
     'refuses proximity %s',
     async (proximity) => {
       const errors = await validate(dto({ address: 'x', proximity }));
@@ -67,6 +73,23 @@ describe('GeocodingService.forwardGeocode (ISS-1875)', () => {
       dto({ address: 'Main St', types: 'address', proximity: '-78.9,35.9' }),
     );
     expect(mapbox.forwardGeocode).toHaveBeenCalledTimes(3);
+  });
+
+  it('shares a cache entry for proximities within about 100 m, and ignores proximity for OpenCage', async () => {
+    await service.forwardGeocode(
+      dto({ address: 'x', proximity: '-78.89861,35.99401' }),
+    );
+    await service.forwardGeocode(
+      dto({ address: 'x', proximity: '-78.89859,35.99399' }),
+    );
+    expect(mapbox.forwardGeocode).toHaveBeenCalledTimes(1);
+
+    opencage.forwardGeocode.mockResolvedValue([]);
+    await service.forwardGeocode(dto({ address: 'y', provider: 'opencage' }));
+    await service.forwardGeocode(
+      dto({ address: 'y', provider: 'opencage', proximity: '-78.9,35.9' }),
+    );
+    expect(opencage.forwardGeocode).toHaveBeenCalledTimes(1);
   });
 
   it('treats the same types in another order as the same query', async () => {
