@@ -1,5 +1,6 @@
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { NOT_TENANT_SCOPED_KEY } from './gateway-principal';
 import { TenantScopeGuard } from './tenant-scope.guard';
 
 const TENANT_A = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -291,5 +292,51 @@ describe('TenantScopeGuard', () => {
     const context = buildContext(request);
 
     expect(() => guard.canActivate(context)).toThrow('tenant_scope_denied');
+  });
+
+  describe('@NotTenantScoped() route', () => {
+    const buildNotTenantScopedContext = (request: any): ExecutionContext => {
+      jest
+        .spyOn(reflector, 'getAllAndOverride')
+        .mockImplementation((key) => key === NOT_TENANT_SCOPED_KEY);
+      return {
+        switchToHttp: () => ({ getRequest: () => request }),
+        getHandler: () => ({}),
+        getClass: () => ({}),
+      } as unknown as ExecutionContext;
+    };
+
+    it('gateway request with no target tenant -> true, no target set', () => {
+      const request = buildRequest({
+        method: 'POST',
+        gatewayPrincipal: { externalId: 'servicenet', keyId: 'key_1' },
+        gatewayPermissions: ['norse-api.invoke'],
+      });
+
+      expect(guard.canActivate(buildNotTenantScopedContext(request))).toBe(
+        true,
+      );
+      expect(request.targetTenantId).toBeUndefined();
+    });
+
+    it('still requires a resolved gateway identity and permissions', () => {
+      expect(() =>
+        guard.canActivate(
+          buildNotTenantScopedContext(
+            buildRequest({ gatewayPrincipal: undefined }),
+          ),
+        ),
+      ).toThrow('gateway_identity_required');
+      expect(() =>
+        guard.canActivate(
+          buildNotTenantScopedContext(
+            buildRequest({
+              gatewayPrincipal: { externalId: 'servicenet', keyId: 'key_1' },
+              gatewayPermissions: undefined,
+            }),
+          ),
+        ),
+      ).toThrow('permissions_unavailable');
+    });
   });
 });

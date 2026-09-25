@@ -1,0 +1,293 @@
+import { HttpException, Injectable, Logger } from '@nestjs/common';
+import { ElasticsearchService } from '@nestjs/elasticsearch';
+import { errors } from '@elastic/elasticsearch';
+import {
+  AggregationsCompositeAggregate,
+  AggregationsCompositeAggregateKey,
+  SearchRequest,
+} from '@elastic/elasticsearch/lib/api/types';
+import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
+import {
+  SERVICES_SEARCH_DEFAULT_LIMIT,
+  ServiceListItemDto,
+  ServicesFacetsRequestDto,
+  ServicesFacetsResponseDto,
+  ServicesScopeFilterDto,
+  ServicesSearchRequestDto,
+  ServicesSearchResponseDto,
+} from './dto';
+import { callElasticsearch } from 'src/common/elasticsearch/es-call';
+import { RegionService, unknownRegionsError } from '../../region/internal';
+import {
+  SERVICE_LIST_SOURCE_FIELDS,
+  SERVICES_INDEX,
+  ServiceFilterInput,
+  buildServiceFilter,
+  serviceListSort,
+  sortModeFor,
+  textClause,
+} from './service-search.query';
+import {
+  CursorQuery,
+  decodeCursor,
+  encodeCursor,
+  shardPreference,
+} from './service-search.cursor';
+
+/** Buckets per composite page; facets page until exhausted, never truncate. */
+export const FACET_PAGE_SIZE = 1000;
+
+const FACET_FIELDS = {
+  contributors: 'resourceWriterId',
+  statuses: 'status',
+  taxonomyPath: 'taxonomyPath',
+  taxonomyCodes: 'taxonomyCodes',
+} as const;
+type FacetName = keyof typeof FACET_FIELDS;
+
+interface ServiceSource {
+  serviceId?: string;
+  tenant_id?: string;
+  resourceWriterId?: string;
+  isCanonicalPublication?: boolean;
+  status?: string;
+  taxonomyPath?: string[];
+  taxonomyCodes?: string[];
+  locationTypes?: string[];
+  name?: string;
+  alternateName?: string;
+  description?: string;
+  organizationName?: string;
+  city?: string;
+  assuredDate?: string;
+}
+
+@Injectable()
+export class ServiceSearchService {
+  private readonly logger = new Logger(ServiceSearchService.name);
+
+  constructor(
+    private readonly elasticsearch: ElasticsearchService,
+    private readonly regions: RegionService,
+  ) {}
+
+  async search(
+    request: ServicesSearchRequestDto,
+  ): Promise<ServicesSearchResponseDto> {
+    const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
+    const cursorQuery: CursorQuery = {
+      ...scopeFilterInput(request),
+      taxonomyCodes: request.filter?.taxonomyCodes,
+      statuses: request.filter?.statuses,
+      text: request.text,
+    };
+    const mode = sortModeFor(request.text);
+    const searchAfter =
+      request.cursor === undefined
+        ? undefined
+        : decodeCursor(request.cursor, mode, cursorQuery);
+
+    const scope = buildServiceFilter(cursorQuery);
+    if (scope === null) return { items: [], total: 0, limit, nextCursor: null };
+    await this.regions.assertExist(cursorQuery.regionIds ?? []);
+
+    const body: SearchRequest = {
+      index: SERVICES_INDEX,
+      preference: shardPreference(cursorQuery),
+      // One extra hit says whether a next page exists, so the last page
+      // returns a null cursor instead of one that leads to an empty page.
+      size: limit + 1,
+      // Without this ES stops counting at 10,000 and the total would lie.
+      track_total_hits: true,
+      _source: SERVICE_LIST_SOURCE_FIELDS,
+      query: { bool: { ...scope, must: textClause(request.text) } },
+      sort: serviceListSort(mode),
+      ...(searchAfter ? { search_after: searchAfter } : {}),
+    };
+
+    const result = await this.call('search', () =>
+      this.elasticsearch.search<ServiceSource>(body),
+    );
+    const total =
+      typeof result.hits.total === 'number'
+        ? result.hits.total
+        : (result.hits.total?.value ?? 0);
+    const page = result.hits.hits.slice(0, limit);
+    const last = page[page.length - 1];
+
+    return {
+      items: page.map((hit) => toListItem(hit._id, hit._source)),
+      total,
+      limit,
+      nextCursor:
+        result.hits.hits.length > limit && last?.sort
+          ? encodeCursor(mode, cursorQuery, last.sort)
+          : null,
+    };
+  }
+
+  async facets(
+    request: ServicesFacetsRequestDto,
+  ): Promise<ServicesFacetsResponseDto> {
+    const input = scopeFilterInput(request);
+    const scope = buildServiceFilter(input);
+    if (scope === null) return { contributors: [], statuses: [], taxonomy: [] };
+    await this.regions.assertExist(input.regionIds ?? []);
+
+    const buckets = await this.collectFacetBuckets(
+      { bool: scope },
+      shardPreference(input),
+    );
+
+    // Normalized as the path is: codes are stored as written ("BD-1800."), the
+    // path as its canonical key, so comparing raw would mark a directly coded
+    // term as synthesized.
+    const coded = new Set(
+      buckets.taxonomyCodes.map((b) => normalizeAirsCode(b.key)),
+    );
+
+    return {
+      contributors: buckets.contributors
+        .map((b) => ({ resourceWriterId: b.key, recordCount: b.count }))
+        .sort((a, b) => a.resourceWriterId.localeCompare(b.resourceWriterId)),
+      // A blank status is an option no `$in` can usefully match.
+      statuses: buckets.statuses
+        .filter((b) => b.key !== '')
+        .map((b) => ({ value: b.key, recordCount: b.count }))
+        .sort((a, b) => a.value.localeCompare(b.value)),
+      taxonomy: buildAirsTreeFromPathCounts(
+        buckets.taxonomyPath.map((b) => ({
+          code: b.key,
+          recordCount: b.count,
+        })),
+        coded,
+      ).map((n) => ({ ...n, name: n.code })),
+    };
+  }
+
+  /**
+   * Every bucket of each facet, paged with composite aggregations. A `terms`
+   * aggregation with a fixed size would silently drop the tail of a large
+   * taxonomy, which reads as "no records under this code".
+   */
+  private async collectFacetBuckets(
+    query: SearchRequest['query'],
+    preference: string,
+  ): Promise<Record<FacetName, { key: string; count: number }[]>> {
+    const out: Record<FacetName, { key: string; count: number }[]> = {
+      contributors: [],
+      statuses: [],
+      taxonomyPath: [],
+      taxonomyCodes: [],
+    };
+    let pending = new Map<FacetName, AggregationsCompositeAggregateKey | null>(
+      (Object.keys(FACET_FIELDS) as FacetName[]).map((name) => [name, null]),
+    );
+
+    while (pending.size > 0) {
+      const aggs = Object.fromEntries(
+        [...pending].map(([name, after]) => [
+          name,
+          {
+            composite: {
+              size: FACET_PAGE_SIZE,
+              sources: [{ key: { terms: { field: FACET_FIELDS[name] } } }],
+              ...(after ? { after } : {}),
+            },
+          },
+        ]),
+      );
+      const result = await this.call('facets', () =>
+        this.elasticsearch.search({
+          index: SERVICES_INDEX,
+          preference,
+          size: 0,
+          track_total_hits: false,
+          query,
+          aggs,
+        }),
+      );
+
+      const next = new Map<FacetName, AggregationsCompositeAggregateKey>();
+      for (const name of pending.keys()) {
+        const agg = result.aggregations?.[name] as
+          AggregationsCompositeAggregate | undefined;
+        const page = agg?.buckets ?? [];
+        const bucketList = Array.isArray(page) ? page : Object.values(page);
+        for (const bucket of bucketList) {
+          out[name].push({
+            key: String(bucket.key.key),
+            count: bucket.doc_count,
+          });
+        }
+        if (bucketList.length === FACET_PAGE_SIZE && agg?.after_key) {
+          next.set(name, agg.after_key);
+        }
+      }
+      pending = next;
+    }
+    return out;
+  }
+
+  private call<T>(what: string, run: () => Promise<T>): Promise<T> {
+    return callElasticsearch(
+      {
+        label: `Services ${what}`,
+        logger: this.logger,
+        mapError: missingRegionShape,
+      },
+      run,
+    );
+  }
+}
+
+/** The clauses search and facets share: writer set, geography, virtual mode. */
+function scopeFilterInput(request: {
+  resourceWriterIds: string[];
+  filter?: ServicesScopeFilterDto;
+}): ServiceFilterInput {
+  const regionIds = request.filter?.geography?.regionIds;
+  return {
+    resourceWriterIds: request.resourceWriterIds,
+    regionIds: regionIds ? [...new Set(regionIds)] : undefined,
+    virtual: request.filter?.virtual,
+  };
+}
+
+const MISSING_SHAPE = /Shape with ID \[([^\]]+)\][^"]*not found/;
+
+/**
+ * ES's 400 for an `indexed_shape` it cannot find, as a 400 naming the Region:
+ * one deleted between the existence check and the search.
+ */
+function missingRegionShape(error: unknown): HttpException | null {
+  if (!(error instanceof errors.ResponseError) || error.statusCode !== 400) {
+    return null;
+  }
+  const match = MISSING_SHAPE.exec(JSON.stringify(error.meta?.body ?? ''));
+  return match ? unknownRegionsError([match[1]]) : null;
+}
+
+function toListItem(
+  id: string | undefined,
+  source: ServiceSource | undefined,
+): ServiceListItemDto {
+  const s = source ?? {};
+  return {
+    id: id ?? '',
+    serviceId: s.serviceId ?? '',
+    tenantId: s.tenant_id ?? '',
+    resourceWriterId: s.resourceWriterId ?? '',
+    isCanonicalPublication: s.isCanonicalPublication !== false,
+    status: s.status ?? null,
+    taxonomyPath: s.taxonomyPath ?? [],
+    taxonomyCodes: s.taxonomyCodes ?? [],
+    locationTypes: s.locationTypes ?? [],
+    name: s.name ?? null,
+    alternateName: s.alternateName ?? null,
+    description: s.description ?? null,
+    organizationName: s.organizationName ?? null,
+    city: s.city ?? null,
+    assuredDate: s.assuredDate ?? null,
+  };
+}

@@ -30,6 +30,7 @@ import { FavoriteListController } from './favorite-list/favorite-list.controller
 import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
+import { RegionInternalModule } from './region/internal/region.module';
 import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { GatewayIdentityGuard } from './auth/gateway/gateway-identity.guard';
@@ -45,6 +46,7 @@ import { PrintableDirectoryPublicController } from './printable-directory/printa
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ServiceModule } from './service/service.module';
+import { ServiceSearchInternalModule } from './service/internal/service-search.module';
 import { OrganizationController } from './organization/organization.controller';
 
 @Module({
@@ -82,11 +84,13 @@ import { OrganizationController } from './organization/organization.controller';
     ResourceModule,
     SuggestionModule,
     GeocodingModule,
+    RegionInternalModule,
     AnalyticsModule,
     TaxonomyScorecardModule,
     PrintableDirectoryModule,
     OrganizationModule,
     ServiceModule,
+    ServiceSearchInternalModule,
   ],
   controllers: [AppController],
   providers: [
