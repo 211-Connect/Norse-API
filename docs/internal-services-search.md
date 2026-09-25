@@ -83,7 +83,9 @@ over one fixture and compares the results.
   position within results the caller could already request.
 - A cursor that doesn't decode, has the wrong shape, or came from a different
   query or sort mode returns 400. The query fingerprint covers the writer
-  set, taxonomy, statuses, text, Region ids and virtual mode.
+  set, taxonomy, statuses, text, Region ids and virtual mode. The four lists
+  are treated as sets (sorted and de-duplicated), so the same set in another
+  order is the same query, with the same `preference`.
 - The service asks ES for `limit + 1` hits. That extra hit tells it whether a
   next page exists, so a full last page still returns a null cursor.
 - `serviceId` is the final sort key in both orders. Without it, a page

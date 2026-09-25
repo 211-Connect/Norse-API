@@ -54,7 +54,21 @@ name, alternateName, description, organizationName, city, assuredDate }`.
 Only these fields are read from the index (`SERVICE_LIST_SOURCE_FIELDS`), so
 Dagster's `loadRunId` and the `service_area` shape are never returned.
 
-Errors: a malformed request, cursor or Region id is 400; an unknown Region is
+## Canonical publications only
+
+Every services read excludes `isCanonicalPublication: false` (as Mongo's
+`$ne: false`); a document without the flag is canonical. This relies on
+Dagster writing `isCanonicalPublication=false` on every borrowed copy: the
+UWGKC reader, for example, publishes St. Louis records under its own tenant
+as non-canonical. A borrowed copy loaded without the flag would be listed and
+counted twice. The live parity run confirmed the rule holds: for writer
+`5334599c-1be1-4e55-bf86-1f19d56e9da4` the index held 27,691 documents under
+each of two tenants, and services search returned 27,691 distinct services,
+equal to Mongo.
+
+## Errors
+
+A malformed request, cursor or Region id is 400; an unknown Region is
 404 on `GET /internal/regions/:id` and 400 in a services `filter.geography`; an ES timeout is 503; any other ES failure is 502.
 
 ## How a Geography filter uses them
@@ -137,7 +151,8 @@ virtual mode as the list, so each count matches what the list would show.
 
 **Cursors.** The fingerprint covers `regionIds` and `virtual`. A cursor from
 one geography or virtual mode is 400 against another. `virtual: "all"` and no
-`virtual` are the same query.
+`virtual` are the same query, and so is the same set of Region ids in another
+order.
 
 ## Known behaviour: border contact
 
@@ -167,6 +182,11 @@ matched instead of `geometry`. It is not built.
 - A cursor encodes the last hit's `search_after` values, the sort mode and a
   fingerprint of the query. One from another query or sort mode is 400. It is
   not signed; see the detail doc for why that is safe.
+- The fingerprint covers every filter field; the type that builds it fails to
+  compile when a field is added without it. `resourceWriterIds`,
+  `taxonomyCodes`, `statuses` and `regionIds` are sets: sorted and
+  de-duplicated first, so reordering one gives the same fingerprint and
+  `preference`.
 - `serviceId` is the last sort key, and every request of one query (first
   page included) sends the same ES `preference`, derived from the query
   fingerprint. Both are needed for pages not to skip or repeat a record:
@@ -192,7 +212,8 @@ Region typeahead does not page. It returns at most `limit` items.
   from Mongo.
 
 **Region typeahead.**
-- 1 to 5 digits: a ZIP prefix, ZIPs only, ordered by ZIP.
+- 1 to 5 digits: a ZIP prefix, ZIPs only, ordered by ZIP. `states` is
+  ignored on this path: no boost applies, ZIP order is the whole ranking.
 - Otherwise: a `bool_prefix` match on `name`, plus fixed `constant_score`
   boosts:
   - exact state code or name: +100
