@@ -25,6 +25,10 @@ export const POINT_RADIUS_MIN_MILES = 0.1;
 export const POINT_RADIUS_MAX_MILES = 100;
 
 export const VIRTUAL_MODES = ['all', 'only', 'exclude'] as const;
+
+/** What ties a service to a Place (ADR 0025): its Service Area, or its sites. */
+export const MATCH_MODES = ['serves', 'located'] as const;
+export type MatchMode = (typeof MATCH_MODES)[number];
 export type VirtualMode = (typeof VIRTUAL_MODES)[number];
 
 export class ServicesGeoPointDto {
@@ -101,6 +105,17 @@ export class ServicesScopeFilterDto {
   @IsOptional()
   @IsIn(VIRTUAL_MODES)
   virtual?: VirtualMode;
+
+  @ApiProperty({
+    enum: MATCH_MODES,
+    required: false,
+    default: 'serves',
+    description:
+      'serves: the service_area intersects a Place. located: a physical location lies inside a Place; under virtual all, Virtual Services that serve it match too, and under only it is the same as serves.',
+  })
+  @IsOptional()
+  @IsIn(MATCH_MODES)
+  match?: MatchMode;
 }
 
 /**

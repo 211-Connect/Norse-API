@@ -739,6 +739,96 @@ describe('ServiceSearchService', () => {
       expect(search).not.toHaveBeenCalled();
     });
 
+    describe('Located In (ISS-1898)', () => {
+      const located = (...ids: string[]) => [
+        ...ids.map((id) => ({
+          geo_shape: {
+            locationPoints: {
+              indexed_shape: { index: 'regions', id, path: 'geometry' },
+              relation: 'intersects',
+            },
+          },
+        })),
+      ];
+      const near = (lat: number, lon: number, miles: number) => ({
+        geo_distance: { distance: `${miles}mi`, locationPoints: { lat, lon } },
+      });
+      const point = { lat: 35.994, lng: -78.8986, radiusMiles: 10 };
+      const geographyOf = async (
+        virtual: 'all' | 'only' | 'exclude',
+        match: 'serves' | 'located',
+      ) => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: { regionIds: ['county:37063'], points: [point] },
+            virtual,
+            match,
+          },
+        });
+        return lastRequest().query.bool.filter.slice(2);
+      };
+      const serves = {
+        bool: {
+          should: [
+            ...regionClause('county:37063').bool.should,
+            circle(35.994, -78.8986, 10),
+            globalVirtual,
+          ],
+          minimum_should_match: 1,
+        },
+      };
+
+      it("matches a physical site inside a Region or within a point's radius, plus Virtual Services that serve it, under All", async () => {
+        expect(await geographyOf('all', 'located')).toEqual([
+          {
+            bool: {
+              should: [
+                ...located('county:37063'),
+                near(35.994, -78.8986, 10),
+                {
+                  bool: {
+                    filter: [{ term: { locationTypes: 'virtual' } }, serves],
+                  },
+                },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+        ]);
+      });
+
+      it('matches only a physical site under Exclude', async () => {
+        expect(await geographyOf('exclude', 'located')).toEqual([
+          {
+            bool: {
+              should: [...located('county:37063'), near(35.994, -78.8986, 10)],
+              minimum_should_match: 1,
+            },
+          },
+          { term: { locationTypes: 'physical' } },
+        ]);
+      });
+
+      it('equals Serves Area under Only: a Virtual Service has no site to be located at', async () => {
+        expect(await geographyOf('only', 'located')).toEqual(
+          await geographyOf('only', 'serves'),
+        );
+      });
+
+      it('treats an absent match as Serves Area', async () => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: { regionIds: ['county:37063'], points: [point] },
+          },
+        });
+        expect(lastRequest().query.bool.filter.slice(2)).toEqual([serves]);
+      });
+    });
+
     it('counts facets under the same geography clause as the list', async () => {
       search.mockResolvedValue({ aggregations: {} });
       await service.facets({

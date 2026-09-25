@@ -159,6 +159,7 @@ describe('ServiceSearchController (internal/services)', () => {
         },
       ],
       [{ resourceWriterIds: ['w'], filter: { virtual: 'yes' } }],
+      [{ resourceWriterIds: ['w'], filter: { match: 'near' } }],
       [
         {
           resourceWriterIds: ['w'],

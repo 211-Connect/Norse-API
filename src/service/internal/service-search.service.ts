@@ -257,6 +257,7 @@ function scopeFilterInput(request: {
   const scope: ServiceFilterInput = {
     resourceWriterIds: request.resourceWriterIds,
     virtual: request.filter?.virtual,
+    match: request.filter?.match,
   };
   const geography = request.filter?.geography;
   if (!geography) return scope;

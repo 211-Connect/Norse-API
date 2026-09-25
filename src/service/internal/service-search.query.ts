@@ -4,7 +4,7 @@ import {
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { REGIONS_INDEX } from '../../region/internal';
-import { VirtualMode } from './dto';
+import { MatchMode, VirtualMode } from './dto';
 
 /**
  * The ES `services` index (ADR 0023). Filters mirror ServiceNet's Mongo
@@ -77,10 +77,14 @@ export interface ServiceFilterInput {
   regionIds?: readonly string[];
   points?: readonly GeoPoint[];
   virtual?: VirtualMode;
+  match?: MatchMode;
 }
 
 /** The field Dagster #601 loads with the union of a service's Service Areas. */
 export const SERVICE_AREA_FIELD = 'service_area';
+
+/** One geo_point per physical site (Dagster, ISS-1896). */
+export const LOCATION_POINTS_FIELD = 'locationPoints';
 
 /**
  * A Virtual Service that publishes no Service Area serves every Region
@@ -100,7 +104,7 @@ const VIRTUAL_WITHOUT_SERVICE_AREA: QueryDslQueryContainer = {
  * point is a query-time circle. Excluding virtual services drops the global
  * branch, so only a real overlap matches.
  */
-export function geographyClause(
+function servesClause(
   regionIds: readonly string[],
   points: readonly GeoPoint[],
   virtual: VirtualMode | undefined,
@@ -129,6 +133,56 @@ export function geographyClause(
   ];
   if (virtual !== 'exclude') serves.push(VIRTUAL_WITHOUT_SERVICE_AREA);
   return { bool: { should: serves, minimum_should_match: 1 } };
+}
+
+/** A physical site inside a Region's shape or within a point's radius. */
+function locatedClauses(
+  regionIds: readonly string[],
+  points: readonly GeoPoint[],
+): QueryDslQueryContainer[] {
+  return [
+    ...regionIds.map((id) => ({
+      geo_shape: {
+        [LOCATION_POINTS_FIELD]: {
+          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+          relation: 'intersects' as const,
+        },
+      },
+    })),
+    ...points.map(({ lat, lng, radiusMiles }) => ({
+      geo_distance: {
+        distance: `${radiusMiles}mi`,
+        [LOCATION_POINTS_FIELD]: { lat, lon: lng },
+      },
+    })),
+  ];
+}
+
+/**
+ * The Geography clause for a Match × Virtual pair (ADR 0025's table). Located
+ * In × Only is Serves Area × Only: a Virtual Service has no site to be at.
+ */
+export function geographyClause(
+  regionIds: readonly string[],
+  points: readonly GeoPoint[],
+  virtual: VirtualMode | undefined,
+  match: MatchMode | undefined,
+): QueryDslQueryContainer {
+  if (match !== 'located' || virtual === 'only') {
+    return servesClause(regionIds, points, virtual);
+  }
+  const located = locatedClauses(regionIds, points);
+  if (virtual !== 'exclude') {
+    located.push({
+      bool: {
+        filter: [
+          { term: { locationTypes: 'virtual' } },
+          servesClause(regionIds, points, virtual),
+        ],
+      },
+    });
+  }
+  return { bool: { should: located, minimum_should_match: 1 } };
 }
 
 /**
@@ -179,7 +233,7 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   const regionIds = input.regionIds ?? [];
   const points = input.points ?? [];
   if (regionIds.length + points.length > 0) {
-    filter.push(geographyClause(regionIds, points, input.virtual));
+    filter.push(geographyClause(regionIds, points, input.virtual, input.match));
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);

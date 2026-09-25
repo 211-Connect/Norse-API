@@ -154,6 +154,15 @@ POST /internal/services/facets
   same `bool.should`. A repeated point is dropped. Regions and points count
   together toward the 20; `geography` with none, or more than 20, is 400. A
   points-only clause skips the Region existence check.
+- `match` (ISS-1898, ADR 0025): `serves` (the default; absent means serves)
+  or `located`. Under `located`, a service matches when a `locationPoints`
+  geo_point lies inside a Region (`geo_shape`, `indexed_shape`) or within a
+  point's radius (`geo_distance`). With `virtual: "all"` a Virtual Service that
+  serves the Place matches too; with `"only"` the clause is exactly the serves
+  clause; with `"exclude"` only a physical site matches. Checked against ES
+  8.18.8 for all six Match × Virtual cells. Needs the `locationPoints` field
+  (Dagster ISS-1896); until that is loaded, `located` matches only Virtual
+  Services.
 - `intersects` counts border contact (a v1 decision). A service whose area
   only touches a Region's edge matches. See
   [Known behaviour: border contact](#known-behaviour-border-contact).
@@ -186,7 +195,7 @@ under `all`.
 `statuses`, which are the options being counted. Send the same geography and
 virtual mode as the list, so each count matches what the list would show.
 
-**Cursors.** The fingerprint covers `regionIds`, `points` and `virtual`. A cursor from
+**Cursors.** The fingerprint covers `regionIds`, `points`, `virtual` and `match`. A cursor from
 one geography or virtual mode is 400 against another. `virtual: "all"` and no
 `virtual` are the same query, and so is the same set of Region ids in another
 order.

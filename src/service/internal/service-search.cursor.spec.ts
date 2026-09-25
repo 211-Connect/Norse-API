@@ -21,6 +21,7 @@ const FULL: Required<CursorQuery> = {
     { lat: 39.0997, lng: -94.5786, radiusMiles: 5 },
   ],
   virtual: 'only',
+  match: 'located',
   text: 'food',
 };
 
@@ -31,6 +32,7 @@ const OTHER: Required<CursorQuery> = {
   regionIds: ['zip:63110'],
   points: [{ lat: 35.994, lng: -78.8986, radiusMiles: 25 }],
   virtual: 'exclude',
+  match: 'serves',
   text: 'shelter',
 };
 
@@ -84,6 +86,7 @@ describe('queryFingerprint', () => {
         regionIds: [],
         points: [],
         virtual: 'all',
+        match: 'serves',
         text: '  ',
       }),
     ).toBe(queryFingerprint(bare));

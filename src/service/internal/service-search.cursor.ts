@@ -41,6 +41,7 @@ const FINGERPRINT_PARTS: {
   regionIds: (q) => asSet(q.regionIds),
   points: (q) => asSet(q.points?.map(geoPointKey)),
   virtual: (q) => q.virtual ?? 'all',
+  match: (q) => q.match ?? 'serves',
   text: (q) => q.text?.trim() ?? '',
 };
 
