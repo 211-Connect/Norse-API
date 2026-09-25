@@ -68,19 +68,23 @@ export class ServicesSearchRequestDto extends ServicesWriterScopeDto {
     required: false,
     maxLength: 256,
     description:
-      'Matches name (weighted highest), alternateName, description and organizationName. Does not change the order.',
+      'Contains-matches name, and matches name (weighted highest), alternateName, description and organizationName. With text, results are ordered by relevance.',
   })
   @IsOptional()
   @IsString()
   @MaxLength(256)
   text?: string;
 
-  @ApiProperty({ required: false, default: 0, minimum: 0 })
+  @ApiProperty({
+    required: false,
+    maxLength: 2048,
+    description:
+      'The nextCursor of the previous page, for the same query. Absent for the first page.',
+  })
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  offset?: number;
+  @IsString()
+  @MaxLength(2048)
+  cursor?: string;
 
   @ApiProperty({
     required: false,

@@ -101,7 +101,12 @@ describe('ServiceSearchController (internal/services)', () => {
           limit: 10,
         })
         .expect(200);
-      expect(res.body).toEqual({ items: [], total: 0, offset: 0, limit: 10 });
+      expect(res.body).toEqual({
+        items: [],
+        total: 0,
+        limit: 10,
+        nextCursor: null,
+      });
       expect(search).toHaveBeenCalledTimes(1);
     });
 
@@ -110,7 +115,8 @@ describe('ServiceSearchController (internal/services)', () => {
       [{ resourceWriterIds: 'writer-a' }],
       [{ resourceWriterIds: [1] }],
       [{ resourceWriterIds: ['w'], limit: 201 }],
-      [{ resourceWriterIds: ['w'], offset: -1 }],
+      [{ resourceWriterIds: ['w'], cursor: 'x'.repeat(2049) }],
+      [{ resourceWriterIds: ['w'], cursor: 'not-a-cursor' }],
       [{ resourceWriterIds: ['w'], filter: { statuses: 'active' } }],
     ])('rejects %j with 400', async (body) => {
       await request(app.getHttpServer())

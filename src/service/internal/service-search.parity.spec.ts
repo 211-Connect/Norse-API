@@ -11,11 +11,17 @@ import { ServiceSearchService } from './service-search.service';
  * run the request this service actually sends to ES over the same fixture, using
  * the ES semantics that matter here: `terms` matches any array element, `exists`
  * is false for a missing field, `missing: '_first'`, keyword order is byte order,
- * and a composite bucket counts a document once per distinct value.
+ * `search_after` resumes strictly after the given sort values, the total stops at
+ * 10,000 unless `track_total_hits` is true, and a composite bucket counts a
+ * document once per distinct value.
  *
- * Text search is excluded: it is the one deliberate change (name regex ->
- * multi_match), and the evaluator refuses a clause it does not model rather than
- * guessing at it.
+ * Pages are walked with the cursor the service returns and compared with Mongo's
+ * skip/limit slices of the same ordering.
+ *
+ * Text search is excluded from parity: it deliberately differs (name regex ->
+ * name contains OR multi_match, ordered by score). The evaluator models the
+ * `wildcard` half exactly and treats `multi_match` as matching nothing, so the
+ * text tests below exercise the contains match alone.
  */
 
 type Doc = Record<string, unknown>;
@@ -243,7 +249,8 @@ function mongoListFilterOptions(writers: string[]) {
 
 // --- ES evaluator: the request this service sends, run over the fixture -----
 
-const fieldOf = (field: string) => (field === 'name.raw' ? 'name' : field);
+const fieldOf = (field: string) =>
+  field === 'name.raw' || field === 'name.substring' ? 'name' : field;
 
 function valuesOf(doc: Doc, field: string): unknown[] {
   const v = doc[fieldOf(field)];
@@ -251,15 +258,36 @@ function valuesOf(doc: Doc, field: string): unknown[] {
   return Array.isArray(v) ? v : [v];
 }
 
+/** ES wildcard: `*` any run, `?` one character, `\` escapes the next one. */
+function wildcardRegex(pattern: string, caseInsensitive: boolean): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '\\' && i + 1 < pattern.length) {
+      out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    } else if (ch === '*') out += '.*';
+    else if (ch === '?') out += '.';
+    else out += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`, caseInsensitive ? 'is' : 's');
+}
+
 function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
   const [kind, body] = Object.entries(clause)[0];
   switch (kind) {
-    case 'bool':
+    case 'bool': {
+      const should = (body.should ?? []) as any[];
+      const shouldOk =
+        should.length === 0 ||
+        should.filter((c) => evaluateClause(c, doc)).length >=
+          (body.minimum_should_match ?? 1);
       return (
         (body.filter ?? []).every((c: any) => evaluateClause(c, doc)) &&
         (body.must ?? []).every((c: any) => evaluateClause(c, doc)) &&
-        !(body.must_not ?? []).some((c: any) => evaluateClause(c, doc))
+        !(body.must_not ?? []).some((c: any) => evaluateClause(c, doc)) &&
+        shouldOk
       );
+    }
     case 'terms': {
       const [field, list] = Object.entries(body)[0] as [string, unknown[]];
       return valuesOf(doc, field).some((v) => list.includes(v));
@@ -270,49 +298,86 @@ function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
     }
     case 'exists':
       return valuesOf(doc, body.field).length > 0;
+    case 'wildcard': {
+      const [field, spec] = Object.entries<any>(body)[0];
+      const re = wildcardRegex(spec.value, spec.case_insensitive === true);
+      return valuesOf(doc, field).some((v) => re.test(String(v)));
+    }
+    case 'multi_match':
+      return false;
     default:
       throw new Error(`parity evaluator does not model "${kind}"`);
   }
 }
 
-function evaluateSearch(request: Record<string, any>) {
-  const matched = FIXTURE.filter((d) => evaluateClause(request.query, d));
+type SortValue = string | number | null;
+
+function sortValuesOf(
+  doc: Doc,
+  sorts: Record<string, { order: string; missing?: string }>[],
+): SortValue[] {
+  return sorts.map((spec) => {
+    const field = Object.keys(spec)[0];
+    if (field === '_score') return 1;
+    const v = valuesOf(doc, field)[0];
+    return v === undefined ? null : (v as SortValue);
+  });
+}
+
+function compareSortValues(
+  a: SortValue[],
+  b: SortValue[],
+  sorts: Record<string, { order: string; missing?: string }>[],
+): number {
+  for (let i = 0; i < sorts.length; i++) {
+    const { order, missing } = Object.values(sorts[i])[0];
+    const av = a[i];
+    const bv = b[i];
+    const missingFirst = (missing ?? '_last') === '_first';
+    let cmp: number;
+    if (av === null || bv === null) {
+      cmp = av === bv ? 0 : (av === null) === missingFirst ? -1 : 1;
+    } else if (typeof av === 'number' && typeof bv === 'number') {
+      cmp = (av - bv) * (order === 'desc' ? -1 : 1);
+    } else {
+      cmp = byteCompare(String(av), String(bv)) * (order === 'desc' ? -1 : 1);
+    }
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
+}
+
+function evaluateSearch(docs: Doc[], request: Record<string, any>) {
   const sorts = request.sort as Record<
     string,
     { order: string; missing?: string }
   >[];
-  matched.sort((a, b) => {
-    for (const spec of sorts) {
-      const [field, { order, missing }] = Object.entries(spec)[0];
-      const av = valuesOf(a, field)[0] as string | undefined;
-      const bv = valuesOf(b, field)[0] as string | undefined;
-      const missingFirst = (missing ?? '_last') === '_first';
-      let cmp: number;
-      if (av === undefined || bv === undefined) {
-        cmp = av === bv ? 0 : (av === undefined) === missingFirst ? -1 : 1;
-      } else {
-        cmp = byteCompare(av, bv) * (order === 'desc' ? -1 : 1);
-      }
-      if (cmp !== 0) return cmp;
-    }
-    return 0;
-  });
+  const matched = docs
+    .filter((d) => evaluateClause(request.query, d))
+    .map((d) => ({ d, sort: sortValuesOf(d, sorts) }))
+    .sort((a, b) => compareSortValues(a.sort, b.sort, sorts));
+  const after = request.search_after as SortValue[] | undefined;
+  const remaining = after
+    ? matched.filter((m) => compareSortValues(m.sort, after, sorts) > 0)
+    : matched;
+  const from = request.from ?? 0;
   const total =
     request.track_total_hits === true
       ? matched.length
-      : Math.min(matched.length, 3);
+      : Math.min(matched.length, 10_000);
   return {
     hits: {
       total: { value: total, relation: 'eq' },
-      hits: matched
-        .slice(request.from, request.from + request.size)
-        .map(({ _id, ...source }) => ({ _id, _source: source })),
+      hits: remaining.slice(from, from + request.size).map(({ d, sort }) => {
+        const { _id, ...source } = d;
+        return { _id, _source: source, sort };
+      }),
     },
   };
 }
 
-function evaluateAggregations(request: Record<string, any>) {
-  const matched = FIXTURE.filter((d) => evaluateClause(request.query, d));
+function evaluateAggregations(docs: Doc[], request: Record<string, any>) {
+  const matched = docs.filter((d) => evaluateClause(request.query, d));
   const aggregations: Record<string, unknown> = {};
   for (const [name, agg] of Object.entries<any>(request.aggs)) {
     const { size, sources, after } = agg.composite;
@@ -335,6 +400,37 @@ function evaluateAggregations(request: Record<string, any>) {
   return { aggregations };
 }
 
+function serviceOver(docs: Doc[]) {
+  const search = jest.fn(async (request: Record<string, any>) =>
+    request.aggs
+      ? evaluateAggregations(docs, request)
+      : evaluateSearch(docs, request),
+  );
+  return {
+    search,
+    service: new ServiceSearchService({
+      search,
+    } as unknown as ElasticsearchService),
+  };
+}
+
+/** Every page of a query, following nextCursor; fails if paging never ends. */
+async function walk(
+  service: ServiceSearchService,
+  request: Omit<Parameters<ServiceSearchService['search']>[0], 'cursor'>,
+  maxPages = 20,
+) {
+  const pages: { ids: string[]; total: number }[] = [];
+  let cursor: string | undefined;
+  for (let guard = 0; guard < maxPages; guard++) {
+    const page = await service.search({ ...request, cursor });
+    pages.push({ ids: page.items.map((i) => i.id), total: page.total });
+    if (page.nextCursor === null) return pages;
+    cursor = page.nextCursor;
+  }
+  throw new Error(`paging did not end within ${maxPages} pages`);
+}
+
 // --- The cases -------------------------------------------------------------
 
 const WRITER_SETS = [[A], [B], [C], [A, B], [A, B, C], []];
@@ -348,25 +444,15 @@ const CODE_SETS = [
   ['XX-1'],
 ];
 const STATUS_SETS = [[], ['active'], ['inactive'], ['active', 'closed'], ['']];
-const PAGES = [
-  { offset: 0, limit: 50 },
-  { offset: 0, limit: 2 },
-  { offset: 2, limit: 3 },
-  { offset: 100, limit: 5 },
-];
+const LIMITS = [50, 1, 2, 3];
 
 describe('services search parity with the Mongo record source', () => {
-  const search = jest.fn(async (request: Record<string, any>) =>
-    request.aggs ? evaluateAggregations(request) : evaluateSearch(request),
-  );
-  const service = new ServiceSearchService({
-    search,
-  } as unknown as ElasticsearchService);
+  const { service } = serviceOver(FIXTURE);
 
   const listCases = WRITER_SETS.flatMap((writers) =>
     CODE_SETS.flatMap((codes) =>
       STATUS_SETS.flatMap((statuses) =>
-        PAGES.map((page) => ({ writers, codes, statuses, ...page })),
+        LIMITS.map((limit) => ({ writers, codes, statuses, limit })),
       ),
     ),
   );
@@ -391,25 +477,33 @@ describe('services search parity with the Mongo record source', () => {
   });
 
   it.each(listCases)(
-    'lists the same page and total: writers=$writers codes=$codes statuses=$statuses offset=$offset limit=$limit',
-    async ({ writers, codes, statuses, offset, limit }) => {
-      const expected = mongoListRecords({
+    'walks the same pages and total: writers=$writers codes=$codes statuses=$statuses limit=$limit',
+    async ({ writers, codes, statuses, limit }) => {
+      const pages = await walk(service, {
+        resourceWriterIds: writers,
+        filter: { taxonomyCodes: codes, statuses },
+        limit,
+      });
+      const all = mongoListRecords({
         writers,
         codes,
         statuses,
-        offset,
-        limit,
+        offset: 0,
+        limit: 1_000,
       });
-      const actual = await service.search({
-        resourceWriterIds: writers,
-        filter: { taxonomyCodes: codes, statuses },
-        offset,
-        limit,
+      const expectedPages = Math.max(1, Math.ceil(all.total / limit));
+      expect(pages).toHaveLength(expectedPages);
+      pages.forEach((page, i) => {
+        expect(page).toEqual(
+          mongoListRecords({
+            writers,
+            codes,
+            statuses,
+            offset: i * limit,
+            limit,
+          }),
+        );
       });
-      expect({
-        ids: actual.items.map((i) => i.id),
-        total: actual.total,
-      }).toEqual(expected);
     },
   );
 
@@ -421,4 +515,84 @@ describe('services search parity with the Mongo record source', () => {
       ).resolves.toEqual(mongoListFilterOptions(writers));
     },
   );
+});
+
+describe('paging beyond the ES result window', () => {
+  const COUNT = 10_050;
+  const docs: Doc[] = Array.from({ length: COUNT }, (_, i) => ({
+    _id: `t:s${i}`,
+    serviceId: `s${String(i).padStart(5, '0')}`,
+    resourceWriterId: A,
+    // 100 distinct names, so every page boundary lands inside a name tie.
+    name: `Service ${String(i % 100).padStart(3, '0')}`,
+    status: 'active',
+  }));
+  const { service, search } = serviceOver(docs);
+
+  it('reaches every record exactly once, with an exact total and a null cursor at the end', async () => {
+    const pages = await walk(
+      service,
+      { resourceWriterIds: [A], limit: 200 },
+      60,
+    );
+    const ids = pages.flatMap((p) => p.ids);
+    expect(ids).toHaveLength(COUNT);
+    expect(new Set(ids).size).toBe(COUNT);
+    expect(pages.every((p) => p.total === COUNT)).toBe(true);
+    expect(pages).toHaveLength(Math.ceil(COUNT / 200));
+    expect(
+      search.mock.calls.every(([request]) => request.from === undefined),
+    ).toBe(true);
+  });
+
+  it('pages a text search by score with the serviceId tie-breaker', async () => {
+    const pages = await walk(
+      service,
+      {
+        resourceWriterIds: [A],
+        text: 'service 00',
+        limit: 7,
+      },
+      160,
+    );
+    const ids = pages.flatMap((p) => p.ids);
+    // "Service 000" .. "Service 009", ~101 records each.
+    const expected = docs.filter((d) =>
+      /service 00/i.test(d.name as string),
+    ).length;
+    expect(new Set(ids).size).toBe(expected);
+    expect(ids).toHaveLength(expected);
+  });
+});
+
+describe('text: name contains match (the deliberate change)', () => {
+  const docs: Doc[] = [
+    { _id: 't:1', serviceId: '1', resourceWriterId: A, name: 'Food Bank' },
+    { _id: 't:2', serviceId: '2', resourceWriterId: A, name: 'Fo*d Pantry' },
+    { _id: 't:3', serviceId: '3', resourceWriterId: A, name: 'Fo?d Shelf' },
+    { _id: 't:4', serviceId: '4', resourceWriterId: A, name: 'C:\\Temp Help' },
+    { _id: 't:5', serviceId: '5', resourceWriterId: A, name: 'Shelter' },
+  ];
+  const { service } = serviceOver(docs);
+  const ids = async (text: string) =>
+    (await service.search({ resourceWriterIds: [A], text })).items.map(
+      (i) => i.id,
+    );
+
+  it('finds a mid-word substring: "ood" finds "Food"', async () => {
+    expect(await ids('ood')).toEqual(['t:1']);
+  });
+
+  it('matches case-insensitively: "FOOD" finds "Food"', async () => {
+    expect(await ids('FOOD')).toEqual(['t:1']);
+  });
+
+  it('treats * and ? in the text as literals', async () => {
+    expect(await ids('fo*d')).toEqual(['t:2']);
+    expect(await ids('fo?d')).toEqual(['t:3']);
+  });
+
+  it('treats a backslash in the text as a literal', async () => {
+    expect(await ids('c:\\temp')).toEqual(['t:4']);
+  });
 });

@@ -1,4 +1,5 @@
 import {
+  FieldValue,
   QueryDslQueryContainer,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
@@ -6,13 +7,11 @@ import {
 /**
  * Query building for the ES `services` index (ADR 0022), mirroring ServiceNet's
  * Mongo `buildQuery` in `sharing-mongo/src/record-source.ts` clause for clause.
- * Only text search deliberately differs; see `textClause`.
+ * Text search and its ordering deliberately differ; see `textClause` and
+ * `serviceListSort`.
  */
 
 export const SERVICES_INDEX = 'services';
-
-/** ES refuses `from + size` beyond `index.max_result_window` (default 10,000). */
-export const SERVICES_MAX_RESULT_WINDOW = 10_000;
 
 export const SERVICE_TEXT_FIELDS = [
   'name^3',
@@ -38,16 +37,33 @@ export const SERVICE_LIST_SOURCE_FIELDS = [
   'assuredDate',
 ];
 
+/** `name.substring`: the `wildcard`-typed subfield Dagster #601 adds for contains matching. */
+export const SERVICE_NAME_SUBSTRING_FIELD = 'name.substring';
+
+export type SortMode = 'name' | 'score';
+
+export const sortModeFor = (text: string | undefined): SortMode =>
+  (text?.trim() ?? '') === '' ? 'name' : 'score';
+
 /**
- * Name, then serviceId, never score. `name.raw` is a case-sensitive keyword, so
- * this is Mongo's binary `{name: 1}` order; a missing name sorts first, as a
- * null does in Mongo. The serviceId tiebreak keeps pages stable across a
- * many-way name tie.
+ * Without text: name, then serviceId. `name.raw` is a case-sensitive keyword,
+ * so this is Mongo's binary `{name: 1}` order, and a missing name sorts first,
+ * as a null does in Mongo.
+ *
+ * With text: score, then serviceId. This is a deliberate change from Mongo,
+ * which kept name order for a search.
+ *
+ * `serviceId` is the tie-breaker in both, and `search_after` needs it: without
+ * a unique last key, a page boundary inside a tie skips or repeats records.
  */
-export const SERVICE_LIST_SORT: Sort = [
-  { 'name.raw': { order: 'asc', missing: '_first' } },
-  { serviceId: { order: 'asc' } },
-];
+export function serviceListSort(mode: SortMode): Sort {
+  return mode === 'score'
+    ? [{ _score: { order: 'desc' } }, { serviceId: { order: 'asc' } }]
+    : [
+        { 'name.raw': { order: 'asc', missing: '_first' } },
+        { serviceId: { order: 'asc' } },
+      ];
+}
 
 export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
@@ -98,24 +114,49 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   return { filter, must_not };
 }
 
+/** Escapes a user string for a `wildcard` query: `\\` first, then `*` and `?`. */
+export function escapeWildcard(text: string): string {
+  return text.replace(/[\\*?]/g, '\\$&');
+}
+
 /**
- * The one deliberate departure from Mongo, which matched a case-insensitive
- * substring of `name` alone. Every term must appear in one field, and the last
- * term may be a prefix, so a half-typed word still narrows the list as the
- * regex did. No fuzziness: results are ordered by name, not score, so a fuzzy
- * match would land among exact ones with nothing to tell them apart.
+ * The deliberate departure from Mongo, which matched a case-insensitive
+ * substring of `name` alone. Two ways to match, OR'd:
+ *
+ * - a case-insensitive contains match on `name.substring`, which keeps
+ *   Mongo's mid-word behaviour ("ood" finds "Food")
+ * - a `multi_match` over name (weighted highest), alternate name, description
+ *   and organization name. Every term must appear in one field, and the last
+ *   term may be a prefix. No fuzziness.
  */
 export function textClause(text: string | undefined): QueryDslQueryContainer[] {
   const trimmed = text?.trim() ?? '';
   if (trimmed === '') return [];
   return [
     {
-      multi_match: {
-        query: trimmed,
-        type: 'bool_prefix',
-        fields: [...SERVICE_TEXT_FIELDS],
-        operator: 'and',
+      bool: {
+        should: [
+          {
+            wildcard: {
+              [SERVICE_NAME_SUBSTRING_FIELD]: {
+                value: `*${escapeWildcard(trimmed)}*`,
+                case_insensitive: true,
+              },
+            },
+          },
+          {
+            multi_match: {
+              query: trimmed,
+              type: 'bool_prefix',
+              fields: [...SERVICE_TEXT_FIELDS],
+              operator: 'and',
+            },
+          },
+        ],
+        minimum_should_match: 1,
       },
     },
   ];
 }
+
+export type CursorSortValues = FieldValue[];

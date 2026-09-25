@@ -1,6 +1,5 @@
 import {
   BadGatewayException,
-  BadRequestException,
   HttpException,
   Injectable,
   Logger,
@@ -23,13 +22,18 @@ import {
   ServicesSearchResponseDto,
 } from './dto';
 import {
-  SERVICE_LIST_SORT,
   SERVICE_LIST_SOURCE_FIELDS,
   SERVICES_INDEX,
-  SERVICES_MAX_RESULT_WINDOW,
   buildServiceFilter,
+  serviceListSort,
+  sortModeFor,
   textClause,
 } from './service-search.query';
+import {
+  CursorQuery,
+  decodeCursor,
+  encodeCursor,
+} from './service-search.cursor';
 
 /** Buckets per composite page; facets page until exhausted, never truncate. */
 export const FACET_PAGE_SIZE = 1000;
@@ -68,30 +72,33 @@ export class ServiceSearchService {
   async search(
     request: ServicesSearchRequestDto,
   ): Promise<ServicesSearchResponseDto> {
-    const offset = request.offset ?? 0;
     const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
-    if (offset + limit > SERVICES_MAX_RESULT_WINDOW) {
-      throw new BadRequestException(
-        `offset + limit must not exceed ${SERVICES_MAX_RESULT_WINDOW}`,
-      );
-    }
-
-    const scope = buildServiceFilter({
+    const cursorQuery: CursorQuery = {
       resourceWriterIds: request.resourceWriterIds,
       taxonomyCodes: request.filter?.taxonomyCodes,
       statuses: request.filter?.statuses,
-    });
-    if (scope === null) return { items: [], total: 0, offset, limit };
+      text: request.text,
+    };
+    const mode = sortModeFor(request.text);
+    const searchAfter =
+      request.cursor === undefined
+        ? undefined
+        : decodeCursor(request.cursor, mode, cursorQuery);
+
+    const scope = buildServiceFilter(cursorQuery);
+    if (scope === null) return { items: [], total: 0, limit, nextCursor: null };
 
     const body: SearchRequest = {
       index: SERVICES_INDEX,
-      from: offset,
-      size: limit,
+      // One extra hit says whether a next page exists, so the last page
+      // returns a null cursor instead of one that leads to an empty page.
+      size: limit + 1,
       // Without this ES stops counting at 10,000 and the total would lie.
       track_total_hits: true,
       _source: SERVICE_LIST_SOURCE_FIELDS,
       query: { bool: { ...scope, must: textClause(request.text) } },
-      sort: SERVICE_LIST_SORT,
+      sort: serviceListSort(mode),
+      ...(searchAfter ? { search_after: searchAfter } : {}),
     };
 
     const result = await this.call('search', () =>
@@ -101,12 +108,17 @@ export class ServiceSearchService {
       typeof result.hits.total === 'number'
         ? result.hits.total
         : (result.hits.total?.value ?? 0);
+    const page = result.hits.hits.slice(0, limit);
+    const last = page[page.length - 1];
 
     return {
-      items: result.hits.hits.map((hit) => toListItem(hit._id, hit._source)),
+      items: page.map((hit) => toListItem(hit._id, hit._source)),
       total,
-      offset,
       limit,
+      nextCursor:
+        result.hits.hits.length > limit && last?.sort
+          ? encodeCursor(mode, cursorQuery, last.sort)
+          : null,
     };
   }
 

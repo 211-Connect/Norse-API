@@ -33,8 +33,13 @@ export class ServicesSearchResponseDto {
   @ApiProperty({ type: [ServiceListItemDto] }) items: ServiceListItemDto[];
   @ApiProperty({ description: 'Every match, not just this page.' })
   total: number;
-  @ApiProperty() offset: number;
   @ApiProperty() limit: number;
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Pass as `cursor` for the next page; null on the last page.',
+  })
+  nextCursor: string | null;
 }
 
 export class ContributorFacetDto {

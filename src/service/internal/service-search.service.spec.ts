@@ -45,7 +45,12 @@ describe('ServiceSearchService', () => {
 
     it('answers an empty writer set with nothing, never an unscoped query', async () => {
       const result = await service.search({ resourceWriterIds: [] });
-      expect(result).toEqual({ items: [], total: 0, offset: 0, limit: 50 });
+      expect(result).toEqual({
+        items: [],
+        total: 0,
+        limit: 50,
+        nextCursor: null,
+      });
       expect(search).not.toHaveBeenCalled();
     });
 
@@ -72,26 +77,50 @@ describe('ServiceSearchService', () => {
       expect(lastRequest().query.bool.filter).toHaveLength(2);
     });
 
-    it('searches name (weighted highest), alternate name, description and organization name', async () => {
+    it('matches text by name contains, OR a multi_match weighted to name', async () => {
       await service.search({
         resourceWriterIds: [WRITER_A],
         text: '  food bank ',
       });
       expect(lastRequest().query.bool.must).toEqual([
         {
-          multi_match: {
-            query: 'food bank',
-            type: 'bool_prefix',
-            fields: [
-              'name^3',
-              'alternateName',
-              'description',
-              'organizationName',
+          bool: {
+            should: [
+              {
+                wildcard: {
+                  'name.substring': {
+                    value: '*food bank*',
+                    case_insensitive: true,
+                  },
+                },
+              },
+              {
+                multi_match: {
+                  query: 'food bank',
+                  type: 'bool_prefix',
+                  fields: [
+                    'name^3',
+                    'alternateName',
+                    'description',
+                    'organizationName',
+                  ],
+                  operator: 'and',
+                },
+              },
             ],
-            operator: 'and',
+            minimum_should_match: 1,
           },
         },
       ]);
+    });
+
+    it('escapes wildcard metacharacters in the text', async () => {
+      await service.search({ resourceWriterIds: [WRITER_A], text: 'a*b?c\\d' });
+      const wildcard =
+        lastRequest().query.bool.must[0].bool.should[0].wildcard[
+          'name.substring'
+        ];
+      expect(wildcard.value).toBe('*a\\*b\\?c\\\\d*');
     });
 
     it('ignores blank text', async () => {
@@ -99,35 +128,169 @@ describe('ServiceSearchService', () => {
       expect(lastRequest().query.bool.must).toEqual([]);
     });
 
-    it('orders by name then serviceId, not score, even with text', async () => {
-      await service.search({ resourceWriterIds: [WRITER_A], text: 'food' });
+    it('orders by name then serviceId without text', async () => {
+      await service.search({ resourceWriterIds: [WRITER_A] });
       expect(lastRequest().sort).toEqual([
         { 'name.raw': { order: 'asc', missing: '_first' } },
         { serviceId: { order: 'asc' } },
       ]);
     });
 
-    it('pages with offset/limit and counts every match', async () => {
-      await service.search({
-        resourceWriterIds: [WRITER_A],
-        offset: 100,
-        limit: 25,
-      });
+    it('orders by score then serviceId with text', async () => {
+      await service.search({ resourceWriterIds: [WRITER_A], text: 'food' });
+      expect(lastRequest().sort).toEqual([
+        { _score: { order: 'desc' } },
+        { serviceId: { order: 'asc' } },
+      ]);
+    });
+
+    it('asks for one extra hit, never uses from, and counts every match', async () => {
+      await service.search({ resourceWriterIds: [WRITER_A], limit: 25 });
       const request = lastRequest();
-      expect(request.from).toBe(100);
-      expect(request.size).toBe(25);
+      expect(request.size).toBe(26);
+      expect(request.from).toBeUndefined();
+      expect(request.search_after).toBeUndefined();
       expect(request.track_total_hits).toBe(true);
     });
 
-    it('refuses a page beyond the ES result window instead of failing downstream', async () => {
-      await expect(
-        service.search({
+    describe('cursor', () => {
+      const hit = (serviceId: string, sort: unknown[]) => ({
+        _id: `t:${serviceId}`,
+        _source: { serviceId },
+        sort,
+      });
+
+      it('returns the last kept hit as nextCursor and resumes after it', async () => {
+        search.mockResolvedValueOnce({
+          hits: {
+            total: { value: 3 },
+            hits: [
+              hit('s1', ['Alpha', 's1']),
+              hit('s2', [null, 's2']),
+              hit('s3', ['Gamma', 's3']),
+            ],
+          },
+        });
+        const first = await service.search({
           resourceWriterIds: [WRITER_A],
-          offset: 9_990,
-          limit: 11,
-        }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(search).not.toHaveBeenCalled();
+          limit: 2,
+        });
+        expect(first.items.map((i) => i.serviceId)).toEqual(['s1', 's2']);
+        expect(first.nextCursor).toEqual(expect.any(String));
+
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          limit: 2,
+          cursor: first.nextCursor!,
+        });
+        expect(lastRequest().search_after).toEqual([null, 's2']);
+      });
+
+      it('returns a null cursor on the last page', async () => {
+        search.mockResolvedValueOnce({
+          hits: { total: { value: 2 }, hits: [hit('s1', ['A', 's1'])] },
+        });
+        const page = await service.search({
+          resourceWriterIds: [WRITER_A],
+          limit: 2,
+        });
+        expect(page.nextCursor).toBeNull();
+      });
+
+      const issue = async (text?: string) => {
+        search.mockResolvedValueOnce({
+          hits: {
+            total: { value: 2 },
+            hits: [
+              hit('s1', text ? [2.5, 's1'] : ['A', 's1']),
+              hit('s2', text ? [1.5, 's2'] : ['B', 's2']),
+            ],
+          },
+        });
+        const page = await service.search({
+          resourceWriterIds: [WRITER_A],
+          limit: 1,
+          text,
+        });
+        search.mockClear();
+        return page.nextCursor!;
+      };
+      const reencode = (cursor: string, edit: (p: any) => void) => {
+        const payload = JSON.parse(
+          Buffer.from(cursor, 'base64url').toString('utf8'),
+        );
+        edit(payload);
+        return Buffer.from(JSON.stringify(payload)).toString('base64url');
+      };
+
+      it.each([
+        ['not base64 JSON', () => Promise.resolve('!!!not-a-cursor')],
+        [
+          'a sort value of the wrong type',
+          async () => reencode(await issue(), (p) => (p.s = [1, 's1'])),
+        ],
+        [
+          'a missing tie-breaker',
+          async () => reencode(await issue(), (p) => (p.s = ['A'])),
+        ],
+        [
+          'an unknown version',
+          async () => reencode(await issue(), (p) => (p.v = 2)),
+        ],
+        [
+          'an edited query fingerprint',
+          async () => reencode(await issue(), (p) => (p.k = '0'.repeat(16))),
+        ],
+      ])('rejects %s with 400', async (_label, make) => {
+        const cursor = await make();
+        await expect(
+          service.search({ resourceWriterIds: [WRITER_A], cursor }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(search).not.toHaveBeenCalled();
+      });
+
+      it('rejects a cursor replayed against a different query', async () => {
+        const cursor = await issue();
+        await expect(
+          service.search({ resourceWriterIds: [WRITER_B], cursor }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(
+          service.search({
+            resourceWriterIds: [WRITER_A],
+            filter: { statuses: ['active'] },
+            cursor,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(search).not.toHaveBeenCalled();
+      });
+
+      it('rejects a name-order cursor on a text search, and the reverse', async () => {
+        const nameCursor = await issue();
+        await expect(
+          service.search({
+            resourceWriterIds: [WRITER_A],
+            text: 'x',
+            cursor: nameCursor,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        const scoreCursor = await issue('food');
+        await expect(
+          service.search({
+            resourceWriterIds: [WRITER_A],
+            cursor: scoreCursor,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('accepts a score cursor for the same text search', async () => {
+        const cursor = await issue('food');
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          text: ' food ',
+          cursor,
+        });
+        expect(lastRequest().search_after).toEqual([2.5, 's1']);
+      });
     });
 
     it('returns list-row fields and the total', async () => {
