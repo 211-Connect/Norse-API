@@ -160,6 +160,47 @@ describe('HybridSearchService', () => {
     expect(flatTerms).toHaveLength(0);
   });
 
+  it('keeps the x1 taxonomy boost baseline for short queries', async () => {
+    // 'food shelf' = 2 tokens: at or below the per-unit length, the boost is
+    // exactly the flat baseline the ranking was tuned on.
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 0.9 * (1 + 0.5 / 1));
+  });
+
+  it('scales taxonomy boosts up with query length', async () => {
+    // 6 tokens → floor(6/3) = 2: the recall clause's BM25 doubles with the
+    // token count, so the intent signal scales with it.
+    const long = {
+      ...baseQuery,
+      query: 'help paying rent after losing my job',
+    };
+    await service.searchHybrid({ headers, query: long });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 2 * 0.9 * (1 + 0.5 / 1));
+  });
+
+  it('caps the taxonomy boost length scale', async () => {
+    // 15 tokens → floor(15/3) = 5, exactly the cap.
+    const veryLong = {
+      ...baseQuery,
+      query:
+        'need to know what steps to do when someone dies at home in the family',
+    };
+    await service.searchHybrid({ headers, query: veryLong });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 5 * 0.9 * (1 + 0.5 / 1));
+  });
+
   it('uses a 2-key deterministic sort by default (boost mode)', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
