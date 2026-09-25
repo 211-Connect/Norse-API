@@ -30,6 +30,7 @@ import {
   GeoPoint,
   ServiceFilterInput,
   buildServiceFilter,
+  geoPointKey,
   serviceListSort,
   sortModeFor,
   textClause,
@@ -268,7 +269,7 @@ function scopeFilterInput(request: {
 function distinctPoints(points: readonly GeoPoint[]): GeoPoint[] {
   const seen = new Map<string, GeoPoint>();
   for (const p of points) {
-    seen.set(`${p.lat},${p.lng},${p.radiusMiles}`, {
+    seen.set(geoPointKey(p), {
       lat: p.lat,
       lng: p.lng,
       radiusMiles: p.radiusMiles,
@@ -277,7 +278,6 @@ function distinctPoints(points: readonly GeoPoint[]): GeoPoint[] {
   return [...seen.values()];
 }
 
-/** A geography clause names 1 to 20 Places, Regions and points together. */
 function assertPlaceCount(count: number): void {
   if (count < 1 || count > SERVICES_SEARCH_MAX_PLACES) {
     throw new BadRequestException(

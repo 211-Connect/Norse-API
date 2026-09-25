@@ -66,6 +66,10 @@ export interface GeoPoint {
   radiusMiles: number;
 }
 
+/** One point Place, by where it sits and how far it reaches. */
+export const geoPointKey = ({ lat, lng, radiusMiles }: GeoPoint): string =>
+  `${lat},${lng},${radiusMiles}`;
+
 export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
   taxonomyCodes?: readonly string[];
