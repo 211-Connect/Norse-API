@@ -40,6 +40,18 @@ const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 50;
+// Taxonomy boosts are a flat constant, but the BM25 they compete with is not:
+// the recall clause sums weak token matches across ~15 fields, so a long
+// natural-language query inflates lexical scores into the hundreds (Q7, 15
+// tokens: lexical top ~450, taxonomy boost ~55 — invisible) while short
+// queries keep the balance the boosts were tuned on. Scale the taxonomy boost
+// by query length: 1–3 tokens keep the ×1 baseline, then one unit per ~3
+// tokens, capped at 5. Measured sweep (2026-09-24, tenant-wide): at ×3–×5 a
+// 15-token query's top-5 goes fully on-topic; 1–3-token queries are untouched
+// by construction, and exact-name matching still dominates at ≤×5 (see the
+// length-scale spec tests).
+const TAXONOMY_BOOST_TOKENS_PER_UNIT = 3;
+const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
@@ -544,18 +556,35 @@ export class HybridSearchService {
    * each contribution equal to the boost (no term-IDF noise); the bool sums
    * matching clauses, so a doc carrying several predicted codes accumulates
    * them and the highest-scoring predicted code contributes the most.
-   * boost = BASE_TAXONOMY_BOOST * score * (1 + 0.5 / (1 + i))
+   * boost = BASE_TAXONOMY_BOOST * lengthScale * score * (1 + 0.5 / (1 + i))
+   *
+   * lengthScale grows with the query's token count: the recall clause's BM25
+   * sums weak token matches across many fields, so long natural-language
+   * queries inflate lexical scores to the hundreds and a flat boost becomes
+   * invisible there, while 1–3-token queries keep the balance the boosts were
+   * tuned on. 1–3 tokens → ×1; one unit per TAXONOMY_BOOST_TOKENS_PER_UNIT
+   * tokens beyond that, capped at TAXONOMY_BOOST_MAX_SCALE.
    */
   private buildTaxonomyBoostClauses(
     predicted: PredictedTaxonomy[],
+    queryStr?: string,
   ): QueryDslQueryContainer[] {
+    const tokens = queryStr?.trim().split(/\s+/).filter(Boolean).length ?? 1;
+    const lengthScale = Math.min(
+      TAXONOMY_BOOST_MAX_SCALE,
+      Math.max(1, Math.floor(tokens / TAXONOMY_BOOST_TOKENS_PER_UNIT)),
+    );
     return predicted.map((sc, i) => ({
       nested: {
         path: 'taxonomies',
         query: {
           constant_score: {
             filter: { term: { 'taxonomies.code': sc.code } },
-            boost: BASE_TAXONOMY_BOOST * sc.score * (1 + 0.5 / (1 + i)),
+            boost:
+              BASE_TAXONOMY_BOOST *
+              lengthScale *
+              sc.score *
+              (1 + 0.5 / (1 + i)),
           },
         },
         score_mode: 'max',
@@ -795,7 +824,7 @@ export class HybridSearchService {
 
     const should = [
       ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
-      ...this.buildTaxonomyBoostClauses(predicted),
+      ...this.buildTaxonomyBoostClauses(predicted, queryStr),
       ...(pinnedMode === 'ignore'
         ? []
         : [
@@ -1034,7 +1063,7 @@ export class HybridSearchService {
     const lexicalShould = queryStr
       ? this.buildLexicalShouldClauses(queryStr)
       : [];
-    const taxonomyShould = this.buildTaxonomyBoostClauses(predicted);
+    const taxonomyShould = this.buildTaxonomyBoostClauses(predicted, queryStr);
     // When pinned_resources_mode is `boost`, pinned becomes a small additive
     // score contribution (constant_score) instead of a hard sort tier. When it
     // is `top`, the hard sort tiers handle ordering. When `ignore`, neither is
