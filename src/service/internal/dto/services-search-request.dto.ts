@@ -14,7 +14,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { REGION_ID_PATTERN } from '../../../region/internal/dto';
+import { REGION_ID_PATTERN, regionIdMessage } from '../../../region/internal';
 
 export const SERVICES_SEARCH_DEFAULT_LIMIT = 50;
 export const SERVICES_SEARCH_MAX_LIMIT = 200;
@@ -37,11 +37,7 @@ export class ServicesGeographyFilterDto {
   @ArrayMinSize(1)
   @ArrayMaxSize(SERVICES_SEARCH_MAX_REGIONS)
   @IsString({ each: true })
-  @Matches(REGION_ID_PATTERN, {
-    each: true,
-    message:
-      'each regionId must be state:XX, county:<5-digit FIPS> or zip:<5 digits>',
-  })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
   regionIds: string[];
 }
 

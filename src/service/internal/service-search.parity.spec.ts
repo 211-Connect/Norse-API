@@ -1,6 +1,7 @@
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
 import { ServiceSearchService } from './service-search.service';
+import { RegionService } from '../../region/internal';
 
 /**
  * Parity with ServiceNet's Mongo record source (`sharing-mongo/src/record-source.ts`)
@@ -408,9 +409,10 @@ function serviceOver(docs: Doc[]) {
   );
   return {
     search,
-    service: new ServiceSearchService({
-      search,
-    } as unknown as ElasticsearchService),
+    service: new ServiceSearchService(
+      { search } as unknown as ElasticsearchService,
+      { assertExist: async () => undefined } as unknown as RegionService,
+    ),
   };
 }
 

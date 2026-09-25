@@ -3,7 +3,6 @@ import {
   ApiExcludeController,
   ApiOperation,
   ApiResponse,
-  ApiTags,
 } from '@nestjs/swagger';
 import {
   RegionDetailDto,
@@ -20,7 +19,6 @@ import { RegionService } from './region.service';
  * the gateway (ISS-1887).
  */
 @ApiExcludeController()
-@ApiTags('Regions (internal)')
 @Controller('internal/regions')
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}

@@ -1,11 +1,4 @@
-import {
-  BadGatewayException,
-  BadRequestException,
-  HttpException,
-  Injectable,
-  Logger,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { errors } from '@elastic/elasticsearch';
 import {
@@ -23,10 +16,12 @@ import {
   ServicesSearchRequestDto,
   ServicesSearchResponseDto,
 } from './dto';
-import { REGIONS_INDEX } from '../../region/internal/region.query';
+import { callElasticsearch } from 'src/common/elasticsearch/es-call';
+import { RegionService, unknownRegionsError } from '../../region/internal';
 import {
   SERVICE_LIST_SOURCE_FIELDS,
   SERVICES_INDEX,
+  ServiceFilterInput,
   buildServiceFilter,
   serviceListSort,
   sortModeFor,
@@ -71,17 +66,19 @@ interface ServiceSource {
 export class ServiceSearchService {
   private readonly logger = new Logger(ServiceSearchService.name);
 
-  constructor(private readonly elasticsearch: ElasticsearchService) {}
+  constructor(
+    private readonly elasticsearch: ElasticsearchService,
+    private readonly regions: RegionService,
+  ) {}
 
   async search(
     request: ServicesSearchRequestDto,
   ): Promise<ServicesSearchResponseDto> {
     const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
     const cursorQuery: CursorQuery = {
-      resourceWriterIds: request.resourceWriterIds,
+      ...scopeFilterInput(request),
       taxonomyCodes: request.filter?.taxonomyCodes,
       statuses: request.filter?.statuses,
-      ...scopeFilterInput(request.filter),
       text: request.text,
     };
     const mode = sortModeFor(request.text);
@@ -92,7 +89,7 @@ export class ServiceSearchService {
 
     const scope = buildServiceFilter(cursorQuery);
     if (scope === null) return { items: [], total: 0, limit, nextCursor: null };
-    await this.assertRegionsExist(cursorQuery.regionIds);
+    await this.regions.assertExist(cursorQuery.regionIds ?? []);
 
     const body: SearchRequest = {
       index: SERVICES_INDEX,
@@ -132,13 +129,10 @@ export class ServiceSearchService {
   async facets(
     request: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {
-    const input = {
-      resourceWriterIds: request.resourceWriterIds,
-      ...scopeFilterInput(request.filter),
-    };
+    const input = scopeFilterInput(request);
     const scope = buildServiceFilter(input);
     if (scope === null) return { contributors: [], statuses: [], taxonomy: [] };
-    await this.assertRegionsExist(input.regionIds);
+    await this.regions.assertExist(input.regionIds ?? []);
 
     const buckets = await this.collectFacetBuckets(
       { bool: scope },
@@ -235,68 +229,43 @@ export class ServiceSearchService {
     return out;
   }
 
-  /**
-   * ES answers `indexed_shape` with a missing id as a 400, which would surface
-   * as a 502. One `mget` first turns it into a 400 naming every unknown id.
-   */
-  private async assertRegionsExist(
-    regionIds: readonly string[] | undefined,
-  ): Promise<void> {
-    if (!regionIds || regionIds.length === 0) return;
-    const result = await this.call('region check', () =>
-      this.elasticsearch.mget({
-        index: REGIONS_INDEX,
-        ids: [...regionIds],
-        _source: false,
-      }),
+  private call<T>(what: string, run: () => Promise<T>): Promise<T> {
+    return callElasticsearch(
+      {
+        label: `Services ${what}`,
+        logger: this.logger,
+        mapError: missingRegionShape,
+      },
+      run,
     );
-    const found = new Set(
-      result.docs.filter((d) => 'found' in d && d.found).map((d) => d._id),
-    );
-    const unknown = regionIds.filter((id) => !found.has(id));
-    if (unknown.length > 0) throw unknownRegions(unknown);
-  }
-
-  /** Downstream failures: a timeout is 503, anything else 502. */
-  private async call<T>(what: string, run: () => Promise<T>): Promise<T> {
-    try {
-      return await run();
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      // A Region deleted between the check and the search.
-      const missingShape = missingShapeId(error);
-      if (missingShape !== null) throw unknownRegions([missingShape]);
-      if (error instanceof errors.TimeoutError) {
-        this.logger.error(`Services ${what} timed out`);
-        throw new ServiceUnavailableException(`Services ${what} timed out`);
-      }
-      this.logger.error(`Services ${what} failed: ${error?.message}`);
-      throw new BadGatewayException(`Services ${what} failed`);
-    }
   }
 }
 
-function scopeFilterInput(filter: ServicesScopeFilterDto | undefined) {
-  const regionIds = filter?.geography?.regionIds;
+/** The clauses search and facets share: writer set, geography, virtual mode. */
+function scopeFilterInput(request: {
+  resourceWriterIds: string[];
+  filter?: ServicesScopeFilterDto;
+}): ServiceFilterInput {
+  const regionIds = request.filter?.geography?.regionIds;
   return {
+    resourceWriterIds: request.resourceWriterIds,
     regionIds: regionIds ? [...new Set(regionIds)] : undefined,
-    virtual: filter?.virtual,
+    virtual: request.filter?.virtual,
   };
-}
-
-function unknownRegions(ids: readonly string[]) {
-  return new BadRequestException(`Unknown Region id(s): ${ids.join(', ')}`);
 }
 
 const MISSING_SHAPE = /Shape with ID \[([^\]]+)\][^"]*not found/;
 
-/** The id from ES's 400 for an `indexed_shape` it cannot find, else null. */
-function missingShapeId(error: unknown): string | null {
+/**
+ * ES's 400 for an `indexed_shape` it cannot find, as a 400 naming the Region:
+ * one deleted between the existence check and the search.
+ */
+function missingRegionShape(error: unknown): HttpException | null {
   if (!(error instanceof errors.ResponseError) || error.statusCode !== 400) {
     return null;
   }
   const match = MISSING_SHAPE.exec(JSON.stringify(error.meta?.body ?? ''));
-  return match ? match[1] : null;
+  return match ? unknownRegionsError([match[1]]) : null;
 }
 
 function toListItem(

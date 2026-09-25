@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -46,7 +47,8 @@ const stateClauses = (req: any) =>
 
 describe('RegionService', () => {
   const search = jest.fn();
-  const elasticsearch = { search } as unknown as ElasticsearchService;
+  const mget = jest.fn();
+  const elasticsearch = { search, mget } as unknown as ElasticsearchService;
   let service: RegionService;
   const lastRequest = () => search.mock.calls[search.mock.calls.length - 1][0];
   const hits = (...sources: object[]) => ({
@@ -302,6 +304,48 @@ describe('RegionService', () => {
     it('maps any other failure to 502', async () => {
       search.mockRejectedValue(new Error('boom'));
       await expect(service.get('state:MO')).rejects.toBeInstanceOf(
+        BadGatewayException,
+      );
+    });
+  });
+
+  describe('assertExist', () => {
+    const found = (...ids: string[]) =>
+      mget.mockResolvedValueOnce({
+        docs: ids.map((_id) => ({ _index: 'regions_v1', _id, found: true })),
+      });
+
+    it('skips the lookup for no ids', async () => {
+      mget.mockClear();
+      await service.assertExist([]);
+      expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('checks every id with one mget against the regions alias', async () => {
+      found('state:MO', 'zip:63110');
+      await service.assertExist(['state:MO', 'zip:63110']);
+      expect(mget).toHaveBeenCalledWith({
+        index: 'regions',
+        ids: ['state:MO', 'zip:63110'],
+        _source: false,
+      });
+    });
+
+    it('400s naming every unknown id', async () => {
+      mget.mockResolvedValueOnce({
+        docs: [
+          { _index: 'regions', _id: 'zip:00000', found: false },
+          { _index: 'regions_v1', _id: 'state:MO', found: true },
+        ],
+      });
+      const failure = service.assertExist(['zip:00000', 'state:MO']);
+      await expect(failure).rejects.toBeInstanceOf(BadRequestException);
+      await expect(failure).rejects.toThrow('Unknown Region id(s): zip:00000');
+    });
+
+    it('maps a failed lookup to 502', async () => {
+      mget.mockRejectedValueOnce(new Error('boom'));
+      await expect(service.assertExist(['state:MO'])).rejects.toBeInstanceOf(
         BadGatewayException,
       );
     });

@@ -3,14 +3,13 @@ import {
   QueryDslQueryContainer,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
-import { REGIONS_INDEX } from '../../region/internal/region.query';
+import { REGIONS_INDEX } from '../../region/internal';
 import { VirtualMode } from './dto';
 
 /**
- * Query building for the ES `services` index (ADR 0023), mirroring ServiceNet's
- * Mongo `buildQuery` in `sharing-mongo/src/record-source.ts` clause for clause.
- * Text search and its ordering deliberately differ; see `textClause` and
- * `serviceListSort`.
+ * The ES `services` index (ADR 0023). Filters mirror ServiceNet's Mongo
+ * `buildQuery` (`sharing-mongo/src/record-source.ts`) clause for clause so the
+ * two return the same records; text and its ordering deliberately differ.
  */
 
 export const SERVICES_INDEX = 'services';
@@ -48,15 +47,9 @@ export const sortModeFor = (text: string | undefined): SortMode =>
   (text?.trim() ?? '') === '' ? 'name' : 'score';
 
 /**
- * Without text: name, then serviceId. `name.raw` is a case-sensitive keyword,
- * so this is Mongo's binary `{name: 1}` order, and a missing name sorts first,
- * as a null does in Mongo.
- *
- * With text: score, then serviceId. This is a deliberate change from Mongo,
- * which kept name order for a search.
- *
- * `serviceId` is the tie-breaker in both, and `search_after` needs it: without
- * a unique last key, a page boundary inside a tie skips or repeats records.
+ * No text: case-sensitive `name.raw`, missing first, is Mongo's `{name: 1}`.
+ * Text: `_score`, a deliberate change from Mongo. `serviceId` breaks ties so a
+ * page boundary inside a tie cannot skip or repeat records.
  */
 export function serviceListSort(mode: SortMode): Sort {
   return mode === 'score'
@@ -79,10 +72,8 @@ export interface ServiceFilterInput {
 export const SERVICE_AREA_FIELD = 'service_area';
 
 /**
- * Regions OR'ed: a service matches when its `service_area` intersects any of
- * them. `intersects` counts border contact (v1). ES reads each Region's shape
- * from the `regions` index by id, so the geometry never crosses the wire, and a
- * service without a `service_area` cannot match.
+ * Regions OR'ed; `intersects` counts border contact (v1). ES reads each shape
+ * from `regions` by id, so no geometry crosses the wire.
  */
 export function geographyClause(
   regionIds: readonly string[],
@@ -115,12 +106,8 @@ export function virtualClause(
 }
 
 /**
- * The scope every read carries: the writer set, canonical publications only, and
- * a usable serviceId.
- *
- * Canonical is `must_not false`, not `term true`, as Mongo's `$ne: false`: the
- * producer marks only a borrowed copy false, and a document without the flag is
- * canonical.
+ * Canonical is `must_not false`, as Mongo's `$ne: false`: only a borrowed copy
+ * is marked false, and an unflagged document is canonical.
  */
 function scopeClauses(resourceWriterIds: readonly string[]) {
   return {
@@ -135,10 +122,7 @@ function scopeClauses(resourceWriterIds: readonly string[]) {
   };
 }
 
-/**
- * The filter a page and its total share, or `null` for an empty writer set,
- * which must return nothing rather than an unscoped query.
- */
+/** `null` for an empty writer set, which must return nothing, not everything. */
 export function buildServiceFilter(input: ServiceFilterInput): {
   filter: QueryDslQueryContainer[];
   must_not: QueryDslQueryContainer[];
@@ -168,14 +152,9 @@ export function escapeWildcard(text: string): string {
 }
 
 /**
- * The deliberate departure from Mongo, which matched a case-insensitive
- * substring of `name` alone. Two ways to match, OR'd:
- *
- * - a case-insensitive contains match on `name.substring`, which keeps
- *   Mongo's mid-word behaviour ("ood" finds "Food")
- * - a `multi_match` over name (weighted highest), alternate name, description
- *   and organization name. Every term must appear in one field, and the last
- *   term may be a prefix. No fuzziness.
+ * Departs from Mongo's name-only substring match. OR of a case-insensitive
+ * contains on `name.substring` (keeps "ood" finding "Food") and an all-terms
+ * `bool_prefix` over the text fields, without fuzziness.
  */
 export function textClause(text: string | undefined): QueryDslQueryContainer[] {
   const trimmed = text?.trim() ?? '';

@@ -14,6 +14,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { REGION_ID_PATTERN, regionIdMessage } from '../region.constants';
 
 export const REGION_TYPES = ['state', 'county', 'zip'] as const;
 export type RegionType = (typeof REGION_TYPES)[number];
@@ -21,6 +22,7 @@ export type RegionType = (typeof REGION_TYPES)[number];
 export const REGION_SEARCH_DEFAULT_LIMIT = 10;
 export const REGION_SEARCH_MAX_LIMIT = 25;
 export const REGION_SEARCH_MAX_TEXT = 100;
+export const REGION_SEARCH_MAX_STATES = 60;
 
 /** `a,b` and repeated `?x=a&x=b` both arrive as one list; blanks are dropped. */
 function commaList(uppercase: boolean) {
@@ -72,7 +74,7 @@ export class RegionSearchQueryDto {
   @Transform(commaList(true))
   @IsArray()
   @ArrayNotEmpty()
-  @ArrayMaxSize(60)
+  @ArrayMaxSize(REGION_SEARCH_MAX_STATES)
   @IsString({ each: true })
   @Matches(/^[A-Z]{2}$/, { each: true })
   states?: string[];
@@ -91,14 +93,9 @@ export class RegionSearchQueryDto {
   limit?: number;
 }
 
-/** `state:MO`, `county:29095` (5-digit FIPS) or `zip:64130`. */
-export const REGION_ID_PATTERN = /^(state:[A-Z]{2}|county:\d{5}|zip:\d{5})$/;
-
 export class RegionIdParamDto {
   @ApiProperty({ example: 'county:29095', pattern: REGION_ID_PATTERN.source })
   @IsString()
-  @Matches(REGION_ID_PATTERN, {
-    message: 'id must be state:XX, county:<5-digit FIPS> or zip:<5 digits>',
-  })
+  @Matches(REGION_ID_PATTERN, { message: regionIdMessage })
   id: string;
 }

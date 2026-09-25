@@ -4,7 +4,6 @@ import {
   ApiExcludeController,
   ApiOperation,
   ApiResponse,
-  ApiTags,
 } from '@nestjs/swagger';
 import {
   ServicesFacetsRequestDto,
@@ -21,7 +20,6 @@ import { ServiceSearchService } from './service-search.service';
  * yet (ISS-1876), so they must not be exposed through the gateway.
  */
 @ApiExcludeController()
-@ApiTags('Services (internal)')
 @Controller('internal/services')
 export class ServiceSearchController {
   constructor(private readonly searchService: ServiceSearchService) {}
@@ -31,7 +29,7 @@ export class ServiceSearchController {
   @HttpCode(200)
   @ApiOperation({
     summary:
-      "One page of a writer set's canonical services, ordered by name then serviceId, with the total.",
+      "One page of a writer set's canonical services with the total: by relevance then serviceId when text is given, else by name then serviceId.",
   })
   @ApiBody({ type: ServicesSearchRequestDto })
   @ApiResponse({ status: 200, type: ServicesSearchResponseDto })

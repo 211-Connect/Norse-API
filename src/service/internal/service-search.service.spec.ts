@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { errors } from '@elastic/elasticsearch';
+import { RegionService } from '../../region/internal';
 import {
   FACET_PAGE_SIZE,
   ServiceSearchService,
@@ -24,7 +25,10 @@ describe('ServiceSearchService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new ServiceSearchService(elasticsearch);
+    service = new ServiceSearchService(
+      elasticsearch,
+      new RegionService(elasticsearch),
+    );
     search.mockResolvedValue(emptyPage);
     mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
       docs: ids.map((_id) => ({ _index: 'regions_v1', _id, found: true })),

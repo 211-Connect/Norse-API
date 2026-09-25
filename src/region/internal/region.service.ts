@@ -1,13 +1,6 @@
-import {
-  BadGatewayException,
-  HttpException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { errors } from '@elastic/elasticsearch';
+import { callElasticsearch } from 'src/common/elasticsearch/es-call';
 import {
   REGION_SEARCH_DEFAULT_LIMIT,
   RegionDetailDto,
@@ -16,6 +9,7 @@ import {
   RegionSummaryDto,
   RegionType,
 } from './dto';
+import { REGIONS_INDEX, unknownRegionsError } from './region.constants';
 import { buildRegionGet, buildRegionSearch } from './region.query';
 
 interface RegionSource {
@@ -69,19 +63,31 @@ export class RegionService {
     return detail;
   }
 
-  /** Downstream failures: a timeout is 503, anything else 502. */
-  private async call<T>(what: string, run: () => Promise<T>): Promise<T> {
-    try {
-      return await run();
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      if (error instanceof errors.TimeoutError) {
-        this.logger.error(`Region ${what} timed out`);
-        throw new ServiceUnavailableException(`Region ${what} timed out`);
-      }
-      this.logger.error(`Region ${what} failed: ${error?.message}`);
-      throw new BadGatewayException(`Region ${what} failed`);
-    }
+  /**
+   * A 400 naming every id with no Region. ES answers an `indexed_shape` on a
+   * missing id with its own 400, which would otherwise surface as a 502.
+   */
+  async assertExist(ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const result = await this.call('check', () =>
+      this.elasticsearch.mget({
+        index: REGIONS_INDEX,
+        ids: [...ids],
+        _source: false,
+      }),
+    );
+    const found = new Set(
+      result.docs.filter((d) => 'found' in d && d.found).map((d) => d._id),
+    );
+    const unknown = ids.filter((id) => !found.has(id));
+    if (unknown.length > 0) throw unknownRegionsError(unknown);
+  }
+
+  private call<T>(what: string, run: () => Promise<T>): Promise<T> {
+    return callElasticsearch(
+      { label: `Region ${what}`, logger: this.logger },
+      run,
+    );
   }
 }
 

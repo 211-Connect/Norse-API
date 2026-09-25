@@ -1,20 +1,14 @@
 /**
- * AIRS/HSIS taxonomy code structure, ported verbatim from ServiceNet
- * `packages/oss/sharing-contracts/src/airs.ts` so the facets route builds the
- * same tree the Mongo adapter built. The hierarchy is encoded in the code's own
- * separators, never in a string prefix: `BD-18` is a sibling of `BD-1800`, not
- * its ancestor. Keep the two copies in step.
+ * Ported verbatim from ServiceNet `sharing-contracts/src/airs.ts` so facets build
+ * the tree the Mongo adapter built; keep the two in step. Hierarchy follows
+ * separators, never string prefix: `BD-18` is a sibling of `BD-1800`.
  */
 
 export function normalizeAirsCode(code: string): string {
   return code.trim().replace(/[.\-]+$/, '');
 }
 
-/**
- * Tests structure, not segment widths: the published AIRS spec (`ND-160.200-80`)
- * uses narrower segments than staging (`BD-1800.8200-250`), and both are AIRS.
- * A free-text label (`Serbo-Croatian`) is not, and must not be cut into branches.
- */
+/** Structure, not segment widths: `ND-160.200-80` and `BD-1800.8200-250` both qualify; `Serbo-Croatian` does not. */
 export function isAirsCode(code: string): boolean {
   return /^[A-Z]{2}(-[0-9]+(\.[0-9]+(-[0-9]+(\.[0-9]+)?)?)?)?$/.test(
     normalizeAirsCode(code),
@@ -51,11 +45,7 @@ export interface AirsTreeNode {
   synthesized: boolean;
 }
 
-/**
- * The picker tree from ALREADY-EXPANDED path counts: grouping over the
- * ancestor-expanded `taxonomyPath` already yields "records at or under this
- * node", so nothing is re-derived and nothing is double-counted.
- */
+/** From ancestor-expanded path counts, which already mean "at or under this node". */
 export function buildAirsTreeFromPathCounts(
   pathCounts: readonly { code: string; recordCount: number }[],
   codedCodes: ReadonlySet<string>,

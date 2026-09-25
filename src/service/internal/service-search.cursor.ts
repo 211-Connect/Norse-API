@@ -1,29 +1,17 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import { FieldValue } from '@elastic/elasticsearch/lib/api/types';
-import { VirtualMode } from './dto';
-import { SortMode } from './service-search.query';
+import { ServiceFilterInput, SortMode } from './service-search.query';
 
 /**
- * An opaque `search_after` cursor: the last hit's sort values, the sort mode
- * they belong to, and a fingerprint of the query that produced them.
- *
- * It is not signed; the writer set is the caller's own input, so a forged cursor
- * can only move a position within results the caller could already request.
- * The fingerprint turns a cursor replayed against a different query into a 400
- * instead of a page that silently skips records.
+ * An opaque, unsigned `search_after` cursor. The writer set is the caller's own
+ * input, so forging one only moves within results the caller could request; the
+ * query fingerprint turns a cursor replayed against another query into a 400.
  */
 
 const CURSOR_VERSION = 1;
 
-export interface CursorQuery {
-  resourceWriterIds: readonly string[];
-  taxonomyCodes?: readonly string[];
-  statuses?: readonly string[];
-  regionIds?: readonly string[];
-  virtual?: VirtualMode;
-  text?: string;
-}
+export type CursorQuery = ServiceFilterInput & { text?: string };
 
 interface CursorPayload {
   v: number;
@@ -32,24 +20,36 @@ interface CursorPayload {
   s: FieldValue[];
 }
 
+const asSet = (values: readonly string[] | undefined) =>
+  [...new Set(values ?? [])].sort();
+
+/**
+ * Every query field, required by the mapped type: a new filter field does not
+ * compile until it is fingerprinted. Set-like lists are sorted so the same set
+ * in another order is the same query (and the same shard preference).
+ */
+const FINGERPRINT_PARTS: {
+  [K in keyof CursorQuery]-?: (query: CursorQuery) => unknown;
+} = {
+  resourceWriterIds: (q) => asSet(q.resourceWriterIds),
+  taxonomyCodes: (q) => asSet(q.taxonomyCodes),
+  statuses: (q) => asSet(q.statuses),
+  regionIds: (q) => asSet(q.regionIds),
+  virtual: (q) => q.virtual ?? 'all',
+  text: (q) => q.text?.trim() ?? '',
+};
+
 export function queryFingerprint(query: CursorQuery): string {
-  const canonical = JSON.stringify([
-    query.resourceWriterIds,
-    query.taxonomyCodes ?? [],
-    query.statuses ?? [],
-    query.text?.trim() ?? '',
-    query.regionIds ?? [],
-    query.virtual ?? 'all',
-  ]);
+  const canonical = JSON.stringify(
+    Object.entries(FINGERPRINT_PARTS).map(([key, part]) => [key, part(query)]),
+  );
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
 /**
- * ES `preference` for every request of one query, first page included. Primary
- * and replica copies of a shard hold different deleted-doc counts, so BM25
- * scores differ between them; if each page may hit another copy, `search_after`
- * on `_score` skips and repeats records. Pinning by query (never by page) makes
- * every page, and every composite facet page, read the same copies.
+ * Pinned per query, never per page: primary and replica copies hold different
+ * deleted-doc counts, so their BM25 scores drift, and `search_after` on
+ * `_score` across copies skips and repeats records.
  */
 export function shardPreference(query: CursorQuery): string {
   return `services-${queryFingerprint(query)}`;
@@ -94,10 +94,7 @@ export function decodeCursor(
   return payload.s;
 }
 
-/**
- * `[name | null, serviceId]` or `[score, serviceId]`. A missing name comes
- * back from ES as null and sorts first, so null is a legal first value.
- */
+/** `[name | null, serviceId]` or `[score, serviceId]`; ES returns a missing name as null. */
 function validSortValues(mode: SortMode, s: unknown): s is FieldValue[] {
   if (!Array.isArray(s) || s.length !== 2) return false;
   const [first, serviceId] = s;

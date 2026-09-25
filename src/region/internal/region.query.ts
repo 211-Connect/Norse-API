@@ -3,12 +3,7 @@ import {
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
 import { RegionType } from './dto';
-
-/**
- * The alias Dagster loads (PR #602). ISS-1873 filters search against a Region
- * with `indexed_shape` on this same alias.
- */
-export const REGIONS_INDEX = 'regions';
+import { REGIONS_INDEX } from './region.constants';
 
 export const REGION_SUMMARY_FIELDS = ['id', 'type', 'name', 'state'];
 export const REGION_DETAIL_FIELDS = [
