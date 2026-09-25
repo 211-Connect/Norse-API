@@ -109,3 +109,53 @@ Region typeahead does not page. It returns at most `limit` items.
 
 See [internal-regions.md](internal-regions.md) for examples and known limits
 (no "Saint" → "St." synonym, no city Regions).
+
+## Live test against a real cluster
+
+`src/live/geography.live.spec.ts` runs the four routes against a real
+Elasticsearch, production included. It is skipped unless `NORSE_LIVE_ES=1`,
+so `npm test` never touches a cluster.
+
+It mounts both internal modules in a Nest app with the production
+`ValidationPipe` and versioning, and swaps in only the ES client. The
+geography scenario previews ISS-1873: it builds `buildServiceFilter` plus a
+`geo_shape` `indexed_shape` clause, and measures how many matches only touch
+a Region's edge (Q53).
+
+**It is read-only by construction.** The client comes from
+`src/common/testing/read-only-elasticsearch.ts`:
+
+- Only GET and HEAD, and POST to a path ending in `_search` or `_count`, are
+  allowed. Anything else throws `ReadOnlyViolationError` before it is sent:
+  `_doc` writes, `_bulk`, `_update_by_query`, `_delete_by_query`, `_reindex`,
+  index, alias, settings, mapping, pipeline and script changes, scroll and PIT.
+- The check runs twice: in the Transport, then in the Connection on the exact
+  method and path. Either one alone blocks a write.
+- The client stops at a request budget (`LIVE_MAX_REQUESTS`, default 1,500).
+- `read-only-elasticsearch.spec.ts` proves it, and runs in plain `npm test`.
+  It calls `index`, `bulk`, `deleteByQuery`, `indices.create` and the other
+  writes against a recording connection, and asserts each is refused with
+  nothing sent.
+
+Mongo parity is optional (`NORSE_LIVE_MONGO=1`). It goes through
+`ReadOnlyCollection`, which offers only `countDocuments`, a projected `find`,
+and `aggregate` limited to `$match`, `$group`, `$project` and `$count`.
+
+To run it, port-forward the cluster and source the agent credentials in the
+same shell:
+
+```bash
+kubectl --context do-sfo2-dagster-self-hosted -n elasticsearch \
+  port-forward svc/cluster-es-http 9200:9200 &
+set -a; source ../.env.agent; set +a   # ELASTICSEARCH_HOST, ELASTICSEARCH_API_KEY, MONGODB_CONNECTION_STRING
+NORSE_LIVE_ES=1 NORSE_LIVE_MONGO=1 npx jest src/live/geography.live --runInBand
+```
+
+- A run makes about 650 ES requests, at concurrency 4 or less, with a pause
+  between pages. The JSON report goes to `LIVE_REPORT_PATH` (default:
+  `$TMPDIR/norse-geography-live-report.json`).
+- Other knobs: `LIVE_TENANT_ID` (default UWGSL211), `LIVE_PAGE_DELAY_MS`,
+  `LIVE_CONCURRENCY` (max 4) and `LIVE_LATENCY_SAMPLES` (max 30).
+- **Don't run it during a Dagster reload.** Until Dagster #604 merges, a
+  reload deletes a tenant's slice and refills it over several minutes. The
+  full walk counts the slice before and after and fails if it moved.
