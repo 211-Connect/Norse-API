@@ -20,7 +20,7 @@ can sit under several tenants.
   `/swagger/json`, so the Norse SDK never sees them.
   `service-search.controller.spec.ts` checks the generated document.
 - **Unauthenticated.** They trust the writer set they are given. Auth is
-  ISS-1876. A separate ticket blocks `/internal/*` at the gateway, and these
+  ISS-1876. ISS-1887 blocks `/internal/*` at the gateway, and these
   routes must not deploy before it lands.
 
 ## Semantics
