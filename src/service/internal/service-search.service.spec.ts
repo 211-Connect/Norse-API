@@ -48,6 +48,22 @@ describe('ServiceSearchService', () => {
       minimum_should_match: 1,
     },
   });
+  // ADR 0025: a Virtual Service with no Service Area serves every Place.
+  const globalVirtual = {
+    bool: {
+      filter: [{ term: { locationTypes: 'virtual' } }],
+      must_not: [{ exists: { field: 'service_area' } }],
+    },
+  };
+  const servesClause = (...ids: string[]) => {
+    const regions = regionClause(...ids);
+    return {
+      bool: {
+        ...regions.bool,
+        should: [...regions.bool.should, globalVirtual],
+      },
+    };
+  };
   const missingShapeError = (id: string) =>
     new errors.ResponseError({
       statusCode: 400,
@@ -615,8 +631,8 @@ describe('ServiceSearchService', () => {
     });
   });
 
-  describe('geography and virtual (ISS-1873, ISS-1874)', () => {
-    it('ORs Regions by intersecting service_area with the indexed Region shape', async () => {
+  describe('geography and virtual (ISS-1873, ISS-1874, ISS-1895)', () => {
+    it('ORs Regions by intersecting service_area with the indexed Region shape, plus Virtual Services with no Service Area', async () => {
       await service.search({
         resourceWriterIds: [WRITER_A],
         filter: { geography: { regionIds: ['county:29510', 'zip:63110'] } },
@@ -624,8 +640,35 @@ describe('ServiceSearchService', () => {
       expect(lastRequest().query.bool.filter).toEqual([
         { terms: { resourceWriterId: [WRITER_A] } },
         { exists: { field: 'serviceId' } },
-        regionClause('county:29510', 'zip:63110'),
+        servesClause('county:29510', 'zip:63110'),
       ]);
+    });
+
+    it('never treats a missing Service Area as global when virtual is excluded', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { regionIds: ['state:MO'] },
+          virtual: 'exclude',
+        },
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        regionClause('state:MO'),
+        { term: { locationTypes: 'physical' } },
+      ]);
+    });
+
+    it('counts facets under the same geography clause as the list', async () => {
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['state:MO'] }, virtual: 'only' },
+      });
+      expect(JSON.stringify(lastRequest().query)).toContain(
+        JSON.stringify(servesClause('state:MO')),
+      );
     });
 
     it('ANDs geography with taxonomy, status, virtual and text', async () => {
@@ -645,7 +688,7 @@ describe('ServiceSearchService', () => {
         { exists: { field: 'serviceId' } },
         { terms: { taxonomyPath: ['BD'] } },
         { terms: { status: ['active'] } },
-        regionClause('state:MO'),
+        servesClause('state:MO'),
         { term: { locationTypes: 'virtual' } },
       ]);
       expect(bool.must).toHaveLength(1);
@@ -658,7 +701,7 @@ describe('ServiceSearchService', () => {
         filter: { geography: { regionIds: ['state:MO', 'state:MO'] } },
       });
       expect(lastRequest().query.bool.filter[2]).toEqual(
-        regionClause('state:MO'),
+        servesClause('state:MO'),
       );
     });
 

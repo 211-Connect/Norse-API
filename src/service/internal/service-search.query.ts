@@ -72,25 +72,36 @@ export interface ServiceFilterInput {
 export const SERVICE_AREA_FIELD = 'service_area';
 
 /**
+ * A Virtual Service that publishes no Service Area serves every Place
+ * (ADR 0025). A physical service with no Service Area serves none: its extent
+ * is missing data, not a claim.
+ */
+const GLOBAL_VIRTUAL_SERVICE: QueryDslQueryContainer = {
+  bool: {
+    filter: [{ term: { locationTypes: 'virtual' } }],
+    must_not: [{ exists: { field: SERVICE_AREA_FIELD } }],
+  },
+};
+
+/**
  * Regions OR'ed; `intersects` counts border contact (v1). ES reads each shape
- * from `regions` by id, so no geometry crosses the wire.
+ * from `regions` by id, so no geometry crosses the wire. Excluding virtual
+ * services drops the global branch, so only a real overlap matches.
  */
 export function geographyClause(
   regionIds: readonly string[],
+  virtual: VirtualMode | undefined,
 ): QueryDslQueryContainer {
-  return {
-    bool: {
-      should: regionIds.map((id) => ({
-        geo_shape: {
-          [SERVICE_AREA_FIELD]: {
-            indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-            relation: 'intersects',
-          },
-        },
-      })),
-      minimum_should_match: 1,
+  const serves: QueryDslQueryContainer[] = regionIds.map((id) => ({
+    geo_shape: {
+      [SERVICE_AREA_FIELD]: {
+        indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+        relation: 'intersects',
+      },
     },
-  };
+  }));
+  if (virtual !== 'exclude') serves.push(GLOBAL_VIRTUAL_SERVICE);
+  return { bool: { should: serves, minimum_should_match: 1 } };
 }
 
 /**
@@ -139,7 +150,7 @@ export function buildServiceFilter(input: ServiceFilterInput): {
     filter.push({ terms: { status: [...input.statuses] } });
   }
   if (input.regionIds && input.regionIds.length > 0) {
-    filter.push(geographyClause(input.regionIds));
+    filter.push(geographyClause(input.regionIds, input.virtual));
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);

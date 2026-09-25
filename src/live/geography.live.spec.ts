@@ -236,6 +236,23 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     },
   });
 
+  // What the Serves Area route matches for these Regions: an overlap, or a
+  // Virtual Service with no Service Area (ADR 0025).
+  const servesClause = (...ids: string[]): Query => ({
+    bool: {
+      should: [
+        ...ids.map((id) => shapeClause(id)),
+        {
+          bool: {
+            filter: [{ term: { locationTypes: 'virtual' } }],
+            must_not: [{ exists: { field: 'service_area' } }],
+          },
+        },
+      ],
+      minimum_should_match: 1,
+    },
+  });
+
   const pointsClause = (coordinates: number[][]): Query => ({
     geo_shape: {
       service_area: {
@@ -1051,7 +1068,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     for (const id of ['county:29510', 'zip:63110', 'state:MO']) {
       const filter = { geography: { regionIds: [id] } };
       const route = await totalFor(filter);
-      const direct = await countWhere([shapeClause(id)]);
+      const direct = await countWhere([servesClause(id)]);
       regions[id] = {
         route,
         direct,
@@ -1062,7 +1079,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     const cityOrCounty = await totalFor({
       geography: { regionIds: ['county:29510', 'county:29189'] },
     });
-    const county = await countWhere([shapeClause('county:29189')]);
+    const county = await countWhere([servesClause('county:29189')]);
 
     const virtual: Record<string, unknown> = {};
     for (const [mode, term] of [

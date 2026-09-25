@@ -150,7 +150,12 @@ POST /internal/services/facets
 - `intersects` counts border contact (a v1 decision). A service whose area
   only touches a Region's edge matches. See
   [Known behaviour: border contact](#known-behaviour-border-contact).
-- A service without a `service_area` never matches.
+- **A Virtual Service with no Service Area serves every Region** (ADR 0025,
+  ISS-1895). The `bool.should` carries one more branch: `locationTypes`
+  contains `virtual` and `service_area` does not exist. A physical-only
+  service without a `service_area` still never matches.
+- With `virtual: "exclude"` that branch is left out, so a service needs a
+  physical location **and** a `service_area` that overlaps a Region.
 - **Unknown Region id: 400.** Before searching, one `mget` on `regions`
   (`_source: false`) checks every id, and the 400 lists each unknown one:
   `Unknown Region id(s): zip:00000`. ES itself answers an `indexed_shape`
