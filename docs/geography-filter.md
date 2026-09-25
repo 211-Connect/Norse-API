@@ -109,9 +109,8 @@ POST /internal/services/facets
   `relation: "intersects"`, `minimum_should_match: 1`. ES reads each shape
   from the index, so no geometry crosses the wire.
 - `intersects` counts border contact (a v1 decision). A service whose area
-  only touches a Region's edge matches. For example, every UWGSL211 service
-  that matches St. Louis City (`county:29510`) also matches St. Louis County
-  (`county:29189`), which borders it.
+  only touches a Region's edge matches. See
+  [Known behaviour: border contact](#known-behaviour-border-contact).
 - A service without a `service_area` never matches.
 - **Unknown Region id: 400.** Before searching, one `mget` on `regions`
   (`_source: false`) checks every id, and the 400 lists each unknown one:
@@ -139,6 +138,27 @@ virtual mode as the list, so each count matches what the list would show.
 **Cursors.** The fingerprint covers `regionIds` and `virtual`. A cursor from
 one geography or virtual mode is 400 against another. `virtual: "all"` and no
 `virtual` are the same query.
+
+## Known behaviour: border contact
+
+`relation: intersects` is the accepted v1 rule: a service whose
+`service_area` only touches a Region's edge matches that Region. Measured on
+production for tenant UWGSL211:
+
+| Region | Matches | Border-only |
+| --- | --- | --- |
+| `zip:63110` | 7,190 | 202 (2.8%) |
+| `county:29510` (St. Louis City) | 9,413 | 1,486 (15.8%) |
+| `state:KS` | 3,912 | 3,706 (94.7%), only touching the MO/KS line |
+
+Every St. Louis City match is also a St. Louis County (`county:29189`)
+match: City OR County returns the County's 11,179. For a Missouri tenant,
+most `state:KS` matches are Missouri services whose area reaches the state
+line.
+
+If this confuses users, the known remedy is an interior-shape variant: a
+second field on `regions` holding each geometry shrunk by about 100 m,
+matched instead of `geometry`. It is not built.
 
 ## Cursor paging (services search)
 
