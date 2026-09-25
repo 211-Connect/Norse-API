@@ -45,6 +45,7 @@ import { PrintableDirectoryPublicController } from './printable-directory/printa
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ServiceModule } from './service/service.module';
+import { ServiceSearchInternalModule } from './service/internal/service-search.module';
 import { OrganizationController } from './organization/organization.controller';
 
 @Module({
@@ -87,6 +88,7 @@ import { OrganizationController } from './organization/organization.controller';
     PrintableDirectoryModule,
     OrganizationModule,
     ServiceModule,
+    ServiceSearchInternalModule,
   ],
   controllers: [AppController],
   providers: [
