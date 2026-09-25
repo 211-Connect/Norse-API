@@ -15,7 +15,8 @@ const WRITER_B = 'writer-b';
 
 describe('ServiceSearchService', () => {
   const search = jest.fn();
-  const elasticsearch = { search } as unknown as ElasticsearchService;
+  const mget = jest.fn();
+  const elasticsearch = { search, mget } as unknown as ElasticsearchService;
   let service: ServiceSearchService;
 
   const emptyPage = { hits: { total: { value: 0 }, hits: [] } };
@@ -25,7 +26,44 @@ describe('ServiceSearchService', () => {
     jest.clearAllMocks();
     service = new ServiceSearchService(elasticsearch);
     search.mockResolvedValue(emptyPage);
+    mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
+      docs: ids.map((_id) => ({ _index: 'regions_v1', _id, found: true })),
+    }));
   });
+
+  const regionClause = (...ids: string[]) => ({
+    bool: {
+      should: ids.map((id) => ({
+        geo_shape: {
+          service_area: {
+            indexed_shape: { index: 'regions', id, path: 'geometry' },
+            relation: 'intersects',
+          },
+        },
+      })),
+      minimum_should_match: 1,
+    },
+  });
+  const missingShapeError = (id: string) =>
+    new errors.ResponseError({
+      statusCode: 400,
+      body: {
+        error: {
+          root_cause: [
+            {
+              type: 'illegal_argument_exception',
+              reason: `Shape with ID [${id}] not found`,
+            },
+          ],
+          type: 'illegal_argument_exception',
+          reason: `Shape with ID [${id}] not found`,
+        },
+        status: 400,
+      },
+      headers: {},
+      warnings: null,
+      meta: {} as never,
+    });
 
   describe('search', () => {
     it('scopes to the writer set, canonical publications and a usable serviceId', async () => {
@@ -473,6 +511,236 @@ describe('ServiceSearchService', () => {
       });
       expect(result.taxonomy).toHaveLength(FACET_PAGE_SIZE + 1);
       expect(result.taxonomy.map((n) => n.code)).toContain('ZZ');
+    });
+  });
+
+  describe('geography and virtual (ISS-1873, ISS-1874)', () => {
+    it('ORs Regions by intersecting service_area with the indexed Region shape', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['county:29510', 'zip:63110'] } },
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        regionClause('county:29510', 'zip:63110'),
+      ]);
+    });
+
+    it('ANDs geography with taxonomy, status, virtual and text', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          taxonomyCodes: ['BD'],
+          statuses: ['active'],
+          geography: { regionIds: ['state:MO'] },
+          virtual: 'only',
+        },
+        text: 'food',
+      });
+      const { bool } = lastRequest().query;
+      expect(bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        { terms: { taxonomyPath: ['BD'] } },
+        { terms: { status: ['active'] } },
+        regionClause('state:MO'),
+        { term: { locationTypes: 'virtual' } },
+      ]);
+      expect(bool.must).toHaveLength(1);
+      expect(bool.should).toBeUndefined();
+    });
+
+    it('drops a repeated Region id', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['state:MO', 'state:MO'] } },
+      });
+      expect(lastRequest().query.bool.filter[2]).toEqual(
+        regionClause('state:MO'),
+      );
+    });
+
+    it.each([
+      ['only', { term: { locationTypes: 'virtual' } }],
+      ['exclude', { term: { locationTypes: 'physical' } }],
+    ] as const)('virtual %s filters on locationTypes', async (mode, clause) => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { virtual: mode },
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        clause,
+      ]);
+    });
+
+    it('virtual all adds no clause', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { virtual: 'all' },
+      });
+      expect(lastRequest().query.bool.filter).toHaveLength(2);
+    });
+
+    it('checks the Regions exist with one mget, and skips it without geography', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['state:MO', 'zip:63110'] } },
+      });
+      expect(mget).toHaveBeenCalledTimes(1);
+      expect(mget).toHaveBeenCalledWith({
+        index: 'regions',
+        ids: ['state:MO', 'zip:63110'],
+        _source: false,
+      });
+
+      mget.mockClear();
+      await service.search({ resourceWriterIds: [WRITER_A] });
+      await service.facets({ resourceWriterIds: [WRITER_A] });
+      expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('answers unknown Region ids with 400 naming them, without searching', async () => {
+      mget.mockResolvedValueOnce({
+        docs: [
+          { _index: 'regions', _id: 'zip:00000', found: false },
+          { _index: 'regions_v1', _id: 'state:MO', found: true },
+          { _index: 'regions', _id: 'county:99999', found: false },
+        ],
+      });
+      const failure = service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { regionIds: ['zip:00000', 'state:MO', 'county:99999'] },
+        },
+      });
+      await expect(failure).rejects.toBeInstanceOf(BadRequestException);
+      await expect(failure).rejects.toThrow(
+        'Unknown Region id(s): zip:00000, county:99999',
+      );
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('answers unknown Region ids on facets with 400, without aggregating', async () => {
+      mget.mockResolvedValueOnce({
+        docs: [{ _index: 'regions', _id: 'zip:00000', found: false }],
+      });
+      await expect(
+        service.facets({
+          resourceWriterIds: [WRITER_A],
+          filter: { geography: { regionIds: ['zip:00000'] } },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it("maps ES's missing-shape 400 to 400, not 502", async () => {
+      search.mockRejectedValueOnce(missingShapeError('county:29510'));
+      const failure = service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['county:29510'] } },
+      });
+      await expect(failure).rejects.toBeInstanceOf(BadRequestException);
+      await expect(failure).rejects.toThrow('county:29510');
+
+      search.mockRejectedValueOnce(missingShapeError('state:MO'));
+      await expect(
+        service.facets({
+          resourceWriterIds: [WRITER_A],
+          filter: { geography: { regionIds: ['state:MO'] } },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('still maps any other ES 400 to 502', async () => {
+      search.mockRejectedValueOnce(
+        new errors.ResponseError({
+          statusCode: 400,
+          body: { error: { type: 'parsing_exception', reason: 'bad' } },
+          headers: {},
+          warnings: null,
+          meta: {} as never,
+        }),
+      );
+      await expect(
+        service.search({ resourceWriterIds: [WRITER_A] }),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+    });
+
+    it('narrows facets by geography and virtual, so counts match the list', async () => {
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { regionIds: ['county:29189'] },
+          virtual: 'exclude',
+        },
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        regionClause('county:29189'),
+        { term: { locationTypes: 'physical' } },
+      ]);
+    });
+
+    describe('cursor fingerprint', () => {
+      const issueWith = async (filter: object) => {
+        search.mockResolvedValueOnce({
+          hits: {
+            total: { value: 2 },
+            hits: [
+              { _id: 't:s1', _source: { serviceId: 's1' }, sort: ['A', 's1'] },
+              { _id: 't:s2', _source: { serviceId: 's2' }, sort: ['B', 's2'] },
+            ],
+          },
+        });
+        const page = await service.search({
+          resourceWriterIds: [WRITER_A],
+          limit: 1,
+          filter,
+        });
+        search.mockClear();
+        return page.nextCursor!;
+      };
+      const geo = (...regionIds: string[]) => ({ geography: { regionIds } });
+
+      it.each([
+        ['another Region', geo('state:MO'), geo('state:KS')],
+        ['no geography', geo('state:MO'), {}],
+        ['added geography', {}, geo('state:MO')],
+        ['another virtual mode', { virtual: 'only' }, { virtual: 'exclude' }],
+        ['virtual added', {}, { virtual: 'only' }],
+      ])('rejects a cursor replayed with %s', async (_l, issued, replayed) => {
+        const cursor = await issueWith(issued);
+        await expect(
+          service.search({
+            resourceWriterIds: [WRITER_A],
+            filter: replayed as never,
+            cursor,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(search).not.toHaveBeenCalled();
+      });
+
+      it('accepts it for the same geography and virtual mode', async () => {
+        const filter = { ...geo('state:MO'), virtual: 'only' as const };
+        const cursor = await issueWith(filter);
+        await service.search({ resourceWriterIds: [WRITER_A], filter, cursor });
+        expect(lastRequest().search_after).toEqual(['A', 's1']);
+      });
+
+      it("treats virtual 'all' as no virtual clause", async () => {
+        const cursor = await issueWith({});
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: { virtual: 'all' },
+          cursor,
+        });
+        expect(lastRequest().search_after).toEqual(['A', 's1']);
+      });
     });
   });
 });

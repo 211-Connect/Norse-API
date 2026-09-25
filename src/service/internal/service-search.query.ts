@@ -3,6 +3,8 @@ import {
   QueryDslQueryContainer,
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
+import { REGIONS_INDEX } from '../../region/internal/region.query';
+import { VirtualMode } from './dto';
 
 /**
  * Query building for the ES `services` index (ADR 0023), mirroring ServiceNet's
@@ -69,6 +71,47 @@ export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
   taxonomyCodes?: readonly string[];
   statuses?: readonly string[];
+  regionIds?: readonly string[];
+  virtual?: VirtualMode;
+}
+
+/** The field Dagster #601 loads with the union of a service's Service Areas. */
+export const SERVICE_AREA_FIELD = 'service_area';
+
+/**
+ * Regions OR'ed: a service matches when its `service_area` intersects any of
+ * them. `intersects` counts border contact (v1). ES reads each Region's shape
+ * from the `regions` index by id, so the geometry never crosses the wire, and a
+ * service without a `service_area` cannot match.
+ */
+export function geographyClause(
+  regionIds: readonly string[],
+): QueryDslQueryContainer {
+  return {
+    bool: {
+      should: regionIds.map((id) => ({
+        geo_shape: {
+          [SERVICE_AREA_FIELD]: {
+            indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+            relation: 'intersects',
+          },
+        },
+      })),
+      minimum_should_match: 1,
+    },
+  };
+}
+
+/**
+ * `only`: some location is virtual. `exclude`: some location is physical, so a
+ * service with both kinds appears under both. `all` adds no clause.
+ */
+export function virtualClause(
+  mode: VirtualMode | undefined,
+): QueryDslQueryContainer | null {
+  if (mode === 'only') return { term: { locationTypes: 'virtual' } };
+  if (mode === 'exclude') return { term: { locationTypes: 'physical' } };
+  return null;
 }
 
 /**
@@ -111,6 +154,11 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   if (input.statuses && input.statuses.length > 0) {
     filter.push({ terms: { status: [...input.statuses] } });
   }
+  if (input.regionIds && input.regionIds.length > 0) {
+    filter.push(geographyClause(input.regionIds));
+  }
+  const virtual = virtualClause(input.virtual);
+  if (virtual) filter.push(virtual);
   return { filter, must_not };
 }
 

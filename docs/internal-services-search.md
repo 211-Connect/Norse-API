@@ -7,8 +7,8 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | `resourceWriterIds` (required) | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds`, `filter.virtual`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
+| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
 
 Send `x-api-version: 1`, as for every versioned route. No `x-tenant-id`: the
 writer set is the scope, as it was in the Mongo query, and one writer's records
@@ -38,6 +38,23 @@ over one fixture and compares the results.
 - **Taxonomy.** Codes are matched exactly against the ancestor-expanded
   `taxonomyPath`, never by prefix: `BD-18` is a sibling of `BD-1800`, not its
   parent.
+- **Geography and virtual** (ISS-1873, ISS-1874) are not in the Mongo
+  source. Regions are OR'ed `geo_shape` `intersects` clauses on
+  `service_area` against the indexed Region shape; an unknown Region id is
+  400. `virtual` is `all`, `only` (`locationTypes` has `virtual`) or
+  `exclude` (`locationTypes` has `physical`). Both also narrow facets. The
+  rules, a request example and the error mapping are in
+  [geography-filter.md](geography-filter.md#geography-and-virtual-clauses).
+
+  ```json
+  {
+    "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
+    "filter": {
+      "geography": { "regionIds": ["state:MO"] },
+      "virtual": "only"
+    }
+  }
+  ```
 - **Order without text.** Results are sorted by `name.raw` ascending with a
   missing name first, then by `serviceId`. `name.raw` is a case-sensitive
   keyword, so this is Mongo's binary order.
@@ -65,7 +82,8 @@ over one fixture and compares the results.
   writer set is the caller's own input, so a forged cursor can only move a
   position within results the caller could already request.
 - A cursor that doesn't decode, has the wrong shape, or came from a different
-  query or sort mode returns 400.
+  query or sort mode returns 400. The query fingerprint covers the writer
+  set, taxonomy, statuses, text, Region ids and virtual mode.
 - The service asks ES for `limit + 1` hits. That extra hit tells it whether a
   next page exists, so a full last page still returns a null cursor.
 - `serviceId` is the final sort key in both orders. Without it, a page

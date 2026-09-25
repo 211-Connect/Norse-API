@@ -75,9 +75,10 @@ MultiPolygon, tens of KB for a county) and, for counties, the simplemaps
 `attribution` the UI must show. `fips` and `zip` appear only on the Region type
 they belong to.
 
-Search filtering against a Region (ISS-1873) should not fetch this geometry:
-use `geo_shape` `indexed_shape` against index `regions`, id = the Region id
-(documents are stored with `_id` equal to `id`).
+Search filtering against a Region (ISS-1873) does not fetch this geometry:
+it uses `geo_shape` `indexed_shape` against index `regions`, id = the Region
+id (documents are stored with `_id` equal to `id`). See
+[geography-filter.md](geography-filter.md#geography-and-virtual-clauses).
 
 ## Errors
 
