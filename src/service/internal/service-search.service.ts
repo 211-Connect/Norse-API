@@ -1,0 +1,249 @@
+import {
+  BadGatewayException,
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ElasticsearchService } from '@nestjs/elasticsearch';
+import { errors } from '@elastic/elasticsearch';
+import {
+  AggregationsCompositeAggregate,
+  AggregationsCompositeAggregateKey,
+  SearchRequest,
+} from '@elastic/elasticsearch/lib/api/types';
+import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
+import {
+  SERVICES_SEARCH_DEFAULT_LIMIT,
+  ServiceListItemDto,
+  ServicesFacetsRequestDto,
+  ServicesFacetsResponseDto,
+  ServicesSearchRequestDto,
+  ServicesSearchResponseDto,
+} from './dto';
+import {
+  SERVICE_LIST_SORT,
+  SERVICE_LIST_SOURCE_FIELDS,
+  SERVICES_INDEX,
+  SERVICES_MAX_RESULT_WINDOW,
+  buildServiceFilter,
+  textClause,
+} from './service-search.query';
+
+/** Buckets per composite page; facets page until exhausted, never truncate. */
+export const FACET_PAGE_SIZE = 1000;
+
+const FACET_FIELDS = {
+  contributors: 'resourceWriterId',
+  statuses: 'status',
+  taxonomyPath: 'taxonomyPath',
+  taxonomyCodes: 'taxonomyCodes',
+} as const;
+type FacetName = keyof typeof FACET_FIELDS;
+
+interface ServiceSource {
+  serviceId?: string;
+  tenant_id?: string;
+  resourceWriterId?: string;
+  isCanonicalPublication?: boolean;
+  status?: string;
+  taxonomyPath?: string[];
+  taxonomyCodes?: string[];
+  locationTypes?: string[];
+  name?: string;
+  alternateName?: string;
+  description?: string;
+  organizationName?: string;
+  city?: string;
+  assuredDate?: string;
+}
+
+@Injectable()
+export class ServiceSearchService {
+  private readonly logger = new Logger(ServiceSearchService.name);
+
+  constructor(private readonly elasticsearch: ElasticsearchService) {}
+
+  async search(
+    request: ServicesSearchRequestDto,
+  ): Promise<ServicesSearchResponseDto> {
+    const offset = request.offset ?? 0;
+    const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
+    if (offset + limit > SERVICES_MAX_RESULT_WINDOW) {
+      throw new BadRequestException(
+        `offset + limit must not exceed ${SERVICES_MAX_RESULT_WINDOW}`,
+      );
+    }
+
+    const scope = buildServiceFilter({
+      resourceWriterIds: request.resourceWriterIds,
+      taxonomyCodes: request.filter?.taxonomyCodes,
+      statuses: request.filter?.statuses,
+    });
+    if (scope === null) return { items: [], total: 0, offset, limit };
+
+    const body: SearchRequest = {
+      index: SERVICES_INDEX,
+      from: offset,
+      size: limit,
+      // Without this ES stops counting at 10,000 and the total would lie.
+      track_total_hits: true,
+      _source: SERVICE_LIST_SOURCE_FIELDS,
+      query: { bool: { ...scope, must: textClause(request.text) } },
+      sort: SERVICE_LIST_SORT,
+    };
+
+    const result = await this.call('search', () =>
+      this.elasticsearch.search<ServiceSource>(body),
+    );
+    const total =
+      typeof result.hits.total === 'number'
+        ? result.hits.total
+        : (result.hits.total?.value ?? 0);
+
+    return {
+      items: result.hits.hits.map((hit) => toListItem(hit._id, hit._source)),
+      total,
+      offset,
+      limit,
+    };
+  }
+
+  async facets(
+    request: ServicesFacetsRequestDto,
+  ): Promise<ServicesFacetsResponseDto> {
+    const scope = buildServiceFilter({
+      resourceWriterIds: request.resourceWriterIds,
+    });
+    if (scope === null) return { contributors: [], statuses: [], taxonomy: [] };
+
+    const buckets = await this.collectFacetBuckets({ bool: scope });
+
+    // Normalized as the path is: codes are stored as written ("BD-1800."), the
+    // path as its canonical key, so comparing raw would mark a directly coded
+    // term as synthesized.
+    const coded = new Set(
+      buckets.taxonomyCodes.map((b) => normalizeAirsCode(b.key)),
+    );
+
+    return {
+      contributors: buckets.contributors
+        .map((b) => ({ resourceWriterId: b.key, recordCount: b.count }))
+        .sort((a, b) => a.resourceWriterId.localeCompare(b.resourceWriterId)),
+      // A blank status is an option no `$in` can usefully match.
+      statuses: buckets.statuses
+        .filter((b) => b.key !== '')
+        .map((b) => ({ value: b.key, recordCount: b.count }))
+        .sort((a, b) => a.value.localeCompare(b.value)),
+      taxonomy: buildAirsTreeFromPathCounts(
+        buckets.taxonomyPath.map((b) => ({
+          code: b.key,
+          recordCount: b.count,
+        })),
+        coded,
+      ).map((n) => ({ ...n, name: n.code })),
+    };
+  }
+
+  /**
+   * Every bucket of each facet, paged with composite aggregations. A `terms`
+   * aggregation with a fixed size would silently drop the tail of a large
+   * taxonomy, which reads as "no records under this code".
+   */
+  private async collectFacetBuckets(
+    query: SearchRequest['query'],
+  ): Promise<Record<FacetName, { key: string; count: number }[]>> {
+    const out: Record<FacetName, { key: string; count: number }[]> = {
+      contributors: [],
+      statuses: [],
+      taxonomyPath: [],
+      taxonomyCodes: [],
+    };
+    let pending = new Map<FacetName, AggregationsCompositeAggregateKey | null>(
+      (Object.keys(FACET_FIELDS) as FacetName[]).map((name) => [name, null]),
+    );
+
+    while (pending.size > 0) {
+      const aggs = Object.fromEntries(
+        [...pending].map(([name, after]) => [
+          name,
+          {
+            composite: {
+              size: FACET_PAGE_SIZE,
+              sources: [{ key: { terms: { field: FACET_FIELDS[name] } } }],
+              ...(after ? { after } : {}),
+            },
+          },
+        ]),
+      );
+      const result = await this.call('facets', () =>
+        this.elasticsearch.search({
+          index: SERVICES_INDEX,
+          size: 0,
+          track_total_hits: false,
+          query,
+          aggs,
+        }),
+      );
+
+      const next = new Map<FacetName, AggregationsCompositeAggregateKey>();
+      for (const name of pending.keys()) {
+        const agg = result.aggregations?.[name] as
+          AggregationsCompositeAggregate | undefined;
+        const page = agg?.buckets ?? [];
+        const bucketList = Array.isArray(page) ? page : Object.values(page);
+        for (const bucket of bucketList) {
+          out[name].push({
+            key: String(bucket.key.key),
+            count: bucket.doc_count,
+          });
+        }
+        if (bucketList.length === FACET_PAGE_SIZE && agg?.after_key) {
+          next.set(name, agg.after_key);
+        }
+      }
+      pending = next;
+    }
+    return out;
+  }
+
+  /** Downstream failures: a timeout is 503, anything else 502. */
+  private async call<T>(what: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      if (error instanceof errors.TimeoutError) {
+        this.logger.error(`Services ${what} timed out`);
+        throw new ServiceUnavailableException(`Services ${what} timed out`);
+      }
+      this.logger.error(`Services ${what} failed: ${error?.message}`);
+      throw new BadGatewayException(`Services ${what} failed`);
+    }
+  }
+}
+
+function toListItem(
+  id: string | undefined,
+  source: ServiceSource | undefined,
+): ServiceListItemDto {
+  const s = source ?? {};
+  return {
+    id: id ?? '',
+    serviceId: s.serviceId ?? '',
+    tenantId: s.tenant_id ?? '',
+    resourceWriterId: s.resourceWriterId ?? '',
+    isCanonicalPublication: s.isCanonicalPublication !== false,
+    status: s.status ?? null,
+    taxonomyPath: s.taxonomyPath ?? [],
+    taxonomyCodes: s.taxonomyCodes ?? [],
+    locationTypes: s.locationTypes ?? [],
+    name: s.name ?? null,
+    alternateName: s.alternateName ?? null,
+    description: s.description ?? null,
+    organizationName: s.organizationName ?? null,
+    city: s.city ?? null,
+    assuredDate: s.assuredDate ?? null,
+  };
+}
