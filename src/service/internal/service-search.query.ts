@@ -5,7 +5,7 @@ import {
 } from '@elastic/elasticsearch/lib/api/types';
 
 /**
- * Query building for the ES `services` index (ADR 0022), mirroring ServiceNet's
+ * Query building for the ES `services` index (ADR 0023), mirroring ServiceNet's
  * Mongo `buildQuery` in `sharing-mongo/src/record-source.ts` clause for clause.
  * Text search and its ordering deliberately differ; see `textClause` and
  * `serviceListSort`.

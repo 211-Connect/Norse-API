@@ -3,7 +3,7 @@
 ServiceNet's record selector lists and facets services through two internal
 routes over the shared Elasticsearch `services` index. The index is loaded by
 Dagster `configurable-readers` (Dagster PR #601, ISS-1867). See
-architecture-docs ADR 0022 and INTEG-022.
+architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
 | Route | Body | Returns |
 | --- | --- | --- |

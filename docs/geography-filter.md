@@ -10,10 +10,12 @@ ties them together. The detail lives in two docs:
   (ISS-1870, PR #217)
 
 Design: architecture-docs
-[ADR 0022](https://github.com/211-Connect/ArchitectureDocs/blob/main/decisions/0022-record-selector-searches-elasticsearch-services-via-norse-api.md)
+[ADR 0023](https://github.com/211-Connect/ArchitectureDocs/blob/main/decisions/0023-record-selector-searches-elasticsearch-services-via-norse-api.md)
 (record selector searches an ES `services` index through Norse-API) and
-[ADR 0023](https://github.com/211-Connect/ArchitectureDocs/blob/main/decisions/0023-region-store-canonical-identity-seeded-from-boundary-cache.md)
-(Region store). Integrations: INTEG-022, INTEG-023, INTEG-024. Data loading:
+[ADR 0024](https://github.com/211-Connect/ArchitectureDocs/blob/main/decisions/0024-region-store-canonical-identity-seeded-from-boundary-cache.md)
+(Region store). Both ADRs are in ArchitectureDocs
+[PR #31](https://github.com/211-Connect/ArchitectureDocs/pull/31), so the
+links resolve once it merges. Integrations: INTEG-022, INTEG-023, INTEG-024. Data loading:
 Dagster [#601](https://github.com/211-Connect/dagster-data-orchestration/pull/601)
 (`services` index), [#602](https://github.com/211-Connect/dagster-data-orchestration/pull/602)
 (`regions` index) and
@@ -63,7 +65,7 @@ Errors: a malformed request, cursor or Region id is 400; an unknown Region is
 3. To draw it, ServiceNet calls `GET /internal/regions/:id` for the GeoJSON
    geometry. For counties it must show the returned `attribution`.
 4. To filter services, the Region ids go into the services search. **This
-   clause is not built yet (ISS-1873).** Per ADR 0022, several Regions are
+   clause is not built yet (ISS-1873).** Per ADR 0023, several Regions are
    OR'ed and AND'ed with every other filter. A Region matches a service when
    it intersects the service's `service_area`, and services with no area
    never match. The query should use `geo_shape` with `indexed_shape` against

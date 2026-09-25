@@ -25,7 +25,7 @@ class PublishedControlController {
 }
 
 /**
- * The Geography filter's internal routes (ADR 0022/0023) mounted together,
+ * The Geography filter's internal routes (ADR 0023/0024) mounted together,
  * as AppModule mounts them: both controllers are served, neither is published.
  */
 describe('Geography filter internal routes, mounted together', () => {

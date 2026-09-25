@@ -15,7 +15,7 @@ import {
 import { ServiceSearchService } from './service-search.service';
 
 /**
- * ServiceNet's record selector reads services through these routes (ADR 0022).
+ * ServiceNet's record selector reads services through these routes (ADR 0023).
  * Internal and unpublished: left out of the OpenAPI document the Norse SDK is
  * generated from. They trust the writer set they are given and carry no auth
  * yet (ISS-1876), so they must not be exposed through the gateway.

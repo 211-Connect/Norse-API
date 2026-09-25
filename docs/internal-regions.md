@@ -3,7 +3,7 @@
 ServiceNet's Geography filter turns typed text into a Region and a Region into
 its boundary through two internal routes over the Elasticsearch **alias
 `regions`** (currently `regions_v1`). Dagster loads the index once from the
-Region seed (Dagster PR #602, INTEG-023). See architecture-docs ADR 0023 and
+Region seed (Dagster PR #602, INTEG-023). See architecture-docs ADR 0024 (ArchitectureDocs PR #31) and
 INTEG-024.
 
 | Route | Query | Returns |
@@ -65,7 +65,7 @@ well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
 - **"Saint" does not match "St."** Names are stored as "St. Louis County,
   MO", and the index has no synonym for it. "st louis" finds it, "saint
   louis" finds nothing. Not planned for v1.
-- **No city Regions** (ADR 0023). "kansas city" returns the ZIPs whose name
+- **No city Regions** (ADR 0024). "kansas city" returns the ZIPs whose name
   carries the city.
 
 ## Lookup

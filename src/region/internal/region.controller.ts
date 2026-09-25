@@ -14,7 +14,7 @@ import {
 import { RegionService } from './region.service';
 
 /**
- * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0023).
+ * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024).
  * Internal and unpublished: left out of the OpenAPI document the Norse SDK is
  * generated from. No auth yet (ISS-1876), so they must not be exposed through
  * the gateway (ISS-1887).
