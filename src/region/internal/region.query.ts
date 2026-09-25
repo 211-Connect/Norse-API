@@ -1,0 +1,230 @@
+import {
+  QueryDslQueryContainer,
+  SearchRequest,
+} from '@elastic/elasticsearch/lib/api/types';
+import { RegionType } from './dto';
+
+/**
+ * The alias Dagster loads (PR #602). ISS-1873 filters search against a Region
+ * with `indexed_shape` on this same alias.
+ */
+export const REGIONS_INDEX = 'regions';
+
+export const REGION_SUMMARY_FIELDS = ['id', 'type', 'name', 'state'];
+export const REGION_DETAIL_FIELDS = [
+  ...REGION_SUMMARY_FIELDS,
+  'fips',
+  'zip',
+  'geometry',
+  'attribution',
+];
+
+/** Lifts the named state far above any name match score. */
+export const EXACT_STATE_BOOST = 100;
+/** Lifts states whose name starts with the text above other name matches. */
+export const STATE_PREFIX_BOOST = 10;
+/** Shorter text would lift too many states ("n" → eight of them). */
+export const STATE_PREFIX_MIN_LENGTH = 3;
+/**
+ * Puts an in-state ZIP (0) above an out-of-state county (+2) on an equal
+ * name match, without burying a clearly better match.
+ */
+export const NEAR_STATE_BOOST = 4;
+/** When scores are close, state ranks above county above ZIP. */
+export const TYPE_BOOSTS: Partial<Record<RegionType, number>> = {
+  state: 3,
+  county: 2,
+};
+
+const ZIP_PREFIX = /^\d{1,5}$/;
+
+const STATE_NAMES: Record<string, string> = {
+  AK: 'Alaska',
+  AL: 'Alabama',
+  AR: 'Arkansas',
+  AZ: 'Arizona',
+  CA: 'California',
+  CO: 'Colorado',
+  CT: 'Connecticut',
+  DC: 'District of Columbia',
+  DE: 'Delaware',
+  FL: 'Florida',
+  GA: 'Georgia',
+  HI: 'Hawaii',
+  IA: 'Iowa',
+  ID: 'Idaho',
+  IL: 'Illinois',
+  IN: 'Indiana',
+  KS: 'Kansas',
+  KY: 'Kentucky',
+  LA: 'Louisiana',
+  MA: 'Massachusetts',
+  MD: 'Maryland',
+  ME: 'Maine',
+  MI: 'Michigan',
+  MN: 'Minnesota',
+  MO: 'Missouri',
+  MS: 'Mississippi',
+  MT: 'Montana',
+  NC: 'North Carolina',
+  ND: 'North Dakota',
+  NE: 'Nebraska',
+  NH: 'New Hampshire',
+  NJ: 'New Jersey',
+  NM: 'New Mexico',
+  NV: 'Nevada',
+  NY: 'New York',
+  OH: 'Ohio',
+  OK: 'Oklahoma',
+  OR: 'Oregon',
+  PA: 'Pennsylvania',
+  RI: 'Rhode Island',
+  SC: 'South Carolina',
+  SD: 'South Dakota',
+  TN: 'Tennessee',
+  TX: 'Texas',
+  UT: 'Utah',
+  VA: 'Virginia',
+  VT: 'Vermont',
+  WA: 'Washington',
+  WI: 'Wisconsin',
+  WV: 'West Virginia',
+  WY: 'Wyoming',
+};
+
+const normalize = (text: string) =>
+  text.trim().toLowerCase().replace(/\s+/g, ' ');
+
+const STATE_BY_TEXT = new Map<string, string>(
+  Object.entries(STATE_NAMES).flatMap(([code, name]) => [
+    [code.toLowerCase(), code],
+    [normalize(name), code],
+  ]),
+);
+
+/** The state code when the whole text is a state's code or name. */
+export function exactStateCode(text: string): string | undefined {
+  return STATE_BY_TEXT.get(normalize(text));
+}
+
+/**
+ * Codes of the states whose full name starts with the text, other than an
+ * exact match. Empty below STATE_PREFIX_MIN_LENGTH characters.
+ */
+export function statePrefixCodes(text: string): string[] {
+  const prefix = normalize(text);
+  if (prefix.length < STATE_PREFIX_MIN_LENGTH) return [];
+  return Object.entries(STATE_NAMES)
+    .filter(([, name]) => {
+      const full = normalize(name);
+      return full !== prefix && full.startsWith(prefix);
+    })
+    .map(([code]) => code);
+}
+
+/**
+ * Adds exactly `boost` when the filter matches. A boosted `term` would scale
+ * with the term's rarity instead: a `type: state` term scored about 20.
+ */
+function flat(boost: number, filter: QueryDslQueryContainer) {
+  return { constant_score: { filter, boost } };
+}
+
+export function isZipPrefix(text: string): boolean {
+  return ZIP_PREFIX.test(text);
+}
+
+export interface RegionSearchInput {
+  q: string;
+  types?: RegionType[];
+  states?: string[];
+  limit: number;
+}
+
+/**
+ * The ES request for a typeahead, or null when the request cannot match
+ * anything (digits with a type filter that excludes ZIPs).
+ */
+export function buildRegionSearch(
+  input: RegionSearchInput,
+): SearchRequest | null {
+  const q = input.q.trim();
+  const base = {
+    index: REGIONS_INDEX,
+    size: input.limit,
+    track_total_hits: false,
+    _source: REGION_SUMMARY_FIELDS,
+  };
+
+  if (isZipPrefix(q)) {
+    if (input.types && !input.types.includes('zip')) return null;
+    return {
+      ...base,
+      query: {
+        bool: {
+          filter: [{ term: { type: 'zip' } }, { prefix: { zip: q } }],
+        },
+      },
+      sort: [{ zip: { order: 'asc' } }],
+    };
+  }
+
+  const nameMatch = {
+    multi_match: {
+      query: q,
+      type: 'bool_prefix' as const,
+      fields: ['name', 'name._2gram', 'name._3gram'],
+      operator: 'and' as const,
+    },
+  };
+  const exact = exactStateCode(q);
+  const prefixed = statePrefixCodes(q);
+  const stateMatches = [
+    ...(exact
+      ? [flat(EXACT_STATE_BOOST, { term: { id: `state:${exact}` } })]
+      : []),
+    ...(prefixed.length
+      ? [
+          flat(STATE_PREFIX_BOOST, {
+            terms: { id: prefixed.map((code) => `state:${code}`) },
+          }),
+        ]
+      : []),
+  ];
+  const must = stateMatches.length
+    ? {
+        bool: { should: [nameMatch, ...stateMatches], minimum_should_match: 1 },
+      }
+    : nameMatch;
+
+  const typeBoosts = Object.entries(TYPE_BOOSTS).map(([type, boost]) =>
+    flat(boost, { term: { type } }),
+  );
+
+  return {
+    ...base,
+    query: {
+      bool: {
+        must: [must],
+        filter: input.types ? [{ terms: { type: input.types } }] : [],
+        should: [
+          ...typeBoosts,
+          ...(input.states?.length
+            ? [flat(NEAR_STATE_BOOST, { terms: { state: input.states } })]
+            : []),
+        ],
+      },
+    },
+    sort: [{ _score: { order: 'desc' } }, { id: { order: 'asc' } }],
+  };
+}
+
+export function buildRegionGet(id: string): SearchRequest {
+  return {
+    index: REGIONS_INDEX,
+    size: 1,
+    track_total_hits: false,
+    _source: REGION_DETAIL_FIELDS,
+    query: { term: { id } },
+  };
+}
