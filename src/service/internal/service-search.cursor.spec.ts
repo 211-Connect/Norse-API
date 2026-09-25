@@ -76,6 +76,13 @@ describe('queryFingerprint', () => {
     expect(decodeCursor(cursor, 'score', reordered)).toEqual([1.5, 's1']);
   });
 
+  it('ignores match without a Place, where it changes nothing', () => {
+    const bare: CursorQuery = { resourceWriterIds: ['writer-a'] };
+    expect(queryFingerprint({ ...bare, match: 'located' })).toBe(
+      queryFingerprint(bare),
+    );
+  });
+
   it('treats absent lists as empty and absent virtual as all', () => {
     const bare: CursorQuery = { resourceWriterIds: ['writer-a'] };
     expect(

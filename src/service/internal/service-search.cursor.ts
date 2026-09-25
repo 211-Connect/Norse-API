@@ -41,7 +41,11 @@ const FINGERPRINT_PARTS: {
   regionIds: (q) => asSet(q.regionIds),
   points: (q) => asSet(q.points?.map(geoPointKey)),
   virtual: (q) => q.virtual ?? 'all',
-  match: (q) => q.match ?? 'serves',
+  // Match changes nothing without a Place, so it must not change the cursor.
+  match: (q) =>
+    (q.regionIds?.length ?? 0) + (q.points?.length ?? 0) > 0
+      ? (q.match ?? 'serves')
+      : 'serves',
   text: (q) => q.text?.trim() ?? '',
 };
 

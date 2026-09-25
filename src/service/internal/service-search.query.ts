@@ -162,11 +162,10 @@ function locatedClauses(
  * The Geography clause for a Match × Virtual pair (ADR 0025's table). Located
  * In × Only is Serves Area × Only: a Virtual Service has no site to be at.
  */
-export function geographyClause(
+function geographyClause(
   regionIds: readonly string[],
   points: readonly GeoPoint[],
-  virtual: VirtualMode | undefined,
-  match: MatchMode | undefined,
+  { virtual, match }: Pick<ServiceFilterInput, 'virtual' | 'match'>,
 ): QueryDslQueryContainer {
   if (match !== 'located' || virtual === 'only') {
     return servesClause(regionIds, points, virtual);
@@ -233,7 +232,7 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   const regionIds = input.regionIds ?? [];
   const points = input.points ?? [];
   if (regionIds.length + points.length > 0) {
-    filter.push(geographyClause(regionIds, points, input.virtual, input.match));
+    filter.push(geographyClause(regionIds, points, input));
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);
