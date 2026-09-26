@@ -160,9 +160,10 @@ POST /internal/services/facets
   point's radius (`geo_distance`). With `virtual: "all"` a Virtual Service that
   serves the Place matches too; with `"only"` the clause is exactly the serves
   clause; with `"exclude"` only a physical site matches. Checked against ES
-  8.18.8 for all six Match × Virtual cells. Needs the `locationPoints` field
-  (Dagster ISS-1896); until that is loaded, `located` matches only Virtual
-  Services.
+  8.18.8 for all six Match × Virtual cells. Reads the `locationPoints` field
+  (Dagster ISS-1896); a tenant's services gain it on its next reader run, and
+  until then `located` finds only that tenant's Virtual Services. Offered
+  ungated by decision (ADR 0025).
 - `intersects` counts border contact (a v1 decision). A service whose area
   only touches a Region's edge matches. See
   [Known behaviour: border contact](#known-behaviour-border-contact).
