@@ -5,7 +5,13 @@ import {
 import { RegionType } from './dto';
 import { REGIONS_INDEX } from './region.constants';
 
-export const REGION_SUMMARY_FIELDS = ['id', 'type', 'name', 'state'];
+export const REGION_SUMMARY_FIELDS = [
+  'id',
+  'type',
+  'name',
+  'state',
+  'centroid',
+];
 export const REGION_DETAIL_FIELDS = [
   ...REGION_SUMMARY_FIELDS,
   'fips',

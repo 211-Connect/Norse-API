@@ -233,9 +233,10 @@ describe('RegionService', () => {
   describe('search: response', () => {
     it('asks ES for summary fields only, never geometry', async () => {
       await service.search({ q: 'jack' });
-      expect(lastRequest()._source).toEqual(['id', 'type', 'name', 'state']);
+      const summary = ['id', 'type', 'name', 'state', 'centroid'];
+      expect(lastRequest()._source).toEqual(summary);
       await service.search({ q: '641' });
-      expect(lastRequest()._source).toEqual(['id', 'type', 'name', 'state']);
+      expect(lastRequest()._source).toEqual(summary);
     });
 
     it('maps hits to {id, type, name, state} only', async () => {
@@ -251,6 +252,20 @@ describe('RegionService', () => {
           },
         ],
       });
+    });
+
+    it("returns a Region's centroid as {lat, lng}, to bias an address search (ISS-1875)", async () => {
+      search.mockResolvedValue(
+        hits({ ...JACKSON, centroid: [-94.3462, 39.0086] }),
+      );
+      const [item] = (await service.search({ q: 'jack' })).items;
+      expect(item?.centroid).toEqual({ lat: 39.0086, lng: -94.3462 });
+    });
+
+    it('leaves the centroid out when the Region has none', async () => {
+      search.mockResolvedValue(hits(JACKSON));
+      const [item] = (await service.search({ q: 'jack' })).items;
+      expect(item).not.toHaveProperty('centroid');
     });
 
     it('defaults the limit to 10 and passes an explicit one through', async () => {

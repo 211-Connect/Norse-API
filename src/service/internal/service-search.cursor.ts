@@ -1,7 +1,11 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
 import { FieldValue } from '@elastic/elasticsearch/lib/api/types';
-import { ServiceFilterInput, SortMode } from './service-search.query';
+import {
+  ServiceFilterInput,
+  SortMode,
+  geoPointKey,
+} from './service-search.query';
 
 /**
  * An opaque, unsigned `search_after` cursor. The writer set is the caller's own
@@ -35,7 +39,13 @@ const FINGERPRINT_PARTS: {
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),
   regionIds: (q) => asSet(q.regionIds),
+  points: (q) => asSet(q.points?.map(geoPointKey)),
   virtual: (q) => q.virtual ?? 'all',
+  // Match changes nothing without a Place, so it must not change the cursor.
+  match: (q) =>
+    (q.regionIds?.length ?? 0) + (q.points?.length ?? 0) > 0
+      ? (q.match ?? 'serves')
+      : 'serves',
   text: (q) => q.text?.trim() ?? '',
 };
 

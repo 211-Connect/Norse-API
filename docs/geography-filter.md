@@ -68,8 +68,8 @@ Send `x-api-version: 1` and `x-internal-api-key` on every call. No
 
 | Route | Input | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` (1 to 20), `filter.virtual`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | body: `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | body: `resourceWriterIds` (required, max 100), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 together), `filter.virtual`, `text` (max 256), `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
+| `POST /internal/services/facets` | body: `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
 | `GET /internal/regions` | query: `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state }] }` |
 | `GET /internal/regions/:id` | `state:MO`, `county:29095` or `zip:64130` | `{ id, type, name, state, fips?, zip?, geometry, attribution? }` |
 
@@ -147,10 +147,32 @@ POST /internal/services/facets
   `service_area`, `indexed_shape: { index: "regions", id, path: "geometry" }`,
   `relation: "intersects"`, `minimum_should_match: 1`. ES reads each shape
   from the index, so no geometry crosses the wire.
+- `points` (ISS-1897, ADR 0025): each `{ lat, lng, radiusMiles }`, with
+  `lat` in ±90, `lng` in ±180 and `radiusMiles` from 0.1 to 100. A point is a
+  query-time `circle` on `service_area` (`coordinates: [lng, lat]`,
+  `radius: "<r>mi"`, `relation: "intersects"`), OR'ed with the Regions in the
+  same `bool.should`. A repeated point is dropped. Regions and points count
+  together toward the 20; `geography` with none, or more than 20, is 400. A
+  points-only clause skips the Region existence check.
+- `match` (ISS-1898, ADR 0025): `serves` (the default; absent means serves)
+  or `located`. Under `located`, a service matches when a `locationPoints`
+  geo_point lies inside a Region (`geo_shape`, `indexed_shape`) or within a
+  point's radius (`geo_distance`). With `virtual: "all"` a Virtual Service that
+  serves the Place matches too; with `"only"` the clause is exactly the serves
+  clause; with `"exclude"` only a physical site matches. Checked against ES
+  8.18.8 for all six Match × Virtual cells. Reads the `locationPoints` field
+  (Dagster ISS-1896); a tenant's services gain it on its next reader run, and
+  until then `located` finds only that tenant's Virtual Services. Offered
+  ungated by decision (ADR 0025).
 - `intersects` counts border contact (a v1 decision). A service whose area
   only touches a Region's edge matches. See
   [Known behaviour: border contact](#known-behaviour-border-contact).
-- A service without a `service_area` never matches.
+- **A Virtual Service with no Service Area serves every Region** (ADR 0025,
+  ISS-1895). The `bool.should` carries one more branch: `locationTypes`
+  contains `virtual` and `service_area` does not exist. A physical-only
+  service without a `service_area` still never matches.
+- With `virtual: "exclude"` that branch is left out, so a service needs a
+  physical location **and** a `service_area` that overlaps a Region.
 - **Unknown Region id: 400.** Before searching, one `mget` on `regions`
   (`_source: false`) checks every id, and the 400 lists each unknown one:
   `Unknown Region id(s): zip:00000`. ES itself answers an `indexed_shape`
@@ -174,7 +196,7 @@ under `all`.
 `statuses`, which are the options being counted. Send the same geography and
 virtual mode as the list, so each count matches what the list would show.
 
-**Cursors.** The fingerprint covers `regionIds` and `virtual`. A cursor from
+**Cursors.** The fingerprint covers `regionIds`, `points`, `virtual` and `match`. A cursor from
 one geography or virtual mode is 400 against another. `virtual: "all"` and no
 `virtual` are the same query, and so is the same set of Region ids in another
 order.

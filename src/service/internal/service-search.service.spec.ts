@@ -48,6 +48,34 @@ describe('ServiceSearchService', () => {
       minimum_should_match: 1,
     },
   });
+  // ADR 0025: a Virtual Service with no Service Area serves every Region.
+  const globalVirtual = {
+    bool: {
+      filter: [{ term: { locationTypes: 'virtual' } }],
+      must_not: [{ exists: { field: 'service_area' } }],
+    },
+  };
+  const circle = (lat: number, lng: number, radiusMiles: number) => ({
+    geo_shape: {
+      service_area: {
+        shape: {
+          type: 'circle',
+          coordinates: [lng, lat],
+          radius: `${radiusMiles}mi`,
+        },
+        relation: 'intersects',
+      },
+    },
+  });
+  const servesClause = (...ids: string[]) => {
+    const regions = regionClause(...ids);
+    return {
+      bool: {
+        ...regions.bool,
+        should: [...regions.bool.should, globalVirtual],
+      },
+    };
+  };
   const missingShapeError = (id: string) =>
     new errors.ResponseError({
       statusCode: 400,
@@ -615,8 +643,8 @@ describe('ServiceSearchService', () => {
     });
   });
 
-  describe('geography and virtual (ISS-1873, ISS-1874)', () => {
-    it('ORs Regions by intersecting service_area with the indexed Region shape', async () => {
+  describe('geography and virtual (ISS-1873, ISS-1874, ISS-1895)', () => {
+    it('ORs Regions by intersecting service_area with the indexed Region shape, plus Virtual Services with no Service Area', async () => {
       await service.search({
         resourceWriterIds: [WRITER_A],
         filter: { geography: { regionIds: ['county:29510', 'zip:63110'] } },
@@ -624,8 +652,216 @@ describe('ServiceSearchService', () => {
       expect(lastRequest().query.bool.filter).toEqual([
         { terms: { resourceWriterId: [WRITER_A] } },
         { exists: { field: 'serviceId' } },
-        regionClause('county:29510', 'zip:63110'),
+        servesClause('county:29510', 'zip:63110'),
       ]);
+    });
+
+    it('never treats a missing Service Area as global when virtual is excluded', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { regionIds: ['state:MO'] },
+          virtual: 'exclude',
+        },
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+        regionClause('state:MO'),
+        { term: { locationTypes: 'physical' } },
+      ]);
+    });
+
+    it('ORs a point, as a circle intersecting service_area, with the Regions (ISS-1897)', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: {
+            regionIds: ['state:MO'],
+            points: [{ lat: 35.994, lng: -78.8986, radiusMiles: 10 }],
+          },
+        },
+      });
+      const regions = regionClause('state:MO');
+      expect(lastRequest().query.bool.filter[2]).toEqual({
+        bool: {
+          ...regions.bool,
+          should: [
+            ...regions.bool.should,
+            circle(35.994, -78.8986, 10),
+            globalVirtual,
+          ],
+        },
+      });
+    });
+
+    it('searches points alone without an mget, and drops a repeated point', async () => {
+      const point = { lat: 35.994, lng: -78.8986, radiusMiles: 10 };
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: {
+          geography: { points: [point, { ...point }] },
+          virtual: 'exclude',
+        },
+      });
+      expect(mget).not.toHaveBeenCalled();
+      expect(lastRequest().query.bool.filter[2]).toEqual({
+        bool: {
+          should: [circle(35.994, -78.8986, 10)],
+          minimum_should_match: 1,
+        },
+      });
+    });
+
+    it('answers a geography with no Places, or more than 20, with 400', async () => {
+      const point = (i: number) => ({
+        lat: 35 + i / 100,
+        lng: -78.9,
+        radiusMiles: 5,
+      });
+      await expect(
+        service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: { geography: { regionIds: [], points: [] } },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.facets({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: {
+              regionIds: ['state:MO'],
+              points: Array.from({ length: 20 }, (_, i) => point(i)),
+            },
+          },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    describe('Located In (ISS-1898)', () => {
+      const located = (...ids: string[]) => [
+        ...ids.map((id) => ({
+          geo_shape: {
+            locationPoints: {
+              indexed_shape: { index: 'regions', id, path: 'geometry' },
+              relation: 'intersects',
+            },
+          },
+        })),
+      ];
+      const near = (lat: number, lon: number, miles: number) => ({
+        geo_distance: { distance: `${miles}mi`, locationPoints: { lat, lon } },
+      });
+      const point = { lat: 35.994, lng: -78.8986, radiusMiles: 10 };
+      const geographyOf = async (
+        virtual: 'all' | 'only' | 'exclude',
+        match: 'serves' | 'located',
+      ) => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: { regionIds: ['county:37063'], points: [point] },
+            virtual,
+            match,
+          },
+        });
+        return lastRequest().query.bool.filter.slice(2);
+      };
+      const serves = {
+        bool: {
+          should: [
+            ...regionClause('county:37063').bool.should,
+            circle(35.994, -78.8986, 10),
+            globalVirtual,
+          ],
+          minimum_should_match: 1,
+        },
+      };
+
+      it("matches a physical site inside a Region or within a point's radius, plus Virtual Services that serve it, under All", async () => {
+        expect(await geographyOf('all', 'located')).toEqual([
+          {
+            bool: {
+              should: [
+                ...located('county:37063'),
+                near(35.994, -78.8986, 10),
+                {
+                  bool: {
+                    filter: [{ term: { locationTypes: 'virtual' } }, serves],
+                  },
+                },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+        ]);
+      });
+
+      it('matches only a physical site under Exclude', async () => {
+        expect(await geographyOf('exclude', 'located')).toEqual([
+          {
+            bool: {
+              should: [...located('county:37063'), near(35.994, -78.8986, 10)],
+              minimum_should_match: 1,
+            },
+          },
+          { term: { locationTypes: 'physical' } },
+        ]);
+      });
+
+      it('equals Serves Area under Only: a Virtual Service has no site to be located at', async () => {
+        expect(await geographyOf('only', 'located')).toEqual(
+          await geographyOf('only', 'serves'),
+        );
+      });
+
+      it('counts facets under the same Located In clause as the list', async () => {
+        const filter = {
+          geography: { regionIds: ['county:37063'], points: [point] },
+          virtual: 'exclude' as const,
+          match: 'located' as const,
+        };
+        await service.search({ resourceWriterIds: [WRITER_A], filter });
+        const listed = lastRequest().query.bool.filter;
+        search.mockResolvedValue({ aggregations: {} });
+        await service.facets({ resourceWriterIds: [WRITER_A], filter });
+        expect(JSON.stringify(lastRequest().query)).toContain(
+          JSON.stringify(listed[2]),
+        );
+      });
+
+      it('ignores match without a Place', async () => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: { match: 'located' },
+        });
+        expect(lastRequest().query.bool.filter).toHaveLength(2);
+      });
+
+      it('treats an absent match as Serves Area', async () => {
+        search.mockClear();
+        await service.search({
+          resourceWriterIds: [WRITER_A],
+          filter: {
+            geography: { regionIds: ['county:37063'], points: [point] },
+          },
+        });
+        expect(lastRequest().query.bool.filter.slice(2)).toEqual([serves]);
+      });
+    });
+
+    it('counts facets under the same geography clause as the list', async () => {
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['state:MO'] }, virtual: 'only' },
+      });
+      expect(JSON.stringify(lastRequest().query)).toContain(
+        JSON.stringify(servesClause('state:MO')),
+      );
     });
 
     it('ANDs geography with taxonomy, status, virtual and text', async () => {
@@ -645,7 +881,7 @@ describe('ServiceSearchService', () => {
         { exists: { field: 'serviceId' } },
         { terms: { taxonomyPath: ['BD'] } },
         { terms: { status: ['active'] } },
-        regionClause('state:MO'),
+        servesClause('state:MO'),
         { term: { locationTypes: 'virtual' } },
       ]);
       expect(bool.must).toHaveLength(1);
@@ -658,7 +894,7 @@ describe('ServiceSearchService', () => {
         filter: { geography: { regionIds: ['state:MO', 'state:MO'] } },
       });
       expect(lastRequest().query.bool.filter[2]).toEqual(
-        regionClause('state:MO'),
+        servesClause('state:MO'),
       );
     });
 
