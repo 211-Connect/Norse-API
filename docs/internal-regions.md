@@ -8,8 +8,10 @@ INTEG-024.
 
 | Route | Query | Returns |
 | --- | --- | --- |
-| `GET /internal/regions` | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state }] }` |
-| `GET /internal/regions/:id` | — | `{ id, type, name, state, fips?, zip?, geometry, attribution? }` |
+| `GET /internal/regions` | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state, centroid? }] }` |
+| `GET /internal/regions/:id` | — | `{ id, type, name, state, centroid?, fips?, zip?, geometry, attribution? }` |
+
+`centroid` is `{ lat, lng }` from the seed's `[lon, lat]`, present for counties and ZIPs (the seed has none for states). ServiceNet biases address search toward it (ISS-1875).
 
 Send `x-api-version: 1`, as for every versioned route, and
 `x-internal-api-key`. No `x-tenant-id`: Regions are not tenant data.

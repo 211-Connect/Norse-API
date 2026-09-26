@@ -17,6 +17,8 @@ interface RegionSource {
   type?: RegionType;
   name?: string;
   state?: string;
+  /** GeoJSON position, [lng, lat], as the Dagster loader writes it. */
+  centroid?: [number, number] | null;
   fips?: string | null;
   zip?: string | null;
   geometry?: Record<string, unknown>;
@@ -92,10 +94,14 @@ export class RegionService {
 }
 
 function toSummary(source: RegionSource): RegionSummaryDto {
+  const [lng, lat] = source.centroid ?? [];
   return {
     id: source.id ?? '',
     type: source.type as RegionType,
     name: source.name ?? '',
     state: source.state ?? '',
+    ...(typeof lat === 'number' && typeof lng === 'number'
+      ? { centroid: { lat, lng } }
+      : {}),
   };
 }
