@@ -7,8 +7,8 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds`, `filter.virtual`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.virtual` | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
+| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match` | `{ contributors, statuses, taxonomy }` |
 
 Send `x-api-version: 1`, as for every versioned route, and
 `x-internal-api-key`. No `x-tenant-id`: the

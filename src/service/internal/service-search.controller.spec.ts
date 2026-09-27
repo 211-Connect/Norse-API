@@ -159,6 +159,44 @@ describe('ServiceSearchController (internal/services)', () => {
         },
       ],
       [{ resourceWriterIds: ['w'], filter: { virtual: 'yes' } }],
+      [{ resourceWriterIds: ['w'], filter: { match: 'near' } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          filter: { geography: { regionIds: [], points: [] } },
+        },
+      ],
+      ...[
+        { lat: 91, lng: -78.9, radiusMiles: 10 },
+        { lat: 35.9, lng: -181, radiusMiles: 10 },
+        { lat: 35.9, lng: -78.9, radiusMiles: 0 },
+        { lat: 35.9, lng: -78.9, radiusMiles: 100.5 },
+        { lat: 35.9, radiusMiles: 10 },
+        { lat: '35.9', lng: -78.9, radiusMiles: 10 },
+      ].map((point) => [
+        {
+          resourceWriterIds: ['w'],
+          filter: { geography: { points: [point] } },
+        },
+      ]),
+      [
+        {
+          resourceWriterIds: ['w'],
+          filter: {
+            geography: {
+              regionIds: Array.from(
+                { length: 10 },
+                (_, i) => `zip:${String(63100 + i)}`,
+              ),
+              points: Array.from({ length: 11 }, (_, i) => ({
+                lat: 35 + i / 100,
+                lng: -78.9,
+                radiusMiles: 10,
+              })),
+            },
+          },
+        },
+      ],
     ])('rejects %j with 400', async (body) => {
       await request(app.getHttpServer())
         .post('/internal/services/search')
@@ -185,6 +223,31 @@ describe('ServiceSearchController (internal/services)', () => {
               ),
             },
             virtual: 'exclude',
+          },
+        })
+        .expect(200);
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts 20 Places of Regions and points together', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          filter: {
+            geography: {
+              regionIds: Array.from(
+                { length: 10 },
+                (_, i) => `zip:${63100 + i}`,
+              ),
+              points: Array.from({ length: 10 }, (_, i) => ({
+                lat: 35 + i / 100,
+                lng: -78.9,
+                radiusMiles: 0.1 + i * 10,
+              })),
+            },
           },
         })
         .expect(200);

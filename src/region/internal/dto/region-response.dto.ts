@@ -1,6 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { REGION_TYPES, RegionType } from './region-search-query.dto';
 
+export class LatLngDto {
+  @ApiProperty({ example: 39.0086 })
+  lat: number;
+
+  @ApiProperty({ example: -94.3462 })
+  lng: number;
+}
+
 export class RegionSummaryDto {
   @ApiProperty({ example: 'county:29095' })
   id: string;
@@ -13,6 +21,13 @@ export class RegionSummaryDto {
 
   @ApiProperty({ example: 'MO', description: 'Postal code of the state.' })
   state: string;
+
+  @ApiProperty({
+    type: LatLngDto,
+    required: false,
+    description: 'A representative point, e.g. to bias an address search.',
+  })
+  centroid?: LatLngDto;
 }
 
 export class RegionSearchResponseDto {

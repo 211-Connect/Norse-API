@@ -37,6 +37,8 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
         autocomplete: true,
         language: [locale],
         limit,
+        ...(query.types ? { types: query.types } : {}),
+        ...(query.proximity ? { proximity: query.proximity } : {}),
       })
       .send();
 
