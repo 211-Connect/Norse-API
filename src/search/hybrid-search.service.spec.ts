@@ -429,12 +429,16 @@ describe('HybridSearchService', () => {
     });
 
     it('keeps the same preference for every page, limit and sort of a search', async () => {
-      const [first] = await preferencesOf(baseQuery);
-      const [paged] = await preferencesOf({ ...baseQuery, page: 4, limit: 10 });
-      const [sorted] = await preferencesOf({ ...baseQuery, sort: 'name' });
+      const preferences = [
+        ...(await preferencesOf(baseQuery)),
+        ...(await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
+        ...(await preferencesOf({ ...baseQuery, sort: 'name' })),
+      ];
 
-      expect(paged).toBe(first);
-      expect(sorted).toBe(first);
+      // Every search of all three requests, not just the first of each.
+      expect(preferences).toHaveLength(6);
+      expect(preferences[0]).toEqual(expect.any(String));
+      expect(new Set(preferences).size).toBe(1);
     });
 
     it('uses a different preference for a different search', async () => {

@@ -30,6 +30,7 @@ import {
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 import { hybridShardPreference } from './internal/hybrid-shard-preference';
+import { HybridSearchIdentity } from './internal/hybrid-search-fingerprint';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
@@ -279,7 +280,7 @@ export class HybridSearchService {
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
-    const preference = hybridShardPreference({
+    const identity: HybridSearchIdentity = {
       tenantId,
       lang,
       queryStr,
@@ -291,7 +292,8 @@ export class HybridSearchService {
       geoType: geo_type,
       organizationId: organization_id,
       geometry,
-    });
+    };
+    const preference = hybridShardPreference(identity);
     const t0 = performance.now();
 
     this.logger.debug(
@@ -363,20 +365,7 @@ export class HybridSearchService {
     let cutoff: RelevanceCutoffDto | undefined;
 
     if (cutoffRequested) {
-      const cacheKey = relevanceCutoffCacheKey({
-        tenantId,
-        lang,
-        queryStr,
-        filters,
-        taxonomies: hardScopeCodes,
-        coords,
-        distance,
-        age,
-        geoType: geo_type,
-        organizationId: organization_id,
-        geometry,
-        pinnedMode,
-      });
+      const cacheKey = relevanceCutoffCacheKey({ ...identity, pinnedMode });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages.
