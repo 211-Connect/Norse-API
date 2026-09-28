@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'crypto';
 import {
   Injectable,
   CanActivate,
@@ -6,6 +7,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+
+/** Hashing first gives equal-length buffers, so length leaks nothing either. */
+const digest = (value: string) => createHash('sha256').update(value).digest();
 
 @Injectable()
 export class InternalApiGuard implements CanActivate {
@@ -20,7 +24,11 @@ export class InternalApiGuard implements CanActivate {
       throw new UnauthorizedException('Internal API key not configured');
     }
 
-    if (!apiKey || apiKey !== expectedApiKey) {
+    if (
+      typeof apiKey !== 'string' ||
+      !apiKey ||
+      !timingSafeEqual(digest(apiKey), digest(expectedApiKey))
+    ) {
       throw new UnauthorizedException('Invalid or missing internal API key');
     }
 
