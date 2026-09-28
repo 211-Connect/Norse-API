@@ -7,7 +7,6 @@ import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
-import { MetricsService } from 'src/metrics/metrics.service';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import { ServiceDetailResponseDto } from './dto/service-detail-response.dto';
 import { ServiceDetailService } from './service-detail.service';
@@ -15,10 +14,7 @@ import { ServiceDetailService } from './service-detail.service';
 @ApiTags('Service')
 @Controller('service')
 export class ServiceController {
-  constructor(
-    private readonly detailService: ServiceDetailService,
-    private readonly metrics: MetricsService,
-  ) {}
+  constructor(private readonly detailService: ServiceDetailService) {}
 
   @Get(':id')
   @Version('1')
@@ -47,11 +43,6 @@ export class ServiceController {
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
-    this.metrics.incrementSearchHit(
-      'GET',
-      'serviceDetail',
-      headers['x-tenant-id'],
-    );
     return this.detailService.findById(id, { headers });
   }
 }

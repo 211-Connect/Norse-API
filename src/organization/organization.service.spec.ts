@@ -1,4 +1,5 @@
 import { ElasticsearchService } from '@nestjs/elasticsearch';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { OrganizationService } from './organization.service';
 
 describe('OrganizationService', () => {
@@ -9,7 +10,10 @@ describe('OrganizationService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new OrganizationService(elasticsearch);
+    service = new OrganizationService(
+      elasticsearch,
+      createMetricsServiceMock() as never,
+    );
     (elasticsearch.search as jest.Mock).mockResolvedValue({
       took: 3,
       timed_out: false,

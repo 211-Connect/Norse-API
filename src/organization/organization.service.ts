@@ -4,6 +4,7 @@ import { SearchRequest } from '@elastic/elasticsearch/lib/api/types';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchOrganizationQueryDto } from './dto/search-organization-query.dto';
 import { OrganizationSearchResponseDto } from './dto/search-organization-response.dto';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 export const ORGANIZATIONS_INDEX = 'organizations';
 
@@ -11,7 +12,10 @@ export const ORGANIZATIONS_INDEX = 'organizations';
 export class OrganizationService {
   private readonly logger = new Logger(OrganizationService.name);
 
-  constructor(private readonly elasticsearchService: ElasticsearchService) {}
+  constructor(
+    private readonly elasticsearchService: ElasticsearchService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   /**
    * @param options.onlyWithResources Exclude organizations Dagster counted at 0
@@ -92,7 +96,11 @@ export class OrganizationService {
     };
 
     try {
-      const result = await this.elasticsearchService.search(request);
+      const result = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'organization_search',
+        () => this.elasticsearchService.search(request),
+      );
       const total =
         typeof result.hits.total === 'number'
           ? result.hits.total

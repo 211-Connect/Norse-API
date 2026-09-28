@@ -27,4 +27,4 @@ ENV PORT=$PORT
 EXPOSE $PORT
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "node dist/main.js"]
+CMD ["node", "dist/main.js"]

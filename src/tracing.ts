@@ -14,6 +14,8 @@ import {
   TraceIdRatioBasedSampler,
 } from '@opentelemetry/sdk-trace-node';
 
+let sdk: NodeSDK | undefined;
+
 if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
   console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
 } else {
@@ -22,7 +24,7 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
   );
 
-  const sdk = new NodeSDK({
+  sdk = new NodeSDK({
     sampler: new ParentBasedSampler({
       root: new TraceIdRatioBasedSampler(
         parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || '1.0'),
@@ -42,18 +44,33 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
         '@opentelemetry/instrumentation-fs': {
           enabled: false,
         },
+        '@opentelemetry/instrumentation-http': {
+          ignoreIncomingRequestHook: (req) => {
+            const path = (req.url ?? '').split('?')[0];
+            return path === '/metrics' || path === '/health';
+          },
+        },
       }),
       new NestInstrumentation(),
     ],
   });
 
   sdk.start();
+}
 
-  process.on('SIGTERM', () => {
-    sdk
-      .shutdown()
-      .then(() => console.log('Tracing terminated'))
-      .catch((error) => console.log('Error terminating tracing', error))
-      .finally(() => process.exit(0));
-  });
+/**
+ * Shuts the OpenTelemetry SDK down (flushing the last spans). Idempotent: a
+ * second call is a no-op. Called by TracingShutdownService from Nest's
+ * onApplicationShutdown hook — do not terminate the process here.
+ */
+export async function shutdownTracing(): Promise<void> {
+  if (!sdk) return;
+  const current = sdk;
+  sdk = undefined; // idempotent: a second call is a no-op
+  try {
+    await current.shutdown();
+    console.log('Tracing terminated');
+  } catch (error) {
+    console.log('Error terminating tracing', error);
+  }
 }
