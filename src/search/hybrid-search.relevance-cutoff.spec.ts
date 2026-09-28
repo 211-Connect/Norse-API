@@ -321,6 +321,24 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       expect(survivorRequest().size).toBe(18);
     });
 
+    it('reads the same shard copies as the main search', async () => {
+      // Two providers' branches, so the probe also sends its widening window.
+      plan = {
+        matched: 900,
+        topScore: 100,
+        survivors: 8,
+        keptServices: Array.from({ length: 8 }, (_, i) => `dup-${i % 2}`),
+      };
+      await run();
+
+      // head, count, survivors, widening window and the main search
+      expect(requests.some((r) => r.size === 200)).toBe(true);
+      expect(requests.length).toBeGreaterThanOrEqual(5);
+      const preferences = new Set(requests.map((r) => r.preference));
+      expect(preferences.size).toBe(1);
+      expect([...preferences][0]).toEqual(expect.any(String));
+    });
+
     it('counts before it collects, so a large cut costs one cheap call', async () => {
       plan = { matched: 27452, topScore: 100, survivors: 1500 };
       await run();

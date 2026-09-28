@@ -411,6 +411,48 @@ describe('HybridSearchService', () => {
     });
   });
 
+  describe('shard-copy preference', () => {
+    const preferencesOf = async (query: any, h: any = headers) => {
+      esSearch.mockClear();
+      await service.searchHybrid({ headers: h, query });
+      return esSearch.mock.calls.map(([req]) => req.preference);
+    };
+
+    it('pins the taxonomy lookup and the main search to one preference', async () => {
+      const preferences = await preferencesOf(baseQuery);
+
+      expect(preferences).toHaveLength(2);
+      expect(preferences[0]).toEqual(expect.any(String));
+      // A leading underscore is Elasticsearch's reserved preference syntax.
+      expect(preferences[0]).not.toMatch(/^_/);
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('keeps the same preference for every page, limit and sort of a search', async () => {
+      const [first] = await preferencesOf(baseQuery);
+      const [paged] = await preferencesOf({ ...baseQuery, page: 4, limit: 10 });
+      const [sorted] = await preferencesOf({ ...baseQuery, sort: 'name' });
+
+      expect(paged).toBe(first);
+      expect(sorted).toBe(first);
+    });
+
+    it('uses a different preference for a different search', async () => {
+      const [base] = await preferencesOf(baseQuery);
+      const [otherText] = await preferencesOf({ ...baseQuery, query: 'rent' });
+      const [otherTenant] = await preferencesOf(baseQuery, {
+        ...headers,
+        'x-tenant-id': 'tenant-b',
+      });
+      const [otherScope] = await preferencesOf({
+        ...baseQuery,
+        taxonomy: ['BM-1400'],
+      });
+
+      expect(new Set([base, otherText, otherTenant, otherScope]).size).toBe(4);
+    });
+  });
+
   it('maps from/size from page and limit (no app-side slicing)', async () => {
     await service.searchHybrid({
       headers,
