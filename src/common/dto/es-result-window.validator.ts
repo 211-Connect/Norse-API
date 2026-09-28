@@ -25,9 +25,7 @@ const readLimit = (object: unknown): unknown =>
  * default of 25 when absent).
  */
 @ValidatorConstraint({ name: 'isWithinMaxResultWindow', async: false })
-export class IsWithinMaxResultWindowConstraint
-  implements ValidatorConstraintInterface
-{
+export class IsWithinMaxResultWindowConstraint implements ValidatorConstraintInterface {
   validate(page: number, args: ValidationArguments): boolean {
     if (!Number.isFinite(page) || page <= 0) {
       // @IsInt / @Min report malformed page input themselves.
