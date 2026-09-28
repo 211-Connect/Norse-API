@@ -25,6 +25,7 @@ import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { hybridShardPreference } from './internal/hybrid-shard-preference';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -146,6 +147,19 @@ export class HybridSearchService {
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const preference = hybridShardPreference({
+      tenantId,
+      lang,
+      queryStr,
+      filters,
+      taxonomies: hardScopeCodes,
+      coords,
+      distance,
+      age,
+      geoType: geo_type,
+      organizationId: organization_id,
+      geometry,
+    });
     const t0 = performance.now();
 
     this.logger.debug(
@@ -179,7 +193,7 @@ export class HybridSearchService {
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId)
+      ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
       : [];
     const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
@@ -214,6 +228,7 @@ export class HybridSearchService {
 
     const request = this.buildHybridQuery({
       index,
+      preference,
       queryStr,
       queryVector,
       predicted: predictedTaxonomies,
@@ -326,6 +341,7 @@ export class HybridSearchService {
   private async getTaxonomyCodes(
     queryVector: number[],
     tenantId: string,
+    preference: string,
   ): Promise<PredictedTaxonomy[]> {
     try {
       const result = await this.elasticsearchService.search<{
@@ -333,6 +349,7 @@ export class HybridSearchService {
         name: string;
       }>({
         index: 'hybrid_taxonomies',
+        preference,
         size: TAXONOMY_K,
         track_total_hits: false,
         _source: ['code', 'name'],
@@ -593,6 +610,7 @@ export class HybridSearchService {
 
   private buildHybridQuery(args: {
     index: string;
+    preference: string;
     queryStr: string;
     queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
@@ -607,6 +625,7 @@ export class HybridSearchService {
   }): SearchRequest {
     const {
       index,
+      preference,
       queryStr,
       queryVector,
       predicted,
@@ -689,6 +708,7 @@ export class HybridSearchService {
 
     return {
       index,
+      preference,
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,
