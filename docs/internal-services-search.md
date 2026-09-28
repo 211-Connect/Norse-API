@@ -7,8 +7,8 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match` | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `exclude`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor, appliedExclusions }` |
+| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match`, `exclude` | `{ contributors, statuses, taxonomy, appliedExclusions }` |
 
 Send `x-api-version: 1`, as for every versioned route, and
 `x-internal-api-key`. No `x-tenant-id`: the
@@ -56,6 +56,40 @@ over one fixture and compares the results.
     "filter": {
       "geography": { "regionIds": ["state:MO"] },
       "virtual": "only"
+    }
+  }
+  ```
+- **Exclusions** (ISS-1928, for ServiceNet's Withholding — its ADR 0022).
+  `exclude` takes `serviceIds` (max 1,000), `taxonomyCodes` (max 100) and
+  `regionIds` (max 20), all optional. A service matching any item is left
+  out of the results, the total and every facet count, through `must_not`.
+  Each item excludes exactly what the positive clause selects:
+  - `serviceIds` match `serviceId` exactly, across the whole writer set, so
+    an id two writers share is excluded for both.
+  - `taxonomyCodes` match the expanded `taxonomyPath`, so a node excludes its
+    descendants.
+  - `regionIds` exclude what `filter.geography.regionIds` would select under
+    the defaults (`match: serves`, `virtual: all`): a `service_area`
+    intersecting the indexed Region shape, **and** every Virtual Service with
+    no `service_area`, which serves every Region. They are checked in the same
+    `mget` as the geography Regions; an unknown one is 400.
+
+  Both responses carry `appliedExclusions` (`serviceIds`, `taxonomyCodes`,
+  `regionIds`), de-duplicated, with empty lists when nothing was excluded.
+  **It is the confirmation, and callers must require it.** The global
+  `ValidationPipe` runs with `whitelist: false`, so a Norse-API older than
+  this change ignores `exclude` and answers 200 with the excluded records.
+  ServiceNet refuses any response to an excluding request that does not echo
+  every exclusion it sent. Exclusions are part of the cursor fingerprint and
+  the shard preference.
+
+  ```json
+  {
+    "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
+    "exclude": {
+      "serviceIds": ["svc-1"],
+      "taxonomyCodes": ["BD-1800"],
+      "regionIds": ["county:29095"]
     }
   }
   ```

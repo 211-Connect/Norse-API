@@ -306,9 +306,14 @@ function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
     }
     case 'multi_match':
       return false;
-    default:
-      throw new Error(`parity evaluator does not model "${kind}"`);
+    case 'geo_shape': {
+      // Fixture docs list the Region ids their service_area intersects.
+      const [field, spec] = Object.entries<any>(body)[0];
+      if (!spec.indexed_shape) break;
+      return valuesOf(doc, field).includes(spec.indexed_shape.id);
+    }
   }
+  throw new Error(`parity evaluator does not model "${kind}"`);
 }
 
 type SortValue = string | number | null;
@@ -514,7 +519,10 @@ describe('services search parity with the Mongo record source', () => {
     async ({ writers }) => {
       await expect(
         service.facets({ resourceWriterIds: writers }),
-      ).resolves.toEqual(mongoListFilterOptions(writers));
+      ).resolves.toEqual({
+        ...mongoListFilterOptions(writers),
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+      });
     },
   );
 });
@@ -597,4 +605,109 @@ describe('text: name contains match (the deliberate change)', () => {
   it('treats a backslash in the text as a literal', async () => {
     expect(await ids('c:\\temp')).toEqual(['t:4']);
   });
+});
+
+describe('exclusions over the fixture (ISS-1928)', () => {
+  const GEO: Record<string, Doc> = {
+    't:s1': { service_area: ['county:1'], locationTypes: ['physical'] },
+    't:s2': { service_area: ['county:2'], locationTypes: ['physical'] },
+    'v:t3': { service_area: ['county:1', 'state:X'] },
+    'w:u1': { locationTypes: ['virtual'] },
+    't:s7': { service_area: ['county:2'], locationTypes: ['virtual'] },
+  };
+  const docs = FIXTURE.map((d) => ({ ...d, ...GEO[d._id as string] }));
+  const writers = [A, B, C];
+
+  interface Exclude {
+    serviceIds?: string[];
+    taxonomyCodes?: string[];
+    regionIds?: string[];
+  }
+
+  /** Stated independently of the query builder. */
+  const excludedBy = (doc: Doc, ex: Exclude) => {
+    const area = (doc.service_area as string[] | undefined) ?? [];
+    const virtualEverywhere =
+      area.length === 0 &&
+      ((doc.locationTypes as string[] | undefined) ?? []).includes('virtual');
+    return (
+      (ex.serviceIds ?? []).includes(doc.serviceId as string) ||
+      ((doc.taxonomyPath as string[] | undefined) ?? []).some((c) =>
+        (ex.taxonomyCodes ?? []).includes(c),
+      ) ||
+      (ex.regionIds ?? []).some((r) => area.includes(r) || virtualEverywhere)
+    );
+  };
+
+  const CASES: [string, Exclude][] = [
+    ['services', { serviceIds: ['s1', 't1', 'no-such-service'] }],
+    ['a taxonomy node and its descendants', { taxonomyCodes: ['BD-1800'] }],
+    [
+      'a Region, with Virtual Services that serve everywhere',
+      { regionIds: ['county:1'] },
+    ],
+    [
+      'all three at once',
+      { serviceIds: ['t2'], taxonomyCodes: ['BD-18'], regionIds: ['county:2'] },
+    ],
+  ];
+
+  const idsOf = async (service: ServiceSearchService, exclude?: Exclude) =>
+    (await walk(service, { resourceWriterIds: writers, exclude, limit: 3 }))
+      .flatMap((p) => p.ids)
+      .sort();
+
+  it.each(CASES)(
+    'search leaves out exactly the excluded records: %s',
+    async (_label, exclude) => {
+      const { service } = serviceOver(docs);
+      const before = await idsOf(service);
+      const after = await idsOf(service, exclude);
+      const expectedGone = before.filter((id) =>
+        excludedBy(
+          docs.find((d) => d._id === id)!,
+          exclude,
+        ),
+      );
+      expect(expectedGone.length).toBeGreaterThan(0);
+      expect(after).toEqual(before.filter((id) => !expectedGone.includes(id)));
+
+      const page = await service.search({
+        resourceWriterIds: writers,
+        exclude,
+      });
+      expect(page.total).toBe(before.length - expectedGone.length);
+    },
+  );
+
+  it.each(CASES)(
+    'facet counts drop by exactly the excluded records: %s',
+    async (_label, exclude) => {
+      const withExclusion = await serviceOver(docs).service.facets({
+        resourceWriterIds: writers,
+        exclude,
+      });
+      const withoutTheRecords = await serviceOver(
+        docs.filter((d) => !excludedBy(d, exclude)),
+      ).service.facets({ resourceWriterIds: writers });
+      const unexcluded = await serviceOver(docs).service.facets({
+        resourceWriterIds: writers,
+      });
+
+      const { appliedExclusions, ...counts } = withExclusion;
+      expect(counts).toEqual({
+        ...withoutTheRecords,
+        appliedExclusions: undefined,
+      });
+      expect(counts).not.toEqual({
+        ...unexcluded,
+        appliedExclusions: undefined,
+      });
+      expect(appliedExclusions).toEqual({
+        serviceIds: exclude.serviceIds ?? [],
+        taxonomyCodes: exclude.taxonomyCodes ?? [],
+        regionIds: exclude.regionIds ?? [],
+      });
+    },
+  );
 });

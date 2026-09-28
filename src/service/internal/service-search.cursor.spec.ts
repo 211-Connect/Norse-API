@@ -13,6 +13,11 @@ import {
  */
 const FULL: Required<CursorQuery> = {
   resourceWriterIds: ['writer-a', 'writer-b'],
+  exclude: {
+    serviceIds: ['s1', 's2'],
+    taxonomyCodes: ['LR'],
+    regionIds: ['state:KS'],
+  },
   taxonomyCodes: ['BD-1800', 'LV-1000'],
   statuses: ['active', 'inactive'],
   regionIds: ['county:29510', 'state:MO'],
@@ -27,6 +32,11 @@ const FULL: Required<CursorQuery> = {
 
 const OTHER: Required<CursorQuery> = {
   resourceWriterIds: ['writer-c'],
+  exclude: {
+    serviceIds: ['s1'],
+    taxonomyCodes: ['LR'],
+    regionIds: ['state:KS'],
+  },
   taxonomyCodes: ['BD-18'],
   statuses: ['pending'],
   regionIds: ['zip:63110'],
@@ -64,6 +74,33 @@ describe('queryFingerprint', () => {
       points: [...FULL.points].reverse().concat(FULL.points[0]),
     };
     expect(queryFingerprint(shuffled)).toBe(queryFingerprint(FULL));
+  });
+
+  it.each(['serviceIds', 'taxonomyCodes', 'regionIds'] as const)(
+    'changes when excluded %s change, ignoring their order and repeats',
+    (key) => {
+      const values = FULL.exclude[key];
+      const reordered = {
+        ...FULL,
+        exclude: {
+          ...FULL.exclude,
+          [key]: [...values].reverse().concat(values[0]),
+        },
+      };
+      const dropped = { ...FULL, exclude: { ...FULL.exclude, [key]: [] } };
+      expect(queryFingerprint(reordered)).toBe(queryFingerprint(FULL));
+      expect(queryFingerprint(dropped)).not.toBe(queryFingerprint(FULL));
+    },
+  );
+
+  it('treats absent exclusions as empty ones', () => {
+    const bare: CursorQuery = { resourceWriterIds: ['writer-a'] };
+    expect(
+      queryFingerprint({
+        ...bare,
+        exclude: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+      }),
+    ).toBe(queryFingerprint(bare));
   });
 
   it('accepts a cursor replayed with the same sets in another order', () => {

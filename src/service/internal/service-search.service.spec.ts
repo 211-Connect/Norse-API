@@ -120,6 +120,7 @@ describe('ServiceSearchService', () => {
         total: 0,
         limit: 50,
         nextCursor: null,
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -500,6 +501,7 @@ describe('ServiceSearchService', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -577,6 +579,7 @@ describe('ServiceSearchService', () => {
             synthesized: false,
           },
         ],
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
       });
     });
 
@@ -1078,6 +1081,148 @@ describe('ServiceSearchService', () => {
         });
         expect(lastRequest().search_after).toEqual(['A', 's1']);
       });
+    });
+  });
+  describe('exclusions (ISS-1928)', () => {
+    const exclude = {
+      serviceIds: ['s1', 's2', 's1'],
+      taxonomyCodes: ['BD-1800'],
+      regionIds: ['county:29510'],
+    };
+    const exclusionClauses = [
+      { terms: { serviceId: ['s1', 's2'] } },
+      { terms: { taxonomyPath: ['BD-1800'] } },
+      servesClause('county:29510'),
+    ];
+    const baseMustNot = [
+      { term: { isCanonicalPublication: false } },
+      { term: { serviceId: '' } },
+    ];
+    const applied = {
+      serviceIds: ['s1', 's2'],
+      taxonomyCodes: ['BD-1800'],
+      regionIds: ['county:29510'],
+    };
+    const noneApplied = { serviceIds: [], taxonomyCodes: [], regionIds: [] };
+
+    it('takes services, taxonomy codes and Regions out of the search with must_not', async () => {
+      await service.search({ resourceWriterIds: [WRITER_A], exclude });
+      const { query } = lastRequest();
+      expect(query.bool.must_not).toEqual([
+        ...baseMustNot,
+        ...exclusionClauses,
+      ]);
+      expect(query.bool.filter).toEqual([
+        { terms: { resourceWriterId: [WRITER_A] } },
+        { exists: { field: 'serviceId' } },
+      ]);
+    });
+
+    it('takes the same records out of the facet counts', async () => {
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({ resourceWriterIds: [WRITER_A], exclude });
+      expect(lastRequest().query.bool.must_not).toEqual([
+        ...baseMustNot,
+        ...exclusionClauses,
+      ]);
+    });
+
+    it('confirms the exclusions it applied on search and facets', async () => {
+      const page = await service.search({
+        resourceWriterIds: [WRITER_A],
+        exclude,
+      });
+      expect(page.appliedExclusions).toEqual(applied);
+
+      search.mockResolvedValue({ aggregations: {} });
+      const facets = await service.facets({
+        resourceWriterIds: [WRITER_A],
+        exclude,
+      });
+      expect(facets.appliedExclusions).toEqual(applied);
+    });
+
+    it('confirms them even for an empty writer set, which searches nothing', async () => {
+      await expect(
+        service.search({ resourceWriterIds: [], exclude }),
+      ).resolves.toMatchObject({ appliedExclusions: applied });
+      await expect(
+        service.facets({ resourceWriterIds: [], exclude }),
+      ).resolves.toMatchObject({ appliedExclusions: applied });
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('adds no clause and confirms none without exclusions', async () => {
+      const page = await service.search({
+        resourceWriterIds: [WRITER_A],
+        exclude: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+      });
+      expect(lastRequest().query.bool.must_not).toEqual(baseMustNot);
+      expect(page.appliedExclusions).toEqual(noneApplied);
+
+      const bare = await service.search({ resourceWriterIds: [WRITER_A] });
+      expect(lastRequest().query.bool.must_not).toEqual(baseMustNot);
+      expect(bare.appliedExclusions).toEqual(noneApplied);
+      expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('checks excluded Regions exist, together with the geography ones', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        filter: { geography: { regionIds: ['state:MO'] } },
+        exclude: { regionIds: ['county:29510', 'state:MO'] },
+      });
+      expect(mget).toHaveBeenCalledTimes(1);
+      expect(mget).toHaveBeenCalledWith({
+        index: 'regions',
+        ids: ['state:MO', 'county:29510'],
+        _source: false,
+      });
+    });
+
+    it('answers an unknown excluded Region with 400, never an unexcluded result', async () => {
+      mget.mockResolvedValue({
+        docs: [{ _index: 'regions', _id: 'zip:00000', found: false }],
+      });
+      await expect(
+        service.search({
+          resourceWriterIds: [WRITER_A],
+          exclude: { regionIds: ['zip:00000'] },
+        }),
+      ).rejects.toThrow('Unknown Region id(s): zip:00000');
+      await expect(
+        service.facets({
+          resourceWriterIds: [WRITER_A],
+          exclude: { regionIds: ['zip:00000'] },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cursor replayed with other exclusions', async () => {
+      search.mockResolvedValueOnce({
+        hits: {
+          total: { value: 2 },
+          hits: [
+            { _id: 't:s3', _source: { serviceId: 's3' }, sort: ['A', 's3'] },
+            { _id: 't:s4', _source: { serviceId: 's4' }, sort: ['B', 's4'] },
+          ],
+        },
+      });
+      const { nextCursor } = await service.search({
+        resourceWriterIds: [WRITER_A],
+        exclude: { serviceIds: ['s1'] },
+        limit: 1,
+      });
+      search.mockClear();
+      await expect(
+        service.search({
+          resourceWriterIds: [WRITER_A],
+          exclude: { serviceIds: ['s2'] },
+          cursor: nextCursor!,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
     });
   });
 });

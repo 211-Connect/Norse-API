@@ -1,5 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+/** The exclusions applied, de-duplicated; empty lists when none were sent. */
+export class ServicesAppliedExclusionsDto {
+  @ApiProperty({ type: [String] }) serviceIds: string[];
+  @ApiProperty({ type: [String] }) taxonomyCodes: string[];
+  @ApiProperty({ type: [String] }) regionIds: string[];
+}
+
+const APPLIED_EXCLUSIONS = {
+  type: ServicesAppliedExclusionsDto,
+  description:
+    "The request's exclude, as applied. A Norse that predates exclusions ignores exclude and omits this, so a caller that excludes must refuse a response without it.",
+};
+
 export class ServiceListItemDto {
   @ApiProperty({
     description:
@@ -40,6 +53,8 @@ export class ServicesSearchResponseDto {
     description: 'Pass as `cursor` for the next page; null on the last page.',
   })
   nextCursor: string | null;
+  @ApiProperty(APPLIED_EXCLUSIONS)
+  appliedExclusions: ServicesAppliedExclusionsDto;
 }
 
 export class ContributorFacetDto {
@@ -70,4 +85,6 @@ export class ServicesFacetsResponseDto {
   contributors: ContributorFacetDto[];
   @ApiProperty({ type: [StatusFacetDto] }) statuses: StatusFacetDto[];
   @ApiProperty({ type: [TaxonomyFacetDto] }) taxonomy: TaxonomyFacetDto[];
+  @ApiProperty(APPLIED_EXCLUSIONS)
+  appliedExclusions: ServicesAppliedExclusionsDto;
 }

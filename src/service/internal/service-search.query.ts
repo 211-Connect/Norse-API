@@ -70,8 +70,16 @@ export interface GeoPoint {
 export const geoPointKey = ({ lat, lng, radiusMiles }: GeoPoint): string =>
   `${lat},${lng},${radiusMiles}`;
 
+/** What is taken out of the scope; a service matching any item is excluded. */
+export interface ServiceExclusions {
+  serviceIds: readonly string[];
+  taxonomyCodes: readonly string[];
+  regionIds: readonly string[];
+}
+
 export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
+  exclude?: ServiceExclusions;
   taxonomyCodes?: readonly string[];
   statuses?: readonly string[];
   regionIds?: readonly string[];
@@ -236,7 +244,30 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);
+  must_not.push(...exclusionClauses(input.exclude));
   return { filter, must_not };
+}
+
+/**
+ * Each clause is the positive one negated, so an exclusion takes out exactly
+ * what the same filter would select. A Region under the defaults (serves, virtual
+ * all) therefore also takes out Virtual Services with no Service Area.
+ */
+function exclusionClauses(
+  exclude: ServiceExclusions | undefined,
+): QueryDslQueryContainer[] {
+  if (!exclude) return [];
+  const clauses: QueryDslQueryContainer[] = [];
+  if (exclude.serviceIds.length > 0) {
+    clauses.push({ terms: { serviceId: [...exclude.serviceIds] } });
+  }
+  if (exclude.taxonomyCodes.length > 0) {
+    clauses.push({ terms: { taxonomyPath: [...exclude.taxonomyCodes] } });
+  }
+  if (exclude.regionIds.length > 0) {
+    clauses.push(servesClause(exclude.regionIds, [], 'all'));
+  }
+  return clauses;
 }
 
 /** Escapes a user string for a `wildcard` query: `\\` first, then `*` and `?`. */

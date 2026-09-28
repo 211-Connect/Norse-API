@@ -36,6 +36,11 @@ const FINGERPRINT_PARTS: {
   [K in keyof CursorQuery]-?: (query: CursorQuery) => unknown;
 } = {
   resourceWriterIds: (q) => asSet(q.resourceWriterIds),
+  exclude: (q) => [
+    asSet(q.exclude?.serviceIds),
+    asSet(q.exclude?.taxonomyCodes),
+    asSet(q.exclude?.regionIds),
+  ],
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),
   regionIds: (q) => asSet(q.regionIds),

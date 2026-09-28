@@ -23,6 +23,9 @@ export const SERVICES_SEARCH_MAX_WRITERS = 100;
 export const SERVICES_SEARCH_MAX_PLACES = 20;
 export const POINT_RADIUS_MIN_MILES = 0.1;
 export const POINT_RADIUS_MAX_MILES = 100;
+export const SERVICES_EXCLUDE_MAX_SERVICES = 1000;
+export const SERVICES_EXCLUDE_MAX_TAXONOMY_CODES = 100;
+export const SERVICES_EXCLUDE_MAX_REGIONS = 20;
 
 export const VIRTUAL_MODES = ['all', 'only', 'exclude'] as const;
 
@@ -143,8 +146,58 @@ export class ServicesSearchFilterDto extends ServicesScopeFilterDto {
 }
 
 /**
- * The Resource Writer set the caller may see. Required; an empty set returns
- * nothing rather than everything.
+ * Records taken out of the scope, as ServiceNet's Withholding needs (its ADR
+ * 0022). A service matching any listed item is excluded; lists are OR'ed.
+ */
+export class ServicesExclusionDto {
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_SERVICES,
+    description:
+      'serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_SERVICES)
+  @IsString({ each: true })
+  serviceIds?: string[];
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
+    description:
+      'AIRS codes, matched as filter.taxonomyCodes is: exactly against the ancestor-expanded taxonomyPath, so a node excludes its descendants.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_TAXONOMY_CODES)
+  @IsString({ each: true })
+  taxonomyCodes?: string[];
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_REGIONS,
+    example: ['county:29510'],
+    description:
+      'Region ids. Excludes exactly what filter.geography would select for the Region under the defaults (match serves, virtual all): a service_area intersecting it, and a Virtual Service with no service_area. An unknown id is 400.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_REGIONS)
+  @IsString({ each: true })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
+  regionIds?: string[];
+}
+
+/**
+ * The Resource Writer set the caller may see, less any exclusions. Required;
+ * an empty set returns nothing rather than everything.
  */
 export class ServicesWriterScopeDto {
   @ApiProperty({
@@ -156,6 +209,17 @@ export class ServicesWriterScopeDto {
   @ArrayMaxSize(SERVICES_SEARCH_MAX_WRITERS)
   @IsString({ each: true })
   resourceWriterIds: string[];
+
+  @ApiProperty({
+    type: ServicesExclusionDto,
+    required: false,
+    description:
+      'Applied to the results and the facet counts alike. The response echoes it as appliedExclusions; a caller that sends it should refuse a response without that echo.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ServicesExclusionDto)
+  exclude?: ServicesExclusionDto;
 }
 
 export class ServicesSearchRequestDto extends ServicesWriterScopeDto {

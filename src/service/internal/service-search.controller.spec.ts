@@ -97,7 +97,7 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(paths).toContain('/published-control');
       expect(paths.filter((p) => p.includes('internal/services'))).toEqual([]);
       expect(JSON.stringify(res.body)).not.toMatch(
-        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem/,
+        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|ServicesExclusion|ServicesAppliedExclusions/,
       );
     });
   });
@@ -119,6 +119,7 @@ describe('ServiceSearchController (internal/services)', () => {
         total: 0,
         limit: 10,
         nextCursor: null,
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
       });
       expect(search).toHaveBeenCalledTimes(1);
     });
@@ -159,6 +160,27 @@ describe('ServiceSearchController (internal/services)', () => {
         },
       ],
       [{ resourceWriterIds: ['w'], filter: { virtual: 'yes' } }],
+      [{ resourceWriterIds: ['w'], exclude: 's1' }],
+      [{ resourceWriterIds: ['w'], exclude: { serviceIds: 's1' } }],
+      [{ resourceWriterIds: ['w'], exclude: { serviceIds: [1] } }],
+      [{ resourceWriterIds: ['w'], exclude: { taxonomyCodes: 'BD' } }],
+      [{ resourceWriterIds: ['w'], exclude: { regionIds: ['St. Louis'] } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: {
+            serviceIds: Array.from({ length: 1001 }, (_, i) => `s${i}`),
+          },
+        },
+      ],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: {
+            regionIds: Array.from({ length: 21 }, (_, i) => `zip:${63100 + i}`),
+          },
+        },
+      ],
       [{ resourceWriterIds: ['w'], filter: { match: 'near' } }],
       [
         {
@@ -206,6 +228,22 @@ describe('ServiceSearchController (internal/services)', () => {
         .expect(400);
       expect(search).not.toHaveBeenCalled();
       expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('accepts exclusions and confirms them in the response', async () => {
+      const exclude = {
+        serviceIds: Array.from({ length: 1000 }, (_, i) => `s${i}`),
+        taxonomyCodes: ['BD-1800'],
+        regionIds: ['county:29510'],
+      };
+      const res = await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({ resourceWriterIds: ['writer-a'], exclude })
+        .expect(200);
+      expect(res.body.appliedExclusions).toEqual(exclude);
+      expect(search.mock.calls[0][0].query.bool.must_not).toHaveLength(5);
     });
 
     it('accepts 20 Regions and a virtual mode', async () => {
@@ -295,6 +333,37 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(search).not.toHaveBeenCalled();
     });
 
+    it('rejects an unusable exclude with 400', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/facets')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: { regionIds: ['x'] },
+        })
+        .expect(400);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('confirms exclusions on facets', async () => {
+      search.mockResolvedValue({ aggregations: {} });
+      const res = await request(app.getHttpServer())
+        .post('/internal/services/facets')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: { serviceIds: ['s1'] },
+        })
+        .expect(200);
+      expect(res.body.appliedExclusions).toEqual({
+        serviceIds: ['s1'],
+        taxonomyCodes: [],
+        regionIds: [],
+      });
+    });
+
     it('serves facets for a writer set', async () => {
       search.mockResolvedValue({ aggregations: {} });
       const res = await request(app.getHttpServer())
@@ -307,6 +376,7 @@ describe('ServiceSearchController (internal/services)', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
+        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
       });
     });
   });
