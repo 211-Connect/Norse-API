@@ -46,6 +46,9 @@ type Plan = {
   matched: number;
   topScore: number;
   survivors: number;
+  rank20Score?: number;
+  countsByMinScore?: Record<number, number>;
+  headHits?: number;
   keptServices?: string[];
   widenedServices?: string[];
 };
@@ -63,29 +66,50 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       }
       requests.push(req);
 
-      // 1. head — top score and the matched total
-      if (req.size === 1 && req._source === false) {
+      // 1. head — the top CUTOFF_TOP_DOCS_FLOOR + 1 scores and the matched
+      //    total. Keyed on _source === false with no min_score: the count and
+      //    survivor calls both carry a min_score, the head does not.
+      if (req._source === false && req.min_score == null) {
+        const n = plan.headHits ?? 21;
         return Promise.resolve({
           hits: {
             total: { value: plan.matched, relation: 'eq' },
-            hits: [{ _id: 'top', _score: plan.topScore }],
+            hits: Array.from({ length: n }, (_, i) => ({
+              _id: i === 0 ? 'top' : `rank-${i}`,
+              _score:
+                i === 0
+                  ? plan.topScore
+                  : (plan.rank20Score ?? plan.topScore * 0.2),
+            })),
           },
         });
       }
-      // 2. count above the threshold, no documents collected
+      // 2. count above the threshold, no documents collected. The ladder sends
+      //    several of these; countsByMinScore answers per threshold. Tolerance
+      //    lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
       if (req.size === 0 && req.min_score != null) {
+        const entry = Object.entries(plan.countsByMinScore ?? {}).find(
+          ([k]) => Math.abs(Number(k) - req.min_score) < 1e-6,
+        );
         return Promise.resolve({
-          hits: { total: { value: plan.survivors, relation: 'eq' }, hits: [] },
+          hits: {
+            total: {
+              value: entry ? entry[1] : plan.survivors,
+              relation: 'eq',
+            },
+            hits: [],
+          },
         });
       }
-      // 3. the survivors themselves
+      // 3. the survivors themselves — the last kept doc's score is the
+      //    threshold, so cutoff_score stays meaningful for every rung
       if (req.min_score != null && Array.isArray(req._source)) {
         const svc = plan.keptServices ?? [];
         return Promise.resolve({
           hits: {
-            hits: Array.from({ length: plan.survivors }, (_, i) => ({
+            hits: Array.from({ length: req.size }, (_, i) => ({
               _id: `keep-${i}`,
-              _score: plan.topScore * 0.2,
+              _score: req.min_score,
               _source: { service_id: svc[i] ?? `svc-${i}` },
             })),
           },
@@ -383,6 +407,132 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       // ...ordering still by the caller's sort. A cut that walked the response
       // list would be meaningless here, because those hits are not score-ordered.
       expect(JSON.stringify(mainRequest().sort)).toContain('name.lc');
+    });
+  });
+
+  describe('the top-20 clamp', () => {
+    it('asks the head call for the floor + 1 scores', async () => {
+      await run();
+
+      const head = requests.find((r) => r._source === false);
+      expect(head.size).toBe(21);
+      expect(head._source).toBe(false);
+      expect(head.sort).toEqual(['_score']);
+    });
+
+    it('clamps the threshold to the top-20 score when it sits below the fraction', async () => {
+      // 0.2 x 300 = 60, but the probe's own 20th result scores 50: cutting at
+      // 60 would remove the probe's top 19..20, so the threshold clamps to 50.
+      plan = { matched: 1234, topScore: 300, rank20Score: 50, survivors: 24 };
+      const response = await run();
+
+      const counting = requests.find(
+        (r) => r.size === 0 && r.min_score != null,
+      );
+      expect(counting.min_score).toBe(50);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 24,
+        cutoff_score: 50,
+        candidates_examined: 24,
+      });
+    });
+
+    it('keeps a tie group at the clamp whole', async () => {
+      // min_score is inclusive: every document tied at the threshold goes with
+      // the group — the boundary cannot split a tie.
+      plan = {
+        matched: 1234,
+        topScore: 300,
+        rank20Score: 50,
+        survivors: 27,
+        countsByMinScore: { 50: 27 },
+      };
+      const response = await run();
+
+      expect(response.relevance_cutoff.applied).toBe(true);
+      expect(response.relevance_cutoff.kept).toBe(27);
+      expect(response.relevance_cutoff.cutoff_score).toBe(50);
+    });
+
+    it('does not clamp when fewer than the floor + 1 hits come back', async () => {
+      plan = { matched: 12, topScore: 100, survivors: 5, headHits: 12 };
+      const response = await run();
+
+      // no 21st score, so nothing to clamp to: the fraction alone decides
+      const countScores = requests
+        .filter((r) => r.size === 0 && r.min_score != null)
+        .map((r) => r.min_score);
+      expect(countScores).toEqual([20]);
+      expect(response.relevance_cutoff.applied).toBe(true);
+      expect(response.relevance_cutoff.kept).toBe(5);
+    });
+  });
+
+  describe('the fraction ladder', () => {
+    it('climbs to the first rung that enumerates and stops there', async () => {
+      // Washington Q7's measured distribution: 0.2 leaves 5,524 survivors,
+      // each rung thins it, 0.5 finally fits under MAX_ENUMERATED_CUT.
+      plan = {
+        matched: 15700,
+        topScore: 100,
+        // rank 20 sits inside the survivors on this path, so its score is well
+        // above the base fraction and cannot clamp any rung
+        rank20Score: 60,
+        survivors: 5524,
+        countsByMinScore: { 20: 5524, 25: 3504, 30: 2788, 40: 1064, 50: 490 },
+      };
+      const response = await run();
+
+      const countScores = requests
+        .filter((r) => r.size === 0 && r.min_score != null)
+        .map((r) => Math.round(r.min_score));
+      expect(countScores).toEqual([20, 25, 30, 40, 50]);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        reason: null,
+        kept: 490,
+        candidates_examined: 490,
+        matched_before_cutoff: 15700,
+      });
+      expect(response.relevance_cutoff.cutoff_score).toBeCloseTo(50, 6);
+    });
+
+    it('clamps a ladder rung to the top-20 score as well', async () => {
+      // The clamp cannot bind at the base fraction here (0.2 x 100 = 20 < 22),
+      // but the 0.25 rung computes 25 and must clamp to 22 before counting.
+      plan = {
+        matched: 15700,
+        topScore: 100,
+        rank20Score: 22,
+        survivors: 2000,
+        countsByMinScore: { 20: 2000, 22: 900 },
+      };
+      const response = await run();
+
+      const countScores = requests
+        .filter((r) => r.size === 0 && r.min_score != null)
+        .map((r) => r.min_score);
+      expect(countScores).toEqual([20, 22]);
+      expect(response.relevance_cutoff.applied).toBe(true);
+      expect(response.relevance_cutoff.kept).toBe(900);
+      expect(response.relevance_cutoff.cutoff_score).toBe(22);
+    });
+
+    it('declines with the base count when no rung enumerates', async () => {
+      plan = {
+        matched: 27452,
+        topScore: 100,
+        survivors: 1500,
+        countsByMinScore: { 20: 1500, 25: 1400, 30: 1300, 40: 1200, 50: 1100 },
+      };
+      const response = await run();
+
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: false,
+        reason: 'cut_too_large',
+        candidates_examined: 1500,
+      });
     });
   });
 });

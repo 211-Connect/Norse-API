@@ -67,7 +67,9 @@ const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
   'Opt-in trimming of low-relevance results (hybrid search only; ignored for ' +
   'other query types). `off` (default) returns the full matched set and leaves ' +
   'the response document unchanged. `on` keeps results scoring at least a ' +
-  'fifth of the top score, and **returns everything when the scores are too ' +
+  'fraction of the top score — 0.2 of the top, tightened stepwise (up to 0.5) ' +
+  'when more than 1,000 results would survive, and never less than the top-20 ' +
+  "results' own scores — and **returns everything when the scores are too " +
   'flat for that to remove anything meaningful** — a uniformly weak result set ' +
   'is reported as such rather than cut arbitrarily. The cut is computed on ' +
   'semantic and lexical relevance only: proximity still filters and ranks, but ' +
