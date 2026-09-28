@@ -521,7 +521,7 @@ describe('services search parity with the Mongo record source', () => {
         service.facets({ resourceWriterIds: writers }),
       ).resolves.toEqual({
         ...mongoListFilterOptions(writers),
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
     },
   );
@@ -608,9 +608,15 @@ describe('text: name contains match (the deliberate change)', () => {
 });
 
 describe('exclusions over the fixture (ISS-1928)', () => {
+  // Fixture docs list the Region ids their service_area and sites intersect.
   const GEO: Record<string, Doc> = {
-    't:s1': { service_area: ['county:1'], locationTypes: ['physical'] },
+    't:s1': {
+      service_area: ['county:1'],
+      locationPoints: ['county:1'],
+      locationTypes: ['physical'],
+    },
     't:s2': { service_area: ['county:2'], locationTypes: ['physical'] },
+    't:s0': { locationPoints: ['county:3'], locationTypes: ['physical'] },
     'v:t3': { service_area: ['county:1', 'state:X'] },
     'w:u1': { locationTypes: ['virtual'] },
     't:s7': { service_area: ['county:2'], locationTypes: ['virtual'] },
@@ -618,37 +624,63 @@ describe('exclusions over the fixture (ISS-1928)', () => {
   const docs = FIXTURE.map((d) => ({ ...d, ...GEO[d._id as string] }));
   const writers = [A, B, C];
 
-  interface Exclude {
-    serviceIds?: string[];
+  interface Rule {
     taxonomyCodes?: string[];
     regionIds?: string[];
+    statuses?: string[];
+    virtual?: 'only' | 'exclude';
+  }
+  interface Exclude {
+    serviceIds?: string[];
+    rules?: Rule[];
   }
 
+  const list = (doc: Doc, field: string) =>
+    (doc[field] as string[] | undefined) ?? [];
+  const anyOf = (wanted: string[] | undefined, has: (v: string) => boolean) =>
+    (wanted ?? []).length === 0 || wanted!.some(has);
+
   /** Stated independently of the query builder. */
-  const excludedBy = (doc: Doc, ex: Exclude) => {
-    const area = (doc.service_area as string[] | undefined) ?? [];
-    const virtualEverywhere =
-      area.length === 0 &&
-      ((doc.locationTypes as string[] | undefined) ?? []).includes('virtual');
-    return (
-      (ex.serviceIds ?? []).includes(doc.serviceId as string) ||
-      ((doc.taxonomyPath as string[] | undefined) ?? []).some((c) =>
-        (ex.taxonomyCodes ?? []).includes(c),
-      ) ||
-      (ex.regionIds ?? []).some((r) => area.includes(r) || virtualEverywhere)
-    );
-  };
+  const ruleMatches = (doc: Doc, rule: Rule) =>
+    anyOf(rule.taxonomyCodes, (c) => list(doc, 'taxonomyPath').includes(c)) &&
+    anyOf(rule.statuses, (s) => doc.status === s) &&
+    anyOf(
+      rule.regionIds,
+      (r) =>
+        list(doc, 'service_area').includes(r) ||
+        list(doc, 'locationPoints').includes(r),
+    ) &&
+    (rule.virtual === undefined ||
+      list(doc, 'locationTypes').includes(
+        rule.virtual === 'only' ? 'virtual' : 'physical',
+      ));
+  const excludedBy = (doc: Doc, ex: Exclude) =>
+    (ex.serviceIds ?? []).includes(doc.serviceId as string) ||
+    (ex.rules ?? []).some((rule) => ruleMatches(doc, rule));
 
   const CASES: [string, Exclude][] = [
     ['services', { serviceIds: ['s1', 't1', 'no-such-service'] }],
-    ['a taxonomy node and its descendants', { taxonomyCodes: ['BD-1800'] }],
     [
-      'a Region, with Virtual Services that serve everywhere',
-      { regionIds: ['county:1'] },
+      'a taxonomy node and its descendants',
+      { rules: [{ taxonomyCodes: ['BD-1800'] }] },
     ],
     [
-      'all three at once',
-      { serviceIds: ['t2'], taxonomyCodes: ['BD-18'], regionIds: ['county:2'] },
+      'Regions, by Service Area or by site',
+      { rules: [{ regionIds: ['county:1', 'county:3'] }] },
+    ],
+    [
+      'criteria ANDed inside one rule',
+      { rules: [{ taxonomyCodes: ['BD-1800'], statuses: ['inactive'] }] },
+    ],
+    [
+      'services and rules ORed',
+      {
+        serviceIds: ['t2'],
+        rules: [
+          { taxonomyCodes: ['BD-1800'], statuses: ['active', 'closed'] },
+          { regionIds: ['county:2'], virtual: 'only' },
+        ],
+      },
     ],
   ];
 
@@ -680,6 +712,29 @@ describe('exclusions over the fixture (ISS-1928)', () => {
     },
   );
 
+  it('narrows a rule by each criterion it adds', async () => {
+    const { service } = serviceOver(docs);
+    const taxonomyOnly = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'] }],
+    });
+    const andStatus = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'], statuses: ['inactive'] }],
+    });
+    expect(andStatus).toContain('t:s1');
+    expect(taxonomyOnly).not.toContain('t:s1');
+    expect(andStatus).not.toContain('t:s0');
+  });
+
+  it('never takes out a Virtual Service that serves everywhere by Region', async () => {
+    const { service } = serviceOver(docs);
+    const after = await idsOf(service, {
+      rules: [{ regionIds: ['county:1', 'county:2', 'county:3', 'state:X'] }],
+    });
+    expect(after).toContain('w:u1');
+    expect(after).not.toContain('t:s7');
+    expect(after).not.toContain('t:s0');
+  });
+
   it.each(CASES)(
     'facet counts drop by exactly the excluded records: %s',
     async (_label, exclude) => {
@@ -705,8 +760,12 @@ describe('exclusions over the fixture (ISS-1928)', () => {
       });
       expect(appliedExclusions).toEqual({
         serviceIds: exclude.serviceIds ?? [],
-        taxonomyCodes: exclude.taxonomyCodes ?? [],
-        regionIds: exclude.regionIds ?? [],
+        rules: (exclude.rules ?? []).map((rule) => ({
+          taxonomyCodes: rule.taxonomyCodes ?? [],
+          regionIds: rule.regionIds ?? [],
+          statuses: rule.statuses ?? [],
+          virtual: rule.virtual ?? null,
+        })),
       });
     },
   );

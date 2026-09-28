@@ -60,37 +60,61 @@ over one fixture and compares the results.
   }
   ```
 - **Exclusions** (ISS-1928, for ServiceNet's Withholding — its ADR 0022).
-  `exclude` takes `serviceIds` (max 1,000), `taxonomyCodes` (max 100) and
-  `regionIds` (max 20), all optional. A service matching any item is left
-  out of the results, the total and every facet count, through `must_not`.
-  Each item excludes exactly what the positive clause selects:
-  - `serviceIds` match `serviceId` exactly, across the whole writer set, so
-    an id two writers share is excluded for both.
-  - `taxonomyCodes` match the expanded `taxonomyPath`, so a node excludes its
-    descendants.
-  - `regionIds` exclude what `filter.geography.regionIds` would select under
-    the defaults (`match: serves`, `virtual: all`): a `service_area`
-    intersecting the indexed Region shape, **and** every Virtual Service with
-    no `service_area`, which serves every Region. They are checked in the same
-    `mget` as the geography Regions; an unknown one is 400.
+  `exclude` takes hand-picked `serviceIds` and Record Criteria `rules`, both
+  optional. A service listed, or matching **any** rule, is left out of the
+  results, the total and every facet count, through `must_not`.
+  - `serviceIds` (max 1,000, `SERVICES_EXCLUDE_MAX_SERVICE_IDS`) match
+    `serviceId` exactly, across the whole writer set, so an id two writers
+    share is excluded for both. The cap is provisional: how a large set of
+    withheld ids reaches Norse is not settled.
+  - `rules` (max 50): each takes `taxonomyCodes` (max 100), `regionIds`
+    (max 20), `statuses` (max 100) and `virtual` (`only` | `exclude`). The
+    criteria given are AND'ed; each list matches any of its items. A rule with
+    no criteria (absent or only empty lists, no `virtual`) is 400, since it
+    would exclude everything.
+    - `taxonomyCodes` match the expanded `taxonomyPath`, so a node covers its
+      descendants; `statuses` match `status` exactly; `virtual` is
+      `filter.virtual`'s clause.
+    - `regionIds` match a `service_area` intersecting the Region **or** a
+      `locationPoints` site inside it — but **never** a Virtual Service with
+      no `service_area`. Such a service serves every Region (ADR 0025) under
+      the positive filter; excluding a Region must not take it out. Excluded
+      Regions are checked in the same `mget` as the geography Regions; an
+      unknown one is 400.
 
-  Both responses carry `appliedExclusions` (`serviceIds`, `taxonomyCodes`,
-  `regionIds`), de-duplicated, with empty lists when nothing was excluded.
-  **It is the confirmation, and callers must require it.** The global
+  Both responses carry `appliedExclusions`: `serviceIds` de-duplicated, and
+  `rules` one per rule sent, in the order sent, each with every list present
+  (de-duplicated, `[]` when absent) and `virtual` `null` when absent. **It is
+  the confirmation, and callers must require it.** The global
   `ValidationPipe` runs with `whitelist: false`, so a Norse-API older than
   this change ignores `exclude` and answers 200 with the excluded records.
   ServiceNet refuses any response to an excluding request that does not echo
-  every exclusion it sent. Exclusions are part of the cursor fingerprint and
-  the shard preference.
+  every serviceId it sent and every rule exactly. Exclusions are part of the
+  cursor fingerprint and the shard preference, independent of the order of
+  rules and of the items in their lists.
 
   ```json
   {
     "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
     "exclude": {
       "serviceIds": ["svc-1"],
-      "taxonomyCodes": ["BD-1800"],
-      "regionIds": ["county:29095"]
+      "rules": [
+        { "taxonomyCodes": ["BD-1800"], "statuses": ["inactive"] },
+        { "regionIds": ["county:29095"], "virtual": "exclude" }
+      ]
     }
+  }
+  ```
+
+  echoes
+
+  ```json
+  {
+    "serviceIds": ["svc-1"],
+    "rules": [
+      { "taxonomyCodes": ["BD-1800"], "regionIds": [], "statuses": ["inactive"], "virtual": null },
+      { "taxonomyCodes": [], "regionIds": ["county:29095"], "statuses": [], "virtual": "exclude" }
+    ]
   }
   ```
 - **Order without text.** Results are sorted by `name.raw` ascending with a

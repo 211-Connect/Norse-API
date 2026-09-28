@@ -18,6 +18,7 @@ import {
   ServiceListItemDto,
   ServicesAppliedExclusionsDto,
   ServicesExclusionDto,
+  ServicesExclusionRuleDto,
   ServicesFacetsRequestDto,
   ServicesFacetsResponseDto,
   ServicesScopeFilterDto,
@@ -29,6 +30,7 @@ import { RegionService, unknownRegionsError } from '../../region/internal';
 import {
   SERVICE_LIST_SOURCE_FIELDS,
   SERVICES_INDEX,
+  ExclusionRule,
   GeoPoint,
   ServiceFilterInput,
   buildServiceFilter,
@@ -278,8 +280,7 @@ function scopeFilterInput(request: {
     resourceWriterIds: request.resourceWriterIds,
     exclude: {
       serviceIds: distinct(request.exclude?.serviceIds),
-      taxonomyCodes: distinct(request.exclude?.taxonomyCodes),
-      regionIds: distinct(request.exclude?.regionIds),
+      rules: (request.exclude?.rules ?? []).map(exclusionRule),
     },
     virtual: request.filter?.virtual,
     match: request.filter?.match,
@@ -296,21 +297,47 @@ const distinct = (values: readonly string[] | undefined): string[] => [
   ...new Set(values ?? []),
 ];
 
+function exclusionRule(
+  rule: ServicesExclusionRuleDto,
+  index: number,
+): ExclusionRule {
+  const normalized: ExclusionRule = {
+    taxonomyCodes: distinct(rule.taxonomyCodes),
+    regionIds: distinct(rule.regionIds),
+    statuses: distinct(rule.statuses),
+    virtual: rule.virtual ?? null,
+  };
+  const { taxonomyCodes, regionIds, statuses, virtual } = normalized;
+  if (
+    taxonomyCodes.length + regionIds.length + statuses.length === 0 &&
+    virtual === null
+  ) {
+    throw new BadRequestException(
+      `exclude.rules[${index}] has no criteria, so it would exclude every record`,
+    );
+  }
+  return normalized;
+}
+
 /** Read back from the query input, so the echo is what the clauses were built from. */
 function appliedExclusions(
   input: ServiceFilterInput,
 ): ServicesAppliedExclusionsDto {
   return {
     serviceIds: [...(input.exclude?.serviceIds ?? [])],
-    taxonomyCodes: [...(input.exclude?.taxonomyCodes ?? [])],
-    regionIds: [...(input.exclude?.regionIds ?? [])],
+    rules: (input.exclude?.rules ?? []).map((r) => ({
+      taxonomyCodes: [...r.taxonomyCodes],
+      regionIds: [...r.regionIds],
+      statuses: [...r.statuses],
+      virtual: r.virtual,
+    })),
   };
 }
 
 function regionsToCheck(input: ServiceFilterInput): string[] {
   return distinct([
     ...(input.regionIds ?? []),
-    ...(input.exclude?.regionIds ?? []),
+    ...(input.exclude?.rules.flatMap((r) => r.regionIds) ?? []),
   ]);
 }
 

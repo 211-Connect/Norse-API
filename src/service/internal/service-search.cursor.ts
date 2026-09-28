@@ -38,8 +38,16 @@ const FINGERPRINT_PARTS: {
   resourceWriterIds: (q) => asSet(q.resourceWriterIds),
   exclude: (q) => [
     asSet(q.exclude?.serviceIds),
-    asSet(q.exclude?.taxonomyCodes),
-    asSet(q.exclude?.regionIds),
+    asSet(
+      q.exclude?.rules.map((r) =>
+        JSON.stringify([
+          asSet(r.taxonomyCodes),
+          asSet(r.regionIds),
+          asSet(r.statuses),
+          r.virtual,
+        ]),
+      ),
+    ),
   ],
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),

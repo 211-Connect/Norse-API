@@ -1,10 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  RULE_VIRTUAL_MODES,
+  RuleVirtualMode,
+} from './services-search-request.dto';
 
-/** The exclusions applied, de-duplicated; empty lists when none were sent. */
-export class ServicesAppliedExclusionsDto {
-  @ApiProperty({ type: [String] }) serviceIds: string[];
+/** A rule as applied: de-duplicated lists, empty when absent. */
+export class ServicesAppliedExclusionRuleDto {
   @ApiProperty({ type: [String] }) taxonomyCodes: string[];
   @ApiProperty({ type: [String] }) regionIds: string[];
+  @ApiProperty({ type: [String] }) statuses: string[];
+  @ApiProperty({ enum: RULE_VIRTUAL_MODES, nullable: true })
+  virtual: RuleVirtualMode | null;
+}
+
+/** The exclusions applied; rules in the order sent, one per rule sent. */
+export class ServicesAppliedExclusionsDto {
+  @ApiProperty({ type: [String] }) serviceIds: string[];
+  @ApiProperty({ type: [ServicesAppliedExclusionRuleDto] })
+  rules: ServicesAppliedExclusionRuleDto[];
 }
 
 const APPLIED_EXCLUSIONS = {

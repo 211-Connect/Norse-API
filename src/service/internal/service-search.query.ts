@@ -4,7 +4,7 @@ import {
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { REGIONS_INDEX } from '../../region/internal';
-import { MatchMode, VirtualMode } from './dto';
+import { MatchMode, RuleVirtualMode, VirtualMode } from './dto';
 
 /**
  * The ES `services` index (ADR 0023). Filters mirror ServiceNet's Mongo
@@ -70,11 +70,18 @@ export interface GeoPoint {
 export const geoPointKey = ({ lat, lng, radiusMiles }: GeoPoint): string =>
   `${lat},${lng},${radiusMiles}`;
 
-/** What is taken out of the scope; a service matching any item is excluded. */
-export interface ServiceExclusions {
-  serviceIds: readonly string[];
+/** Criteria AND'ed; an empty list places no constraint. */
+export interface ExclusionRule {
   taxonomyCodes: readonly string[];
   regionIds: readonly string[];
+  statuses: readonly string[];
+  virtual: RuleVirtualMode | null;
+}
+
+/** A service listed or matching any rule is excluded. */
+export interface ServiceExclusions {
+  serviceIds: readonly string[];
+  rules: readonly ExclusionRule[];
 }
 
 export interface ServiceFilterInput {
@@ -118,14 +125,7 @@ function servesClause(
   virtual: VirtualMode | undefined,
 ): QueryDslQueryContainer {
   const serves: QueryDslQueryContainer[] = [
-    ...regionIds.map((id) => ({
-      geo_shape: {
-        [SERVICE_AREA_FIELD]: {
-          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-          relation: 'intersects' as const,
-        },
-      },
-    })),
+    ...regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
     ...points.map(({ lat, lng, radiusMiles }) => ({
       geo_shape: {
         [SERVICE_AREA_FIELD]: {
@@ -143,20 +143,25 @@ function servesClause(
   return { bool: { should: serves, minimum_should_match: 1 } };
 }
 
+/** ES reads the Region's shape from `regions` by id. */
+function regionShape(field: string, id: string): QueryDslQueryContainer {
+  return {
+    geo_shape: {
+      [field]: {
+        indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+        relation: 'intersects',
+      },
+    },
+  };
+}
+
 /** A physical site inside a Region's shape or within a point's radius. */
 function locatedClauses(
   regionIds: readonly string[],
   points: readonly GeoPoint[],
 ): QueryDslQueryContainer[] {
   return [
-    ...regionIds.map((id) => ({
-      geo_shape: {
-        [LOCATION_POINTS_FIELD]: {
-          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-          relation: 'intersects' as const,
-        },
-      },
-    })),
+    ...regionIds.map((id) => regionShape(LOCATION_POINTS_FIELD, id)),
     ...points.map(({ lat, lng, radiusMiles }) => ({
       geo_distance: {
         distance: `${radiusMiles}mi`,
@@ -248,26 +253,44 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   return { filter, must_not };
 }
 
-/**
- * Each clause is the positive one negated, so an exclusion takes out exactly
- * what the same filter would select. A Region under the defaults (serves, virtual
- * all) therefore also takes out Virtual Services with no Service Area.
- */
 function exclusionClauses(
   exclude: ServiceExclusions | undefined,
 ): QueryDslQueryContainer[] {
   if (!exclude) return [];
-  const clauses: QueryDslQueryContainer[] = [];
+  const clauses = exclude.rules.map(ruleClause);
   if (exclude.serviceIds.length > 0) {
-    clauses.push({ terms: { serviceId: [...exclude.serviceIds] } });
-  }
-  if (exclude.taxonomyCodes.length > 0) {
-    clauses.push({ terms: { taxonomyPath: [...exclude.taxonomyCodes] } });
-  }
-  if (exclude.regionIds.length > 0) {
-    clauses.push(servesClause(exclude.regionIds, [], 'all'));
+    clauses.unshift({ terms: { serviceId: [...exclude.serviceIds] } });
   }
   return clauses;
+}
+
+/**
+ * A Region takes out services serving it or sited in it, but not the Virtual
+ * Services that serve everywhere (ADR 0025): withholding a Region must not
+ * withhold every such service from every partner.
+ */
+function ruleClause(rule: ExclusionRule): QueryDslQueryContainer {
+  const filter: QueryDslQueryContainer[] = [];
+  if (rule.taxonomyCodes.length > 0) {
+    filter.push({ terms: { taxonomyPath: [...rule.taxonomyCodes] } });
+  }
+  if (rule.statuses.length > 0) {
+    filter.push({ terms: { status: [...rule.statuses] } });
+  }
+  if (rule.regionIds.length > 0) {
+    filter.push({
+      bool: {
+        should: [
+          ...rule.regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
+          ...locatedClauses(rule.regionIds, []),
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  }
+  const virtual = virtualClause(rule.virtual ?? undefined);
+  if (virtual) filter.push(virtual);
+  return { bool: { filter } };
 }
 
 /** Escapes a user string for a `wildcard` query: `\\` first, then `*` and `?`. */

@@ -120,7 +120,7 @@ describe('ServiceSearchService', () => {
         total: 0,
         limit: 50,
         nextCursor: null,
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -501,7 +501,7 @@ describe('ServiceSearchService', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -579,7 +579,7 @@ describe('ServiceSearchService', () => {
             synthesized: false,
           },
         ],
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
     });
 
@@ -1084,15 +1084,47 @@ describe('ServiceSearchService', () => {
     });
   });
   describe('exclusions (ISS-1928)', () => {
+    const areaOrSite = (...ids: string[]) => ({
+      bool: {
+        should: [
+          ...regionClause(...ids).bool.should,
+          ...ids.map((id) => ({
+            geo_shape: {
+              locationPoints: {
+                indexed_shape: { index: 'regions', id, path: 'geometry' },
+                relation: 'intersects',
+              },
+            },
+          })),
+        ],
+        minimum_should_match: 1,
+      },
+    });
     const exclude = {
       serviceIds: ['s1', 's2', 's1'],
-      taxonomyCodes: ['BD-1800'],
-      regionIds: ['county:29510'],
+      rules: [
+        { taxonomyCodes: ['BD-1800', 'BD-1800'], statuses: ['inactive'] },
+        { regionIds: ['county:29510'], virtual: 'exclude' as const },
+      ],
     };
     const exclusionClauses = [
       { terms: { serviceId: ['s1', 's2'] } },
-      { terms: { taxonomyPath: ['BD-1800'] } },
-      servesClause('county:29510'),
+      {
+        bool: {
+          filter: [
+            { terms: { taxonomyPath: ['BD-1800'] } },
+            { terms: { status: ['inactive'] } },
+          ],
+        },
+      },
+      {
+        bool: {
+          filter: [
+            areaOrSite('county:29510'),
+            { term: { locationTypes: 'physical' } },
+          ],
+        },
+      },
     ];
     const baseMustNot = [
       { term: { isCanonicalPublication: false } },
@@ -1100,12 +1132,24 @@ describe('ServiceSearchService', () => {
     ];
     const applied = {
       serviceIds: ['s1', 's2'],
-      taxonomyCodes: ['BD-1800'],
-      regionIds: ['county:29510'],
+      rules: [
+        {
+          taxonomyCodes: ['BD-1800'],
+          regionIds: [],
+          statuses: ['inactive'],
+          virtual: null,
+        },
+        {
+          taxonomyCodes: [],
+          regionIds: ['county:29510'],
+          statuses: [],
+          virtual: 'exclude',
+        },
+      ],
     };
-    const noneApplied = { serviceIds: [], taxonomyCodes: [], regionIds: [] };
+    const noneApplied = { serviceIds: [], rules: [] };
 
-    it('takes services, taxonomy codes and Regions out of the search with must_not', async () => {
+    it('excludes listed services and every rule, AND within a rule, OR across them', async () => {
       await service.search({ resourceWriterIds: [WRITER_A], exclude });
       const { query } = lastRequest();
       expect(query.bool.must_not).toEqual([
@@ -1118,6 +1162,18 @@ describe('ServiceSearchService', () => {
       ]);
     });
 
+    it('excludes a Region by Service Area or site, never by the global-virtual branch', async () => {
+      await service.search({
+        resourceWriterIds: [WRITER_A],
+        exclude: { rules: [{ regionIds: ['county:29510', 'state:MO'] }] },
+      });
+      const [, , regionRule] = lastRequest().query.bool.must_not;
+      expect(regionRule).toEqual({
+        bool: { filter: [areaOrSite('county:29510', 'state:MO')] },
+      });
+      expect(JSON.stringify(regionRule)).not.toContain('"exists"');
+    });
+
     it('takes the same records out of the facet counts', async () => {
       search.mockResolvedValue({ aggregations: {} });
       await service.facets({ resourceWriterIds: [WRITER_A], exclude });
@@ -1127,7 +1183,7 @@ describe('ServiceSearchService', () => {
       ]);
     });
 
-    it('confirms the exclusions it applied on search and facets', async () => {
+    it('confirms the services and rules it applied, in the order sent, on search and facets', async () => {
       const page = await service.search({
         resourceWriterIds: [WRITER_A],
         exclude,
@@ -1155,7 +1211,7 @@ describe('ServiceSearchService', () => {
     it('adds no clause and confirms none without exclusions', async () => {
       const page = await service.search({
         resourceWriterIds: [WRITER_A],
-        exclude: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        exclude: { serviceIds: [], rules: [] },
       });
       expect(lastRequest().query.bool.must_not).toEqual(baseMustNot);
       expect(page.appliedExclusions).toEqual(noneApplied);
@@ -1166,16 +1222,41 @@ describe('ServiceSearchService', () => {
       expect(mget).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['no criteria', {}],
+      ['only empty lists', { taxonomyCodes: [], regionIds: [], statuses: [] }],
+    ])(
+      'rejects a rule with %s, which would exclude everything',
+      async (_label, rule) => {
+        const request = {
+          resourceWriterIds: [WRITER_A],
+          exclude: { rules: [{ statuses: ['active'] }, rule] },
+        };
+        await expect(service.search(request)).rejects.toThrow(
+          'exclude.rules[1] has no criteria',
+        );
+        await expect(service.facets(request)).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(search).not.toHaveBeenCalled();
+      },
+    );
+
     it('checks excluded Regions exist, together with the geography ones', async () => {
       await service.search({
         resourceWriterIds: [WRITER_A],
         filter: { geography: { regionIds: ['state:MO'] } },
-        exclude: { regionIds: ['county:29510', 'state:MO'] },
+        exclude: {
+          rules: [
+            { regionIds: ['county:29510', 'state:MO'] },
+            { regionIds: ['zip:63110'], statuses: ['active'] },
+          ],
+        },
       });
       expect(mget).toHaveBeenCalledTimes(1);
       expect(mget).toHaveBeenCalledWith({
         index: 'regions',
-        ids: ['state:MO', 'county:29510'],
+        ids: ['state:MO', 'county:29510', 'zip:63110'],
         _source: false,
       });
     });
@@ -1184,22 +1265,20 @@ describe('ServiceSearchService', () => {
       mget.mockResolvedValue({
         docs: [{ _index: 'regions', _id: 'zip:00000', found: false }],
       });
+      const exclude = { rules: [{ regionIds: ['zip:00000'] }] };
       await expect(
-        service.search({
-          resourceWriterIds: [WRITER_A],
-          exclude: { regionIds: ['zip:00000'] },
-        }),
+        service.search({ resourceWriterIds: [WRITER_A], exclude }),
       ).rejects.toThrow('Unknown Region id(s): zip:00000');
       await expect(
-        service.facets({
-          resourceWriterIds: [WRITER_A],
-          exclude: { regionIds: ['zip:00000'] },
-        }),
+        service.facets({ resourceWriterIds: [WRITER_A], exclude }),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(search).not.toHaveBeenCalled();
     });
 
-    it('rejects a cursor replayed with other exclusions', async () => {
+    it.each([
+      ['other services', { serviceIds: ['s2'] }],
+      ['another rule', { rules: [{ statuses: ['inactive'] }] }],
+    ])('rejects a cursor replayed with %s', async (_label, other) => {
       search.mockResolvedValueOnce({
         hits: {
           total: { value: 2 },
@@ -1211,14 +1290,18 @@ describe('ServiceSearchService', () => {
       });
       const { nextCursor } = await service.search({
         resourceWriterIds: [WRITER_A],
-        exclude: { serviceIds: ['s1'] },
+        exclude: { serviceIds: ['s1'], rules: [{ statuses: ['active'] }] },
         limit: 1,
       });
       search.mockClear();
       await expect(
         service.search({
           resourceWriterIds: [WRITER_A],
-          exclude: { serviceIds: ['s2'] },
+          exclude: {
+            serviceIds: ['s1'],
+            rules: [{ statuses: ['active'] }],
+            ...other,
+          },
           cursor: nextCursor!,
         }),
       ).rejects.toBeInstanceOf(BadRequestException);

@@ -15,8 +15,20 @@ const FULL: Required<CursorQuery> = {
   resourceWriterIds: ['writer-a', 'writer-b'],
   exclude: {
     serviceIds: ['s1', 's2'],
-    taxonomyCodes: ['LR'],
-    regionIds: ['state:KS'],
+    rules: [
+      {
+        taxonomyCodes: ['LR', 'BD'],
+        regionIds: [],
+        statuses: [],
+        virtual: null,
+      },
+      {
+        taxonomyCodes: [],
+        regionIds: ['state:KS'],
+        statuses: ['active'],
+        virtual: 'exclude',
+      },
+    ],
   },
   taxonomyCodes: ['BD-1800', 'LV-1000'],
   statuses: ['active', 'inactive'],
@@ -32,11 +44,7 @@ const FULL: Required<CursorQuery> = {
 
 const OTHER: Required<CursorQuery> = {
   resourceWriterIds: ['writer-c'],
-  exclude: {
-    serviceIds: ['s1'],
-    taxonomyCodes: ['LR'],
-    regionIds: ['state:KS'],
-  },
+  exclude: { serviceIds: ['s1'], rules: [] },
   taxonomyCodes: ['BD-18'],
   statuses: ['pending'],
   regionIds: ['zip:63110'],
@@ -76,30 +84,87 @@ describe('queryFingerprint', () => {
     expect(queryFingerprint(shuffled)).toBe(queryFingerprint(FULL));
   });
 
-  it.each(['serviceIds', 'taxonomyCodes', 'regionIds'] as const)(
-    'changes when excluded %s change, ignoring their order and repeats',
-    (key) => {
-      const values = FULL.exclude[key];
-      const reordered = {
-        ...FULL,
-        exclude: {
-          ...FULL.exclude,
-          [key]: [...values].reverse().concat(values[0]),
-        },
-      };
-      const dropped = { ...FULL, exclude: { ...FULL.exclude, [key]: [] } };
-      expect(queryFingerprint(reordered)).toBe(queryFingerprint(FULL));
-      expect(queryFingerprint(dropped)).not.toBe(queryFingerprint(FULL));
-    },
-  );
+  it('changes when excluded serviceIds change, ignoring their order and repeats', () => {
+    const ids = FULL.exclude.serviceIds;
+    const reordered = {
+      ...FULL,
+      exclude: {
+        ...FULL.exclude,
+        serviceIds: [...ids].reverse().concat(ids[0]),
+      },
+    };
+    const dropped = { ...FULL, exclude: { ...FULL.exclude, serviceIds: [] } };
+    expect(queryFingerprint(reordered)).toBe(queryFingerprint(FULL));
+    expect(queryFingerprint(dropped)).not.toBe(queryFingerprint(FULL));
+  });
+
+  it('ignores the order and repeats of rules and of the lists inside one', () => {
+    const [first, second] = FULL.exclude.rules;
+    const reordered = {
+      ...FULL,
+      exclude: {
+        ...FULL.exclude,
+        rules: [second, { ...first, taxonomyCodes: ['BD', 'LR', 'BD'] }, first],
+      },
+    };
+    expect(queryFingerprint(reordered)).toBe(queryFingerprint(FULL));
+    expect(shardPreference(reordered)).toBe(shardPreference(FULL));
+  });
+
+  it.each([
+    ['a criterion list', { taxonomyCodes: ['LR'] }],
+    ['a status', { statuses: ['active', 'inactive'] }],
+    ['a Region', { regionIds: ['state:MO'] }],
+    ['the virtual mode', { virtual: 'only' as const }],
+  ])('changes when a rule changes %s', (_label, change) => {
+    const [first, second] = FULL.exclude.rules;
+    const changed = {
+      ...FULL,
+      exclude: {
+        ...FULL.exclude,
+        rules: [first, { ...second, ...change }],
+      },
+    };
+    expect(queryFingerprint(changed)).not.toBe(queryFingerprint(FULL));
+  });
+
+  it('does not let two rules read as one, or one as two', () => {
+    const split = {
+      ...FULL,
+      exclude: {
+        serviceIds: [],
+        rules: [
+          { taxonomyCodes: ['LR'], regionIds: [], statuses: [], virtual: null },
+          {
+            taxonomyCodes: [],
+            regionIds: [],
+            statuses: ['active'],
+            virtual: null,
+          },
+        ],
+      },
+    };
+    const joined = {
+      ...FULL,
+      exclude: {
+        serviceIds: [],
+        rules: [
+          {
+            taxonomyCodes: ['LR'],
+            regionIds: [],
+            statuses: ['active'],
+            virtual: null,
+          },
+        ],
+      },
+    };
+    expect(queryFingerprint(split)).not.toBe(queryFingerprint(joined));
+  });
 
   it('treats absent exclusions as empty ones', () => {
     const bare: CursorQuery = { resourceWriterIds: ['writer-a'] };
     expect(
-      queryFingerprint({
-        ...bare,
-        exclude: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
-      }),
+      queryFingerprint({ ...bare, exclude: { serviceIds: [], rules: [] } }),
     ).toBe(queryFingerprint(bare));
   });
 

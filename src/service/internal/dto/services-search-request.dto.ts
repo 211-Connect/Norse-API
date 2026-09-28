@@ -23,16 +23,21 @@ export const SERVICES_SEARCH_MAX_WRITERS = 100;
 export const SERVICES_SEARCH_MAX_PLACES = 20;
 export const POINT_RADIUS_MIN_MILES = 0.1;
 export const POINT_RADIUS_MAX_MILES = 100;
-export const SERVICES_EXCLUDE_MAX_SERVICES = 1000;
+/** Provisional: how a large set of withheld ids reaches Norse is undecided. */
+export const SERVICES_EXCLUDE_MAX_SERVICE_IDS = 1000;
+export const SERVICES_EXCLUDE_MAX_RULES = 50;
 export const SERVICES_EXCLUDE_MAX_TAXONOMY_CODES = 100;
 export const SERVICES_EXCLUDE_MAX_REGIONS = 20;
+export const SERVICES_EXCLUDE_MAX_STATUSES = 100;
 
 export const VIRTUAL_MODES = ['all', 'only', 'exclude'] as const;
+export const RULE_VIRTUAL_MODES = ['only', 'exclude'] as const;
 
 /** What ties a service to a Place (ADR 0025): its Service Area, or its sites. */
 export const MATCH_MODES = ['serves', 'located'] as const;
 export type MatchMode = (typeof MATCH_MODES)[number];
 export type VirtualMode = (typeof VIRTUAL_MODES)[number];
+export type RuleVirtualMode = (typeof RULE_VIRTUAL_MODES)[number];
 
 export class ServicesGeoPointDto {
   @ApiProperty({ minimum: -90, maximum: 90, example: 35.994 })
@@ -146,31 +151,18 @@ export class ServicesSearchFilterDto extends ServicesScopeFilterDto {
 }
 
 /**
- * Records taken out of the scope, as ServiceNet's Withholding needs (its ADR
- * 0022). A service matching any listed item is excluded; lists are OR'ed.
+ * One Record Criteria rule of a Withholding (ServiceNet ADR 0022). A service
+ * matches when it meets every criterion given; a list matches any of its
+ * items. A rule needs at least one criterion, or it would match everything.
  */
-export class ServicesExclusionDto {
-  @ApiProperty({
-    type: [String],
-    required: false,
-    default: [],
-    maxItems: SERVICES_EXCLUDE_MAX_SERVICES,
-    description:
-      'serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both.',
-  })
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_SERVICES)
-  @IsString({ each: true })
-  serviceIds?: string[];
-
+export class ServicesExclusionRuleDto {
   @ApiProperty({
     type: [String],
     required: false,
     default: [],
     maxItems: SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
     description:
-      'AIRS codes, matched as filter.taxonomyCodes is: exactly against the ancestor-expanded taxonomyPath, so a node excludes its descendants.',
+      'AIRS codes, matched as filter.taxonomyCodes is: exactly against the ancestor-expanded taxonomyPath, so a node matches its descendants.',
   })
   @IsOptional()
   @IsArray()
@@ -185,7 +177,7 @@ export class ServicesExclusionDto {
     maxItems: SERVICES_EXCLUDE_MAX_REGIONS,
     example: ['county:29510'],
     description:
-      'Region ids. Excludes exactly what filter.geography would select for the Region under the defaults (match serves, virtual all): a service_area intersecting it, and a Virtual Service with no service_area. An unknown id is 400.',
+      'Region ids. Matches a service whose service_area intersects the Region or with a physical location inside it. Unlike filter.geography, never matches a Virtual Service with no service_area, which serves everywhere. An unknown id is 400.',
   })
   @IsOptional()
   @IsArray()
@@ -193,6 +185,64 @@ export class ServicesExclusionDto {
   @IsString({ each: true })
   @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
   regionIds?: string[];
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_STATUSES,
+    description: 'Matched exactly against status, as filter.statuses is.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_STATUSES)
+  @IsString({ each: true })
+  statuses?: string[];
+
+  @ApiProperty({
+    enum: RULE_VIRTUAL_MODES,
+    required: false,
+    description:
+      'only: some location is virtual. exclude: some location is physical. Absent: either.',
+  })
+  @IsOptional()
+  @IsIn(RULE_VIRTUAL_MODES)
+  virtual?: RuleVirtualMode;
+}
+
+/**
+ * Records taken out of the scope, as ServiceNet's Withholding needs (its ADR
+ * 0022): a service listed in serviceIds or matching any rule is excluded.
+ */
+export class ServicesExclusionDto {
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_SERVICE_IDS,
+    description:
+      'Hand-picked serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_SERVICE_IDS)
+  @IsString({ each: true })
+  serviceIds?: string[];
+
+  @ApiProperty({
+    type: [ServicesExclusionRuleDto],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_RULES,
+    description:
+      "Record Criteria rules, OR'ed: criteria AND inside a rule. A rule with no criteria is 400.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_RULES)
+  @ValidateNested({ each: true })
+  @Type(() => ServicesExclusionRuleDto)
+  rules?: ServicesExclusionRuleDto[];
 }
 
 /**

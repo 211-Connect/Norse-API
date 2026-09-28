@@ -13,6 +13,12 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { ServiceSearchInternalModule } from './service-search.module';
+import {
+  SERVICES_EXCLUDE_MAX_REGIONS,
+  SERVICES_EXCLUDE_MAX_RULES,
+  SERVICES_EXCLUDE_MAX_SERVICE_IDS,
+  SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
+} from './dto';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -97,7 +103,7 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(paths).toContain('/published-control');
       expect(paths.filter((p) => p.includes('internal/services'))).toEqual([]);
       expect(JSON.stringify(res.body)).not.toMatch(
-        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|ServicesExclusion|ServicesAppliedExclusions/,
+        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|ServicesExclusion|ServicesAppliedExclusion/,
       );
     });
   });
@@ -119,7 +125,7 @@ describe('ServiceSearchController (internal/services)', () => {
         total: 0,
         limit: 10,
         nextCursor: null,
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
       expect(search).toHaveBeenCalledTimes(1);
     });
@@ -163,13 +169,31 @@ describe('ServiceSearchController (internal/services)', () => {
       [{ resourceWriterIds: ['w'], exclude: 's1' }],
       [{ resourceWriterIds: ['w'], exclude: { serviceIds: 's1' } }],
       [{ resourceWriterIds: ['w'], exclude: { serviceIds: [1] } }],
-      [{ resourceWriterIds: ['w'], exclude: { taxonomyCodes: 'BD' } }],
-      [{ resourceWriterIds: ['w'], exclude: { regionIds: ['St. Louis'] } }],
+      [{ resourceWriterIds: ['w'], exclude: { rules: { statuses: ['a'] } } }],
+      [{ resourceWriterIds: ['w'], exclude: { rules: [{}] } }],
+      [{ resourceWriterIds: ['w'], exclude: { rules: [{ statuses: [] }] } }],
+      [{ resourceWriterIds: ['w'], exclude: { rules: [{ statuses: [1] }] } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: { rules: [{ taxonomyCodes: 'BD' }] },
+        },
+      ],
+      [{ resourceWriterIds: ['w'], exclude: { rules: [{ virtual: 'all' }] } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: { rules: [{ regionIds: ['St. Louis'] }] },
+        },
+      ],
       [
         {
           resourceWriterIds: ['w'],
           exclude: {
-            serviceIds: Array.from({ length: 1001 }, (_, i) => `s${i}`),
+            serviceIds: Array.from(
+              { length: SERVICES_EXCLUDE_MAX_SERVICE_IDS + 1 },
+              (_, i) => `s${i}`,
+            ),
           },
         },
       ],
@@ -177,7 +201,40 @@ describe('ServiceSearchController (internal/services)', () => {
         {
           resourceWriterIds: ['w'],
           exclude: {
-            regionIds: Array.from({ length: 21 }, (_, i) => `zip:${63100 + i}`),
+            rules: Array.from(
+              { length: SERVICES_EXCLUDE_MAX_RULES + 1 },
+              (_, i) => ({ statuses: [`s${i}`] }),
+            ),
+          },
+        },
+      ],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: {
+            rules: [
+              {
+                regionIds: Array.from(
+                  { length: SERVICES_EXCLUDE_MAX_REGIONS + 1 },
+                  (_, i) => `zip:${63100 + i}`,
+                ),
+              },
+            ],
+          },
+        },
+      ],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: {
+            rules: [
+              {
+                taxonomyCodes: Array.from(
+                  { length: SERVICES_EXCLUDE_MAX_TAXONOMY_CODES + 1 },
+                  (_, i) => `BD-${i}`,
+                ),
+              },
+            ],
           },
         },
       ],
@@ -230,20 +287,52 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(mget).not.toHaveBeenCalled();
     });
 
-    it('accepts exclusions and confirms them in the response', async () => {
-      const exclude = {
-        serviceIds: Array.from({ length: 1000 }, (_, i) => `s${i}`),
-        taxonomyCodes: ['BD-1800'],
-        regionIds: ['county:29510'],
-      };
+    it('accepts exclusions at their limits and confirms them in the response', async () => {
+      const serviceIds = Array.from(
+        { length: SERVICES_EXCLUDE_MAX_SERVICE_IDS },
+        (_, i) => `s${i}`,
+      );
+      const rules = [
+        {
+          taxonomyCodes: Array.from(
+            { length: SERVICES_EXCLUDE_MAX_TAXONOMY_CODES },
+            (_, i) => `BD-${i}`,
+          ),
+          statuses: ['inactive'],
+        },
+        {
+          regionIds: Array.from(
+            { length: SERVICES_EXCLUDE_MAX_REGIONS },
+            (_, i) => `zip:${63100 + i}`,
+          ),
+          virtual: 'only',
+        },
+        ...Array.from({ length: SERVICES_EXCLUDE_MAX_RULES - 2 }, (_, i) => ({
+          statuses: [`status-${i}`],
+        })),
+      ];
       const res = await request(app.getHttpServer())
         .post('/internal/services/search')
         .set('x-api-version', '1')
         .set('x-internal-api-key', INTERNAL_API_KEY)
-        .send({ resourceWriterIds: ['writer-a'], exclude })
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: { serviceIds, rules },
+        })
         .expect(200);
-      expect(res.body.appliedExclusions).toEqual(exclude);
-      expect(search.mock.calls[0][0].query.bool.must_not).toHaveLength(5);
+      expect(res.body.appliedExclusions).toEqual({
+        serviceIds,
+        rules: rules.map((rule) => ({
+          taxonomyCodes: [],
+          regionIds: [],
+          statuses: [],
+          virtual: null,
+          ...rule,
+        })),
+      });
+      expect(search.mock.calls[0][0].query.bool.must_not).toHaveLength(
+        2 + 1 + SERVICES_EXCLUDE_MAX_RULES,
+      );
     });
 
     it('accepts 20 Regions and a virtual mode', async () => {
@@ -340,8 +429,18 @@ describe('ServiceSearchController (internal/services)', () => {
         .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
-          exclude: { regionIds: ['x'] },
+          exclude: { rules: [{ regionIds: ['x'] }] },
         })
+        .expect(400);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('rejects a rule without criteria with 400', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/facets')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({ resourceWriterIds: ['writer-a'], exclude: { rules: [{}] } })
         .expect(400);
       expect(search).not.toHaveBeenCalled();
     });
@@ -354,13 +453,19 @@ describe('ServiceSearchController (internal/services)', () => {
         .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
-          exclude: { serviceIds: ['s1'] },
+          exclude: { serviceIds: ['s1'], rules: [{ statuses: ['inactive'] }] },
         })
         .expect(200);
       expect(res.body.appliedExclusions).toEqual({
         serviceIds: ['s1'],
-        taxonomyCodes: [],
-        regionIds: [],
+        rules: [
+          {
+            taxonomyCodes: [],
+            regionIds: [],
+            statuses: ['inactive'],
+            virtual: null,
+          },
+        ],
       });
     });
 
@@ -376,7 +481,7 @@ describe('ServiceSearchController (internal/services)', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
-        appliedExclusions: { serviceIds: [], taxonomyCodes: [], regionIds: [] },
+        appliedExclusions: { serviceIds: [], rules: [] },
       });
     });
   });
