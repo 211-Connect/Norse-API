@@ -2,13 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { Model } from 'mongoose';
 import {
   SharingWithheldService,
   SharingWithheldVersion,
 } from 'src/common/schemas/sharing-withholding.schema';
-import { WithholdingService } from './withholding.service';
+import {
+  MAX_WITHHELD_SERVICE_IDS_PER_REQUEST,
+  WITHHOLDING_CACHE_SERVICE_IDS,
+  WithholdingService,
+} from './withholding.service';
 
 type Doc = Record<string, unknown>;
 
@@ -30,11 +35,21 @@ function matches(doc: Doc, filter: Doc): boolean {
 }
 
 function fakeModel(docs: Doc[]) {
-  const query = (result: () => unknown) => ({
-    lean: () => ({ exec: async () => result() }),
-  });
+  const readPreferences: string[] = [];
+  const query = (result: () => unknown) => {
+    const q = {
+      read: (pref: string) => {
+        readPreferences.push(pref);
+        return q;
+      },
+      lean: () => q,
+      exec: async () => result(),
+    };
+    return q;
+  };
   return {
     docs,
+    readPreferences,
     find: jest.fn((filter: Doc) =>
       query(() => docs.filter((d) => matches(d, filter))),
     ),
@@ -168,7 +183,6 @@ describe('WithholdingService', () => {
     build([withheld('s1', 1)], [header(1, 1)]);
     await withholding.resolve([ref(1)]);
     await withholding.resolve([ref(1)]);
-    expect(versions.findOne).toHaveBeenCalledTimes(1);
     expect(services.find).toHaveBeenCalledTimes(1);
 
     services.docs.push(withheld('s2', 2));
@@ -176,6 +190,106 @@ describe('WithholdingService', () => {
     const [set] = await withholding.resolve([ref(2)]);
     expect(set.serviceIds).toEqual(['s1', 's2']);
     expect(services.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('confirms the header on every cache hit', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await withholding.resolve([ref(1)]);
+    await withholding.resolve([ref(1)]);
+    expect(versions.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads a cached version whose header count no longer matches (a restore or reconcile reused it)', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await withholding.resolve([ref(1)]);
+
+    services.docs.splice(0, 1, withheld('s7', 1), withheld('s8', 1));
+    versions.docs.splice(0, 1, header(1, 2));
+    const [set] = await withholding.resolve([ref(1)]);
+    expect(set.serviceIds).toEqual(['s7', 's8']);
+    expect(services.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 409 on a cache hit once the header has moved past the version', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await withholding.resolve([ref(1)]);
+    versions.docs.splice(0, 1, header(2, 1));
+    await expect(withholding.resolve([ref(1)])).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('fails closed when the reload after a count mismatch still does not add up', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await withholding.resolve([ref(1)]);
+    versions.docs.splice(0, 1, header(1, 3));
+    await expect(withholding.resolve([ref(1)])).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('reads the header and the services from the primary', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await withholding.resolve([ref(1)]);
+    expect(versions.readPreferences).toEqual(['primary']);
+    expect(services.readPreferences).toEqual(['primary']);
+  });
+
+  it('reads a cold Withholding once for concurrent requests', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    const sets = await Promise.all([
+      withholding.resolve([ref(1)]),
+      withholding.resolve([ref(1)]),
+      withholding.resolve([ref(1)]),
+    ]);
+    expect(sets.map(([set]) => set.serviceIds)).toEqual([
+      ['s1'],
+      ['s1'],
+      ['s1'],
+    ]);
+    expect(services.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers 422 before reading any services when the Withholdings hold too many ids', async () => {
+    const other = { ...header(1, 2), _id: 'x', ownerWriterId: 'writer-b' };
+    build([], [header(1, MAX_WITHHELD_SERVICE_IDS_PER_REQUEST - 1), other]);
+    const refused = withholding.resolve([
+      ref(1),
+      { agreementId: A, ownerWriterId: 'writer-b', version: 1 },
+    ]);
+    await expect(refused).rejects.toBeInstanceOf(UnprocessableEntityException);
+    await expect(refused).rejects.toThrow(
+      String(MAX_WITHHELD_SERVICE_IDS_PER_REQUEST),
+    );
+    expect(services.find).not.toHaveBeenCalled();
+  });
+
+  it('bounds the cache by the ids it holds, not only by entries', async () => {
+    const perSet = Math.floor(WITHHOLDING_CACHE_SERVICE_IDS / 2);
+    const owners = ['o1', 'o2', 'o3'];
+    const serviceDocs = owners.flatMap((owner) =>
+      Array.from({ length: perSet }, (_, i) => ({
+        ...withheld(`${owner}-s${i}`, 1),
+        ownerWriterId: owner,
+      })),
+    );
+    build(
+      serviceDocs,
+      owners.map((owner) => ({ ...header(1, perSet), ownerWriterId: owner })),
+    );
+    const refOf = (owner: string) => ({
+      agreementId: A,
+      ownerWriterId: owner,
+      version: 1,
+    });
+    for (const owner of owners) await withholding.resolve([refOf(owner)]);
+    expect(services.find).toHaveBeenCalledTimes(3);
+
+    await withholding.resolve([refOf('o3')]);
+    await withholding.resolve([refOf('o2')]);
+    expect(services.find).toHaveBeenCalledTimes(3);
+    await withholding.resolve([refOf('o1')]);
+    expect(services.find).toHaveBeenCalledTimes(4);
   });
 
   it('does not cache a refusal', async () => {

@@ -29,7 +29,12 @@ import {
 const MANY_SERVICE_IDS = 1500;
 
 function mongoQuery(result: unknown) {
-  return { lean: () => ({ exec: async () => result }) };
+  const query = {
+    read: () => query,
+    lean: () => query,
+    exec: async () => result,
+  };
+  return query;
 }
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';

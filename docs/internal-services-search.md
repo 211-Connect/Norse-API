@@ -181,10 +181,27 @@ null or `> V`, so a projection being written for V+1 leaves V readable.
 - the services read not adding up to the header's `serviceCount` — **503**:
   the projection is being rewritten.
 - MongoDB failing — **503**.
+- the named Withholdings together stating more than 65,536 services (their
+  headers' `serviceCount` summed; ES's default `index.max_terms_count`) —
+  **422**, before any service is read.
 
-Nothing is searched when a Withholding cannot be confirmed. A resolved set is
-cached in process by agreement, owner **and version** (64 sets), so a cached
-set can only answer for the version it was read at. The Withholding
+Both collections are read from the **primary** (`readPreference: 'primary'`).
+That is sound only while ServiceNet keeps its write order: it writes the
+header last, a lift sets `liftedVersion` > V, and an add sets `version` > V,
+so once a header names V the services readable at V are already in place and
+nothing later changes them. A secondary could serve a header ahead of its
+services; the primary cannot.
+
+Nothing is searched when a Withholding cannot be confirmed. The header is
+read on **every** request. A resolved set is cached in process by agreement,
+owner and version, and a cached set answers only while the header still names
+that version **and** its `serviceCount` equals the cached set's size; else
+the set is read again (and a mismatch after that is the 503 above). This
+catches a version reused after a Postgres restore or a `reconcile` rewrite
+when the count changed; a reused version with the same count and different
+ids is not detectable from the header. The cache holds at most 64 sets and
+131,072 ids in all, evicting the least recently used. Concurrent cold reads of
+one (agreement, owner, version) share one MongoDB read. The Withholding
 references (not their ids) join the cursor fingerprint and shard preference;
 a query without Withholdings fingerprints as before.
 
