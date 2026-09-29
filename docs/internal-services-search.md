@@ -65,11 +65,16 @@ over one fixture and compares the results.
   withheld by a named Withholding is left out of the results, the total and
   every facet count, through `must_not`.
   - `serviceIds` match `serviceId` exactly, across the whole writer set, so an
-    id two writers share is excluded for both. No cap since ISS-1938 (the
-    provisional 1,000 is gone): they are applied in `terms` clauses of at most
-    65,536 ids each (`WITHHELD_SERVICE_IDS_PER_CLAUSE`, ES's default
-    `index.max_terms_count`). ServiceNet no longer sends them; see
-    `withholdings`.
+    id two writers share is excluded for both. Each is at most 128
+    characters. No count cap since ISS-1938 (the provisional 1,000 is gone),
+    but the **request body** is capped: the internal services routes accept
+    up to **5 MB** of JSON (`src/service/internal/internal-services-body.ts`,
+    registered in `main.ts`; every other route keeps Express's 100 kB). That
+    is about 120,000 ids of 36 characters, or about 39,000 of 128; beyond it
+    the answer is a JSON **413** naming the limit. They are applied in
+    `terms` clauses of at most 65,536 ids each
+    (`WITHHELD_SERVICE_IDS_PER_CLAUSE`, ES's default `index.max_terms_count`).
+    ServiceNet no longer sends them; see `withholdings`.
   - `withholdings` (ISS-1938, max 100): `{ agreementId, ownerWriterId,
     version }`. Norse reads the owner's withheld services at exactly that
     version from MongoDB (below) and excludes them **only among that owner's

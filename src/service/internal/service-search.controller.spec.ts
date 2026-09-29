@@ -1,7 +1,10 @@
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
   INestApplication,
+  Post,
   ValidationPipe,
   VersioningType,
 } from '@nestjs/common';
@@ -13,6 +16,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { ServiceSearchInternalModule } from './service-search.module';
+import {
+  INTERNAL_SERVICES_BODY_LIMIT_BYTES,
+  useInternalServicesBodyLimit,
+} from './internal-services-body';
 import { getModelToken } from '@nestjs/mongoose';
 import {
   SharingWithheldService,
@@ -47,6 +54,12 @@ class PublishedControlController {
   ping() {
     return 'ok';
   }
+
+  @Post()
+  @HttpCode(200)
+  echo(@Body() body: unknown) {
+    return body;
+  }
 }
 
 describe('ServiceSearchController (internal/services)', () => {
@@ -78,6 +91,7 @@ describe('ServiceSearchController (internal/services)', () => {
 
     app = moduleRef.createNestApplication();
     // As main.ts configures them.
+    useInternalServicesBodyLimit(app);
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,
@@ -117,6 +131,58 @@ describe('ServiceSearchController (internal/services)', () => {
       .set('x-internal-api-key', INTERNAL_API_KEY)
       .send({ resourceWriterIds: [] })
       .expect(200);
+  });
+
+  describe('request body limit', () => {
+    /** 36-character ids serialise to 39 bytes each: quotes and a comma. */
+    const idsOfBytes = (bytes: number) =>
+      Array.from({ length: Math.ceil(bytes / 39) }, (_, i) =>
+        String(i).padStart(36, '0'),
+      );
+    const post = (path: string, body: object) =>
+      request(app.getHttpServer())
+        .post(path)
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send(body);
+
+    it.each(['search', 'facets'])(
+      'accepts a %s body well past the default 100 kB',
+      async (route) => {
+        const serviceIds = idsOfBytes(4 * 1024 * 1024);
+        const res = await post(`/internal/services/${route}`, {
+          resourceWriterIds: ['writer-a'],
+          exclude: { serviceIds },
+        }).expect(200);
+        expect(res.body.appliedExclusions.serviceIds).toHaveLength(
+          serviceIds.length,
+        );
+      },
+    );
+
+    it('answers 413 with the limit stated beyond it', async () => {
+      const body = {
+        resourceWriterIds: ['writer-a'],
+        exclude: {
+          serviceIds: idsOfBytes(INTERNAL_SERVICES_BODY_LIMIT_BYTES + 1024),
+        },
+      };
+      expect(JSON.stringify(body).length).toBeGreaterThan(
+        INTERNAL_SERVICES_BODY_LIMIT_BYTES,
+      );
+      const res = await post('/internal/services/search', body).expect(413);
+      expect(res.body).toMatchObject({ statusCode: 413 });
+      expect(res.body.message).toContain('5 MB');
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('leaves the default limit, and JSON parsing, on every other route', async () => {
+      const small = await post('/published-control', { a: 1 }).expect(200);
+      expect(small.body).toEqual({ a: 1 });
+      await post('/published-control', {
+        serviceIds: idsOfBytes(200 * 1024),
+      }).expect(413);
+    });
   });
 
   describe('published OpenAPI document', () => {
@@ -194,6 +260,12 @@ describe('ServiceSearchController (internal/services)', () => {
       [{ resourceWriterIds: ['w'], exclude: 's1' }],
       [{ resourceWriterIds: ['w'], exclude: { serviceIds: 's1' } }],
       [{ resourceWriterIds: ['w'], exclude: { serviceIds: [1] } }],
+      [
+        {
+          resourceWriterIds: ['w'],
+          exclude: { serviceIds: ['s'.repeat(129)] },
+        },
+      ],
       [{ resourceWriterIds: ['w'], exclude: { rules: { statuses: ['a'] } } }],
       [{ resourceWriterIds: ['w'], exclude: { rules: [{}] } }],
       [{ resourceWriterIds: ['w'], exclude: { rules: [{ statuses: [] }] } }],

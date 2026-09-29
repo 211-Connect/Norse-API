@@ -264,11 +264,12 @@ export class ServicesExclusionDto {
     required: false,
     default: [],
     description:
-      'serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both. No cap; a Withholding sends its hand-picked services by reference instead (withholdings).',
+      'serviceIds (each at most 128 characters), matched exactly across the whole writer set: a serviceId two writers share is excluded for both. No count cap, but the request body is limited to 5 MB (413 beyond it): about 120,000 ids of 36 characters. A Withholding sends its hand-picked services by reference instead (withholdings).',
   })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @MaxLength(128, { each: true })
   serviceIds?: string[];
 
   @ApiProperty({
