@@ -91,7 +91,7 @@ export class ServiceSearchService {
   ): Promise<ServicesSearchResponseDto> {
     const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
     const cursorQuery: CursorQuery = {
-      ...(await this.scopeFilterInput(request)),
+      ...(await this.resolveScopeFilterInput(request)),
       taxonomyCodes: request.filter?.taxonomyCodes,
       statuses: request.filter?.statuses,
       text: request.text,
@@ -153,7 +153,7 @@ export class ServiceSearchService {
   async facets(
     request: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {
-    const input = await this.scopeFilterInput(request);
+    const input = await this.resolveScopeFilterInput(request);
     const scope = buildServiceFilter(input);
     if (scope === null) {
       return {
@@ -262,7 +262,7 @@ export class ServiceSearchService {
   }
 
   /** The request's scope, with each named Withholding's services read at its exact version. */
-  private async scopeFilterInput(
+  private async resolveScopeFilterInput(
     request: Parameters<typeof scopeFilterInput>[0],
   ): Promise<ServiceFilterInput> {
     const scope = scopeFilterInput(request);
