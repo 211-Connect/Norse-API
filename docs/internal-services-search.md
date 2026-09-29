@@ -102,7 +102,10 @@ over one fixture and compares the results.
     - `regionIds` match a `service_area` intersecting the Region **or** a
       `locationPoints` site inside it — but **never** a Virtual Service with
       no `service_area`. Such a service serves every Region (ADR 0025) under
-      the positive filter; excluding a Region must not take it out. Excluded
+      the positive filter; excluding a Region must not take it out. A
+      Virtual Service that **publishes** a `service_area` is matched like
+      any other service: one with a nationwide `service_area` intersects
+      every Region and **is** excluded by any Region rule. Excluded
       Regions are checked in the same `mget` as the geography Regions; an
       unknown one is 400.
 
@@ -189,6 +192,11 @@ null or `> V`, so a projection being written for V+1 leaves V readable.
 - the services read not adding up to the header's `serviceCount` — **503**:
   the projection is being rewritten.
 - MongoDB failing — **503**.
+- `ownerWriterId` spelled with other casing than ServiceNet projected it —
+  **503** as "not projected yet". The MongoDB lookup matches
+  `agreementId` and `ownerWriterId` **exactly** (case-sensitive), though the
+  Elasticsearch owner clause built from the set is case-insensitive; send
+  the owner id as ServiceNet wrote it into the projection.
 - the named Withholdings together stating more than 65,536 services (their
   headers' `serviceCount` summed; ES's default `index.max_terms_count`) —
   **422**, before any service is read.

@@ -236,7 +236,7 @@ export class ServicesWithholdingRefDto {
 
   @ApiProperty({
     description:
-      "The Resource Writer that withholds; only its records' serviceIds are excluded.",
+      "The Resource Writer that withholds; only its records' serviceIds are excluded. Looked up in MongoDB exactly as sent (case-sensitive): other casing than ServiceNet projected is 503.",
   })
   @IsString()
   @IsNotEmpty()

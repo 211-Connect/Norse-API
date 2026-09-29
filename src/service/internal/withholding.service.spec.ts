@@ -141,6 +141,13 @@ describe('WithholdingService', () => {
     );
   });
 
+  it('matches the owner exactly, so other casing is 503 as unprojected', async () => {
+    build([withheld('s1', 1)], [header(1, 1)]);
+    await expect(
+      withholding.resolve([{ ...ref(1), ownerWriterId: OWNER.toUpperCase() }]),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
   it('answers 409 when the projection has moved past the version asked for', async () => {
     build([withheld('s1', 1)], [header(3, 1)]);
     await expect(withholding.resolve([ref(2)])).rejects.toBeInstanceOf(
