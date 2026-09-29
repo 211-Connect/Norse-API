@@ -13,12 +13,24 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { ServiceSearchInternalModule } from './service-search.module';
+import { getModelToken } from '@nestjs/mongoose';
+import {
+  SharingWithheldService,
+  SharingWithheldVersion,
+} from 'src/common/schemas/sharing-withholding.schema';
 import {
   SERVICES_EXCLUDE_MAX_REGIONS,
   SERVICES_EXCLUDE_MAX_RULES,
-  SERVICES_EXCLUDE_MAX_SERVICE_IDS,
   SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
+  SERVICES_EXCLUDE_MAX_WITHHOLDINGS,
 } from './dto';
+
+/** More than the provisional 1,000 serviceIds cap ISS-1938 removed. */
+const MANY_SERVICE_IDS = 1500;
+
+function mongoQuery(result: unknown) {
+  return { lean: () => ({ exec: async () => result }) };
+}
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -36,6 +48,8 @@ describe('ServiceSearchController (internal/services)', () => {
   let app: INestApplication;
   const search = jest.fn();
   const mget = jest.fn();
+  const withheldFind = jest.fn();
+  const versionFindOne = jest.fn();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -51,6 +65,10 @@ describe('ServiceSearchController (internal/services)', () => {
     })
       .overrideProvider(ElasticsearchService)
       .useValue({ search, mget })
+      .overrideProvider(getModelToken(SharingWithheldService.name))
+      .useValue({ find: withheldFind })
+      .overrideProvider(getModelToken(SharingWithheldVersion.name))
+      .useValue({ findOne: versionFindOne })
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -83,6 +101,8 @@ describe('ServiceSearchController (internal/services)', () => {
     mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
       docs: ids.map((_id) => ({ _id, found: true })),
     }));
+    withheldFind.mockReset();
+    versionFindOne.mockReset();
   });
 
   it('serves the internal routes (so their absence from the document is meaningful)', async () => {
@@ -125,7 +145,7 @@ describe('ServiceSearchController (internal/services)', () => {
         total: 0,
         limit: 10,
         nextCursor: null,
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
       expect(search).toHaveBeenCalledTimes(1);
     });
@@ -186,17 +206,26 @@ describe('ServiceSearchController (internal/services)', () => {
           exclude: { rules: [{ regionIds: ['St. Louis'] }] },
         },
       ],
-      [
-        {
-          resourceWriterIds: ['w'],
-          exclude: {
-            serviceIds: Array.from(
-              { length: SERVICES_EXCLUDE_MAX_SERVICE_IDS + 1 },
-              (_, i) => `s${i}`,
-            ),
-          },
-        },
-      ],
+      ...[
+        'x',
+        [{}],
+        [{ agreementId: 'a', ownerWriterId: 'w' }],
+        [{ agreementId: 'a', ownerWriterId: 'w', version: 0 }],
+        [{ agreementId: 'a', ownerWriterId: 'w', version: 1.5 }],
+        [{ agreementId: 'a', ownerWriterId: 'w', version: '2' }],
+        [{ agreementId: '', ownerWriterId: 'w', version: 1 }],
+        [{ agreementId: 'a', ownerWriterId: 7, version: 1 }],
+        Array.from(
+          { length: SERVICES_EXCLUDE_MAX_WITHHOLDINGS + 1 },
+          (_, i) => ({
+            agreementId: 'a',
+            ownerWriterId: `w${i}`,
+            version: 1,
+          }),
+        ),
+      ].map((withholdings) => [
+        { resourceWriterIds: ['w'], exclude: { withholdings } },
+      ]),
       [
         {
           resourceWriterIds: ['w'],
@@ -289,7 +318,7 @@ describe('ServiceSearchController (internal/services)', () => {
 
     it('accepts exclusions at their limits and confirms them in the response', async () => {
       const serviceIds = Array.from(
-        { length: SERVICES_EXCLUDE_MAX_SERVICE_IDS },
+        { length: MANY_SERVICE_IDS },
         (_, i) => `s${i}`,
       );
       const rules = [
@@ -329,11 +358,84 @@ describe('ServiceSearchController (internal/services)', () => {
           virtual: null,
           ...rule,
         })),
+        withholdings: [],
       });
       expect(search.mock.calls[0][0].query.bool.must_not).toHaveLength(
         2 + 1 + SERVICES_EXCLUDE_MAX_RULES,
       );
     });
+
+    it('applies a Withholding by reference and confirms its version', async () => {
+      versionFindOne.mockReturnValue(
+        mongoQuery({
+          agreementId: 'a1',
+          ownerWriterId: 'writer-a',
+          version: 7,
+          serviceCount: 2,
+        }),
+      );
+      withheldFind.mockReturnValue(
+        mongoQuery([{ serviceId: 's1' }, { serviceId: 's2' }]),
+      );
+      const res = await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: {
+            withholdings: [
+              { agreementId: 'a1', ownerWriterId: 'writer-a', version: 7 },
+            ],
+          },
+        })
+        .expect(200);
+      expect(res.body.appliedExclusions.withholdings).toEqual([
+        {
+          agreementId: 'a1',
+          ownerWriterId: 'writer-a',
+          version: 7,
+          serviceCount: 2,
+        },
+      ]);
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      [6, 503],
+      [8, 409],
+    ])(
+      'answers %#: a projection at version %i for version 7 is %i, and nothing is searched',
+      async (held, status) => {
+        versionFindOne.mockReturnValue(
+          mongoQuery({
+            agreementId: `lagging-${held}`,
+            ownerWriterId: 'writer-a',
+            version: held,
+            serviceCount: 0,
+          }),
+        );
+        withheldFind.mockReturnValue(mongoQuery([]));
+        await request(app.getHttpServer())
+          .post('/internal/services/search')
+          .set('x-api-version', '1')
+          .set('x-internal-api-key', INTERNAL_API_KEY)
+          .send({
+            resourceWriterIds: ['writer-a'],
+            exclude: {
+              withholdings: [
+                {
+                  agreementId: `lagging-${held}`,
+                  ownerWriterId: 'writer-a',
+                  version: 7,
+                },
+              ],
+            },
+          })
+          .expect(status);
+        expect(search).not.toHaveBeenCalled();
+      },
+    );
 
     it('accepts 20 Regions and a virtual mode', async () => {
       await request(app.getHttpServer())
@@ -466,6 +568,7 @@ describe('ServiceSearchController (internal/services)', () => {
             virtual: null,
           },
         ],
+        withholdings: [],
       });
     });
 
@@ -481,7 +584,7 @@ describe('ServiceSearchController (internal/services)', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
     });
   });

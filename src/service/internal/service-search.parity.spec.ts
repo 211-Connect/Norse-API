@@ -2,6 +2,7 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
 import { ServiceSearchService } from './service-search.service';
 import { RegionService } from '../../region/internal';
+import { WithholdingRef, WithholdingService } from './withholding.service';
 
 /**
  * Parity with ServiceNet's Mongo record source (`sharing-mongo/src/record-source.ts`)
@@ -294,8 +295,16 @@ function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
       return valuesOf(doc, field).some((v) => list.includes(v));
     }
     case 'term': {
-      const [field, value] = Object.entries(body)[0];
-      return valuesOf(doc, field).some((v) => v === value);
+      const [field, spec] = Object.entries<any>(body)[0];
+      if (spec !== null && typeof spec === 'object') {
+        const want = String(spec.value);
+        return valuesOf(doc, field).some((v) =>
+          spec.case_insensitive === true
+            ? String(v).toLowerCase() === want.toLowerCase()
+            : v === spec.value,
+        );
+      }
+      return valuesOf(doc, field).some((v) => v === spec);
     }
     case 'exists':
       return valuesOf(doc, body.field).length > 0;
@@ -406,17 +415,22 @@ function evaluateAggregations(docs: Doc[], request: Record<string, any>) {
   return { aggregations };
 }
 
-function serviceOver(docs: Doc[]) {
+function serviceOver(docs: Doc[], withheld: Record<string, string[]> = {}) {
   const search = jest.fn(async (request: Record<string, any>) =>
     request.aggs
       ? evaluateAggregations(docs, request)
       : evaluateSearch(docs, request),
   );
+  const withholdings = {
+    resolve: async (refs: WithholdingRef[]) =>
+      refs.map((r) => ({ ...r, serviceIds: withheld[r.ownerWriterId] ?? [] })),
+  } as unknown as WithholdingService;
   return {
     search,
     service: new ServiceSearchService(
       { search } as unknown as ElasticsearchService,
       { assertExist: async () => undefined } as unknown as RegionService,
+      withholdings,
     ),
   };
 }
@@ -521,7 +535,7 @@ describe('services search parity with the Mongo record source', () => {
         service.facets({ resourceWriterIds: writers }),
       ).resolves.toEqual({
         ...mongoListFilterOptions(writers),
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
     },
   );
@@ -766,7 +780,70 @@ describe('exclusions over the fixture (ISS-1928)', () => {
           statuses: rule.statuses ?? [],
           virtual: rule.virtual ?? null,
         })),
+        withholdings: [],
       });
     },
   );
+
+  describe('Withholdings by reference (ISS-1938)', () => {
+    // s1 under a second writer: a serviceId is unique per writer, not across.
+    const twin = {
+      ...docs.find((d) => d._id === 't:s1')!,
+      _id: 'v:s1',
+      resourceWriterId: B,
+    };
+    const withTwin = [...docs, twin];
+    const ref = { agreementId: 'agreement-1', ownerWriterId: A, version: 2 };
+    const withheld = { [A]: ['s1', 's2', 't1'] };
+
+    it("leaves out the owner's withheld records and nobody else's", async () => {
+      const { service } = serviceOver(withTwin, withheld);
+      const before = (
+        await walk(service, { resourceWriterIds: writers, limit: 3 })
+      ).flatMap((p) => p.ids);
+      const after = (
+        await walk(service, {
+          resourceWriterIds: writers,
+          exclude: { withholdings: [ref] },
+          limit: 3,
+        })
+      ).flatMap((p) => p.ids);
+      expect(before).toEqual(
+        expect.arrayContaining(['t:s1', 't:s2', 'v:s1', 'v:t1']),
+      );
+      expect(after.sort()).toEqual(
+        before.filter((id) => id !== 't:s1' && id !== 't:s2').sort(),
+      );
+    });
+
+    it('matches the owner in any case, as ServiceNet may spell it', async () => {
+      const { service } = serviceOver(withTwin, { [A.toUpperCase()]: ['s1'] });
+      const after = (
+        await walk(service, {
+          resourceWriterIds: writers,
+          exclude: {
+            withholdings: [{ ...ref, ownerWriterId: A.toUpperCase() }],
+          },
+          limit: 3,
+        })
+      ).flatMap((p) => p.ids);
+      expect(after).not.toContain('t:s1');
+      expect(after).toContain('v:s1');
+    });
+
+    it('drops the facet counts by exactly those records', async () => {
+      const excluded = await serviceOver(withTwin, withheld).service.facets({
+        resourceWriterIds: writers,
+        exclude: { withholdings: [ref] },
+      });
+      const without = await serviceOver(
+        withTwin.filter((d) => d._id !== 't:s1' && d._id !== 't:s2'),
+      ).service.facets({ resourceWriterIds: writers });
+      const { appliedExclusions, ...counts } = excluded;
+      expect(counts).toEqual({ ...without, appliedExclusions: undefined });
+      expect(appliedExclusions.withholdings).toEqual([
+        { ...ref, serviceCount: 3 },
+      ]);
+    });
+  });
 });

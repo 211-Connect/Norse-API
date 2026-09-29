@@ -13,11 +13,25 @@ export class ServicesAppliedExclusionRuleDto {
   virtual: RuleVirtualMode | null;
 }
 
+/** A Withholding as applied: the version read and how many services it withheld. */
+export class ServicesAppliedWithholdingDto {
+  @ApiProperty() agreementId: string;
+  @ApiProperty() ownerWriterId: string;
+  @ApiProperty() version: number;
+  @ApiProperty({ description: 'Services withheld at this version.' })
+  serviceCount: number;
+}
+
 /** The exclusions applied; rules in the order sent, one per rule sent. */
 export class ServicesAppliedExclusionsDto {
   @ApiProperty({ type: [String] }) serviceIds: string[];
   @ApiProperty({ type: [ServicesAppliedExclusionRuleDto] })
   rules: ServicesAppliedExclusionRuleDto[];
+  @ApiProperty({
+    type: [ServicesAppliedWithholdingDto],
+    description: 'One per distinct Withholding sent.',
+  })
+  withholdings: ServicesAppliedWithholdingDto[];
 }
 
 const APPLIED_EXCLUSIONS = {

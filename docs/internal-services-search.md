@@ -60,13 +60,22 @@ over one fixture and compares the results.
   }
   ```
 - **Exclusions** (ISS-1928, for ServiceNet's Withholding — its ADR 0022).
-  `exclude` takes hand-picked `serviceIds` and Record Criteria `rules`, both
-  optional. A service listed, or matching **any** rule, is left out of the
-  results, the total and every facet count, through `must_not`.
-  - `serviceIds` (max 1,000, `SERVICES_EXCLUDE_MAX_SERVICE_IDS`) match
-    `serviceId` exactly, across the whole writer set, so an id two writers
-    share is excluded for both. The cap is provisional: how a large set of
-    withheld ids reaches Norse is not settled.
+  `exclude` takes `serviceIds`, Record Criteria `rules` and `withholdings`
+  by reference, all optional. A service listed, matching **any** rule, or
+  withheld by a named Withholding is left out of the results, the total and
+  every facet count, through `must_not`.
+  - `serviceIds` match `serviceId` exactly, across the whole writer set, so an
+    id two writers share is excluded for both. No cap since ISS-1938 (the
+    provisional 1,000 is gone): they are applied in `terms` clauses of at most
+    65,536 ids each (`WITHHELD_SERVICE_IDS_PER_CLAUSE`, ES's default
+    `index.max_terms_count`). ServiceNet no longer sends them; see
+    `withholdings`.
+  - `withholdings` (ISS-1938, max 100): `{ agreementId, ownerWriterId,
+    version }`. Norse reads the owner's withheld services at exactly that
+    version from MongoDB (below) and excludes them **only among that owner's
+    records** (`term resourceWriterId` AND `terms serviceId`, 65,536 ids per
+    clause, as many clauses as it takes). See
+    [Withholdings by reference](#withholdings-by-reference).
   - `rules` (max 50): each takes `taxonomyCodes` (max 100), `regionIds`
     (max 20), `statuses` (max 100) and `virtual` (`only` | `exclude`). The
     criteria given are AND'ed; each list matches any of its items. A rule with
@@ -82,9 +91,11 @@ over one fixture and compares the results.
       Regions are checked in the same `mget` as the geography Regions; an
       unknown one is 400.
 
-  Both responses carry `appliedExclusions`: `serviceIds` de-duplicated, and
+  Both responses carry `appliedExclusions`: `serviceIds` de-duplicated,
   `rules` one per rule sent, in the order sent, each with every list present
-  (de-duplicated, `[]` when absent) and `virtual` `null` when absent. **It is
+  (de-duplicated, `[]` when absent) and `virtual` `null` when absent, and
+  `withholdings` one per distinct Withholding sent, with the `version` applied
+  and its `serviceCount`. **It is
   the confirmation, and callers must require it.** The global
   `ValidationPipe` runs with `whitelist: false`, so a Norse-API older than
   this change ignores `exclude` and answers 200 with the excluded records.
@@ -133,6 +144,52 @@ over one fixture and compares the results.
     the two in step.
   - Contributor names are not in the index. ServiceNet resolves them, as its
     injected resolver does today.
+
+## Withholdings by reference
+
+ServiceNet's Withholding (its ADR 0022) keeps records picked by hand, in any
+number, in Postgres, and projects them into the MongoDB database Norse-API
+already reads (`search_engine`), in two collections ServiceNet writes and
+indexes and Norse only reads (`autoIndex`/`autoCreate` off,
+`src/common/schemas/sharing-withholding.schema.ts`):
+
+| Collection | One document per | Fields |
+| --- | --- | --- |
+| `sharing_withheld_versions` | Withholding | `agreementId`, `ownerWriterId`, `version`, `serviceCount` |
+| `sharing_withheld_services` | withheld service | `agreementId`, `ownerWriterId`, `serviceId`, `version` (withheld since), `liftedVersion` (null while withheld) |
+
+A service is withheld at version V when `version <= V` and `liftedVersion` is
+null or `> V`, so a projection being written for V+1 leaves V readable.
+`WithholdingService` serves a Withholding only at the version named:
+
+- header `version` lower than asked, or no header — **503**: the projection
+  lags or failed; never the older set.
+- header `version` higher — **409**: ServiceNet read a superseded version and
+  should read again.
+- the services read not adding up to the header's `serviceCount` — **503**:
+  the projection is being rewritten.
+- MongoDB failing — **503**.
+
+Nothing is searched when a Withholding cannot be confirmed. A resolved set is
+cached in process by agreement, owner **and version** (64 sets), so a cached
+set can only answer for the version it was read at. The Withholding
+references (not their ids) join the cursor fingerprint and shard preference;
+a query without Withholdings fingerprints as before.
+
+```json
+{
+  "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4", "60d98ab9-…"],
+  "exclude": {
+    "withholdings": [
+      { "agreementId": "0b6f…", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4", "version": 7 }
+    ]
+  }
+}
+```
+
+echoes `"withholdings": [{ "agreementId": "0b6f…", "ownerWriterId": "5334599c-…", "version": 7, "serviceCount": 1240 }]`.
+
+Norse needs only read access to both collections.
 
 ## Paging: cursors
 

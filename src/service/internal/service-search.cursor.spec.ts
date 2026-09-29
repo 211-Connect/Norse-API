@@ -161,6 +161,41 @@ describe('queryFingerprint', () => {
     expect(queryFingerprint(split)).not.toBe(queryFingerprint(joined));
   });
 
+  describe('Withholdings (ISS-1938)', () => {
+    const set = (version: number, serviceIds: string[] = ['s1']) => ({
+      agreementId: 'agreement-1',
+      ownerWriterId: 'writer-a',
+      version,
+      serviceIds,
+    });
+    const withheld = (...sets: ReturnType<typeof set>[]): CursorQuery => ({
+      ...FULL,
+      exclude: { ...FULL.exclude, withheld: sets },
+    });
+
+    it('changes with the version, and the Withholding named', () => {
+      expect(queryFingerprint(withheld(set(2)))).not.toBe(
+        queryFingerprint(withheld(set(3))),
+      );
+      expect(queryFingerprint(withheld(set(2)))).not.toBe(
+        queryFingerprint(FULL),
+      );
+      expect(
+        queryFingerprint(withheld({ ...set(2), ownerWriterId: 'writer-b' })),
+      ).not.toBe(queryFingerprint(withheld(set(2))));
+    });
+
+    it('is named by its version, not its ids', () => {
+      expect(queryFingerprint(withheld(set(2, ['s1'])))).toBe(
+        queryFingerprint(withheld(set(2, ['s1', 's2']))),
+      );
+    });
+
+    it('leaves a query without Withholdings as it was, so earlier cursors stay valid', () => {
+      expect(queryFingerprint(withheld())).toBe(queryFingerprint(FULL));
+    });
+  });
+
   it('treats absent exclusions as empty ones', () => {
     const bare: CursorQuery = { resourceWriterIds: ['writer-a'] };
     expect(

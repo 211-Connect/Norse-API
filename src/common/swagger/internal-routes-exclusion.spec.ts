@@ -9,6 +9,7 @@ import { ApiTags, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { Test } from '@nestjs/testing';
+import { UNWIRED_WITHHOLDING_MODELS } from 'src/common/testing/withholding-models';
 import request from 'supertest';
 import { RegionInternalModule } from 'src/region/internal/region.module';
 import { ServiceSearchInternalModule } from 'src/service/internal/service-search.module';
@@ -49,6 +50,10 @@ describe('Geography filter internal routes, mounted together', () => {
     })
       .overrideProvider(ElasticsearchService)
       .useValue({ search })
+      .overrideProvider(UNWIRED_WITHHOLDING_MODELS[0].token)
+      .useValue(UNWIRED_WITHHOLDING_MODELS[0].value)
+      .overrideProvider(UNWIRED_WITHHOLDING_MODELS[1].token)
+      .useValue(UNWIRED_WITHHOLDING_MODELS[1].value)
       .compile();
 
     app = moduleRef.createNestApplication();

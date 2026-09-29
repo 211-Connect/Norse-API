@@ -45,6 +45,7 @@ import {
   encodeCursor,
   shardPreference,
 } from './service-search.cursor';
+import { WithholdingService } from './withholding.service';
 
 /** Buckets per composite page; facets page until exhausted, never truncate. */
 export const FACET_PAGE_SIZE = 1000;
@@ -81,6 +82,7 @@ export class ServiceSearchService {
   constructor(
     private readonly elasticsearch: ElasticsearchService,
     private readonly regions: RegionService,
+    private readonly withholdings: WithholdingService,
   ) {}
 
   async search(
@@ -88,7 +90,7 @@ export class ServiceSearchService {
   ): Promise<ServicesSearchResponseDto> {
     const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
     const cursorQuery: CursorQuery = {
-      ...scopeFilterInput(request),
+      ...(await this.scopeFilterInput(request)),
       taxonomyCodes: request.filter?.taxonomyCodes,
       statuses: request.filter?.statuses,
       text: request.text,
@@ -150,7 +152,7 @@ export class ServiceSearchService {
   async facets(
     request: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {
-    const input = scopeFilterInput(request);
+    const input = await this.scopeFilterInput(request);
     const scope = buildServiceFilter(input);
     if (scope === null) {
       return {
@@ -258,6 +260,20 @@ export class ServiceSearchService {
     return out;
   }
 
+  /** The request's scope, with each named Withholding's services read at its exact version. */
+  private async scopeFilterInput(
+    request: Parameters<typeof scopeFilterInput>[0],
+  ): Promise<ServiceFilterInput> {
+    const scope = scopeFilterInput(request);
+    const withheld = await this.withholdings.resolve(
+      request.exclude?.withholdings ?? [],
+    );
+    return {
+      ...scope,
+      exclude: { serviceIds: [], rules: [], ...scope.exclude, withheld },
+    };
+  }
+
   private call<T>(what: string, run: () => Promise<T>): Promise<T> {
     return callElasticsearch(
       {
@@ -330,6 +346,12 @@ function appliedExclusions(
       regionIds: [...r.regionIds],
       statuses: [...r.statuses],
       virtual: r.virtual,
+    })),
+    withholdings: (input.exclude?.withheld ?? []).map((w) => ({
+      agreementId: w.agreementId,
+      ownerWriterId: w.ownerWriterId,
+      version: w.version,
+      serviceCount: w.serviceIds.length,
     })),
   };
 }

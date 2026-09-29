@@ -10,6 +10,8 @@ import {
   FACET_PAGE_SIZE,
   ServiceSearchService,
 } from './service-search.service';
+import { WithholdingService } from './withholding.service';
+import { WITHHELD_SERVICE_IDS_PER_CLAUSE } from './service-search.query';
 
 const WRITER_A = 'writer-a';
 const WRITER_B = 'writer-b';
@@ -18,6 +20,10 @@ describe('ServiceSearchService', () => {
   const search = jest.fn();
   const mget = jest.fn();
   const elasticsearch = { search, mget } as unknown as ElasticsearchService;
+  const resolveWithholdings = jest.fn();
+  const withholdings = {
+    resolve: resolveWithholdings,
+  } as unknown as WithholdingService;
   let service: ServiceSearchService;
 
   const emptyPage = { hits: { total: { value: 0 }, hits: [] } };
@@ -25,9 +31,13 @@ describe('ServiceSearchService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resolveWithholdings.mockImplementation(async (refs: unknown[]) =>
+      refs.length === 0 ? [] : Promise.reject(new Error('unexpected')),
+    );
     service = new ServiceSearchService(
       elasticsearch,
       new RegionService(elasticsearch),
+      withholdings,
     );
     search.mockResolvedValue(emptyPage);
     mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
@@ -120,7 +130,7 @@ describe('ServiceSearchService', () => {
         total: 0,
         limit: 50,
         nextCursor: null,
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -501,7 +511,7 @@ describe('ServiceSearchService', () => {
         contributors: [],
         statuses: [],
         taxonomy: [],
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
       expect(search).not.toHaveBeenCalled();
     });
@@ -579,7 +589,7 @@ describe('ServiceSearchService', () => {
             synthesized: false,
           },
         ],
-        appliedExclusions: { serviceIds: [], rules: [] },
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
     });
 
@@ -1146,8 +1156,9 @@ describe('ServiceSearchService', () => {
           virtual: 'exclude',
         },
       ],
+      withholdings: [],
     };
-    const noneApplied = { serviceIds: [], rules: [] };
+    const noneApplied = { serviceIds: [], rules: [], withholdings: [] };
 
     it('excludes listed services and every rule, AND within a rule, OR across them', async () => {
       await service.search({ resourceWriterIds: [WRITER_A], exclude });
@@ -1302,6 +1313,180 @@ describe('ServiceSearchService', () => {
             rules: [{ statuses: ['active'] }],
             ...other,
           },
+          cursor: nextCursor!,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(search).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Withholdings by reference (ISS-1938)', () => {
+    const OWNER = 'writer-owner';
+    const ref = {
+      agreementId: 'agreement-1',
+      ownerWriterId: OWNER,
+      version: 3,
+    };
+    const withheldClause = (ids: string[]) => ({
+      bool: {
+        filter: [
+          {
+            term: {
+              resourceWriterId: { value: OWNER, case_insensitive: true },
+            },
+          },
+          { terms: { serviceId: ids } },
+        ],
+      },
+    });
+    const baseMustNot = [
+      { term: { isCanonicalPublication: false } },
+      { term: { serviceId: '' } },
+    ];
+    const withheld = (serviceIds: string[]) => {
+      resolveWithholdings.mockResolvedValue([{ ...ref, serviceIds }]);
+    };
+
+    it("takes the owner's withheld services out of the results, scoped to that owner", async () => {
+      withheld(['s1', 's2']);
+      await service.search({
+        resourceWriterIds: [WRITER_A, OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(resolveWithholdings).toHaveBeenCalledWith([ref]);
+      expect(lastRequest().query.bool.must_not).toEqual([
+        ...baseMustNot,
+        withheldClause(['s1', 's2']),
+      ]);
+    });
+
+    it('takes them out of the facet counts too', async () => {
+      withheld(['s1']);
+      search.mockResolvedValue({ aggregations: {} });
+      await service.facets({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(lastRequest().query.bool.must_not).toEqual([
+        ...baseMustNot,
+        withheldClause(['s1']),
+      ]);
+    });
+
+    it(`applies any number, ${WITHHELD_SERVICE_IDS_PER_CLAUSE} ids per clause`, async () => {
+      const ids = Array.from(
+        { length: WITHHELD_SERVICE_IDS_PER_CLAUSE + 1 },
+        (_, i) => `s${i}`,
+      );
+      withheld(ids);
+      await service.search({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(lastRequest().query.bool.must_not).toEqual([
+        ...baseMustNot,
+        withheldClause(ids.slice(0, WITHHELD_SERVICE_IDS_PER_CLAUSE)),
+        withheldClause(ids.slice(WITHHELD_SERVICE_IDS_PER_CLAUSE)),
+      ]);
+    });
+
+    it('splits hand-picked serviceIds the same way, now that they have no cap', async () => {
+      const serviceIds = Array.from(
+        { length: WITHHELD_SERVICE_IDS_PER_CLAUSE + 2 },
+        (_, i) => `s${i}`,
+      );
+      await service.search({
+        resourceWriterIds: [OWNER],
+        exclude: { serviceIds },
+      });
+      expect(lastRequest().query.bool.must_not).toEqual([
+        ...baseMustNot,
+        {
+          terms: {
+            serviceId: serviceIds.slice(0, WITHHELD_SERVICE_IDS_PER_CLAUSE),
+          },
+        },
+        {
+          terms: {
+            serviceId: serviceIds.slice(WITHHELD_SERVICE_IDS_PER_CLAUSE),
+          },
+        },
+      ]);
+    });
+
+    it('confirms each Withholding at the version applied, with its service count', async () => {
+      withheld(['s1', 's2']);
+      const page = await service.search({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(page.appliedExclusions.withholdings).toEqual([
+        { ...ref, serviceCount: 2 },
+      ]);
+      search.mockResolvedValue({ aggregations: {} });
+      const facets = await service.facets({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(facets.appliedExclusions.withholdings).toEqual([
+        { ...ref, serviceCount: 2 },
+      ]);
+    });
+
+    it('confirms an empty Withholding without adding a clause', async () => {
+      withheld([]);
+      const page = await service.search({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+      });
+      expect(lastRequest().query.bool.must_not).toEqual(baseMustNot);
+      expect(page.appliedExclusions.withholdings).toEqual([
+        { ...ref, serviceCount: 0 },
+      ]);
+    });
+
+    it('answers what the projection answers when it cannot confirm the version, and searches nothing', async () => {
+      resolveWithholdings.mockRejectedValue(
+        new ServiceUnavailableException('not projected yet'),
+      );
+      await expect(
+        service.search({
+          resourceWriterIds: [OWNER],
+          exclude: { withholdings: [ref] },
+        }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(
+        service.facets({
+          resourceWriterIds: [OWNER],
+          exclude: { withholdings: [ref] },
+        }),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cursor replayed against another version of the Withholding', async () => {
+      withheld(['s1']);
+      search.mockResolvedValueOnce({
+        hits: {
+          total: { value: 2 },
+          hits: [
+            { _id: 't:s3', _source: { serviceId: 's3' }, sort: ['A', 's3'] },
+            { _id: 't:s4', _source: { serviceId: 's4' }, sort: ['B', 's4'] },
+          ],
+        },
+      });
+      const { nextCursor } = await service.search({
+        resourceWriterIds: [OWNER],
+        exclude: { withholdings: [ref] },
+        limit: 1,
+      });
+      search.mockClear();
+      const next = { ...ref, version: 4 };
+      resolveWithholdings.mockResolvedValue([{ ...next, serviceIds: ['s1'] }]);
+      await expect(
+        service.search({
+          resourceWriterIds: [OWNER],
+          exclude: { withholdings: [next] },
           cursor: nextCursor!,
         }),
       ).rejects.toBeInstanceOf(BadRequestException);

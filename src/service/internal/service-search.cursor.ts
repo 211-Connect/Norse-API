@@ -48,6 +48,17 @@ const FINGERPRINT_PARTS: {
         ]),
       ),
     ),
+    // The version names the set, so the ids need not be hashed. Absent when
+    // none, so a cursor issued before Withholdings existed stays valid.
+    ...(q.exclude?.withheld?.length
+      ? [
+          asSet(
+            q.exclude.withheld.map((w) =>
+              JSON.stringify([w.agreementId, w.ownerWriterId, w.version]),
+            ),
+          ),
+        ]
+      : []),
   ],
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),

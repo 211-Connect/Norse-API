@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -23,8 +24,8 @@ export const SERVICES_SEARCH_MAX_WRITERS = 100;
 export const SERVICES_SEARCH_MAX_PLACES = 20;
 export const POINT_RADIUS_MIN_MILES = 0.1;
 export const POINT_RADIUS_MAX_MILES = 100;
-/** Provisional: how a large set of withheld ids reaches Norse is undecided. */
-export const SERVICES_EXCLUDE_MAX_SERVICE_IDS = 1000;
+/** A Withholding per party writer at most, as the writer set is capped. */
+export const SERVICES_EXCLUDE_MAX_WITHHOLDINGS = SERVICES_SEARCH_MAX_WRITERS;
 export const SERVICES_EXCLUDE_MAX_RULES = 50;
 export const SERVICES_EXCLUDE_MAX_TAXONOMY_CODES = 100;
 export const SERVICES_EXCLUDE_MAX_REGIONS = 20;
@@ -211,21 +212,50 @@ export class ServicesExclusionRuleDto {
 }
 
 /**
+ * One owner's Withholding under one Agreement, named rather than listed: its
+ * services apply only to that owner's records.
+ */
+export class ServicesWithholdingRefDto {
+  @ApiProperty({ description: 'The ServiceNet Data Sharing Agreement id.' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  agreementId: string;
+
+  @ApiProperty({
+    description:
+      "The Resource Writer that withholds; only its records' serviceIds are excluded.",
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  ownerWriterId: string;
+
+  @ApiProperty({
+    minimum: 1,
+    description:
+      'The Withholding version ServiceNet read; applied at exactly this version or not at all.',
+  })
+  @IsInt()
+  @Min(1)
+  version: number;
+}
+
+/**
  * Records taken out of the scope, as ServiceNet's Withholding needs (its ADR
- * 0022): a service listed in serviceIds or matching any rule is excluded.
+ * 0022): a service listed in serviceIds, matching any rule, or withheld by a
+ * named Withholding is excluded.
  */
 export class ServicesExclusionDto {
   @ApiProperty({
     type: [String],
     required: false,
     default: [],
-    maxItems: SERVICES_EXCLUDE_MAX_SERVICE_IDS,
     description:
-      'Hand-picked serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both.',
+      'serviceIds, matched exactly across the whole writer set: a serviceId two writers share is excluded for both. No cap; a Withholding sends its hand-picked services by reference instead (withholdings).',
   })
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_SERVICE_IDS)
   @IsString({ each: true })
   serviceIds?: string[];
 
@@ -243,6 +273,21 @@ export class ServicesExclusionDto {
   @ValidateNested({ each: true })
   @Type(() => ServicesExclusionRuleDto)
   rules?: ServicesExclusionRuleDto[];
+
+  @ApiProperty({
+    type: [ServicesWithholdingRefDto],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_WITHHOLDINGS,
+    description:
+      "ServiceNet Withholdings by reference: each owner's services withheld under the Agreement at exactly that version, read from MongoDB sharing_withheld_services. A projection that does not hold that version is 503 (lagging) or 409 (superseded), never an older set.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_WITHHOLDINGS)
+  @ValidateNested({ each: true })
+  @Type(() => ServicesWithholdingRefDto)
+  withholdings?: ServicesWithholdingRefDto[];
 }
 
 /**

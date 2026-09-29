@@ -78,10 +78,30 @@ export interface ExclusionRule {
   virtual: RuleVirtualMode | null;
 }
 
-/** A service listed or matching any rule is excluded. */
+/** One owner's withheld services at one version of its Withholding. */
+export interface WithheldServiceSet {
+  agreementId: string;
+  ownerWriterId: string;
+  version: number;
+  serviceIds: readonly string[];
+}
+
+/** A service listed, matching any rule, or withheld by its owner is excluded. */
 export interface ServiceExclusions {
   serviceIds: readonly string[];
   rules: readonly ExclusionRule[];
+  withheld?: readonly WithheldServiceSet[];
+}
+
+/** ES's default `index.max_terms_count`: the most ids one `terms` query may carry. */
+export const WITHHELD_SERVICE_IDS_PER_CLAUSE = 65_536;
+
+function inClauses(ids: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += WITHHELD_SERVICE_IDS_PER_CLAUSE) {
+    out.push(ids.slice(i, i + WITHHELD_SERVICE_IDS_PER_CLAUSE));
+  }
+  return out;
 }
 
 export interface ServiceFilterInput {
@@ -257,11 +277,30 @@ function exclusionClauses(
   exclude: ServiceExclusions | undefined,
 ): QueryDslQueryContainer[] {
   if (!exclude) return [];
-  const clauses = exclude.rules.map(ruleClause);
-  if (exclude.serviceIds.length > 0) {
-    clauses.unshift({ terms: { serviceId: [...exclude.serviceIds] } });
-  }
-  return clauses;
+  return [
+    ...inClauses(exclude.serviceIds).map((ids) => ({
+      terms: { serviceId: ids },
+    })),
+    ...exclude.rules.map(ruleClause),
+    ...(exclude.withheld ?? []).flatMap((set) =>
+      inClauses(set.serviceIds).map((ids) => ({
+        bool: {
+          filter: [
+            // ServiceNet names the owner as its Agreement spells it.
+            {
+              term: {
+                resourceWriterId: {
+                  value: set.ownerWriterId,
+                  case_insensitive: true,
+                },
+              },
+            },
+            { terms: { serviceId: ids } },
+          ],
+        },
+      })),
+    ),
+  ];
 }
 
 /**
