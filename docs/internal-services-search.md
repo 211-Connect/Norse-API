@@ -82,7 +82,10 @@ over one fixture and compares the results.
     clause, as many clauses as it takes). See
     [Withholdings by reference](#withholdings-by-reference).
   - `rules` (max 50): each takes `taxonomyCodes` (max 100), `regionIds`
-    (max 20), `statuses` (max 100) and `virtual` (`only` | `exclude`). The
+    (max 20 — and at most 20 **across all rules together**, else 400: each
+    Region is two `indexed_shape` clauses per rule, so 50 rules of 20 would
+    be 2,000 shape clauses per search and per facet page), `statuses` (max
+    100) and `virtual` (`only` | `exclude`). The
     criteria given are AND'ed; each list matches any of its items. A rule with
     no criteria (absent or only empty lists, no `virtual`) is 400, since it
     would exclude everything.

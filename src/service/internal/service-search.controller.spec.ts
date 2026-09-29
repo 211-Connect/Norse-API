@@ -399,6 +399,43 @@ describe('ServiceSearchController (internal/services)', () => {
       expect(mget).not.toHaveBeenCalled();
     });
 
+    const regionRules = (...sizes: number[]) =>
+      sizes.map((size, r) => ({
+        regionIds: Array.from(
+          { length: size },
+          (_, i) => `zip:${63000 + 100 * r + i}`,
+        ),
+      }));
+
+    it('refuses more Region ids across all rules than one rule may hold, with 400', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/internal/services/search')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: { rules: regionRules(11, 10) },
+        })
+        .expect(400);
+      expect(res.body.message).toContain(
+        `at most ${SERVICES_EXCLUDE_MAX_REGIONS} Region ids across all rules`,
+      );
+      expect(search).not.toHaveBeenCalled();
+      expect(mget).not.toHaveBeenCalled();
+    });
+
+    it('accepts Region ids across rules up to the total', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/facets')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send({
+          resourceWriterIds: ['writer-a'],
+          exclude: { rules: regionRules(10, 5, 5) },
+        })
+        .expect(200);
+    });
+
     it('accepts exclusions at their limits and confirms them in the response', async () => {
       const serviceIds = Array.from(
         { length: MANY_SERVICE_IDS },

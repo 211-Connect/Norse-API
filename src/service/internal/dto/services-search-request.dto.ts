@@ -178,7 +178,7 @@ export class ServicesExclusionRuleDto {
     maxItems: SERVICES_EXCLUDE_MAX_REGIONS,
     example: ['county:29510'],
     description:
-      'Region ids. Matches a service whose service_area intersects the Region or with a physical location inside it. Unlike filter.geography, never matches a Virtual Service with no service_area, which serves everywhere. An unknown id is 400.',
+      'Region ids, at most 20 across all rules together (400 beyond). Matches a service whose service_area intersects the Region or with a physical location inside it, a Virtual Service with a service_area included. Unlike filter.geography, never matches a Virtual Service with no service_area, which serves everywhere. An unknown id is 400.',
   })
   @IsOptional()
   @IsArray()

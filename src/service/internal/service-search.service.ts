@@ -17,6 +17,7 @@ import {
   SERVICES_SEARCH_MAX_PLACES,
   ServiceListItemDto,
   ServicesAppliedExclusionsDto,
+  SERVICES_EXCLUDE_MAX_REGIONS,
   ServicesExclusionDto,
   ServicesExclusionRuleDto,
   ServicesFacetsRequestDto,
@@ -296,7 +297,9 @@ function scopeFilterInput(request: {
     resourceWriterIds: request.resourceWriterIds,
     exclude: {
       serviceIds: distinct(request.exclude?.serviceIds),
-      rules: (request.exclude?.rules ?? []).map(exclusionRule),
+      rules: assertRuleRegionTotal(
+        (request.exclude?.rules ?? []).map(exclusionRule),
+      ),
     },
     virtual: request.filter?.virtual,
     match: request.filter?.match,
@@ -336,6 +339,17 @@ function exclusionRule(
     );
   }
   return normalized;
+}
+
+/** Each rule's Regions become their own `indexed_shape` clauses, so the total is what costs. */
+function assertRuleRegionTotal(rules: ExclusionRule[]): ExclusionRule[] {
+  const total = rules.reduce((sum, r) => sum + r.regionIds.length, 0);
+  if (total > SERVICES_EXCLUDE_MAX_REGIONS) {
+    throw new BadRequestException(
+      `exclude.rules may name at most ${SERVICES_EXCLUDE_MAX_REGIONS} Region ids across all rules; got ${total}`,
+    );
+  }
+  return rules;
 }
 
 /** Read back from the query input, so the echo is what the clauses were built from. */
