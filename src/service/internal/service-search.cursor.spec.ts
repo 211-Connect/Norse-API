@@ -219,8 +219,51 @@ describe('queryFingerprint', () => {
       );
     });
 
-    it('leaves a query without Withholdings as it was, so earlier cursors stay valid', () => {
+    it('does not change with an empty Withholdings list', () => {
       expect(queryFingerprint(withheld())).toBe(queryFingerprint(FULL));
+    });
+  });
+
+  describe('a query without exclusions hashes as before exclusions existed', () => {
+    // Literals computed by origin/development's service-search.cursor.ts: a
+    // cursor in flight at deploy, and its shard preference, must survive.
+    const representative: CursorQuery = {
+      resourceWriterIds: ['w1', 'w2'],
+      taxonomyCodes: ['BD-1800'],
+      statuses: ['active'],
+      regionIds: ['state:MO'],
+      points: [{ lat: 35.994, lng: -78.8986, radiusMiles: 10 }],
+      virtual: 'only',
+      match: 'located',
+      text: 'food',
+    };
+
+    it.each([
+      ['a bare query', { resourceWriterIds: ['w1'] }, '876ace889e247f4a'],
+      ['a representative filter', representative, '10f190d94e5611da'],
+    ])('%s', (_label, query: CursorQuery, fingerprint) => {
+      expect(queryFingerprint(query)).toBe(fingerprint);
+      expect(shardPreference(query)).toBe(`services-${fingerprint}`);
+      expect(
+        queryFingerprint({
+          ...query,
+          exclude: { serviceIds: [], rules: [], withheld: [] },
+        }),
+      ).toBe(fingerprint);
+    });
+
+    it('accepts a cursor development issued', () => {
+      const issued = Buffer.from(
+        JSON.stringify({
+          v: 1,
+          m: 'score',
+          k: '876ace889e247f4a',
+          s: [1.5, 's1'],
+        }),
+      ).toString('base64url');
+      expect(
+        decodeCursor(issued, 'score', { resourceWriterIds: ['w1'] }),
+      ).toEqual([1.5, 's1']);
     });
   });
 

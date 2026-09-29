@@ -421,6 +421,13 @@ describe('ServiceSearchService', () => {
         expect(lastRequest().preference).toEqual(expect.any(String));
       });
 
+      it('keeps the preference development sent for a query without exclusions', async () => {
+        await service.search({ resourceWriterIds: ['w1'] });
+        expect(lastRequest().preference).toBe('services-876ace889e247f4a');
+        await service.facets({ resourceWriterIds: ['w1'] });
+        expect(lastRequest().preference).toBe('services-876ace889e247f4a');
+      });
+
       it('uses a different preference for a different query', async () => {
         const [base] = await walk({ resourceWriterIds: [WRITER_A] });
         const [otherText] = await walk({

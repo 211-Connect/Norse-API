@@ -27,6 +27,31 @@ interface CursorPayload {
 const asSet = (values: readonly string[] | undefined) =>
   [...new Set(values ?? [])].sort();
 
+const excludePart = (exclude: NonNullable<CursorQuery['exclude']>) => [
+  asSet(exclude.serviceIds),
+  asSet(
+    exclude.rules.map((r) =>
+      JSON.stringify([
+        asSet(r.taxonomyCodes),
+        asSet(r.regionIds),
+        asSet(r.statuses),
+        r.virtual,
+        ...(r.ownerWriterId !== undefined ? [r.ownerWriterId] : []),
+      ]),
+    ),
+  ),
+  // The version names the set, so the ids need not be hashed.
+  ...(exclude.withheld?.length
+    ? [
+        asSet(
+          exclude.withheld.map((w) =>
+            JSON.stringify([w.agreementId, w.ownerWriterId, w.version]),
+          ),
+        ),
+      ]
+    : []),
+];
+
 /**
  * Every query field, required by the mapped type: a new filter field does not
  * compile until it is fingerprinted. Set-like lists are sorted so the same set
@@ -36,32 +61,14 @@ const FINGERPRINT_PARTS: {
   [K in keyof CursorQuery]-?: (query: CursorQuery) => unknown;
 } = {
   resourceWriterIds: (q) => asSet(q.resourceWriterIds),
-  exclude: (q) => [
-    asSet(q.exclude?.serviceIds),
-    asSet(
-      q.exclude?.rules.map((r) =>
-        JSON.stringify([
-          asSet(r.taxonomyCodes),
-          asSet(r.regionIds),
-          asSet(r.statuses),
-          r.virtual,
-          // Absent when unscoped, so earlier cursors stay valid.
-          ...(r.ownerWriterId !== undefined ? [r.ownerWriterId] : []),
-        ]),
-      ),
-    ),
-    // The version names the set, so the ids need not be hashed. Absent when
-    // none, so a cursor issued before Withholdings existed stays valid.
-    ...(q.exclude?.withheld?.length
-      ? [
-          asSet(
-            q.exclude.withheld.map((w) =>
-              JSON.stringify([w.agreementId, w.ownerWriterId, w.version]),
-            ),
-          ),
-        ]
-      : []),
-  ],
+  // Undefined parts are left out, so a query without exclusions hashes as it
+  // did before they existed: in-flight cursors and shard preferences survive.
+  exclude: (q) =>
+    q.exclude?.serviceIds.length ||
+    q.exclude?.rules.length ||
+    q.exclude?.withheld?.length
+      ? excludePart(q.exclude)
+      : undefined,
   taxonomyCodes: (q) => asSet(q.taxonomyCodes),
   statuses: (q) => asSet(q.statuses),
   regionIds: (q) => asSet(q.regionIds),
@@ -77,7 +84,10 @@ const FINGERPRINT_PARTS: {
 
 export function queryFingerprint(query: CursorQuery): string {
   const canonical = JSON.stringify(
-    Object.entries(FINGERPRINT_PARTS).map(([key, part]) => [key, part(query)]),
+    Object.entries(FINGERPRINT_PARTS).flatMap(([key, part]) => {
+      const value = part(query);
+      return value === undefined ? [] : [[key, value]];
+    }),
   );
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

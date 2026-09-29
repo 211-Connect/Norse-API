@@ -111,7 +111,10 @@ over one fixture and compares the results.
   every serviceId it sent and every rule exactly. Exclusions are part of the
   cursor fingerprint and the shard preference, independent of the order of
   rules and of the items in their lists. A rule's owner enters it only when
-  sent, so a cursor for unscoped rules stays valid.
+  sent, so a cursor for unscoped rules stays valid. A query with no excluded
+  serviceIds, rules or Withholdings fingerprints exactly as it did before
+  exclusions existed, so cursors in flight at deploy and shard preferences
+  survive (pinned by a literal in `service-search.cursor.spec.ts`).
 
   ```json
   {
