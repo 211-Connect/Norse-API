@@ -46,8 +46,18 @@ export class ServiceSearchController {
   @ApiBody({ type: ServicesSearchRequestDto })
   @ApiResponse({ status: 200, type: ServicesSearchResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 409, description: 'A Withholding is superseded' })
+  @ApiResponse({ status: 413, description: 'Request body over 5 MB' })
+  @ApiResponse({
+    status: 422,
+    description: 'The Withholdings name too many services',
+  })
   @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })
-  @ApiResponse({ status: 503, description: 'Elasticsearch timed out' })
+  @ApiResponse({
+    status: 503,
+    description:
+      'Elasticsearch timed out, or a Withholding cannot be confirmed',
+  })
   search(
     @Body() body: ServicesSearchRequestDto,
   ): Promise<ServicesSearchResponseDto> {
@@ -64,8 +74,18 @@ export class ServiceSearchController {
   @ApiBody({ type: ServicesFacetsRequestDto })
   @ApiResponse({ status: 200, type: ServicesFacetsResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 409, description: 'A Withholding is superseded' })
+  @ApiResponse({ status: 413, description: 'Request body over 5 MB' })
+  @ApiResponse({
+    status: 422,
+    description: 'The Withholdings name too many services',
+  })
   @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })
-  @ApiResponse({ status: 503, description: 'Elasticsearch timed out' })
+  @ApiResponse({
+    status: 503,
+    description:
+      'Elasticsearch timed out, or a Withholding cannot be confirmed',
+  })
   facets(
     @Body() body: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {

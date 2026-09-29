@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { VersioningType, LogLevel, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 import { buildSwaggerConfig } from './common/swagger/swagger-config';
+import { useInternalServicesBodyLimit } from './service/internal/internal-services-body';
 
 const logLevelMap: Record<string, LogLevel[]> = {
   error: ['error'],
@@ -35,6 +36,7 @@ async function bootstrap() {
     }),
   );
 
+  useInternalServicesBodyLimit(app);
   app.use(helmet());
   app.enableCors();
   app.enableVersioning({

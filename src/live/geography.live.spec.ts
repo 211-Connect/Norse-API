@@ -24,6 +24,11 @@ import {
 import { ConfigModule } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { Test } from '@nestjs/testing';
+import { getModelToken } from '@nestjs/mongoose';
+import {
+  SharingWithheldService,
+  SharingWithheldVersion,
+} from 'src/common/schemas/sharing-withholding.schema';
 import { Client, estypes } from '@elastic/elasticsearch';
 import request from 'supertest';
 import mongoose from 'mongoose';
@@ -151,6 +156,43 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
   const report: Record<string, unknown> = {
     startedAt: new Date().toISOString(),
   };
+
+  /**
+   * ServiceNet's Withholding projection, served from memory: production
+   * MongoDB holds none to read, and this suite never writes. Elasticsearch
+   * still evaluates the owner-scoped clauses for real (scenario 9).
+   */
+  const projection = (() => {
+    const state = {
+      header: null as null | {
+        agreementId: string;
+        ownerWriterId: string;
+        version: number;
+        serviceCount: number;
+      },
+      serviceIds: [] as string[],
+    };
+    const query = (result: () => unknown) => {
+      const q = { read: () => q, lean: () => q, exec: async () => result() };
+      return q;
+    };
+    const owns = (f: { agreementId?: string; ownerWriterId?: string }) =>
+      state.header !== null &&
+      f.agreementId === state.header.agreementId &&
+      f.ownerWriterId === state.header.ownerWriterId;
+    return {
+      state,
+      versionsModel: {
+        findOne: (f: object) => query(() => (owns(f) ? state.header : null)),
+      },
+      servicesModel: {
+        find: (f: object) =>
+          query(() =>
+            owns(f) ? state.serviceIds.map((serviceId) => ({ serviceId })) : [],
+          ),
+      },
+    };
+  })();
 
   const post = (path: string, body: object) =>
     request(baseUrl)
@@ -317,6 +359,10 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     })
       .overrideProvider(ElasticsearchService)
       .useValue(client)
+      .overrideProvider(getModelToken(SharingWithheldService.name))
+      .useValue(projection.servicesModel)
+      .overrideProvider(getModelToken(SharingWithheldVersion.name))
+      .useValue(projection.versionsModel)
       .compile();
     app = moduleRef.createNestApplication({ logger: ['error'] });
     app.useGlobalPipes(
@@ -1168,6 +1214,94 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
     expect(String(unknown.body?.message)).toContain('county:99999');
     expect(String(unknown.body?.message)).not.toContain('county:29510');
     expect(unknownFacets.status).toBe(400);
+  });
+
+  it("9. a Withholding by reference and an owner-scoped rule take out only the owner's records (ISS-1938, ISS-1939)", async () => {
+    const owner = writers[0];
+    const base = await countWhere([]);
+    const ownerPage = await searchPage({
+      resourceWriterIds: [owner],
+      limit: 5,
+    });
+    const withheldIds = [...new Set(ownerPage.items.map((i) => i.serviceId))];
+    expect(withheldIds.length).toBeGreaterThan(0);
+    projection.state.header = {
+      agreementId: 'live-agreement',
+      ownerWriterId: owner,
+      version: 1,
+      serviceCount: withheldIds.length,
+    };
+    projection.state.serviceIds = withheldIds;
+    const ownerTerm = { term: { resourceWriterId: owner } };
+
+    const withheld = await searchPage({
+      resourceWriterIds: writers,
+      exclude: {
+        withholdings: [
+          { agreementId: 'live-agreement', ownerWriterId: owner, version: 1 },
+        ],
+      },
+      limit: 1,
+    });
+    const withheldDirect = await countWhere([
+      ownerTerm,
+      { terms: { serviceId: withheldIds } },
+    ]);
+
+    const rule = { statuses: ['active'] };
+    const scoped = await searchPage({
+      resourceWriterIds: writers,
+      exclude: { rules: [{ ...rule, ownerWriterId: owner }] },
+      limit: 1,
+    });
+    const unscoped = await searchPage({
+      resourceWriterIds: writers,
+      exclude: { rules: [rule] },
+      limit: 1,
+    });
+    const ownerActive = await countWhere([
+      ownerTerm,
+      { terms: { status: rule.statuses } },
+    ]);
+    const anyActive = await countWhere([{ terms: { status: rule.statuses } }]);
+
+    const facets = await post('/internal/services/facets', {
+      resourceWriterIds: writers,
+      exclude: { rules: [{ ...rule, ownerWriterId: owner }] },
+    });
+    const baseFacets = await post('/internal/services/facets', {
+      resourceWriterIds: writers,
+    });
+    const counts = (res: {
+      body: {
+        contributors: { resourceWriterId: string; recordCount: number }[];
+      };
+    }) =>
+      Object.fromEntries(
+        res.body.contributors.map((c) => [c.resourceWriterId, c.recordCount]),
+      );
+    const others = (c: Record<string, number>) =>
+      Object.entries(c).filter(([w]) => w !== owner);
+
+    projection.state.header = null;
+    projection.state.serviceIds = [];
+
+    report.s9_withholding_and_owner_rule = {
+      owner,
+      base,
+      withheldIds: withheldIds.length,
+      withholding: { route: withheld.total, direct: base - withheldDirect },
+      scopedRule: { route: scoped.total, direct: base - ownerActive },
+      unscopedRule: { route: unscoped.total, direct: base - anyActive },
+    };
+
+    expect(withheldDirect).toBeGreaterThan(0);
+    expect(withheld.total).toBe(base - withheldDirect);
+    expect(scoped.total).toBe(base - ownerActive);
+    expect(unscoped.total).toBe(base - anyActive);
+    expect(scoped.total).toBeGreaterThanOrEqual(unscoped.total);
+    expect(facets.status).toBe(200);
+    expect(others(counts(facets))).toEqual(others(counts(baseFacets)));
   });
 
   it('7. latency', async () => {

@@ -16,6 +16,10 @@ import {
   SERVICES_SEARCH_DEFAULT_LIMIT,
   SERVICES_SEARCH_MAX_PLACES,
   ServiceListItemDto,
+  ServicesAppliedExclusionsDto,
+  SERVICES_EXCLUDE_MAX_REGIONS,
+  ServicesExclusionDto,
+  ServicesExclusionRuleDto,
   ServicesFacetsRequestDto,
   ServicesFacetsResponseDto,
   ServicesScopeFilterDto,
@@ -27,6 +31,7 @@ import { RegionService, unknownRegionsError } from '../../region/internal';
 import {
   SERVICE_LIST_SOURCE_FIELDS,
   SERVICES_INDEX,
+  ExclusionRule,
   GeoPoint,
   ServiceFilterInput,
   buildServiceFilter,
@@ -41,6 +46,7 @@ import {
   encodeCursor,
   shardPreference,
 } from './service-search.cursor';
+import { WithholdingService } from './withholding.service';
 
 /** Buckets per composite page; facets page until exhausted, never truncate. */
 export const FACET_PAGE_SIZE = 1000;
@@ -77,6 +83,7 @@ export class ServiceSearchService {
   constructor(
     private readonly elasticsearch: ElasticsearchService,
     private readonly regions: RegionService,
+    private readonly withholdings: WithholdingService,
   ) {}
 
   async search(
@@ -84,7 +91,7 @@ export class ServiceSearchService {
   ): Promise<ServicesSearchResponseDto> {
     const limit = request.limit ?? SERVICES_SEARCH_DEFAULT_LIMIT;
     const cursorQuery: CursorQuery = {
-      ...scopeFilterInput(request),
+      ...(await this.resolveScopeFilterInput(request)),
       taxonomyCodes: request.filter?.taxonomyCodes,
       statuses: request.filter?.statuses,
       text: request.text,
@@ -96,8 +103,16 @@ export class ServiceSearchService {
         : decodeCursor(request.cursor, mode, cursorQuery);
 
     const scope = buildServiceFilter(cursorQuery);
-    if (scope === null) return { items: [], total: 0, limit, nextCursor: null };
-    await this.regions.assertExist(cursorQuery.regionIds ?? []);
+    if (scope === null) {
+      return {
+        items: [],
+        total: 0,
+        limit,
+        nextCursor: null,
+        appliedExclusions: appliedExclusions(cursorQuery),
+      };
+    }
+    await this.regions.assertExist(regionsToCheck(cursorQuery));
 
     const body: SearchRequest = {
       index: SERVICES_INDEX,
@@ -131,16 +146,24 @@ export class ServiceSearchService {
         result.hits.hits.length > limit && last?.sort
           ? encodeCursor(mode, cursorQuery, last.sort)
           : null,
+      appliedExclusions: appliedExclusions(cursorQuery),
     };
   }
 
   async facets(
     request: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {
-    const input = scopeFilterInput(request);
+    const input = await this.resolveScopeFilterInput(request);
     const scope = buildServiceFilter(input);
-    if (scope === null) return { contributors: [], statuses: [], taxonomy: [] };
-    await this.regions.assertExist(input.regionIds ?? []);
+    if (scope === null) {
+      return {
+        contributors: [],
+        statuses: [],
+        taxonomy: [],
+        appliedExclusions: appliedExclusions(input),
+      };
+    }
+    await this.regions.assertExist(regionsToCheck(input));
 
     const buckets = await this.collectFacetBuckets(
       { bool: scope },
@@ -170,6 +193,7 @@ export class ServiceSearchService {
         })),
         coded,
       ).map((n) => ({ ...n, name: n.code })),
+      appliedExclusions: appliedExclusions(input),
     };
   }
 
@@ -237,6 +261,20 @@ export class ServiceSearchService {
     return out;
   }
 
+  /** The request's scope, with each named Withholding's services read at its exact version. */
+  private async resolveScopeFilterInput(
+    request: Parameters<typeof scopeFilterInput>[0],
+  ): Promise<ServiceFilterInput> {
+    const scope = scopeFilterInput(request);
+    const withheld = await this.withholdings.resolve(
+      request.exclude?.withholdings ?? [],
+    );
+    return {
+      ...scope,
+      exclude: { serviceIds: [], rules: [], ...scope.exclude, withheld },
+    };
+  }
+
   private call<T>(what: string, run: () => Promise<T>): Promise<T> {
     return callElasticsearch(
       {
@@ -249,13 +287,20 @@ export class ServiceSearchService {
   }
 }
 
-/** The clauses search and facets share: writer set, geography, virtual mode. */
+/** The clauses search and facets share: writer set, exclusions, geography, virtual mode. */
 function scopeFilterInput(request: {
   resourceWriterIds: string[];
+  exclude?: ServicesExclusionDto;
   filter?: ServicesScopeFilterDto;
 }): ServiceFilterInput {
   const scope: ServiceFilterInput = {
     resourceWriterIds: request.resourceWriterIds,
+    exclude: {
+      serviceIds: distinct(request.exclude?.serviceIds),
+      rules: assertRuleRegionTotal(
+        (request.exclude?.rules ?? []).map(exclusionRule),
+      ),
+    },
     virtual: request.filter?.virtual,
     match: request.filter?.match,
   };
@@ -265,6 +310,75 @@ function scopeFilterInput(request: {
   const points = distinctPoints(geography.points ?? []);
   assertPlaceCount(regionIds.length + points.length);
   return { ...scope, regionIds, points };
+}
+
+const distinct = (values: readonly string[] | undefined): string[] => [
+  ...new Set(values ?? []),
+];
+
+function exclusionRule(
+  rule: ServicesExclusionRuleDto,
+  index: number,
+): ExclusionRule {
+  const normalized: ExclusionRule = {
+    taxonomyCodes: distinct(rule.taxonomyCodes),
+    regionIds: distinct(rule.regionIds),
+    statuses: distinct(rule.statuses),
+    virtual: rule.virtual ?? null,
+    ...(rule.ownerWriterId !== undefined && {
+      ownerWriterId: rule.ownerWriterId,
+    }),
+  };
+  const { taxonomyCodes, regionIds, statuses, virtual } = normalized;
+  if (
+    taxonomyCodes.length + regionIds.length + statuses.length === 0 &&
+    virtual === null
+  ) {
+    throw new BadRequestException(
+      `exclude.rules[${index}] has no criteria, so it would exclude every record`,
+    );
+  }
+  return normalized;
+}
+
+/** Each rule's Regions become their own `indexed_shape` clauses, so the total is what costs. */
+function assertRuleRegionTotal(rules: ExclusionRule[]): ExclusionRule[] {
+  const total = rules.reduce((sum, r) => sum + r.regionIds.length, 0);
+  if (total > SERVICES_EXCLUDE_MAX_REGIONS) {
+    throw new BadRequestException(
+      `exclude.rules may name at most ${SERVICES_EXCLUDE_MAX_REGIONS} Region ids across all rules; got ${total}`,
+    );
+  }
+  return rules;
+}
+
+/** Read back from the query input, so the echo is what the clauses were built from. */
+function appliedExclusions(
+  input: ServiceFilterInput,
+): ServicesAppliedExclusionsDto {
+  return {
+    serviceIds: [...(input.exclude?.serviceIds ?? [])],
+    rules: (input.exclude?.rules ?? []).map((r) => ({
+      taxonomyCodes: [...r.taxonomyCodes],
+      regionIds: [...r.regionIds],
+      statuses: [...r.statuses],
+      virtual: r.virtual,
+      ownerWriterId: r.ownerWriterId ?? null,
+    })),
+    withholdings: (input.exclude?.withheld ?? []).map((w) => ({
+      agreementId: w.agreementId,
+      ownerWriterId: w.ownerWriterId,
+      version: w.version,
+      serviceCount: w.serviceIds.length,
+    })),
+  };
+}
+
+function regionsToCheck(input: ServiceFilterInput): string[] {
+  return distinct([
+    ...(input.regionIds ?? []),
+    ...(input.exclude?.rules.flatMap((r) => r.regionIds) ?? []),
+  ]);
 }
 
 function distinctPoints(points: readonly GeoPoint[]): GeoPoint[] {

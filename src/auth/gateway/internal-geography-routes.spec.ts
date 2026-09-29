@@ -7,6 +7,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { Test } from '@nestjs/testing';
+import { UNWIRED_WITHHOLDING_MODELS } from 'src/common/testing/withholding-models';
 import request from 'supertest';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -103,6 +104,10 @@ describe('Geography filter internal routes: internal key, not tenant scope', () 
     })
       .overrideProvider(ElasticsearchService)
       .useValue({ search, mget })
+      .overrideProvider(UNWIRED_WITHHOLDING_MODELS[0].token)
+      .useValue(UNWIRED_WITHHOLDING_MODELS[0].value)
+      .overrideProvider(UNWIRED_WITHHOLDING_MODELS[1].token)
+      .useValue(UNWIRED_WITHHOLDING_MODELS[1].value)
       .overrideGuard(ArcjetGuard)
       .useValue({ canActivate: () => true })
       .compile();

@@ -2,6 +2,7 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
 import { ServiceSearchService } from './service-search.service';
 import { RegionService } from '../../region/internal';
+import { WithholdingRef, WithholdingService } from './withholding.service';
 
 /**
  * Parity with ServiceNet's Mongo record source (`sharing-mongo/src/record-source.ts`)
@@ -294,8 +295,16 @@ function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
       return valuesOf(doc, field).some((v) => list.includes(v));
     }
     case 'term': {
-      const [field, value] = Object.entries(body)[0];
-      return valuesOf(doc, field).some((v) => v === value);
+      const [field, spec] = Object.entries<any>(body)[0];
+      if (spec !== null && typeof spec === 'object') {
+        const want = String(spec.value);
+        return valuesOf(doc, field).some((v) =>
+          spec.case_insensitive === true
+            ? String(v).toLowerCase() === want.toLowerCase()
+            : v === spec.value,
+        );
+      }
+      return valuesOf(doc, field).some((v) => v === spec);
     }
     case 'exists':
       return valuesOf(doc, body.field).length > 0;
@@ -306,9 +315,14 @@ function evaluateClause(clause: Record<string, any>, doc: Doc): boolean {
     }
     case 'multi_match':
       return false;
-    default:
-      throw new Error(`parity evaluator does not model "${kind}"`);
+    case 'geo_shape': {
+      // Fixture docs list the Region ids their service_area intersects.
+      const [field, spec] = Object.entries<any>(body)[0];
+      if (!spec.indexed_shape) break;
+      return valuesOf(doc, field).includes(spec.indexed_shape.id);
+    }
   }
+  throw new Error(`parity evaluator does not model "${kind}"`);
 }
 
 type SortValue = string | number | null;
@@ -401,17 +415,22 @@ function evaluateAggregations(docs: Doc[], request: Record<string, any>) {
   return { aggregations };
 }
 
-function serviceOver(docs: Doc[]) {
+function serviceOver(docs: Doc[], withheld: Record<string, string[]> = {}) {
   const search = jest.fn(async (request: Record<string, any>) =>
     request.aggs
       ? evaluateAggregations(docs, request)
       : evaluateSearch(docs, request),
   );
+  const withholdings = {
+    resolve: async (refs: WithholdingRef[]) =>
+      refs.map((r) => ({ ...r, serviceIds: withheld[r.ownerWriterId] ?? [] })),
+  } as unknown as WithholdingService;
   return {
     search,
     service: new ServiceSearchService(
       { search } as unknown as ElasticsearchService,
       { assertExist: async () => undefined } as unknown as RegionService,
+      withholdings,
     ),
   };
 }
@@ -514,7 +533,10 @@ describe('services search parity with the Mongo record source', () => {
     async ({ writers }) => {
       await expect(
         service.facets({ resourceWriterIds: writers }),
-      ).resolves.toEqual(mongoListFilterOptions(writers));
+      ).resolves.toEqual({
+        ...mongoListFilterOptions(writers),
+        appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
+      });
     },
   );
 });
@@ -596,5 +618,257 @@ describe('text: name contains match (the deliberate change)', () => {
 
   it('treats a backslash in the text as a literal', async () => {
     expect(await ids('c:\\temp')).toEqual(['t:4']);
+  });
+});
+
+describe('exclusions over the fixture (ISS-1928)', () => {
+  // Fixture docs list the Region ids their service_area and sites intersect.
+  const GEO: Record<string, Doc> = {
+    't:s1': {
+      service_area: ['county:1'],
+      locationPoints: ['county:1'],
+      locationTypes: ['physical'],
+    },
+    't:s2': { service_area: ['county:2'], locationTypes: ['physical'] },
+    't:s0': { locationPoints: ['county:3'], locationTypes: ['physical'] },
+    'v:t3': { service_area: ['county:1', 'state:X'] },
+    'w:u1': { locationTypes: ['virtual'] },
+    't:s7': { service_area: ['county:2'], locationTypes: ['virtual'] },
+  };
+  const docs = FIXTURE.map((d) => ({ ...d, ...GEO[d._id as string] }));
+  const writers = [A, B, C];
+
+  interface Rule {
+    taxonomyCodes?: string[];
+    regionIds?: string[];
+    statuses?: string[];
+    virtual?: 'only' | 'exclude';
+    ownerWriterId?: string;
+  }
+  interface Exclude {
+    serviceIds?: string[];
+    rules?: Rule[];
+  }
+
+  const list = (doc: Doc, field: string) =>
+    (doc[field] as string[] | undefined) ?? [];
+  const anyOf = (wanted: string[] | undefined, has: (v: string) => boolean) =>
+    (wanted ?? []).length === 0 || wanted!.some(has);
+
+  /** Stated independently of the query builder. */
+  const ruleMatches = (doc: Doc, rule: Rule) =>
+    (rule.ownerWriterId === undefined ||
+      String(doc.resourceWriterId).toLowerCase() ===
+        rule.ownerWriterId.toLowerCase()) &&
+    anyOf(rule.taxonomyCodes, (c) => list(doc, 'taxonomyPath').includes(c)) &&
+    anyOf(rule.statuses, (s) => doc.status === s) &&
+    anyOf(
+      rule.regionIds,
+      (r) =>
+        list(doc, 'service_area').includes(r) ||
+        list(doc, 'locationPoints').includes(r),
+    ) &&
+    (rule.virtual === undefined ||
+      list(doc, 'locationTypes').includes(
+        rule.virtual === 'only' ? 'virtual' : 'physical',
+      ));
+  const excludedBy = (doc: Doc, ex: Exclude) =>
+    (ex.serviceIds ?? []).includes(doc.serviceId as string) ||
+    (ex.rules ?? []).some((rule) => ruleMatches(doc, rule));
+
+  const CASES: [string, Exclude][] = [
+    ['services', { serviceIds: ['s1', 't1', 'no-such-service'] }],
+    [
+      'a taxonomy node and its descendants',
+      { rules: [{ taxonomyCodes: ['BD-1800'] }] },
+    ],
+    [
+      'Regions, by Service Area or by site',
+      { rules: [{ regionIds: ['county:1', 'county:3'] }] },
+    ],
+    [
+      'criteria ANDed inside one rule',
+      { rules: [{ taxonomyCodes: ['BD-1800'], statuses: ['inactive'] }] },
+    ],
+    [
+      'services and rules ORed',
+      {
+        serviceIds: ['t2'],
+        rules: [
+          { taxonomyCodes: ['BD-1800'], statuses: ['active', 'closed'] },
+          { regionIds: ['county:2'], virtual: 'only' },
+        ],
+      },
+    ],
+    [
+      'a rule scoped to its owner, spelled in another case (ISS-1939)',
+      {
+        rules: [{ taxonomyCodes: ['BD-1800'], ownerWriterId: A.toUpperCase() }],
+      },
+    ],
+  ];
+
+  const idsOf = async (service: ServiceSearchService, exclude?: Exclude) =>
+    (await walk(service, { resourceWriterIds: writers, exclude, limit: 3 }))
+      .flatMap((p) => p.ids)
+      .sort();
+
+  it.each(CASES)(
+    'search leaves out exactly the excluded records: %s',
+    async (_label, exclude) => {
+      const { service } = serviceOver(docs);
+      const before = await idsOf(service);
+      const after = await idsOf(service, exclude);
+      const expectedGone = before.filter((id) =>
+        excludedBy(
+          docs.find((d) => d._id === id)!,
+          exclude,
+        ),
+      );
+      expect(expectedGone.length).toBeGreaterThan(0);
+      expect(after).toEqual(before.filter((id) => !expectedGone.includes(id)));
+
+      const page = await service.search({
+        resourceWriterIds: writers,
+        exclude,
+      });
+      expect(page.total).toBe(before.length - expectedGone.length);
+    },
+  );
+
+  it('narrows a rule by each criterion it adds', async () => {
+    const { service } = serviceOver(docs);
+    const taxonomyOnly = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'] }],
+    });
+    const andStatus = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'], statuses: ['inactive'] }],
+    });
+    expect(andStatus).toContain('t:s1');
+    expect(taxonomyOnly).not.toContain('t:s1');
+    expect(andStatus).not.toContain('t:s0');
+  });
+
+  it("keeps another writer's records that match an owner-scoped rule", async () => {
+    const { service } = serviceOver(docs);
+    const unscoped = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'] }],
+    });
+    const scoped = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'], ownerWriterId: A }],
+    });
+    expect(unscoped).not.toContain('v:t3');
+    expect(scoped).toContain('v:t3');
+    expect(scoped).not.toContain('t:s1');
+    expect(scoped).not.toContain('t:s2');
+  });
+
+  it('never takes out a Virtual Service that serves everywhere by Region', async () => {
+    const { service } = serviceOver(docs);
+    const after = await idsOf(service, {
+      rules: [{ regionIds: ['county:1', 'county:2', 'county:3', 'state:X'] }],
+    });
+    expect(after).toContain('w:u1');
+    expect(after).not.toContain('t:s7');
+    expect(after).not.toContain('t:s0');
+  });
+
+  it.each(CASES)(
+    'facet counts drop by exactly the excluded records: %s',
+    async (_label, exclude) => {
+      const withExclusion = await serviceOver(docs).service.facets({
+        resourceWriterIds: writers,
+        exclude,
+      });
+      const withoutTheRecords = await serviceOver(
+        docs.filter((d) => !excludedBy(d, exclude)),
+      ).service.facets({ resourceWriterIds: writers });
+      const unexcluded = await serviceOver(docs).service.facets({
+        resourceWriterIds: writers,
+      });
+
+      const { appliedExclusions, ...counts } = withExclusion;
+      expect(counts).toEqual({
+        ...withoutTheRecords,
+        appliedExclusions: undefined,
+      });
+      expect(counts).not.toEqual({
+        ...unexcluded,
+        appliedExclusions: undefined,
+      });
+      expect(appliedExclusions).toEqual({
+        serviceIds: exclude.serviceIds ?? [],
+        rules: (exclude.rules ?? []).map((rule) => ({
+          taxonomyCodes: rule.taxonomyCodes ?? [],
+          regionIds: rule.regionIds ?? [],
+          statuses: rule.statuses ?? [],
+          virtual: rule.virtual ?? null,
+          ownerWriterId: rule.ownerWriterId ?? null,
+        })),
+        withholdings: [],
+      });
+    },
+  );
+
+  describe('Withholdings by reference (ISS-1938)', () => {
+    // s1 under a second writer: a serviceId is unique per writer, not across.
+    const twin = {
+      ...docs.find((d) => d._id === 't:s1')!,
+      _id: 'v:s1',
+      resourceWriterId: B,
+    };
+    const withTwin = [...docs, twin];
+    const ref = { agreementId: 'agreement-1', ownerWriterId: A, version: 2 };
+    const withheld = { [A]: ['s1', 's2', 't1'] };
+
+    it("leaves out the owner's withheld records and nobody else's", async () => {
+      const { service } = serviceOver(withTwin, withheld);
+      const before = (
+        await walk(service, { resourceWriterIds: writers, limit: 3 })
+      ).flatMap((p) => p.ids);
+      const after = (
+        await walk(service, {
+          resourceWriterIds: writers,
+          exclude: { withholdings: [ref] },
+          limit: 3,
+        })
+      ).flatMap((p) => p.ids);
+      expect(before).toEqual(
+        expect.arrayContaining(['t:s1', 't:s2', 'v:s1', 'v:t1']),
+      );
+      expect(after.sort()).toEqual(
+        before.filter((id) => id !== 't:s1' && id !== 't:s2').sort(),
+      );
+    });
+
+    it('matches the owner in any case, as ServiceNet may spell it', async () => {
+      const { service } = serviceOver(withTwin, { [A.toUpperCase()]: ['s1'] });
+      const after = (
+        await walk(service, {
+          resourceWriterIds: writers,
+          exclude: {
+            withholdings: [{ ...ref, ownerWriterId: A.toUpperCase() }],
+          },
+          limit: 3,
+        })
+      ).flatMap((p) => p.ids);
+      expect(after).not.toContain('t:s1');
+      expect(after).toContain('v:s1');
+    });
+
+    it('drops the facet counts by exactly those records', async () => {
+      const excluded = await serviceOver(withTwin, withheld).service.facets({
+        resourceWriterIds: writers,
+        exclude: { withholdings: [ref] },
+      });
+      const without = await serviceOver(
+        withTwin.filter((d) => d._id !== 't:s1' && d._id !== 't:s2'),
+      ).service.facets({ resourceWriterIds: writers });
+      const { appliedExclusions, ...counts } = excluded;
+      expect(counts).toEqual({ ...without, appliedExclusions: undefined });
+      expect(appliedExclusions.withholdings).toEqual([
+        { ...ref, serviceCount: 3 },
+      ]);
+    });
   });
 });

@@ -4,7 +4,7 @@ import {
   Sort,
 } from '@elastic/elasticsearch/lib/api/types';
 import { REGIONS_INDEX } from '../../region/internal';
-import { MatchMode, VirtualMode } from './dto';
+import { MatchMode, RuleVirtualMode, VirtualMode } from './dto';
 
 /**
  * The ES `services` index (ADR 0023). Filters mirror ServiceNet's Mongo
@@ -70,8 +70,45 @@ export interface GeoPoint {
 export const geoPointKey = ({ lat, lng, radiusMiles }: GeoPoint): string =>
   `${lat},${lng},${radiusMiles}`;
 
+/** Criteria AND'ed; an empty list places no constraint. */
+export interface ExclusionRule {
+  taxonomyCodes: readonly string[];
+  regionIds: readonly string[];
+  statuses: readonly string[];
+  virtual: RuleVirtualMode | null;
+  /** Scopes the rule to one writer's records; absent, it spans every writer. */
+  ownerWriterId?: string;
+}
+
+/** One owner's withheld services at one version of its Withholding. */
+export interface WithheldServiceSet {
+  agreementId: string;
+  ownerWriterId: string;
+  version: number;
+  serviceIds: readonly string[];
+}
+
+/** A service listed, matching any rule, or withheld by its owner is excluded. */
+export interface ServiceExclusions {
+  serviceIds: readonly string[];
+  rules: readonly ExclusionRule[];
+  withheld?: readonly WithheldServiceSet[];
+}
+
+/** ES's default `index.max_terms_count`: the most ids one `terms` query may carry. */
+export const WITHHELD_SERVICE_IDS_PER_CLAUSE = 65_536;
+
+function inClauses(ids: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += WITHHELD_SERVICE_IDS_PER_CLAUSE) {
+    out.push(ids.slice(i, i + WITHHELD_SERVICE_IDS_PER_CLAUSE));
+  }
+  return out;
+}
+
 export interface ServiceFilterInput {
   resourceWriterIds: readonly string[];
+  exclude?: ServiceExclusions;
   taxonomyCodes?: readonly string[];
   statuses?: readonly string[];
   regionIds?: readonly string[];
@@ -110,14 +147,7 @@ function servesClause(
   virtual: VirtualMode | undefined,
 ): QueryDslQueryContainer {
   const serves: QueryDslQueryContainer[] = [
-    ...regionIds.map((id) => ({
-      geo_shape: {
-        [SERVICE_AREA_FIELD]: {
-          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-          relation: 'intersects' as const,
-        },
-      },
-    })),
+    ...regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
     ...points.map(({ lat, lng, radiusMiles }) => ({
       geo_shape: {
         [SERVICE_AREA_FIELD]: {
@@ -135,20 +165,25 @@ function servesClause(
   return { bool: { should: serves, minimum_should_match: 1 } };
 }
 
+/** ES reads the Region's shape from `regions` by id. */
+function regionShape(field: string, id: string): QueryDslQueryContainer {
+  return {
+    geo_shape: {
+      [field]: {
+        indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+        relation: 'intersects',
+      },
+    },
+  };
+}
+
 /** A physical site inside a Region's shape or within a point's radius. */
 function locatedClauses(
   regionIds: readonly string[],
   points: readonly GeoPoint[],
 ): QueryDslQueryContainer[] {
   return [
-    ...regionIds.map((id) => ({
-      geo_shape: {
-        [LOCATION_POINTS_FIELD]: {
-          indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
-          relation: 'intersects' as const,
-        },
-      },
-    })),
+    ...regionIds.map((id) => regionShape(LOCATION_POINTS_FIELD, id)),
     ...points.map(({ lat, lng, radiusMiles }) => ({
       geo_distance: {
         distance: `${radiusMiles}mi`,
@@ -236,7 +271,71 @@ export function buildServiceFilter(input: ServiceFilterInput): {
   }
   const virtual = virtualClause(input.virtual);
   if (virtual) filter.push(virtual);
+  must_not.push(...exclusionClauses(input.exclude));
   return { filter, must_not };
+}
+
+function exclusionClauses(
+  exclude: ServiceExclusions | undefined,
+): QueryDslQueryContainer[] {
+  if (!exclude) return [];
+  return [
+    ...inClauses(exclude.serviceIds).map((ids) => ({
+      terms: { serviceId: ids },
+    })),
+    ...exclude.rules.map(ruleClause),
+    ...(exclude.withheld ?? []).flatMap((set) =>
+      inClauses(set.serviceIds).map((ids) => ({
+        bool: {
+          filter: [
+            ownerClause(set.ownerWriterId),
+            { terms: { serviceId: ids } },
+          ],
+        },
+      })),
+    ),
+  ];
+}
+
+/** ServiceNet names the owner as its Agreement spells it. */
+function ownerClause(ownerWriterId: string): QueryDslQueryContainer {
+  return {
+    term: {
+      resourceWriterId: { value: ownerWriterId, case_insensitive: true },
+    },
+  };
+}
+
+/**
+ * A Region takes out services serving it or sited in it, but not the Virtual
+ * Services that serve everywhere (ADR 0025): withholding a Region must not
+ * withhold every such service from every partner.
+ */
+function ruleClause(rule: ExclusionRule): QueryDslQueryContainer {
+  const filter: QueryDslQueryContainer[] = [];
+  if (rule.ownerWriterId !== undefined) {
+    filter.push(ownerClause(rule.ownerWriterId));
+  }
+  if (rule.taxonomyCodes.length > 0) {
+    filter.push({ terms: { taxonomyPath: [...rule.taxonomyCodes] } });
+  }
+  if (rule.statuses.length > 0) {
+    filter.push({ terms: { status: [...rule.statuses] } });
+  }
+  if (rule.regionIds.length > 0) {
+    filter.push({
+      bool: {
+        should: [
+          ...rule.regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
+          ...locatedClauses(rule.regionIds, []),
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  }
+  const virtual = virtualClause(rule.virtual ?? undefined);
+  if (virtual) filter.push(virtual);
+  return { bool: { filter } };
 }
 
 /** Escapes a user string for a `wildcard` query: `\\` first, then `*` and `?`. */

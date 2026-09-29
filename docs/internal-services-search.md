@@ -7,8 +7,8 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor }` |
-| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match` | `{ contributors, statuses, taxonomy }` |
+| `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `exclude`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor, appliedExclusions }` |
+| `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match`, `exclude` | `{ contributors, statuses, taxonomy, appliedExclusions }` |
 
 Send `x-api-version: 1`, as for every versioned route, and
 `x-internal-api-key`. No `x-tenant-id`: the
@@ -59,6 +59,98 @@ over one fixture and compares the results.
     }
   }
   ```
+- **Exclusions** (ISS-1928, for ServiceNet's Withholding — its ADR 0022).
+  `exclude` takes `serviceIds`, Record Criteria `rules` and `withholdings`
+  by reference, all optional. A service listed, matching **any** rule, or
+  withheld by a named Withholding is left out of the results, the total and
+  every facet count, through `must_not`.
+  - `serviceIds` match `serviceId` exactly, across the whole writer set, so an
+    id two writers share is excluded for both. Each is at most 128
+    characters. No count cap since ISS-1938 (the provisional 1,000 is gone),
+    but the **request body** is capped: the internal services routes accept
+    up to **5 MB** of JSON (`src/service/internal/internal-services-body.ts`,
+    registered in `main.ts`; every other route keeps Express's 100 kB). That
+    is about 120,000 ids of 36 characters, or about 39,000 of 128; beyond it
+    the answer is a JSON **413** naming the limit. They are applied in
+    `terms` clauses of at most 65,536 ids each
+    (`WITHHELD_SERVICE_IDS_PER_CLAUSE`, ES's default `index.max_terms_count`).
+    ServiceNet no longer sends them; see `withholdings`.
+  - `withholdings` (ISS-1938, max 100): `{ agreementId, ownerWriterId,
+    version }`. Norse reads the owner's withheld services at exactly that
+    version from MongoDB (below) and excludes them **only among that owner's
+    records** (`term resourceWriterId` AND `terms serviceId`, 65,536 ids per
+    clause, as many clauses as it takes). See
+    [Withholdings by reference](#withholdings-by-reference).
+  - `rules` (max 50): each takes `taxonomyCodes` (max 100), `regionIds`
+    (max 20 — and at most 20 **across all rules together**, else 400: each
+    Region is two `indexed_shape` clauses per rule, so 50 rules of 20 would
+    be 2,000 shape clauses per search and per facet page), `statuses` (max
+    100) and `virtual` (`only` | `exclude`). The
+    criteria given are AND'ed; each list matches any of its items. A rule with
+    no criteria (absent or only empty lists, no `virtual`) is 400, since it
+    would exclude everything.
+    - `ownerWriterId` (ISS-1939, optional, max 128) scopes the rule to the
+      writer whose Withholding it is: it matches **only that owner's
+      records**, through the same case-insensitive `term resourceWriterId`
+      as `withholdings`, AND'ed with the criteria. Without it a rule spans
+      every writer in `resourceWriterIds`, so the other party would lose its
+      own matching records too. It is not a criterion: a rule with only an
+      owner is still 400.
+    - `taxonomyCodes` match the expanded `taxonomyPath`, so a node covers its
+      descendants; `statuses` match `status` exactly; `virtual` is
+      `filter.virtual`'s clause.
+    - `regionIds` match a `service_area` intersecting the Region **or** a
+      `locationPoints` site inside it — but **never** a Virtual Service with
+      no `service_area`. Such a service serves every Region (ADR 0025) under
+      the positive filter; excluding a Region must not take it out. A
+      Virtual Service that **publishes** a `service_area` is matched like
+      any other service: one with a nationwide `service_area` intersects
+      every Region and **is** excluded by any Region rule. Excluded
+      Regions are checked in the same `mget` as the geography Regions; an
+      unknown one is 400.
+
+  Both responses carry `appliedExclusions`: `serviceIds` de-duplicated,
+  `rules` one per rule sent, in the order sent, each with every list present
+  (de-duplicated, `[]` when absent), `virtual` and `ownerWriterId` `null`
+  when absent, and
+  `withholdings` one per distinct Withholding sent, with the `version` applied
+  and its `serviceCount`. **It is
+  the confirmation, and callers must require it.** The global
+  `ValidationPipe` runs with `whitelist: false`, so a Norse-API older than
+  this change ignores `exclude` and answers 200 with the excluded records.
+  ServiceNet refuses any response to an excluding request that does not echo
+  every serviceId it sent and every rule exactly. Exclusions are part of the
+  cursor fingerprint and the shard preference, independent of the order of
+  rules and of the items in their lists. A rule's owner enters it only when
+  sent, so a cursor for unscoped rules stays valid. A query with no excluded
+  serviceIds, rules or Withholdings fingerprints exactly as it did before
+  exclusions existed, so cursors in flight at deploy and shard preferences
+  survive (pinned by a literal in `service-search.cursor.spec.ts`).
+
+  ```json
+  {
+    "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4"],
+    "exclude": {
+      "serviceIds": ["svc-1"],
+      "rules": [
+        { "taxonomyCodes": ["BD-1800"], "statuses": ["inactive"] },
+        { "regionIds": ["county:29095"], "virtual": "exclude", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4" }
+      ]
+    }
+  }
+  ```
+
+  echoes
+
+  ```json
+  {
+    "serviceIds": ["svc-1"],
+    "rules": [
+      { "taxonomyCodes": ["BD-1800"], "regionIds": [], "statuses": ["inactive"], "virtual": null, "ownerWriterId": null },
+      { "taxonomyCodes": [], "regionIds": ["county:29095"], "statuses": [], "virtual": "exclude", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4" }
+    ]
+  }
+  ```
 - **Order without text.** Results are sorted by `name.raw` ascending with a
   missing name first, then by `serviceId`. `name.raw` is a case-sensitive
   keyword, so this is Mongo's binary order.
@@ -75,6 +167,74 @@ over one fixture and compares the results.
     the two in step.
   - Contributor names are not in the index. ServiceNet resolves them, as its
     injected resolver does today.
+
+## Withholdings by reference
+
+ServiceNet's Withholding (its ADR 0022) keeps records picked by hand, in any
+number, in Postgres, and projects them into the MongoDB database Norse-API
+already reads (`search_engine`), in two collections ServiceNet writes and
+indexes and Norse only reads (`autoIndex`/`autoCreate` off,
+`src/common/schemas/sharing-withholding.schema.ts`):
+
+| Collection | One document per | Fields |
+| --- | --- | --- |
+| `sharing_withheld_versions` | Withholding | `agreementId`, `ownerWriterId`, `version`, `serviceCount` |
+| `sharing_withheld_services` | withheld service | `agreementId`, `ownerWriterId`, `serviceId`, `version` (withheld since), `liftedVersion` (null while withheld) |
+
+A service is withheld at version V when `version <= V` and `liftedVersion` is
+null or `> V`, so a projection being written for V+1 leaves V readable.
+`WithholdingService` serves a Withholding only at the version named:
+
+- header `version` lower than asked, or no header — **503**: the projection
+  lags or failed; never the older set.
+- header `version` higher — **409**: ServiceNet read a superseded version and
+  should read again.
+- the services read not adding up to the header's `serviceCount` — **503**:
+  the projection is being rewritten.
+- MongoDB failing — **503**.
+- `ownerWriterId` spelled with other casing than ServiceNet projected it —
+  **503** as "not projected yet". The MongoDB lookup matches
+  `agreementId` and `ownerWriterId` **exactly** (case-sensitive), though the
+  Elasticsearch owner clause built from the set is case-insensitive; send
+  the owner id as ServiceNet wrote it into the projection.
+- the named Withholdings together stating more than 65,536 services (their
+  headers' `serviceCount` summed; ES's default `index.max_terms_count`) —
+  **422**, before any service is read.
+
+Both collections are read from the **primary** (`readPreference: 'primary'`).
+That is sound only while ServiceNet keeps its write order: it writes the
+header last, a lift sets `liftedVersion` > V, and an add sets `version` > V,
+so once a header names V the services readable at V are already in place and
+nothing later changes them. A secondary could serve a header ahead of its
+services; the primary cannot.
+
+Nothing is searched when a Withholding cannot be confirmed. The header is
+read on **every** request. A resolved set is cached in process by agreement,
+owner and version, and a cached set answers only while the header still names
+that version **and** its `serviceCount` equals the cached set's size; else
+the set is read again (and a mismatch after that is the 503 above). This
+catches a version reused after a Postgres restore or a `reconcile` rewrite
+when the count changed; a reused version with the same count and different
+ids is not detectable from the header. The cache holds at most 64 sets and
+131,072 ids in all, evicting the least recently used. Concurrent cold reads of
+one (agreement, owner, version) share one MongoDB read. The Withholding
+references (not their ids) join the cursor fingerprint and shard preference;
+a query without Withholdings fingerprints as before.
+
+```json
+{
+  "resourceWriterIds": ["5334599c-1be1-4e55-bf86-1f19d56e9da4", "60d98ab9-…"],
+  "exclude": {
+    "withholdings": [
+      { "agreementId": "0b6f…", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4", "version": 7 }
+    ]
+  }
+}
+```
+
+echoes `"withholdings": [{ "agreementId": "0b6f…", "ownerWriterId": "5334599c-…", "version": 7, "serviceCount": 1240 }]`.
+
+Norse needs only read access to both collections.
 
 ## Paging: cursors
 

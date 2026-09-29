@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -23,13 +24,21 @@ export const SERVICES_SEARCH_MAX_WRITERS = 100;
 export const SERVICES_SEARCH_MAX_PLACES = 20;
 export const POINT_RADIUS_MIN_MILES = 0.1;
 export const POINT_RADIUS_MAX_MILES = 100;
+/** A Withholding per party writer at most, as the writer set is capped. */
+export const SERVICES_EXCLUDE_MAX_WITHHOLDINGS = SERVICES_SEARCH_MAX_WRITERS;
+export const SERVICES_EXCLUDE_MAX_RULES = 50;
+export const SERVICES_EXCLUDE_MAX_TAXONOMY_CODES = 100;
+export const SERVICES_EXCLUDE_MAX_REGIONS = 20;
+export const SERVICES_EXCLUDE_MAX_STATUSES = 100;
 
 export const VIRTUAL_MODES = ['all', 'only', 'exclude'] as const;
+export const RULE_VIRTUAL_MODES = ['only', 'exclude'] as const;
 
 /** What ties a service to a Place (ADR 0025): its Service Area, or its sites. */
 export const MATCH_MODES = ['serves', 'located'] as const;
 export type MatchMode = (typeof MATCH_MODES)[number];
 export type VirtualMode = (typeof VIRTUAL_MODES)[number];
+export type RuleVirtualMode = (typeof RULE_VIRTUAL_MODES)[number];
 
 export class ServicesGeoPointDto {
   @ApiProperty({ minimum: -90, maximum: 90, example: 35.994 })
@@ -143,8 +152,160 @@ export class ServicesSearchFilterDto extends ServicesScopeFilterDto {
 }
 
 /**
- * The Resource Writer set the caller may see. Required; an empty set returns
- * nothing rather than everything.
+ * One Record Criteria rule of a Withholding (ServiceNet ADR 0022). A service
+ * matches when it meets every criterion given; a list matches any of its
+ * items. A rule needs at least one criterion, or it would match everything.
+ */
+export class ServicesExclusionRuleDto {
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
+    description:
+      'AIRS codes, matched as filter.taxonomyCodes is: exactly against the ancestor-expanded taxonomyPath, so a node matches its descendants.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_TAXONOMY_CODES)
+  @IsString({ each: true })
+  taxonomyCodes?: string[];
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_REGIONS,
+    example: ['county:29510'],
+    description:
+      'Region ids, at most 20 across all rules together (400 beyond). Matches a service whose service_area intersects the Region or with a physical location inside it, a Virtual Service with a service_area included. Unlike filter.geography, never matches a Virtual Service with no service_area, which serves everywhere. An unknown id is 400.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_REGIONS)
+  @IsString({ each: true })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
+  regionIds?: string[];
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_STATUSES,
+    description: 'Matched exactly against status, as filter.statuses is.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_STATUSES)
+  @IsString({ each: true })
+  statuses?: string[];
+
+  @ApiProperty({
+    enum: RULE_VIRTUAL_MODES,
+    required: false,
+    description:
+      'only: some location is virtual. exclude: some location is physical. Absent: either.',
+  })
+  @IsOptional()
+  @IsIn(RULE_VIRTUAL_MODES)
+  virtual?: RuleVirtualMode;
+
+  @ApiProperty({
+    required: false,
+    maxLength: 128,
+    description:
+      "The Resource Writer whose Withholding this rule is, matched case-insensitively as withholdings' ownerWriterId is: only its records are excluded. Absent: every writer's matching records are. Not a criterion on its own.",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  ownerWriterId?: string;
+}
+
+/**
+ * One owner's Withholding under one Agreement, named rather than listed: its
+ * services apply only to that owner's records.
+ */
+export class ServicesWithholdingRefDto {
+  @ApiProperty({ description: 'The ServiceNet Data Sharing Agreement id.' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  agreementId: string;
+
+  @ApiProperty({
+    description:
+      "The Resource Writer that withholds; only its records' serviceIds are excluded. Looked up in MongoDB exactly as sent (case-sensitive): other casing than ServiceNet projected is 503.",
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  ownerWriterId: string;
+
+  @ApiProperty({
+    minimum: 1,
+    description:
+      'The Withholding version ServiceNet read; applied at exactly this version or not at all.',
+  })
+  @IsInt()
+  @Min(1)
+  version: number;
+}
+
+/**
+ * Records taken out of the scope, as ServiceNet's Withholding needs (its ADR
+ * 0022): a service listed in serviceIds, matching any rule, or withheld by a
+ * named Withholding is excluded.
+ */
+export class ServicesExclusionDto {
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: [],
+    description:
+      'serviceIds (each at most 128 characters), matched exactly across the whole writer set: a serviceId two writers share is excluded for both. No count cap, but the request body is limited to 5 MB (413 beyond it): about 120,000 ids of 36 characters. A Withholding sends its hand-picked services by reference instead (withholdings).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(128, { each: true })
+  serviceIds?: string[];
+
+  @ApiProperty({
+    type: [ServicesExclusionRuleDto],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_RULES,
+    description:
+      "Record Criteria rules, OR'ed: criteria AND inside a rule. A rule with no criteria is 400.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_RULES)
+  @ValidateNested({ each: true })
+  @Type(() => ServicesExclusionRuleDto)
+  rules?: ServicesExclusionRuleDto[];
+
+  @ApiProperty({
+    type: [ServicesWithholdingRefDto],
+    required: false,
+    default: [],
+    maxItems: SERVICES_EXCLUDE_MAX_WITHHOLDINGS,
+    description:
+      "ServiceNet Withholdings by reference: each owner's services withheld under the Agreement at exactly that version, read from MongoDB sharing_withheld_services. A projection that does not hold that version is 503 (lagging) or 409 (superseded), never an older set.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SERVICES_EXCLUDE_MAX_WITHHOLDINGS)
+  @ValidateNested({ each: true })
+  @Type(() => ServicesWithholdingRefDto)
+  withholdings?: ServicesWithholdingRefDto[];
+}
+
+/**
+ * The Resource Writer set the caller may see, less any exclusions. Required;
+ * an empty set returns nothing rather than everything.
  */
 export class ServicesWriterScopeDto {
   @ApiProperty({
@@ -156,6 +317,17 @@ export class ServicesWriterScopeDto {
   @ArrayMaxSize(SERVICES_SEARCH_MAX_WRITERS)
   @IsString({ each: true })
   resourceWriterIds: string[];
+
+  @ApiProperty({
+    type: ServicesExclusionDto,
+    required: false,
+    description:
+      'Applied to the results and the facet counts alike. The response echoes it as appliedExclusions; a caller that sends it should refuse a response without that echo.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ServicesExclusionDto)
+  exclude?: ServicesExclusionDto;
 }
 
 export class ServicesSearchRequestDto extends ServicesWriterScopeDto {

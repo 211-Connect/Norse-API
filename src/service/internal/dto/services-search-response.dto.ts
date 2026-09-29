@@ -1,4 +1,50 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  RULE_VIRTUAL_MODES,
+  RuleVirtualMode,
+} from './services-search-request.dto';
+
+/** A rule as applied: de-duplicated lists, empty when absent. */
+export class ServicesAppliedExclusionRuleDto {
+  @ApiProperty({ type: [String] }) taxonomyCodes: string[];
+  @ApiProperty({ type: [String] }) regionIds: string[];
+  @ApiProperty({ type: [String] }) statuses: string[];
+  @ApiProperty({ enum: RULE_VIRTUAL_MODES, nullable: true })
+  virtual: RuleVirtualMode | null;
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'The owner the rule was scoped to; null when unscoped.',
+  })
+  ownerWriterId: string | null;
+}
+
+/** A Withholding as applied: the version read and how many services it withheld. */
+export class ServicesAppliedWithholdingDto {
+  @ApiProperty() agreementId: string;
+  @ApiProperty() ownerWriterId: string;
+  @ApiProperty() version: number;
+  @ApiProperty({ description: 'Services withheld at this version.' })
+  serviceCount: number;
+}
+
+/** The exclusions applied; rules in the order sent, one per rule sent. */
+export class ServicesAppliedExclusionsDto {
+  @ApiProperty({ type: [String] }) serviceIds: string[];
+  @ApiProperty({ type: [ServicesAppliedExclusionRuleDto] })
+  rules: ServicesAppliedExclusionRuleDto[];
+  @ApiProperty({
+    type: [ServicesAppliedWithholdingDto],
+    description: 'One per distinct Withholding sent.',
+  })
+  withholdings: ServicesAppliedWithholdingDto[];
+}
+
+const APPLIED_EXCLUSIONS = {
+  type: ServicesAppliedExclusionsDto,
+  description:
+    "The request's exclude, as applied. A Norse that predates exclusions ignores exclude and omits this, so a caller that excludes must refuse a response without it.",
+};
 
 export class ServiceListItemDto {
   @ApiProperty({
@@ -40,6 +86,8 @@ export class ServicesSearchResponseDto {
     description: 'Pass as `cursor` for the next page; null on the last page.',
   })
   nextCursor: string | null;
+  @ApiProperty(APPLIED_EXCLUSIONS)
+  appliedExclusions: ServicesAppliedExclusionsDto;
 }
 
 export class ContributorFacetDto {
@@ -70,4 +118,6 @@ export class ServicesFacetsResponseDto {
   contributors: ContributorFacetDto[];
   @ApiProperty({ type: [StatusFacetDto] }) statuses: StatusFacetDto[];
   @ApiProperty({ type: [TaxonomyFacetDto] }) taxonomy: TaxonomyFacetDto[];
+  @ApiProperty(APPLIED_EXCLUSIONS)
+  appliedExclusions: ServicesAppliedExclusionsDto;
 }
