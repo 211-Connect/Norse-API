@@ -1,3 +1,5 @@
+jest.mock('dotenv/config', () => ({}));
+
 describe('tracing', () => {
   const originalEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 

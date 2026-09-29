@@ -1,4 +1,5 @@
 import './tracing';
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -61,4 +62,5 @@ async function bootstrap() {
 
   await app.listen(config.get('port'));
 }
+
 bootstrap();
