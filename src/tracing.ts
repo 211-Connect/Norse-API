@@ -1,5 +1,7 @@
+import 'dotenv/config';
+
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { NestInstrumentation } from '@opentelemetry/instrumentation-nestjs-core';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 
@@ -15,6 +17,19 @@ import {
 } from '@opentelemetry/sdk-trace-node';
 
 let sdk: NodeSDK | undefined;
+
+function buildBasicAuthHeaders(): Record<string, string> | undefined {
+  const username = process.env.OTEL_EXPORTER_OTLP_USERNAME;
+  const password = process.env.OTEL_EXPORTER_OTLP_PASSWORD;
+
+  if (!username || !password) {
+    return undefined;
+  }
+
+  return {
+    Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+  };
+}
 
 if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
   console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
@@ -37,10 +52,14 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
       }),
     ),
     traceExporter: new OTLPTraceExporter({
-      url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.replace(/\/$/, '')}/v1/traces`,
+      headers: buildBasicAuthHeaders(),
     }),
     instrumentations: [
       getNodeAutoInstrumentations({
+        '@opentelemetry/instrumentation-express': {
+          enabled: false,
+        },
         '@opentelemetry/instrumentation-fs': {
           enabled: false,
         },
