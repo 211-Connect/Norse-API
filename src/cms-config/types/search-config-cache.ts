@@ -1,10 +1,10 @@
 /**
- * How pinned/priority resources are handled in hybrid/AI-classification search
- * results.
+ * How pinned/priority resources are handled in search results.
  *
  * - `ignore` — do not apply any pinned/priority boost or sort tier.
  * - `boost` (default) — add `pinned_score_boost`/`priority_score_weight` as
- *   score contributions, with no hard sort tier.
+ *   score contributions (hybrid search), with no hard sort tier. For classic
+ *   (non-hybrid) search this preserves the existing priority sort tier.
  * - `top` — hard-sort pinned/priority resources to the top of results,
  *   preserving relevance scoring inside each tier.
  */
@@ -16,8 +16,8 @@ export type PinnedResourcesMode = 'ignore' | 'boost' | 'top';
  */
 export interface SearchConfigCache {
   /**
-   * Controls pinned/priority behavior for hybrid and AI-classification search.
-   * Defaults to `boost` when absent or invalid.
+   * Controls pinned/priority behavior for hybrid, AI-classification, and
+   * classic search. Defaults to `boost` when absent or invalid.
    */
   pinned_resources_mode?: PinnedResourcesMode;
 

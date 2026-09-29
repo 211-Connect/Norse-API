@@ -22,6 +22,7 @@ import { SearchUtilsService } from './search-utils.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
+import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
 
 export type QueryType =
@@ -123,8 +124,8 @@ export class SearchService {
       `searchResources - index name = ${indexName}, locale = ${locale}`,
     );
 
-    const { tenantFacets, customAttributes } =
-      await this.getFacetsAndCustomAttributes(tenantId);
+    const { tenantFacets, customAttributes, searchConfig } =
+      await this.getTenantSearchConfig(tenantId);
 
     const searchableCustomAttributeFields = customAttributes
       .filter((attr) => attr.searchable === true)
@@ -207,7 +208,12 @@ export class SearchService {
       from: (page - 1) * limit,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: SearchUtilsService.buildSort(coords, sort, queryType),
+      sort: SearchUtilsService.buildSort(
+        coords,
+        sort,
+        queryType,
+        SearchUtilsService.resolvePinnedResourcesMode(searchConfig),
+      ),
       aggs: aggregations,
       ...specificQuery,
     };
@@ -537,25 +543,31 @@ export class SearchService {
   }
 
   /**
-   * Fetches facets and custom attributes with a 2-second timeout.
-   * Returns empty arrays if the timeout is reached.
+   * Fetches facets, custom attributes, and search config with a 2-second timeout.
+   * Returns empty arrays / empty config if the timeout is reached.
    * It prevents the search endpoint from being blocked by slow responses from config services.
    */
-  private async getFacetsAndCustomAttributes(tenantId: string): Promise<{
+  private async getTenantSearchConfig(tenantId: string): Promise<{
     tenantFacets: FacetConfig[];
     customAttributes: CustomAttribute[];
+    searchConfig: SearchConfigCache;
   }> {
     let timeoutId: NodeJS.Timeout;
 
     const timeoutPromise = new Promise<{
       tenantFacets: FacetConfig[];
       customAttributes: CustomAttribute[];
+      searchConfig: SearchConfigCache;
     }>((resolve) => {
       timeoutId = setTimeout(() => {
         this.logger.warn(
-          `Timeout fetching facets and custom attributes for tenant ${tenantId}, using empty arrays`,
+          `Timeout fetching search config, facets and custom attributes for tenant ${tenantId}, using empty values`,
         );
-        resolve({ tenantFacets: [], customAttributes: [] });
+        resolve({
+          tenantFacets: [],
+          customAttributes: [],
+          searchConfig: {},
+        });
       }, 2000);
     });
 
@@ -572,10 +584,16 @@ export class SearchService {
           );
           return [];
         }),
-    ]).then(([tenantFacets, customAttributes]) => {
+      this.tenantConfigService.getSearchConfig(tenantId).catch(() => {
+        this.logger.error(
+          `Error fetching search config for tenant ${tenantId}, using empty config`,
+        );
+        return {};
+      }),
+    ]).then(([tenantFacets, customAttributes, searchConfig]) => {
       // Clear timeout to prevent memory leak
       clearTimeout(timeoutId);
-      return { tenantFacets, customAttributes };
+      return { tenantFacets, customAttributes, searchConfig };
     });
 
     return Promise.race([dataPromise, timeoutPromise]);

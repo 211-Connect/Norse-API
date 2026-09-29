@@ -27,6 +27,7 @@ describe('SearchService', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
           },
         },
         {
@@ -231,6 +232,85 @@ describe('SearchService', () => {
       expect(
         filterClauses.some((clause: any) => clause.term?.['organization.id']),
       ).toBe(false);
+    });
+  });
+
+  describe('pinned_resources_mode', () => {
+    let tenantConfigService: { getSearchConfig: jest.Mock };
+
+    beforeEach(() => {
+      tenantConfigService = (service as any).tenantConfigService;
+    });
+
+    it('omits the priority sort tier when pinned_resources_mode is ignore', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({
+        pinned_resources_mode: 'ignore',
+      });
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort).not.toContainEqual({ priority: 'desc' });
+      expect(request.sort).toEqual([
+        '_score',
+        { 'service_at_location_id.raw': { order: 'asc' } },
+      ]);
+    });
+
+    it('keeps the priority sort tier when pinned_resources_mode is boost', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({
+        pinned_resources_mode: 'boost',
+      });
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort[0]).toEqual({ priority: 'desc' });
+    });
+
+    it('defaults to keeping the priority sort tier when pinned_resources_mode is missing', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({});
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort[0]).toEqual({ priority: 'desc' });
     });
   });
 

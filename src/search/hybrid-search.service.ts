@@ -23,10 +23,7 @@ import {
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
-import {
-  PinnedResourcesMode,
-  SearchConfigCache,
-} from '../cms-config/types/search-config-cache';
+import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -304,7 +301,8 @@ export class HybridSearchService {
     ]);
 
     const queryVector = embedResult;
-    const pinnedMode = this.resolvePinnedResourcesMode(searchConfig);
+    const pinnedMode =
+      SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
@@ -1163,16 +1161,6 @@ export class HybridSearchService {
       query: esQuery,
       sort,
     };
-  }
-
-  private resolvePinnedResourcesMode(
-    searchConfig: SearchConfigCache | undefined,
-  ): PinnedResourcesMode {
-    const mode = searchConfig?.pinned_resources_mode;
-    const validModes: PinnedResourcesMode[] = ['ignore', 'boost', 'top'];
-    return validModes.includes(mode as PinnedResourcesMode)
-      ? (mode as PinnedResourcesMode)
-      : 'boost';
   }
 
   /**
