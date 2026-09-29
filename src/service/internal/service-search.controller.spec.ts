@@ -200,6 +200,12 @@ describe('ServiceSearchController (internal/services)', () => {
         },
       ],
       [{ resourceWriterIds: ['w'], exclude: { rules: [{ virtual: 'all' }] } }],
+      ...['', 7, 'w'.repeat(129)].map((ownerWriterId) => [
+        {
+          resourceWriterIds: ['w'],
+          exclude: { rules: [{ statuses: ['active'], ownerWriterId }] },
+        },
+      ]),
       [
         {
           resourceWriterIds: ['w'],
@@ -356,6 +362,7 @@ describe('ServiceSearchController (internal/services)', () => {
           regionIds: [],
           statuses: [],
           virtual: null,
+          ownerWriterId: null,
           ...rule,
         })),
         withholdings: [],
@@ -555,7 +562,13 @@ describe('ServiceSearchController (internal/services)', () => {
         .set('x-internal-api-key', INTERNAL_API_KEY)
         .send({
           resourceWriterIds: ['writer-a'],
-          exclude: { serviceIds: ['s1'], rules: [{ statuses: ['inactive'] }] },
+          exclude: {
+            serviceIds: ['s1'],
+            rules: [
+              { statuses: ['inactive'] },
+              { statuses: ['closed'], ownerWriterId: 'writer-a' },
+            ],
+          },
         })
         .expect(200);
       expect(res.body.appliedExclusions).toEqual({
@@ -566,6 +579,14 @@ describe('ServiceSearchController (internal/services)', () => {
             regionIds: [],
             statuses: ['inactive'],
             virtual: null,
+            ownerWriterId: null,
+          },
+          {
+            taxonomyCodes: [],
+            regionIds: [],
+            statuses: ['closed'],
+            virtual: null,
+            ownerWriterId: 'writer-a',
           },
         ],
         withholdings: [],

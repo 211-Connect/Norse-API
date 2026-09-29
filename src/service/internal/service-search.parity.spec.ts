@@ -643,6 +643,7 @@ describe('exclusions over the fixture (ISS-1928)', () => {
     regionIds?: string[];
     statuses?: string[];
     virtual?: 'only' | 'exclude';
+    ownerWriterId?: string;
   }
   interface Exclude {
     serviceIds?: string[];
@@ -656,6 +657,9 @@ describe('exclusions over the fixture (ISS-1928)', () => {
 
   /** Stated independently of the query builder. */
   const ruleMatches = (doc: Doc, rule: Rule) =>
+    (rule.ownerWriterId === undefined ||
+      String(doc.resourceWriterId).toLowerCase() ===
+        rule.ownerWriterId.toLowerCase()) &&
     anyOf(rule.taxonomyCodes, (c) => list(doc, 'taxonomyPath').includes(c)) &&
     anyOf(rule.statuses, (s) => doc.status === s) &&
     anyOf(
@@ -694,6 +698,12 @@ describe('exclusions over the fixture (ISS-1928)', () => {
           { taxonomyCodes: ['BD-1800'], statuses: ['active', 'closed'] },
           { regionIds: ['county:2'], virtual: 'only' },
         ],
+      },
+    ],
+    [
+      'a rule scoped to its owner, spelled in another case (ISS-1939)',
+      {
+        rules: [{ taxonomyCodes: ['BD-1800'], ownerWriterId: A.toUpperCase() }],
       },
     ],
   ];
@@ -739,6 +749,20 @@ describe('exclusions over the fixture (ISS-1928)', () => {
     expect(andStatus).not.toContain('t:s0');
   });
 
+  it("keeps another writer's records that match an owner-scoped rule", async () => {
+    const { service } = serviceOver(docs);
+    const unscoped = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'] }],
+    });
+    const scoped = await idsOf(service, {
+      rules: [{ taxonomyCodes: ['BD-1800'], ownerWriterId: A }],
+    });
+    expect(unscoped).not.toContain('v:t3');
+    expect(scoped).toContain('v:t3');
+    expect(scoped).not.toContain('t:s1');
+    expect(scoped).not.toContain('t:s2');
+  });
+
   it('never takes out a Virtual Service that serves everywhere by Region', async () => {
     const { service } = serviceOver(docs);
     const after = await idsOf(service, {
@@ -779,6 +803,7 @@ describe('exclusions over the fixture (ISS-1928)', () => {
           regionIds: rule.regionIds ?? [],
           statuses: rule.statuses ?? [],
           virtual: rule.virtual ?? null,
+          ownerWriterId: rule.ownerWriterId ?? null,
         })),
         withholdings: [],
       });

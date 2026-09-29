@@ -11,6 +11,12 @@ export class ServicesAppliedExclusionRuleDto {
   @ApiProperty({ type: [String] }) statuses: string[];
   @ApiProperty({ enum: RULE_VIRTUAL_MODES, nullable: true })
   virtual: RuleVirtualMode | null;
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'The owner the rule was scoped to; null when unscoped.',
+  })
+  ownerWriterId: string | null;
 }
 
 /** A Withholding as applied: the version read and how many services it withheld. */

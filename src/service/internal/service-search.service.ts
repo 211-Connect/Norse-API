@@ -322,6 +322,9 @@ function exclusionRule(
     regionIds: distinct(rule.regionIds),
     statuses: distinct(rule.statuses),
     virtual: rule.virtual ?? null,
+    ...(rule.ownerWriterId !== undefined && {
+      ownerWriterId: rule.ownerWriterId,
+    }),
   };
   const { taxonomyCodes, regionIds, statuses, virtual } = normalized;
   if (
@@ -346,6 +349,7 @@ function appliedExclusions(
       regionIds: [...r.regionIds],
       statuses: [...r.statuses],
       virtual: r.virtual,
+      ownerWriterId: r.ownerWriterId ?? null,
     })),
     withholdings: (input.exclude?.withheld ?? []).map((w) => ({
       agreementId: w.agreementId,

@@ -209,6 +209,18 @@ export class ServicesExclusionRuleDto {
   @IsOptional()
   @IsIn(RULE_VIRTUAL_MODES)
   virtual?: RuleVirtualMode;
+
+  @ApiProperty({
+    required: false,
+    maxLength: 128,
+    description:
+      "The Resource Writer whose Withholding this rule is, matched case-insensitively as withholdings' ownerWriterId is: only its records are excluded. Absent: every writer's matching records are. Not a criterion on its own.",
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  ownerWriterId?: string;
 }
 
 /**

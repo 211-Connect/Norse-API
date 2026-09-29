@@ -116,6 +116,7 @@ describe('queryFingerprint', () => {
     ['a status', { statuses: ['active', 'inactive'] }],
     ['a Region', { regionIds: ['state:MO'] }],
     ['the virtual mode', { virtual: 'only' as const }],
+    ['its owner', { ownerWriterId: 'writer-b' }],
   ])('changes when a rule changes %s', (_label, change) => {
     const [first, second] = FULL.exclude.rules;
     const changed = {
@@ -126,6 +127,33 @@ describe('queryFingerprint', () => {
       },
     };
     expect(queryFingerprint(changed)).not.toBe(queryFingerprint(FULL));
+  });
+
+  it('tells a rule scoped to an owner from the same rule unscoped (ISS-1939)', () => {
+    const [first, second] = FULL.exclude.rules;
+    const scoped = (ownerWriterId: string) => ({
+      ...FULL,
+      exclude: {
+        ...FULL.exclude,
+        rules: [first, { ...second, ownerWriterId }],
+      },
+    });
+    expect(queryFingerprint(scoped('writer-a'))).not.toBe(
+      queryFingerprint(FULL),
+    );
+    expect(queryFingerprint(scoped('writer-a'))).not.toBe(
+      queryFingerprint(scoped('writer-b')),
+    );
+    const reordered = {
+      ...FULL,
+      exclude: {
+        ...FULL.exclude,
+        rules: [{ ...second, ownerWriterId: 'writer-a' }, first],
+      },
+    };
+    expect(queryFingerprint(reordered)).toBe(
+      queryFingerprint(scoped('writer-a')),
+    );
   });
 
   it('does not let two rules read as one, or one as two', () => {

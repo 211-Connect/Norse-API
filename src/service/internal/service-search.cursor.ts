@@ -45,6 +45,8 @@ const FINGERPRINT_PARTS: {
           asSet(r.regionIds),
           asSet(r.statuses),
           r.virtual,
+          // Absent when unscoped, so earlier cursors stay valid.
+          ...(r.ownerWriterId !== undefined ? [r.ownerWriterId] : []),
         ]),
       ),
     ),

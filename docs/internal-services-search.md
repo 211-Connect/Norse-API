@@ -81,6 +81,13 @@ over one fixture and compares the results.
     criteria given are AND'ed; each list matches any of its items. A rule with
     no criteria (absent or only empty lists, no `virtual`) is 400, since it
     would exclude everything.
+    - `ownerWriterId` (ISS-1939, optional, max 128) scopes the rule to the
+      writer whose Withholding it is: it matches **only that owner's
+      records**, through the same case-insensitive `term resourceWriterId`
+      as `withholdings`, AND'ed with the criteria. Without it a rule spans
+      every writer in `resourceWriterIds`, so the other party would lose its
+      own matching records too. It is not a criterion: a rule with only an
+      owner is still 400.
     - `taxonomyCodes` match the expanded `taxonomyPath`, so a node covers its
       descendants; `statuses` match `status` exactly; `virtual` is
       `filter.virtual`'s clause.
@@ -93,7 +100,8 @@ over one fixture and compares the results.
 
   Both responses carry `appliedExclusions`: `serviceIds` de-duplicated,
   `rules` one per rule sent, in the order sent, each with every list present
-  (de-duplicated, `[]` when absent) and `virtual` `null` when absent, and
+  (de-duplicated, `[]` when absent), `virtual` and `ownerWriterId` `null`
+  when absent, and
   `withholdings` one per distinct Withholding sent, with the `version` applied
   and its `serviceCount`. **It is
   the confirmation, and callers must require it.** The global
@@ -102,7 +110,8 @@ over one fixture and compares the results.
   ServiceNet refuses any response to an excluding request that does not echo
   every serviceId it sent and every rule exactly. Exclusions are part of the
   cursor fingerprint and the shard preference, independent of the order of
-  rules and of the items in their lists.
+  rules and of the items in their lists. A rule's owner enters it only when
+  sent, so a cursor for unscoped rules stays valid.
 
   ```json
   {
@@ -111,7 +120,7 @@ over one fixture and compares the results.
       "serviceIds": ["svc-1"],
       "rules": [
         { "taxonomyCodes": ["BD-1800"], "statuses": ["inactive"] },
-        { "regionIds": ["county:29095"], "virtual": "exclude" }
+        { "regionIds": ["county:29095"], "virtual": "exclude", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4" }
       ]
     }
   }
@@ -123,8 +132,8 @@ over one fixture and compares the results.
   {
     "serviceIds": ["svc-1"],
     "rules": [
-      { "taxonomyCodes": ["BD-1800"], "regionIds": [], "statuses": ["inactive"], "virtual": null },
-      { "taxonomyCodes": [], "regionIds": ["county:29095"], "statuses": [], "virtual": "exclude" }
+      { "taxonomyCodes": ["BD-1800"], "regionIds": [], "statuses": ["inactive"], "virtual": null, "ownerWriterId": null },
+      { "taxonomyCodes": [], "regionIds": ["county:29095"], "statuses": [], "virtual": "exclude", "ownerWriterId": "5334599c-1be1-4e55-bf86-1f19d56e9da4" }
     ]
   }
   ```

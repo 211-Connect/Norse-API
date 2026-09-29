@@ -76,6 +76,8 @@ export interface ExclusionRule {
   regionIds: readonly string[];
   statuses: readonly string[];
   virtual: RuleVirtualMode | null;
+  /** Scopes the rule to one writer's records; absent, it spans every writer. */
+  ownerWriterId?: string;
 }
 
 /** One owner's withheld services at one version of its Withholding. */
@@ -286,21 +288,22 @@ function exclusionClauses(
       inClauses(set.serviceIds).map((ids) => ({
         bool: {
           filter: [
-            // ServiceNet names the owner as its Agreement spells it.
-            {
-              term: {
-                resourceWriterId: {
-                  value: set.ownerWriterId,
-                  case_insensitive: true,
-                },
-              },
-            },
+            ownerClause(set.ownerWriterId),
             { terms: { serviceId: ids } },
           ],
         },
       })),
     ),
   ];
+}
+
+/** ServiceNet names the owner as its Agreement spells it. */
+function ownerClause(ownerWriterId: string): QueryDslQueryContainer {
+  return {
+    term: {
+      resourceWriterId: { value: ownerWriterId, case_insensitive: true },
+    },
+  };
 }
 
 /**
@@ -310,6 +313,9 @@ function exclusionClauses(
  */
 function ruleClause(rule: ExclusionRule): QueryDslQueryContainer {
   const filter: QueryDslQueryContainer[] = [];
+  if (rule.ownerWriterId !== undefined) {
+    filter.push(ownerClause(rule.ownerWriterId));
+  }
   if (rule.taxonomyCodes.length > 0) {
     filter.push({ terms: { taxonomyPath: [...rule.taxonomyCodes] } });
   }

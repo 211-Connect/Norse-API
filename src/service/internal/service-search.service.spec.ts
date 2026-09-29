@@ -1148,12 +1148,14 @@ describe('ServiceSearchService', () => {
           regionIds: [],
           statuses: ['inactive'],
           virtual: null,
+          ownerWriterId: null,
         },
         {
           taxonomyCodes: [],
           regionIds: ['county:29510'],
           statuses: [],
           virtual: 'exclude',
+          ownerWriterId: null,
         },
       ],
       withholdings: [],
@@ -1183,6 +1185,68 @@ describe('ServiceSearchService', () => {
         bool: { filter: [areaOrSite('county:29510', 'state:MO')] },
       });
       expect(JSON.stringify(regionRule)).not.toContain('"exists"');
+    });
+
+    describe('a rule scoped to its owner (ISS-1939)', () => {
+      const ownedRule = { statuses: ['inactive'], ownerWriterId: 'Writer-A' };
+
+      it("excludes only the owner's matching services, matching the owner in any case", async () => {
+        await service.search({
+          resourceWriterIds: [WRITER_A, 'writer-b'],
+          exclude: { rules: [ownedRule, { statuses: ['closed'] }] },
+        });
+        expect(lastRequest().query.bool.must_not).toEqual([
+          ...baseMustNot,
+          {
+            bool: {
+              filter: [
+                {
+                  term: {
+                    resourceWriterId: {
+                      value: 'Writer-A',
+                      case_insensitive: true,
+                    },
+                  },
+                },
+                { terms: { status: ['inactive'] } },
+              ],
+            },
+          },
+          { bool: { filter: [{ terms: { status: ['closed'] } }] } },
+        ]);
+      });
+
+      it('confirms the owner, and null for a rule without one', async () => {
+        const page = await service.search({
+          resourceWriterIds: [WRITER_A],
+          exclude: { rules: [ownedRule, { statuses: ['closed'] }] },
+        });
+        expect(page.appliedExclusions.rules).toEqual([
+          {
+            taxonomyCodes: [],
+            regionIds: [],
+            statuses: ['inactive'],
+            virtual: null,
+            ownerWriterId: 'Writer-A',
+          },
+          {
+            taxonomyCodes: [],
+            regionIds: [],
+            statuses: ['closed'],
+            virtual: null,
+            ownerWriterId: null,
+          },
+        ]);
+      });
+
+      it('rejects a rule whose only criterion is its owner, which would exclude all it owns', async () => {
+        await expect(
+          service.search({
+            resourceWriterIds: [WRITER_A],
+            exclude: { rules: [{ ownerWriterId: WRITER_A }] },
+          }),
+        ).rejects.toThrow('exclude.rules[0] has no criteria');
+      });
     });
 
     it('takes the same records out of the facet counts', async () => {
@@ -1289,6 +1353,10 @@ describe('ServiceSearchService', () => {
     it.each([
       ['other services', { serviceIds: ['s2'] }],
       ['another rule', { rules: [{ statuses: ['inactive'] }] }],
+      [
+        'the rule scoped to an owner',
+        { rules: [{ statuses: ['active'], ownerWriterId: WRITER_A }] },
+      ],
     ])('rejects a cursor replayed with %s', async (_label, other) => {
       search.mockResolvedValueOnce({
         hits: {
