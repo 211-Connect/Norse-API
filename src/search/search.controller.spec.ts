@@ -28,6 +28,7 @@ describe('SearchController', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
           },
         },
         {

@@ -14,7 +14,7 @@ import {
   RawResourceDocument,
   ShardsInfo,
 } from './types';
-import { FacetConfig } from '../cms-config/types';
+import { FacetConfig, PinnedResourcesMode } from '../cms-config/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
 
@@ -278,16 +278,25 @@ export class SearchUtilsService {
     return [...leadingTiers, ...orderingTiers(), asc(fields.id)];
   }
 
+  static resolvePinnedResourcesMode(
+    searchConfig: { pinned_resources_mode?: PinnedResourcesMode } | undefined,
+  ): PinnedResourcesMode {
+    const mode = searchConfig?.pinned_resources_mode;
+    const validModes: PinnedResourcesMode[] = ['ignore', 'boost', 'top'];
+    return validModes.includes(mode) ? mode : 'boost';
+  }
+
   static buildSort(
     coords: number[] | undefined,
     sortOption: SearchResourcesQueryDto['sort'],
     queryType: QueryType,
+    pinnedMode?: PinnedResourcesMode,
   ): Sort {
     return this.buildSortClause({
       fields: STANDARD_SORT_FIELDS,
       sortOption,
       coords,
-      leadingTiers: [{ priority: 'desc' }],
+      leadingTiers: pinnedMode === 'ignore' ? [] : [{ priority: 'desc' }],
       // Taxonomy matching is binary, so `_score` carries no signal; nearest
       // first is what relevance means there.
       relevanceMeans: queryType === 'taxonomy' ? 'proximity' : 'score',

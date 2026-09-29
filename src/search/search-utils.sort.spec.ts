@@ -1,6 +1,7 @@
 import { SearchUtilsService } from './search-utils.service';
 import { QueryType } from './search.service';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
+import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 
 type SortOption = SearchResourcesQueryDto['sort'];
 
@@ -94,6 +95,32 @@ describe('SearchUtilsService.buildSort', () => {
         SearchUtilsService.buildSort(undefined, 'relevance', 'taxonomy'),
       ).not.toContain('_score');
     });
+  });
+
+  describe('pinned_resources_mode', () => {
+    it('omits the priority sort tier when mode is ignore', () => {
+      const sort = SearchUtilsService.buildSort(
+        undefined,
+        'relevance',
+        'keyword',
+        'ignore',
+      );
+      expect(sort).not.toContainEqual({ priority: 'desc' });
+      expect(sort).toEqual(['_score', TIEBREAKER]);
+    });
+
+    it.each(['boost', 'top', undefined] as (PinnedResourcesMode | undefined)[])(
+      'keeps the priority sort tier when mode is %s',
+      (pinnedMode) => {
+        const sort = SearchUtilsService.buildSort(
+          undefined,
+          'relevance',
+          'keyword',
+          pinnedMode,
+        );
+        expect(sort[0]).toEqual(PRIORITY);
+      },
+    );
   });
 
   describe('every sort clause ends with a unique tiebreaker', () => {

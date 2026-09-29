@@ -51,16 +51,17 @@ const QUERY_TYPE_PARAM_DESCRIPTION =
 
 const SORT_PARAM_DESCRIPTION =
   'Presentation order of results. Independent of `query_type`: the query ' +
-  'engine decides which resources match, `sort` decides their order. For ' +
-  '`hybrid` search, pinned/prioritized resource handling is controlled by the ' +
-  "tenant's `pinned_resources_mode` setting (`boost` by default, which folds " +
-  'pinned/priority into the relevance score; `top` hard-sorts them first; ' +
-  '`ignore` disables them). Values: `relevance` (default — best match first; ' +
-  'under `hybrid`, geographic proximity is folded into the relevance score), ' +
-  '`distance` (nearest first; requires `coords`, otherwise falls back to ' +
-  '`relevance`), `name` (alphabetical by resource name), `organization` ' +
-  '(alphabetical by provider name). Honored for all query types, including ' +
-  '`hybrid`.';
+  'engine decides which resources match, `sort` decides their order. ' +
+  "Pinned/prioritized resource handling is controlled by the tenant's " +
+  '`pinned_resources_mode` setting (`boost` by default; `top` hard-sorts them ' +
+  'first; `ignore` disables them). For `hybrid` search, `boost` folds ' +
+  'pinned/priority into the relevance score; for other query types, `ignore` ' +
+  'removes the priority sort tier while other modes preserve it. Values: ' +
+  '`relevance` (default — best match first; under `hybrid`, geographic ' +
+  'proximity is folded into the relevance score), `distance` (nearest first; ' +
+  'requires `coords`, otherwise falls back to `relevance`), `name` ' +
+  '(alphabetical by resource name), `organization` (alphabetical by provider ' +
+  'name). Honored for all query types, including `hybrid`.';
 
 const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
   'Opt-in trimming of low-relevance results (hybrid search only; ignored for ' +

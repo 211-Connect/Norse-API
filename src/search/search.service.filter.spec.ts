@@ -26,6 +26,7 @@ describe('SearchService Logic', () => {
 
   const mockTenantConfigService = {
     getFacets: jest.fn().mockResolvedValue([]),
+    getSearchConfig: jest.fn().mockResolvedValue({}),
   };
 
   const mockOrchestrationConfigService = {
