@@ -1,0 +1,381 @@
+import {
+  FieldValue,
+  QueryDslQueryContainer,
+  Sort,
+} from '@elastic/elasticsearch/lib/api/types';
+import { REGIONS_INDEX } from '../../region/internal';
+import { MatchMode, RuleVirtualMode, VirtualMode } from './dto';
+
+/**
+ * The ES `services` index (ADR 0023). Filters mirror ServiceNet's Mongo
+ * `buildQuery` (`sharing-mongo/src/record-source.ts`) clause for clause so the
+ * two return the same records; text and its ordering deliberately differ.
+ */
+
+export const SERVICES_INDEX = 'services';
+
+export const SERVICE_TEXT_FIELDS = [
+  'name^3',
+  'alternateName',
+  'description',
+  'organizationName',
+] as const;
+
+export const SERVICE_LIST_SOURCE_FIELDS = [
+  'serviceId',
+  'tenant_id',
+  'resourceWriterId',
+  'isCanonicalPublication',
+  'status',
+  'taxonomyPath',
+  'taxonomyCodes',
+  'locationTypes',
+  'name',
+  'alternateName',
+  'description',
+  'organizationName',
+  'city',
+  'assuredDate',
+];
+
+/** `name.substring`: the `wildcard`-typed subfield Dagster #601 adds for contains matching. */
+export const SERVICE_NAME_SUBSTRING_FIELD = 'name.substring';
+
+export type SortMode = 'name' | 'score';
+
+export const sortModeFor = (text: string | undefined): SortMode =>
+  (text?.trim() ?? '') === '' ? 'name' : 'score';
+
+/**
+ * No text: case-sensitive `name.raw`, missing first, is Mongo's `{name: 1}`.
+ * Text: `_score`, a deliberate change from Mongo. `serviceId` breaks ties so a
+ * page boundary inside a tie cannot skip or repeat records.
+ */
+export function serviceListSort(mode: SortMode): Sort {
+  return mode === 'score'
+    ? [{ _score: { order: 'desc' } }, { serviceId: { order: 'asc' } }]
+    : [
+        { 'name.raw': { order: 'asc', missing: '_first' } },
+        { serviceId: { order: 'asc' } },
+      ];
+}
+
+export interface GeoPoint {
+  lat: number;
+  lng: number;
+  radiusMiles: number;
+}
+
+/** One point Place, by where it sits and how far it reaches. */
+export const geoPointKey = ({ lat, lng, radiusMiles }: GeoPoint): string =>
+  `${lat},${lng},${radiusMiles}`;
+
+/** Criteria AND'ed; an empty list places no constraint. */
+export interface ExclusionRule {
+  taxonomyCodes: readonly string[];
+  regionIds: readonly string[];
+  statuses: readonly string[];
+  virtual: RuleVirtualMode | null;
+  /** Scopes the rule to one writer's records; absent, it spans every writer. */
+  ownerWriterId?: string;
+}
+
+/** One owner's withheld services at one version of its Withholding. */
+export interface WithheldServiceSet {
+  agreementId: string;
+  ownerWriterId: string;
+  version: number;
+  serviceIds: readonly string[];
+}
+
+/** A service listed, matching any rule, or withheld by its owner is excluded. */
+export interface ServiceExclusions {
+  serviceIds: readonly string[];
+  rules: readonly ExclusionRule[];
+  withheld?: readonly WithheldServiceSet[];
+}
+
+/** ES's default `index.max_terms_count`: the most ids one `terms` query may carry. */
+export const WITHHELD_SERVICE_IDS_PER_CLAUSE = 65_536;
+
+function inClauses(ids: readonly string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += WITHHELD_SERVICE_IDS_PER_CLAUSE) {
+    out.push(ids.slice(i, i + WITHHELD_SERVICE_IDS_PER_CLAUSE));
+  }
+  return out;
+}
+
+export interface ServiceFilterInput {
+  resourceWriterIds: readonly string[];
+  exclude?: ServiceExclusions;
+  taxonomyCodes?: readonly string[];
+  statuses?: readonly string[];
+  regionIds?: readonly string[];
+  points?: readonly GeoPoint[];
+  virtual?: VirtualMode;
+  match?: MatchMode;
+}
+
+/** The field Dagster #601 loads with the union of a service's Service Areas. */
+export const SERVICE_AREA_FIELD = 'service_area';
+
+/** One geo_point per physical site (Dagster, ISS-1896). */
+export const LOCATION_POINTS_FIELD = 'locationPoints';
+
+/**
+ * A Virtual Service that publishes no Service Area serves every Region
+ * (ADR 0025). A physical service with no Service Area serves none: its extent
+ * is missing data, not a claim.
+ */
+const VIRTUAL_WITHOUT_SERVICE_AREA: QueryDslQueryContainer = {
+  bool: {
+    filter: [{ term: { locationTypes: 'virtual' } }],
+    must_not: [{ exists: { field: SERVICE_AREA_FIELD } }],
+  },
+};
+
+/**
+ * Regions and points OR'ed; `intersects` counts border contact (v1). ES reads
+ * each Region's shape from `regions` by id, so no geometry crosses the wire; a
+ * point is a query-time circle. Excluding virtual services drops the global
+ * branch, so only a real overlap matches.
+ */
+function servesClause(
+  regionIds: readonly string[],
+  points: readonly GeoPoint[],
+  virtual: VirtualMode | undefined,
+): QueryDslQueryContainer {
+  const serves: QueryDslQueryContainer[] = [
+    ...regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
+    ...points.map(({ lat, lng, radiusMiles }) => ({
+      geo_shape: {
+        [SERVICE_AREA_FIELD]: {
+          shape: {
+            type: 'circle',
+            coordinates: [lng, lat],
+            radius: `${radiusMiles}mi`,
+          },
+          relation: 'intersects' as const,
+        },
+      },
+    })),
+  ];
+  if (virtual !== 'exclude') serves.push(VIRTUAL_WITHOUT_SERVICE_AREA);
+  return { bool: { should: serves, minimum_should_match: 1 } };
+}
+
+/** ES reads the Region's shape from `regions` by id. */
+function regionShape(field: string, id: string): QueryDslQueryContainer {
+  return {
+    geo_shape: {
+      [field]: {
+        indexed_shape: { index: REGIONS_INDEX, id, path: 'geometry' },
+        relation: 'intersects',
+      },
+    },
+  };
+}
+
+/** A physical site inside a Region's shape or within a point's radius. */
+function locatedClauses(
+  regionIds: readonly string[],
+  points: readonly GeoPoint[],
+): QueryDslQueryContainer[] {
+  return [
+    ...regionIds.map((id) => regionShape(LOCATION_POINTS_FIELD, id)),
+    ...points.map(({ lat, lng, radiusMiles }) => ({
+      geo_distance: {
+        distance: `${radiusMiles}mi`,
+        [LOCATION_POINTS_FIELD]: { lat, lon: lng },
+      },
+    })),
+  ];
+}
+
+/**
+ * The Geography clause for a Match × Virtual pair (ADR 0025's table). Located
+ * In × Only is Serves Area × Only: a Virtual Service has no site to be at.
+ */
+function geographyClause(
+  regionIds: readonly string[],
+  points: readonly GeoPoint[],
+  { virtual, match }: Pick<ServiceFilterInput, 'virtual' | 'match'>,
+): QueryDslQueryContainer {
+  if (match !== 'located' || virtual === 'only') {
+    return servesClause(regionIds, points, virtual);
+  }
+  const located = locatedClauses(regionIds, points);
+  if (virtual !== 'exclude') {
+    located.push({
+      bool: {
+        filter: [
+          { term: { locationTypes: 'virtual' } },
+          servesClause(regionIds, points, virtual),
+        ],
+      },
+    });
+  }
+  return { bool: { should: located, minimum_should_match: 1 } };
+}
+
+/**
+ * `only`: some location is virtual. `exclude`: some location is physical, so a
+ * service with both kinds appears under both. `all` adds no clause.
+ */
+export function virtualClause(
+  mode: VirtualMode | undefined,
+): QueryDslQueryContainer | null {
+  if (mode === 'only') return { term: { locationTypes: 'virtual' } };
+  if (mode === 'exclude') return { term: { locationTypes: 'physical' } };
+  return null;
+}
+
+/**
+ * Canonical is `must_not false`, as Mongo's `$ne: false`: only a borrowed copy
+ * is marked false, and an unflagged document is canonical.
+ */
+function scopeClauses(resourceWriterIds: readonly string[]) {
+  return {
+    filter: [
+      { terms: { resourceWriterId: [...resourceWriterIds] } },
+      { exists: { field: 'serviceId' } },
+    ] as QueryDslQueryContainer[],
+    must_not: [
+      { term: { isCanonicalPublication: false } },
+      { term: { serviceId: '' } },
+    ] as QueryDslQueryContainer[],
+  };
+}
+
+/** `null` for an empty writer set, which must return nothing, not everything. */
+export function buildServiceFilter(input: ServiceFilterInput): {
+  filter: QueryDslQueryContainer[];
+  must_not: QueryDslQueryContainer[];
+} | null {
+  if (input.resourceWriterIds.length === 0) return null;
+  const { filter, must_not } = scopeClauses(input.resourceWriterIds);
+
+  // Exact terms against the loader's ancestor-expanded path. Never prefix:
+  // `BD-18` is a sibling of `BD-1800`.
+  if (input.taxonomyCodes && input.taxonomyCodes.length > 0) {
+    filter.push({ terms: { taxonomyPath: [...input.taxonomyCodes] } });
+  }
+  if (input.statuses && input.statuses.length > 0) {
+    filter.push({ terms: { status: [...input.statuses] } });
+  }
+  const regionIds = input.regionIds ?? [];
+  const points = input.points ?? [];
+  if (regionIds.length + points.length > 0) {
+    filter.push(geographyClause(regionIds, points, input));
+  }
+  const virtual = virtualClause(input.virtual);
+  if (virtual) filter.push(virtual);
+  must_not.push(...exclusionClauses(input.exclude));
+  return { filter, must_not };
+}
+
+function exclusionClauses(
+  exclude: ServiceExclusions | undefined,
+): QueryDslQueryContainer[] {
+  if (!exclude) return [];
+  return [
+    ...inClauses(exclude.serviceIds).map((ids) => ({
+      terms: { serviceId: ids },
+    })),
+    ...exclude.rules.map(ruleClause),
+    ...(exclude.withheld ?? []).flatMap((set) =>
+      inClauses(set.serviceIds).map((ids) => ({
+        bool: {
+          filter: [
+            ownerClause(set.ownerWriterId),
+            { terms: { serviceId: ids } },
+          ],
+        },
+      })),
+    ),
+  ];
+}
+
+/** ServiceNet names the owner as its Agreement spells it. */
+function ownerClause(ownerWriterId: string): QueryDslQueryContainer {
+  return {
+    term: {
+      resourceWriterId: { value: ownerWriterId, case_insensitive: true },
+    },
+  };
+}
+
+/**
+ * A Region takes out services serving it or sited in it, but not the Virtual
+ * Services that serve everywhere (ADR 0025): withholding a Region must not
+ * withhold every such service from every partner.
+ */
+function ruleClause(rule: ExclusionRule): QueryDslQueryContainer {
+  const filter: QueryDslQueryContainer[] = [];
+  if (rule.ownerWriterId !== undefined) {
+    filter.push(ownerClause(rule.ownerWriterId));
+  }
+  if (rule.taxonomyCodes.length > 0) {
+    filter.push({ terms: { taxonomyPath: [...rule.taxonomyCodes] } });
+  }
+  if (rule.statuses.length > 0) {
+    filter.push({ terms: { status: [...rule.statuses] } });
+  }
+  if (rule.regionIds.length > 0) {
+    filter.push({
+      bool: {
+        should: [
+          ...rule.regionIds.map((id) => regionShape(SERVICE_AREA_FIELD, id)),
+          ...locatedClauses(rule.regionIds, []),
+        ],
+        minimum_should_match: 1,
+      },
+    });
+  }
+  const virtual = virtualClause(rule.virtual ?? undefined);
+  if (virtual) filter.push(virtual);
+  return { bool: { filter } };
+}
+
+/** Escapes a user string for a `wildcard` query: `\\` first, then `*` and `?`. */
+export function escapeWildcard(text: string): string {
+  return text.replace(/[\\*?]/g, '\\$&');
+}
+
+/**
+ * Departs from Mongo's name-only substring match. OR of a case-insensitive
+ * contains on `name.substring` (keeps "ood" finding "Food") and an all-terms
+ * `bool_prefix` over the text fields, without fuzziness.
+ */
+export function textClause(text: string | undefined): QueryDslQueryContainer[] {
+  const trimmed = text?.trim() ?? '';
+  if (trimmed === '') return [];
+  return [
+    {
+      bool: {
+        should: [
+          {
+            wildcard: {
+              [SERVICE_NAME_SUBSTRING_FIELD]: {
+                value: `*${escapeWildcard(trimmed)}*`,
+                case_insensitive: true,
+              },
+            },
+          },
+          {
+            multi_match: {
+              query: trimmed,
+              type: 'bool_prefix',
+              fields: [...SERVICE_TEXT_FIELDS],
+              operator: 'and',
+            },
+          },
+        ],
+        minimum_should_match: 1,
+      },
+    },
+  ];
+}
+
+export type CursorSortValues = FieldValue[];

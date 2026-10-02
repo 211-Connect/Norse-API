@@ -23,8 +23,15 @@ import {
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { hybridShardPreference } from './internal/hybrid-shard-preference';
+import { HybridSearchIdentity } from './internal/hybrid-search-fingerprint';
+import { MetricsService } from 'src/metrics/metrics.service';
+import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
+import { RelevanceCutoffDto } from './dto/search-response.dto';
+import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -33,13 +40,27 @@ const VECTOR_SCORE_WEIGHT = 100;
 // Base boost for a matched predicted taxonomy code; multiplied by the code's
 // prediction (kNN cosine) score and a small rank-decay factor.
 const BASE_TAXONOMY_BOOST = 50;
+// Taxonomy boosts are a flat constant, but the BM25 they compete with is not:
+// the recall clause sums weak token matches across ~15 fields, so a long
+// natural-language query inflates lexical scores into the hundreds (Q7, 15
+// tokens: lexical top ~450, taxonomy boost ~55 — invisible) while short
+// queries keep the balance the boosts were tuned on. Scale the taxonomy boost
+// by query length: 1–3 tokens keep the ×1 baseline, then one unit per ~3
+// tokens, capped at 5. Measured sweep (2026-09-24, tenant-wide): at ×3–×5 a
+// 15-token query's top-5 goes fully on-topic; 1–3-token queries are untouched
+// by construction, and exact-name matching still dominates at ≤×5 (see the
+// length-scale spec tests).
+const TAXONOMY_BOOST_TOKENS_PER_UNIT = 3;
+const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+const EMBEDDING_TIMEOUT_MS = 10_000;
 
-// When a tenant enables boost_pinned_resources, pinned/priority stop being hard
-// sort tiers and become small score contributions instead (so a large pinned
-// pool no longer floods the first pages). Tune these like the other weights.
+// When a tenant sets `pinned_resources_mode` to `boost`, pinned/priority stop
+// being hard sort tiers and become small score contributions instead (so a
+// large pinned pool no longer floods the first pages). Tune these like the
+// other weights.
 const PINNED_SCORE_BOOST = 5;
 const PRIORITY_SCORE_WEIGHT = 1;
 
@@ -47,12 +68,116 @@ const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
 const BM25_ORG_NAME_BOOST = 6;
 // use_references are curated taxonomy aliases (e.g. "Girl Scouts", "Scouts",
-// "Scouting" for Scouting Programs). A match there is a strong intent signal —
-// stronger than a generic name/description token hit — so it gets its own boost.
-const BM25_TAXONOMY_USE_REF_BOOST = 12;
+// "Scouting" for Scouting Programs). A match there is an intent signal, but at 12
+// it outweighed name and description hits badly enough to return a pet service as
+// the best match for "prescription assistance" (EXP-019 traced the contamination
+// to this clause alone; EXP-021 swept 12/6/3/0).
+//
+// 6 removes that result with nothing else degraded. Re-measured 2026-09-22 on two
+// tenants with cutoff off: alias-benefit queries 0/6 changed on both; top-1 churn
+// 2/20 Santa Cruz (the fixed query plus "transportation", which moved between two
+// transportation services) and 1/20 Nebraska ("free dental care", which improved
+// from a general clinic to a dental one). Membership totals unchanged, as expected
+// for a ranking-only change. Only at 0 does an alias query break ("food stamps").
+//
+// Note it removes a wrong answer without producing a right one: Santa Cruz has no
+// prescription-assistance resource, so that query still returns something unrelated,
+// just not absurdly so. Nebraska, which does have one, was unaffected at either
+// setting — where a correct answer exists this clause was not what surfaced it.
+const BM25_TAXONOMY_USE_REF_BOOST = 6;
 
 const TAXONOMY_K = 10;
 const TAXONOMY_NUM_CANDIDATES = 500;
+
+/**
+ * Keep everything scoring at least this fraction of the top score.
+ *
+ * Lax on purpose. At 0.5 the cut landed inside the unscoped top 20 on 30 of 37
+ * queries — it was removing results a labeller called relevant. At 0.2 that is
+ * 4 of 30, and 19 of 20 query/tenant pairs return the unscoped top 20 complete.
+ * The cut's job is to remove the tail that only matched on one weak signal, not
+ * to second-guess the ranking.
+ */
+const CUTOFF_FRACTION_OF_MAX = 0.2;
+
+/**
+ * Smallest result set worth cutting down to.
+ *
+ * Denominated in services, not documents. The index is service-at-location, so
+ * one service with N locations is N documents scoring near-identically and
+ * ranking adjacently — every flat run in a real score sequence is exactly one
+ * service. A floor of 5 documents was a floor of 2 choices on Santa Cruz
+ * `substance abuse treatment`.
+ */
+const CUTOFF_MIN_KEEP_SERVICES = 5;
+
+/**
+ * Largest cut we will enumerate into an `ids` filter.
+ *
+ * The cut point is located with a `min_score` count rather than by walking a
+ * candidate window, so it is not limited to the first 300 results
+ * and routinely finds cuts beyond them — on Nebraska 211 the 0.2 threshold
+ * survives at 388 documents of 27,452, which the window could never see. What
+ * still has to be bounded is the id list handed to the main query, so beyond
+ * this the response says `cut_too_large` rather than trimming partially.
+ */
+const MAX_ENUMERATED_CUT = 1000;
+
+/**
+ * The cut must never remove the probe's own top-N documents. Measured on the
+ * 28-pair matrix (e2e/out/CUTOFF_IMPROVEMENTS.md rev 4): the 0.2 threshold
+ * exceeded the probe's 20th score on exactly the three pairs where the cutoff
+ * removed intended top-20 results (Washington/Iowa Q3, Santa Cruz Q4), and on
+ * no other pair. Clamping the threshold to this score fixed all three with
+ * kept sets of 20 documents — smaller than any rescue fraction.
+ */
+const CUTOFF_TOP_DOCS_FLOOR = 20;
+
+/**
+ * When the base fraction leaves more survivors than MAX_ENUMERATED_CUT, try
+ * these fractions in order and apply the first that enumerates. Measured on
+ * the eight `cut_too_large` pairs: each rung keeps recall@20 = 20/20, and
+ * 0.5 enumerates on all eight. This is not a knee detector — no ≥30% drop
+ * exists in the class (largest single-rank drop in ranks [50,1000] is
+ * −1.5%…−23.0%); the rungs are fixed, explainable fractions ("within 2–5× of
+ * the best match"), and the count only gates enumeration. If none fit,
+ * decline with `cut_too_large` as today. Do not extend past 0.5 without
+ * re-measuring recall@20 on the matrix.
+ */
+const CUTOFF_FRACTION_LADDER = [0.25, 0.3, 0.4, 0.5] as const;
+
+/**
+ * Window used only to satisfy the distinct-service floor when a threshold cut
+ * lands on too few services. Small, and fetched only in that case.
+ */
+const SERVICE_FLOOR_WINDOW = 200;
+
+/**
+ * A cut has to actually reduce the set to be worth calling a cut.
+ *
+ * Found by running it: `asdfqwerzxcv` on Santa Cruz kept 567 of 568 — one
+ * document above the threshold, reported as `applied: true` with a
+ * `cutoff_score`, which reads as a considered decision and is nothing of the
+ * sort. Anything retaining more than this fraction of the matched set is a flat
+ * distribution with a rounding error on the end, and the honest answer is that
+ * there was no elbow.
+ */
+const MIN_CUT_REDUCTION = 0.9;
+
+/**
+ * How long a probe decision is reused, in ms.
+ *
+ * The cache exists for one narrow reason — pages 2..n of a single search must
+ * see the same kept set — so it only has to outlive a user paging through
+ * results, not an hour of traffic. `RequestCacheService`'s one-hour default is
+ * far longer than that, and the extra window is all downside: the readers
+ * reindex blue/green, and a reindex inside the TTL changes scores and can
+ * delete documents, leaving `relevance_cutoff.kept` reporting a number the main
+ * query no longer returns. Document `_id`s are stable (`{tenant}:{sal}:{lang}`)
+ * so the ids filter still resolves — it just resolves to a stale decision, and
+ * silently.
+ */
+const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 
 interface PredictedTaxonomy {
   code: string;
@@ -72,6 +197,7 @@ export class HybridSearchService {
     private readonly configService: ConfigService,
     private readonly tenantConfigService: TenantConfigService,
     private readonly requestCacheService: RequestCacheService,
+    private readonly metrics: MetricsService,
   ) {
     this.embeddingBaseUrl =
       this.configService.get<string>('EMBEDDING_BASE_URL');
@@ -107,10 +233,15 @@ export class HybridSearchService {
 
     return this.requestCacheService.getOrSet(cacheKey, async () => {
       try {
-        const result = await this.elasticsearchService.count({
-          index,
-          query: { bool: { filter } },
-        });
+        const result = await this.metrics.observeDownstream(
+          'elasticsearch',
+          'hybrid_documents_count',
+          () =>
+            this.elasticsearchService.count({
+              index,
+              query: { bool: { filter } },
+            }),
+        );
         return result.count;
       } catch (error) {
         this.logger.warn(
@@ -146,6 +277,20 @@ export class HybridSearchService {
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const identity: HybridSearchIdentity = {
+      tenantId,
+      lang,
+      queryStr,
+      filters,
+      taxonomies: hardScopeCodes,
+      coords,
+      distance,
+      age,
+      geoType: geo_type,
+      organizationId: organization_id,
+      geometry,
+    };
+    const preference = hybridShardPreference(identity);
     const t0 = performance.now();
 
     this.logger.debug(
@@ -172,14 +317,15 @@ export class HybridSearchService {
     ]);
 
     const queryVector = embedResult;
-    const boostPinned = searchConfig?.boost_pinned_resources ?? false;
+    const pinnedMode =
+      SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
     const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
     const tTaxonomyStart = performance.now();
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId)
+      ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
       : [];
     const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
@@ -210,10 +356,48 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
+    // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
+    // below runs, no extra Elasticsearch call is made, and the request built
+    // further down is identical to what it has always been.
+    const cutoffRequested = (q.relevance_cutoff ?? 'off') === 'on';
+    let cutoff: RelevanceCutoffDto | undefined;
+
+    if (cutoffRequested) {
+      const cacheKey = relevanceCutoffCacheKey({ ...identity, pinnedMode });
+
+      // Cached so pages 2..n of one search reuse a single probe rather than
+      // re-running it — and so the kept set cannot drift between pages.
+      const probed = await this.requestCacheService.getOrSet(
+        cacheKey,
+        () =>
+          this.probeRelevanceCutoff({
+            index,
+            preference,
+            queryStr,
+            queryVector,
+            predicted: predictedTaxonomies,
+            filters: baseFilters,
+            pinnedMode,
+          }),
+        CUTOFF_PROBE_TTL_MS,
+      );
+
+      cutoff = probed.cutoff;
+
+      if (probed.keptIds) {
+        // Cut by relevance, then let `sort` order whatever survived. Applying
+        // the cut as a membership filter (rather than a score threshold) is
+        // what keeps this coherent under sort=distance|name|organization,
+        // where the returned hits are not in score order at all.
+        baseFilters.push({ ids: { values: probed.keptIds } });
+      }
+    }
+
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
     const request = this.buildHybridQuery({
       index,
+      preference,
       queryStr,
       queryVector,
       predicted: predictedTaxonomies,
@@ -223,15 +407,20 @@ export class HybridSearchService {
       page,
       limit: limit || 25,
       aggs,
-      boostPinned,
+      pinnedMode,
       sort,
     });
 
     const tSearchStart = performance.now();
-    const data = await this.elasticsearchService.search<
-      SearchSource,
-      Record<string, AggregationsStringTermsAggregate>
-    >(request);
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'hybrid_search',
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(request),
+    );
     const tSearchMs = Math.round(performance.now() - tSearchStart);
 
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
@@ -281,6 +470,9 @@ export class HybridSearchService {
         },
       },
       facets,
+      // Omitted entirely when the caller did not opt in, so the response
+      // document is unchanged for every existing consumer.
+      ...(cutoff ? { relevance_cutoff: cutoff } : {}),
     };
   }
 
@@ -296,14 +488,21 @@ export class HybridSearchService {
     }
 
     try {
-      const response = await fetch(`${this.embeddingBaseUrl}/embeddings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.runpodApiKey}`,
-        },
-        body: JSON.stringify({ model: this.embeddingModel, input: query }),
-      });
+      const response = await this.metrics.observeDownstream(
+        'embedding',
+        'embed',
+        () =>
+          fetch(`${this.embeddingBaseUrl}/embeddings`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.runpodApiKey}`,
+            },
+            body: JSON.stringify({ model: this.embeddingModel, input: query }),
+            signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
+      );
 
       if (!response.ok) {
         const text = await response.text();
@@ -326,24 +525,31 @@ export class HybridSearchService {
   private async getTaxonomyCodes(
     queryVector: number[],
     tenantId: string,
+    preference: string,
   ): Promise<PredictedTaxonomy[]> {
     try {
-      const result = await this.elasticsearchService.search<{
-        code: string;
-        name: string;
-      }>({
-        index: 'hybrid_taxonomies',
-        size: TAXONOMY_K,
-        track_total_hits: false,
-        _source: ['code', 'name'],
-        knn: {
-          field: 'embedding',
-          query_vector: queryVector,
-          k: TAXONOMY_K,
-          num_candidates: TAXONOMY_NUM_CANDIDATES,
-          filter: [{ term: { tenant_id: tenantId } }],
-        },
-      });
+      const result = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'taxonomy_knn',
+        () =>
+          this.elasticsearchService.search<{
+            code: string;
+            name: string;
+          }>({
+            index: 'hybrid_taxonomies',
+            preference,
+            size: TAXONOMY_K,
+            track_total_hits: false,
+            _source: ['code', 'name'],
+            knn: {
+              field: 'embedding',
+              query_vector: queryVector,
+              k: TAXONOMY_K,
+              num_candidates: TAXONOMY_NUM_CANDIDATES,
+              filter: [{ term: { tenant_id: tenantId } }],
+            },
+          }),
+      );
 
       return result.hits.hits
         .filter((h) => Boolean(h._source?.code))
@@ -380,18 +586,35 @@ export class HybridSearchService {
    * each contribution equal to the boost (no term-IDF noise); the bool sums
    * matching clauses, so a doc carrying several predicted codes accumulates
    * them and the highest-scoring predicted code contributes the most.
-   * boost = BASE_TAXONOMY_BOOST * score * (1 + 0.5 / (1 + i))
+   * boost = BASE_TAXONOMY_BOOST * lengthScale * score * (1 + 0.5 / (1 + i))
+   *
+   * lengthScale grows with the query's token count: the recall clause's BM25
+   * sums weak token matches across many fields, so long natural-language
+   * queries inflate lexical scores to the hundreds and a flat boost becomes
+   * invisible there, while 1–3-token queries keep the balance the boosts were
+   * tuned on. 1–3 tokens → ×1; one unit per TAXONOMY_BOOST_TOKENS_PER_UNIT
+   * tokens beyond that, capped at TAXONOMY_BOOST_MAX_SCALE.
    */
   private buildTaxonomyBoostClauses(
     predicted: PredictedTaxonomy[],
+    queryStr?: string,
   ): QueryDslQueryContainer[] {
+    const tokens = queryStr?.trim().split(/\s+/).filter(Boolean).length ?? 1;
+    const lengthScale = Math.min(
+      TAXONOMY_BOOST_MAX_SCALE,
+      Math.max(1, Math.floor(tokens / TAXONOMY_BOOST_TOKENS_PER_UNIT)),
+    );
     return predicted.map((sc, i) => ({
       nested: {
         path: 'taxonomies',
         query: {
           constant_score: {
             filter: { term: { 'taxonomies.code': sc.code } },
-            boost: BASE_TAXONOMY_BOOST * sc.score * (1 + 0.5 / (1 + i)),
+            boost:
+              BASE_TAXONOMY_BOOST *
+              lengthScale *
+              sc.score *
+              (1 + 0.5 / (1 + i)),
           },
         },
         score_mode: 'max',
@@ -458,6 +681,24 @@ export class HybridSearchService {
       (f) => f !== 'organization.name' && f !== 'organization.description',
     );
 
+    const recallClause: QueryDslQueryContainer = {
+      multi_match: {
+        operator: 'or',
+        minimum_should_match: '2<75%',
+        fields: generalFields,
+        query: queryStr,
+      },
+    };
+    const nestedRecallClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'or',
+        minimum_should_match: '2<75%',
+        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
+        query: queryStr,
+      },
+    };
+
     return [
       // Top-level name: highest signal — edge-ngram + phrase on .clean
       ...this.buildNameTierClauses('name', BM25_NAME_BOOST, queryStr, {
@@ -479,27 +720,17 @@ export class HybridSearchService {
         { includePhrase: isMultiToken },
       ),
       // General stemmed recall fallback on analyzed fields (low implicit boost)
-      {
-        multi_match: {
-          operator: 'or',
-          minimum_should_match: '2<75%',
-          fields: generalFields,
-          query: queryStr,
-        },
-      },
+      recallClause,
+      // Typo tolerance belongs on the recall clause: the name tiers above are
+      // phrase/prefix by design, and the use_references clause below is
+      // curated, where an approximate match defeats the curation.
+      fuzzyFallbackFor(recallClause),
       // Nested taxonomy name/description boost
+      { nested: { path: 'taxonomies', query: nestedRecallClause } },
       {
         nested: {
           path: 'taxonomies',
-          query: {
-            multi_match: {
-              analyzer: 'standard',
-              operator: 'or',
-              minimum_should_match: '2<75%',
-              fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
-              query: queryStr,
-            },
-          },
+          query: fuzzyFallbackFor(nestedRecallClause),
         },
       },
       // Nested taxonomy use_references (curated aliases) — dedicated higher
@@ -573,26 +804,276 @@ export class HybridSearchService {
 
   /**
    * `sort` picks the order, the query still decides membership (ISS-1367).
-   * pinned/priority lead unless `boost_pinned_resources` moves them into the
-   * score.
+   * pinned/priority lead only when `pinned_resources_mode` is `top`.
    */
   private buildHybridSort(
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
-    boostPinned: boolean,
+    pinnedMode: PinnedResourcesMode,
   ): Sort {
     return SearchUtilsService.buildSortClause({
       fields: HYBRID_SORT_FIELDS,
       sortOption,
       coords,
-      leadingTiers: boostPinned
-        ? []
-        : [{ pinned: 'desc' }, { priority: 'desc' }],
+      leadingTiers:
+        pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [],
     });
+  }
+
+  /**
+   * Locates the cutoff on **semantic and lexical relevance only**.
+   *
+   * Geography is deliberately absent from this query, and that is the whole
+   * point of running a separate pass rather than reading scores off the main
+   * one. In the fused hybrid score, `gauss(distance)` spans a 0–25 range that
+   * manufactures discontinuities out of *distance*, not relevance — so an
+   * elbow found there cuts on geography. That fails in both directions: dense
+   * geographies get spurious cuts at distance cliffs, and sparse ones get no
+   * cut at all because every result is far and the range compresses.
+   *
+   * It is also wrong on the merits. Someone rural may well drive 40 miles for
+   * the right resource; how far a person will travel is their decision, made
+   * through `distance`/`geo_type`, and it is not evidence that a resource is
+   * irrelevant. Proximity stays a ranking signal and a filter. It never
+   * decides what gets cut.
+   *
+   * Pinned resources carry their boost here regardless of
+   * `pinned_resources_mode`, so a tenant's curated resources rank high in the
+   * probe and survive the cut.
+   */
+  private async probeRelevanceCutoff(args: {
+    index: string;
+    preference: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    pinnedMode: PinnedResourcesMode;
+  }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
+    const {
+      index,
+      preference,
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      pinnedMode,
+    } = args;
+
+    const should = [
+      ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
+      ...this.buildTaxonomyBoostClauses(predicted, queryStr),
+      ...(pinnedMode === 'ignore'
+        ? []
+        : [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
+            } as QueryDslQueryContainer,
+          ]),
+    ];
+
+    // coords omitted on purpose — see the doc comment above.
+    const scoreFunctions = this.buildScoreFunctions(queryVector, undefined, 0);
+
+    const innerBool: QueryDslQueryContainer = {
+      bool: { minimum_should_match: 0, filter: filters, should },
+    };
+
+    const query: QueryDslQueryContainer =
+      scoreFunctions.length > 0
+        ? {
+            function_score: {
+              query: innerBool,
+              functions: scoreFunctions,
+              score_mode: 'sum',
+              boost_mode: 'sum',
+            },
+          }
+        : innerBool;
+
+    /**
+     * The rule needs three numbers — the top score, the top-20 score, and how
+     * many results sit above a fraction of the top — and Elasticsearch answers
+     * all of them without collecting documents. The head call returns the top
+     * `CUTOFF_TOP_DOCS_FLOOR + 1` scores in one pass: rank 0 for `topScore`,
+     * rank 20 for the clamp. `size: 0` with `min_score` returns a count in
+     * about a millisecond over a 27,000-result population, where fetching a
+     * 300-document window costs ~250ms and still cannot see a cut that lands
+     * at 388.
+     *
+     * The threshold is `min(fraction × topScore, top-20 score)` — the clamp
+     * guarantees the probe's own top-20 survive the cut, which is the metric
+     * the fraction rule alone was measured to violate (Washington/Iowa Q3,
+     * Santa Cruz Q4). When the clamped fraction leaves more survivors than
+     * MAX_ENUMERATED_CUT, the fraction climbs the ladder and the first rung
+     * that enumerates is applied; past the ladder the probe declines with
+     * `cut_too_large` as before.
+     *
+     * Documents are fetched only once the cut is known to be worth making, so
+     * the expensive call is proportional to the cut rather than to a fixed
+     * window.
+     *
+     * `min_score` is inclusive, so a group of results tied exactly at the
+     * threshold is kept or dropped whole — the boundary cannot split a tie.
+     */
+    // A private projection, not the response shape: the probe asks only for the
+    // grouping key, so it must not borrow the public `SearchSource` DTO.
+    type ProbeSource = { service_id?: string };
+    const fraction = CUTOFF_FRACTION_OF_MAX;
+    const minKeep = CUTOFF_MIN_KEEP_SERVICES;
+
+    const head = await this.elasticsearchService.search<SearchSource>({
+      index,
+      preference,
+      size: CUTOFF_TOP_DOCS_FLOOR + 1,
+      track_total_hits: true,
+      _source: false,
+      sort: ['_score'],
+      query,
+    });
+
+    const matched =
+      typeof head.hits.total === 'number'
+        ? head.hits.total
+        : (head.hits.total?.value ?? 0);
+    const topScore = head.hits.hits[0]?._score ?? 0;
+    // Clamp anchor: the score the probe's own top-20 ends at. Absent when the
+    // matched set is smaller than the floor window — nothing to protect there.
+    const s20 =
+      head.hits.hits.length > CUTOFF_TOP_DOCS_FLOOR
+        ? head.hits.hits[CUTOFF_TOP_DOCS_FLOOR]?._score
+        : undefined;
+
+    const decline = (
+      reason: RelevanceCutoffDto['reason'],
+      examined: number,
+    ): { keptIds: null; cutoff: RelevanceCutoffDto } => ({
+      keptIds: null,
+      cutoff: {
+        applied: false,
+        reason,
+        kept: matched,
+        matched_before_cutoff: matched,
+        cutoff_score: null,
+        candidates_examined: examined,
+      },
+    });
+
+    if (matched <= minKeep) return decline('below_min_keep', matched);
+    if (topScore <= 0) return decline('no_elbow', 1);
+
+    const thresholdFor = (f: number): number =>
+      Math.min(f * topScore, s20 ?? Infinity);
+
+    const countSurvivors = async (threshold: number): Promise<number> => {
+      const counted = await this.elasticsearchService.search<SearchSource>({
+        index,
+        preference,
+        size: 0,
+        track_total_hits: true,
+        min_score: threshold,
+        query,
+      });
+      return typeof counted.hits.total === 'number'
+        ? counted.hits.total
+        : (counted.hits.total?.value ?? 0);
+    };
+
+    let threshold = thresholdFor(fraction);
+    let survivors = await countSurvivors(threshold);
+
+    // Nothing meaningful scored below the threshold: the distribution is flat
+    // and the honest answer is to return everything. This is the case a strict
+    // fraction cannot express, and a lax one can.
+    if (survivors >= matched * MIN_CUT_REDUCTION)
+      return decline('no_elbow', matched);
+    // The two failure branches are provably disjoint: if survivors@0.2 exceed
+    // MAX_ENUMERATED_CUT then rank 20 sits inside the survivors, so s20 >=
+    // threshold and the clamp cannot bind on the ladder path; if the clamp
+    // binds at the base fraction, survivors <= 20 + ties and the ladder never
+    // runs.
+    if (survivors > MAX_ENUMERATED_CUT) {
+      let ladder: { threshold: number; survivors: number } | null = null;
+      for (const f of CUTOFF_FRACTION_LADDER) {
+        const rungThreshold = thresholdFor(f);
+        const rungSurvivors = await countSurvivors(rungThreshold);
+        if (rungSurvivors <= MAX_ENUMERATED_CUT) {
+          ladder = { threshold: rungThreshold, survivors: rungSurvivors };
+          break;
+        }
+      }
+      if (!ladder) return decline('cut_too_large', survivors);
+      threshold = ladder.threshold;
+      survivors = ladder.survivors;
+    }
+
+    const kept = await this.elasticsearchService.search<ProbeSource>({
+      index,
+      preference,
+      size: Math.max(survivors, 1),
+      track_total_hits: false,
+      min_score: threshold,
+      _source: ['service_id'],
+      sort: ['_score'],
+      query,
+    });
+
+    let hits = kept.hits.hits;
+    let cutoffScore = hits[hits.length - 1]?._score ?? null;
+    const services = new Set(
+      hits.map((h) => String(h._source?.service_id ?? h._id)),
+    );
+
+    // The floor is denominated in services, not documents: one provider's
+    // branches must not fill every slot while other providers are cut.
+    if (services.size < minKeep) {
+      const widened = await this.elasticsearchService.search<ProbeSource>({
+        index,
+        preference,
+        size: SERVICE_FLOOR_WINDOW,
+        track_total_hits: false,
+        _source: ['service_id'],
+        sort: ['_score'],
+        query,
+      });
+      const seen = new Set<string>();
+      const take: typeof widened.hits.hits = [];
+      for (const hit of widened.hits.hits) {
+        seen.add(String(hit._source?.service_id ?? hit._id));
+        take.push(hit);
+        if (seen.size >= minKeep) break;
+      }
+      if (take.length >= matched) return decline('below_min_keep', matched);
+      hits = take;
+      cutoffScore = take[take.length - 1]?._score ?? null;
+    }
+
+    const keptIds = hits
+      .map((h) => h._id)
+      .filter((id): id is string => typeof id === 'string');
+
+    if (keptIds.length === 0 || keptIds.length >= matched)
+      return decline('no_elbow', matched);
+
+    return {
+      keptIds,
+      cutoff: {
+        applied: true,
+        reason: null,
+        kept: keptIds.length,
+        matched_before_cutoff: matched,
+        cutoff_score: cutoffScore,
+        candidates_examined: survivors,
+      },
+    };
   }
 
   private buildHybridQuery(args: {
     index: string;
+    preference: string;
     queryStr: string;
     queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
@@ -602,11 +1083,12 @@ export class HybridSearchService {
     page: number;
     limit: number;
     aggs: Aggregations;
-    boostPinned: boolean;
+    pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
   }): SearchRequest {
     const {
       index,
+      preference,
       queryStr,
       queryVector,
       predicted,
@@ -616,7 +1098,7 @@ export class HybridSearchService {
       page,
       limit,
       aggs,
-      boostPinned,
+      pinnedMode,
       sort: sortOption,
     } = args;
 
@@ -625,25 +1107,28 @@ export class HybridSearchService {
     const lexicalShould = queryStr
       ? this.buildLexicalShouldClauses(queryStr)
       : [];
-    const taxonomyShould = this.buildTaxonomyBoostClauses(predicted);
-    // When boost_pinned_resources is enabled, pinned becomes a small additive
-    // score contribution (constant_score) instead of a hard sort tier.
+    const taxonomyShould = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    // When pinned_resources_mode is `boost`, pinned becomes a small additive
+    // score contribution (constant_score) instead of a hard sort tier. When it
+    // is `top`, the hard sort tiers handle ordering. When `ignore`, neither is
+    // applied.
 
-    this.logger.debug(`Boost pinned resources: ${boostPinned}`);
+    this.logger.debug(`Pinned resources mode: ${pinnedMode}`);
 
-    const pinnedShould: QueryDslQueryContainer[] = boostPinned
-      ? [
-          {
-            constant_score: {
-              filter: { term: { pinned: true } },
-              boost: PINNED_SCORE_BOOST,
+    const pinnedShould: QueryDslQueryContainer[] =
+      pinnedMode === 'boost'
+        ? [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
             },
-          },
-        ]
-      : [];
+          ]
+        : [];
     const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
 
-    const sort = this.buildHybridSort(sortOption, coords, boostPinned);
+    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
@@ -651,7 +1136,7 @@ export class HybridSearchService {
       distance,
     );
 
-    if (boostPinned) {
+    if (pinnedMode === 'boost') {
       // priority (integer, higher = more important) as a small score boost.
       scoreFunctions.push({
         field_value_factor: {
@@ -689,6 +1174,7 @@ export class HybridSearchService {
 
     return {
       index,
+      preference,
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,

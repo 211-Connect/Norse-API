@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
   'x-tenant-id': 'tenant-a',
@@ -90,6 +92,10 @@ describe('HybridSearchService', () => {
             getOrSet: jest.fn((_key, factory) => factory()),
           },
         },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
+        },
       ],
     }).compile();
 
@@ -125,9 +131,9 @@ describe('HybridSearchService', () => {
     const scriptFn = functions.find((f: any) => f.script_score);
     expect(scriptFn).toBeDefined();
     expect(scriptFn.script_score.script.source).toBe(
-      "cosineSimilarity(params.qv, 'embedding') + 1.0",
+      "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
     );
-    expect(scriptFn.weight).toBe(50);
+    expect(scriptFn.weight).toBe(100);
     // No knn clause anywhere on the main request.
     expect(capturedMainRequest.knn).toBeUndefined();
   });
@@ -147,11 +153,11 @@ describe('HybridSearchService', () => {
     );
     expect(codes).toEqual(['BH-1800', 'BV-8900']);
 
-    // boost = 10 * score * (1 + 0.5 / (1 + i))
+    // boost = 50 * score * (1 + 0.5 / (1 + i))
     const boost0 = taxonomyClauses[0].nested.query.constant_score.boost;
     const boost1 = taxonomyClauses[1].nested.query.constant_score.boost;
-    expect(boost0).toBeCloseTo(10 * 0.9 * (1 + 0.5 / 1));
-    expect(boost1).toBeCloseTo(10 * 0.6 * (1 + 0.5 / 2));
+    expect(boost0).toBeCloseTo(50 * 0.9 * (1 + 0.5 / 1));
+    expect(boost1).toBeCloseTo(50 * 0.6 * (1 + 0.5 / 2));
 
     // Not a single flat terms boost clause.
     const flatTerms = should.filter(
@@ -160,12 +166,51 @@ describe('HybridSearchService', () => {
     expect(flatTerms).toHaveLength(0);
   });
 
-  it('uses a 4-key deterministic sort', async () => {
+  it('keeps the x1 taxonomy boost baseline for short queries', async () => {
+    // 'food shelf' = 2 tokens: at or below the per-unit length, the boost is
+    // exactly the flat baseline the ranking was tuned on.
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 0.9 * (1 + 0.5 / 1));
+  });
+
+  it('scales taxonomy boosts up with query length', async () => {
+    // 6 tokens → floor(6/3) = 2: the recall clause's BM25 doubles with the
+    // token count, so the intent signal scales with it.
+    const long = {
+      ...baseQuery,
+      query: 'help paying rent after losing my job',
+    };
+    await service.searchHybrid({ headers, query: long });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 2 * 0.9 * (1 + 0.5 / 1));
+  });
+
+  it('caps the taxonomy boost length scale', async () => {
+    // 15 tokens → floor(15/3) = 5, exactly the cap.
+    const veryLong = {
+      ...baseQuery,
+      query:
+        'need to know what steps to do when someone dies at home in the family',
+    };
+    await service.searchHybrid({ headers, query: veryLong });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const boost = should.find((c: any) => c.nested?.query?.constant_score)
+      .nested.query.constant_score.boost;
+    expect(boost).toBeCloseTo(50 * 5 * 0.9 * (1 + 0.5 / 1));
+  });
+
+  it('uses a 2-key deterministic sort by default (boost mode)', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
     expect(capturedMainRequest.sort).toEqual([
-      { pinned: 'desc' },
-      { priority: 'desc' },
       '_score',
       { service_at_location_id: { order: 'asc' } },
     ]);
@@ -179,8 +224,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         {
           _geo_distance: {
             'location.point': { lon: -76.6122, lat: 39.2904 },
@@ -200,8 +243,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         '_score',
         { service_at_location_id: { order: 'asc' } },
       ]);
@@ -214,8 +255,6 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         { 'name.lc': { order: 'asc' } },
         { service_at_location_id: { order: 'asc' } },
       ]);
@@ -228,23 +267,57 @@ describe('HybridSearchService', () => {
       });
 
       expect(capturedMainRequest.sort).toEqual([
-        { pinned: 'desc' },
-        { priority: 'desc' },
         { 'organization.name.lc': { order: 'asc' } },
         { 'name.lc': { order: 'asc' } },
         { service_at_location_id: { order: 'asc' } },
       ]);
     });
 
-    it('drops the pinned/priority tiers when boost_pinned_resources is enabled', async () => {
+    it('defaults to boost mode when pinned_resources_mode is missing', async () => {
       (service as any).tenantConfigService.getSearchConfig = jest
         .fn()
-        .mockResolvedValue({ boost_pinned_resources: true });
+        .mockResolvedValue({});
 
       await service.searchHybrid({
         headers,
         query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
       });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      expect(capturedMainRequest.sort).toEqual([
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: { order: 'asc' } },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(true);
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('boost mode drops pinned/priority tiers and adds score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'boost' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
 
       expect(capturedMainRequest.sort).toEqual([
         {
@@ -257,6 +330,130 @@ describe('HybridSearchService', () => {
         },
         { service_at_location_id: { order: 'asc' } },
       ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(true);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('top mode hard-sorts pinned/priority resources and omits score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'top' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+
+      expect(capturedMainRequest.sort).toEqual([
+        { pinned: 'desc' },
+        { priority: 'desc' },
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: { order: 'asc' } },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(false);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(false);
+    });
+
+    it('ignore mode omits pinned/priority tiers and score contributions', async () => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: 'ignore' });
+
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, sort: 'distance', coords: [-76.6122, 39.2904] },
+      });
+
+      const functions = capturedMainRequest.query.function_score.functions;
+      const should = capturedMainRequest.query.function_score.query.bool.should;
+
+      expect(capturedMainRequest.sort).toEqual([
+        {
+          _geo_distance: {
+            'location.point': { lon: -76.6122, lat: 39.2904 },
+            order: 'asc',
+            unit: 'm',
+            mode: 'min',
+          },
+        },
+        { service_at_location_id: { order: 'asc' } },
+      ]);
+      expect(
+        functions.some((f: any) => f.field_value_factor?.field === 'priority'),
+      ).toBe(false);
+      expect(
+        should.some(
+          (c: any) => c.constant_score?.filter?.term?.pinned === true,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe('shard-copy preference', () => {
+    const preferencesOf = async (query: any, h: any = headers) => {
+      esSearch.mockClear();
+      await service.searchHybrid({ headers: h, query });
+      return esSearch.mock.calls.map(([req]) => req.preference);
+    };
+
+    it('pins the taxonomy lookup and the main search to one preference', async () => {
+      const preferences = await preferencesOf(baseQuery);
+
+      expect(preferences).toHaveLength(2);
+      expect(preferences[0]).toEqual(expect.any(String));
+      // A leading underscore is Elasticsearch's reserved preference syntax.
+      expect(preferences[0]).not.toMatch(/^_/);
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('keeps the same preference for every page, limit and sort of a search', async () => {
+      const preferences = [
+        ...(await preferencesOf(baseQuery)),
+        ...(await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
+        ...(await preferencesOf({ ...baseQuery, sort: 'name' })),
+      ];
+
+      // Every search of all three requests, not just the first of each.
+      expect(preferences).toHaveLength(6);
+      expect(preferences[0]).toEqual(expect.any(String));
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('uses a different preference for a different search', async () => {
+      const [base] = await preferencesOf(baseQuery);
+      const [otherText] = await preferencesOf({ ...baseQuery, query: 'rent' });
+      const [otherTenant] = await preferencesOf(baseQuery, {
+        ...headers,
+        'x-tenant-id': 'tenant-b',
+      });
+      const [otherScope] = await preferencesOf({
+        ...baseQuery,
+        taxonomy: ['BM-1400'],
+      });
+
+      expect(new Set([base, otherText, otherTenant, otherScope]).size).toBe(4);
     });
   });
 
@@ -278,7 +475,7 @@ describe('HybridSearchService', () => {
     expect(result.search.hits.hits[0]._id).toBe('doc-1');
   });
 
-  it('omits lexical should clauses in browse mode (empty query) but keeps taxonomy boosts', async () => {
+  it('omits lexical and taxonomy boost clauses in browse mode (empty query)', async () => {
     await service.searchHybrid({
       headers,
       query: { ...baseQuery, query: '' },
@@ -293,7 +490,7 @@ describe('HybridSearchService', () => {
     const taxonomyClauses = should.filter(
       (c: any) => c.nested?.query?.constant_score,
     );
-    expect(taxonomyClauses).toHaveLength(2);
+    expect(taxonomyClauses).toHaveLength(0);
   });
 
   it('adds a hard taxonomy scope filter when the taxonomy param is provided', async () => {
@@ -343,5 +540,31 @@ describe('HybridSearchService', () => {
       expect(count).toBe(0);
       expect(esCount).not.toHaveBeenCalled();
     });
+  });
+
+  // Same guard on the hybrid path. Only the recall clauses get a fallback:
+  // the name tiers are phrase/prefix by design and the use_references clause is
+  // curated, where an approximate match defeats the curation.
+  it('pairs each recall clause with a de-boosted fuzzy fallback', async () => {
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const should = capturedMainRequest.query.function_score.query.bool.should;
+    const all = [
+      ...should
+        .filter((c: any) => c.multi_match)
+        .map((c: any) => c.multi_match),
+      ...should
+        .filter((c: any) => c.nested?.query?.multi_match)
+        .map((c: any) => c.nested.query.multi_match),
+    ];
+    const fuzzy = all.filter((m: any) => m.fuzziness === 'AUTO');
+    const exact = all.filter((m: any) => m.fuzziness === undefined);
+
+    expect(exact.length).toBeGreaterThan(0);
+    expect(fuzzy.length).toBe(exact.length);
+    for (const m of fuzzy) {
+      expect(m.prefix_length).toBe(2);
+      expect(m.boost).toBe(0.01);
+    }
   });
 });

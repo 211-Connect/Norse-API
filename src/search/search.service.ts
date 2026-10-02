@@ -17,10 +17,13 @@ import { getIndexName } from 'src/common/lib/utils';
 import { SearchResponse, SearchSource } from './dto/search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
+import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
+import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -43,6 +46,7 @@ export class SearchService {
     private readonly tenantConfigService: TenantConfigService,
     private readonly orchestrationConfigService: OrchestrationConfigService,
     private readonly hybridSearchService: HybridSearchService,
+    private readonly metrics: MetricsService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -120,8 +124,8 @@ export class SearchService {
       `searchResources - index name = ${indexName}, locale = ${locale}`,
     );
 
-    const { tenantFacets, customAttributes } =
-      await this.getFacetsAndCustomAttributes(tenantId);
+    const { tenantFacets, customAttributes, searchConfig } =
+      await this.getTenantSearchConfig(tenantId);
 
     const searchableCustomAttributeFields = customAttributes
       .filter((attr) => attr.searchable === true)
@@ -204,15 +208,25 @@ export class SearchService {
       from: (page - 1) * limit,
       size: limit || 25,
       _source_excludes: ['service_area'],
-      sort: SearchUtilsService.buildSort(coords, sort, queryType),
+      sort: SearchUtilsService.buildSort(
+        coords,
+        sort,
+        queryType,
+        SearchUtilsService.resolvePinnedResourcesMode(searchConfig),
+      ),
       aggs: aggregations,
       ...specificQuery,
     };
 
-    const data = await this.elasticsearchService.search<
-      SearchSource,
-      Record<string, AggregationsStringTermsAggregate>
-    >(finalQuery);
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      `resources_${queryType}`,
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(finalQuery),
+    );
 
     if (data.hits?.hits) {
       data.hits.hits = data.hits.hits.map((hit) => {
@@ -307,6 +321,23 @@ export class SearchService {
       ...customAttributeFields,
     ];
 
+    const exactClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'AND',
+        fields: fieldsWithCustomAttributes,
+        query,
+      },
+    };
+    const nestedExactClause: QueryDslQueryContainer = {
+      multi_match: {
+        analyzer: 'standard',
+        operator: 'AND',
+        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
+        query,
+      },
+    };
+
     switch (queryType) {
       case 'keyword':
         return {
@@ -314,25 +345,22 @@ export class SearchService {
             bool: {
               ...baseBool,
               should: [
+                exactClause,
+                // `operator: AND` requires every token to match and this index
+                // has no stemming, so one transposed letter returned nothing at
+                // all. The fallback is de-boosted far enough that it only
+                // decides anything when the clause above matched nothing.
+                fuzzyFallbackFor(exactClause),
                 {
-                  multi_match: {
-                    analyzer: 'standard',
-                    operator: 'AND',
-                    fields: fieldsWithCustomAttributes,
-                    query,
+                  nested: {
+                    path: 'taxonomies',
+                    query: nestedExactClause,
                   },
                 },
                 {
                   nested: {
                     path: 'taxonomies',
-                    query: {
-                      multi_match: {
-                        analyzer: 'standard',
-                        operator: 'AND',
-                        fields: SearchUtilsService.NESTED_FIELDS_TO_QUERY,
-                        query,
-                      },
-                    },
+                    query: fuzzyFallbackFor(nestedExactClause),
                   },
                 },
               ],
@@ -515,25 +543,31 @@ export class SearchService {
   }
 
   /**
-   * Fetches facets and custom attributes with a 2-second timeout.
-   * Returns empty arrays if the timeout is reached.
+   * Fetches facets, custom attributes, and search config with a 2-second timeout.
+   * Returns empty arrays / empty config if the timeout is reached.
    * It prevents the search endpoint from being blocked by slow responses from config services.
    */
-  private async getFacetsAndCustomAttributes(tenantId: string): Promise<{
+  private async getTenantSearchConfig(tenantId: string): Promise<{
     tenantFacets: FacetConfig[];
     customAttributes: CustomAttribute[];
+    searchConfig: SearchConfigCache;
   }> {
     let timeoutId: NodeJS.Timeout;
 
     const timeoutPromise = new Promise<{
       tenantFacets: FacetConfig[];
       customAttributes: CustomAttribute[];
+      searchConfig: SearchConfigCache;
     }>((resolve) => {
       timeoutId = setTimeout(() => {
         this.logger.warn(
-          `Timeout fetching facets and custom attributes for tenant ${tenantId}, using empty arrays`,
+          `Timeout fetching search config, facets and custom attributes for tenant ${tenantId}, using empty values`,
         );
-        resolve({ tenantFacets: [], customAttributes: [] });
+        resolve({
+          tenantFacets: [],
+          customAttributes: [],
+          searchConfig: {},
+        });
       }, 2000);
     });
 
@@ -550,10 +584,16 @@ export class SearchService {
           );
           return [];
         }),
-    ]).then(([tenantFacets, customAttributes]) => {
+      this.tenantConfigService.getSearchConfig(tenantId).catch(() => {
+        this.logger.error(
+          `Error fetching search config for tenant ${tenantId}, using empty config`,
+        );
+        return {};
+      }),
+    ]).then(([tenantFacets, customAttributes, searchConfig]) => {
       // Clear timeout to prevent memory leak
       clearTimeout(timeoutId);
-      return { tenantFacets, customAttributes };
+      return { tenantFacets, customAttributes, searchConfig };
     });
 
     return Promise.race([dataPromise, timeoutPromise]);

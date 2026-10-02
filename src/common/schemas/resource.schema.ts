@@ -159,6 +159,7 @@ export class Resource {
     serviceDescription: string;
     organizationDescription: string;
     alert?: string;
+    alertDate?: string;
     accessibility?: string;
     transportation?: string;
     facets?: Facet[];

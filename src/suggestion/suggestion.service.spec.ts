@@ -12,7 +12,7 @@ describe('SuggestionService', () => {
   const tenantConfigGetSearchConfig = jest.fn();
 
   const taxonomyService = {
-    searchTaxonomiesV2: taxonomySearchV2,
+    searchTaxonomies: taxonomySearchV2,
     getTaxonomyTermsForCodes: taxonomyTerms,
   } as unknown as TaxonomyService;
   const organizationService = {
@@ -24,7 +24,7 @@ describe('SuggestionService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    
+
     // Mock the default search config to have organization_search_enabled as false
     tenantConfigGetSearchConfig.mockResolvedValue({});
 
@@ -52,10 +52,12 @@ describe('SuggestionService', () => {
       items: [{ id: 'tax-1', code: 'BH-1800', name: 'Housing' }],
     };
 
-    it('calls TaxonomyService.searchTaxonomiesV2 and conditionally calls OrganizationService based on feature flag', async () => {
+    it('calls TaxonomyService.searchTaxonomies and conditionally calls OrganizationService based on feature flag', async () => {
       // Mock search config to enable organization search
-      tenantConfigGetSearchConfig.mockResolvedValue({ organization_search_enabled: true });
-      
+      tenantConfigGetSearchConfig.mockResolvedValue({
+        enable_organization_search: true,
+      });
+
       taxonomySearchV2.mockResolvedValue(taxonomyV2Result);
       organizationSearch.mockResolvedValue({
         took: 1,
@@ -87,11 +89,12 @@ describe('SuggestionService', () => {
       expect(tenantConfigGetSearchConfig).toHaveBeenCalledWith('tenant-a');
       expect(taxonomySearchV2).toHaveBeenCalledWith({
         headers,
-        query: { query: 'hous', code: undefined, page: 1 },
+        query: { query: 'hous', page: 1 },
       });
       expect(organizationSearch).toHaveBeenCalledWith({
         headers,
         query: { query: 'hous', page: 1, limit: 8 },
+        onlyWithResources: true,
       });
       expect(response).toEqual({
         taxonomies: [{ id: 'tax-1', code: 'BH-1800', name: 'Housing' }],
@@ -109,7 +112,7 @@ describe('SuggestionService', () => {
     it('returns an empty organizations array when feature flag is disabled', async () => {
       // Mock search config to disable organization search (default behavior)
       tenantConfigGetSearchConfig.mockResolvedValue({});
-      
+
       taxonomySearchV2.mockResolvedValue(taxonomyV2Result);
 
       const response = await service.getSuggestions({
@@ -120,7 +123,7 @@ describe('SuggestionService', () => {
       expect(tenantConfigGetSearchConfig).toHaveBeenCalledWith('tenant-a');
       expect(taxonomySearchV2).toHaveBeenCalledWith({
         headers,
-        query: { query: 'hous', code: undefined, page: 1 },
+        query: { query: 'hous', page: 1 },
       });
       expect(organizationSearch).not.toHaveBeenCalled(); // Should not be called when feature flag is disabled
       expect(response).toEqual({
@@ -131,8 +134,10 @@ describe('SuggestionService', () => {
 
     it('returns an empty organizations array when there are no matches (when feature flag enabled)', async () => {
       // Mock search config to enable organization search
-      tenantConfigGetSearchConfig.mockResolvedValue({ organization_search_enabled: true });
-      
+      tenantConfigGetSearchConfig.mockResolvedValue({
+        enable_organization_search: true,
+      });
+
       taxonomySearchV2.mockResolvedValue(taxonomyV2Result);
       organizationSearch.mockResolvedValue({
         took: 1,
@@ -157,8 +162,10 @@ describe('SuggestionService', () => {
 
     it('maps missing location fields to null (when feature flag enabled)', async () => {
       // Mock search config to enable organization search
-      tenantConfigGetSearchConfig.mockResolvedValue({ organization_search_enabled: true });
-      
+      tenantConfigGetSearchConfig.mockResolvedValue({
+        enable_organization_search: true,
+      });
+
       taxonomySearchV2.mockResolvedValue(taxonomyV2Result);
       organizationSearch.mockResolvedValue({
         took: 1,
@@ -193,8 +200,10 @@ describe('SuggestionService', () => {
 
     it('propagates a taxonomy validation error (e.g. missing query/code)', async () => {
       // Mock search config to enable organization search
-      tenantConfigGetSearchConfig.mockResolvedValue({ organization_search_enabled: true });
-      
+      tenantConfigGetSearchConfig.mockResolvedValue({
+        enable_organization_search: true,
+      });
+
       taxonomySearchV2.mockRejectedValue(
         new Error('Query or code is required'),
       );

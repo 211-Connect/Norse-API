@@ -11,6 +11,7 @@ import {
   ANALYTICS_CACHE_TTL_OPEN_RANGE_MS,
 } from '../internal/constants';
 import { isClosedRange } from '../internal/analytics-cache-ttl';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 @Injectable()
 export class AnalyticsCacheService {
@@ -27,6 +28,7 @@ export class AnalyticsCacheService {
   constructor(
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
   ) {
     const lruMax = this.configService.get<number>(
       'analytics.cache.responseLruMax',
@@ -73,16 +75,21 @@ export class AnalyticsCacheService {
       keyExtra,
     );
 
-    // L1 — in-process LRU
+    // L1 — in-process LRU (only recorded when the LRU tier is enabled)
     const l1Hit = this.lru?.get(key);
     if (l1Hit !== undefined) {
+      this.metrics.recordCacheAccess('analytics-lru', 'hit');
       this.logger.debug(`Analytics LRU hit: ${key}`);
       return l1Hit as T;
+    }
+    if (this.lru) {
+      this.metrics.recordCacheAccess('analytics-lru', 'miss');
     }
 
     // Coalesce concurrent identical requests
     const existing = this.inflight.get(key);
     if (existing) {
+      this.metrics.recordCacheAccess('analytics-redis', 'coalesced');
       this.logger.debug(`Analytics request coalesced: ${key}`);
       return existing as Promise<T>;
     }
@@ -112,16 +119,19 @@ export class AnalyticsCacheService {
     try {
       const l2Hit = await this.cacheManager.get<T>(key);
       if (l2Hit !== undefined && l2Hit !== null) {
+        this.metrics.recordCacheAccess('analytics-redis', 'hit');
         this.logger.debug(`Analytics Redis hit: ${key}`);
         this.lru?.set(key, l2Hit as unknown);
         return l2Hit;
       }
     } catch (err) {
+      this.metrics.recordCacheAccess('analytics-redis', 'get-error');
       // Redis unavailability must not block the request
       this.logger.warn(`Analytics Redis get failed for ${key}: ${err}`);
     }
 
     // Cache miss — fetch from Umami
+    this.metrics.recordCacheAccess('analytics-redis', 'miss');
     this.logger.debug(`Analytics cache miss: ${key}`);
     const result = await factory();
 

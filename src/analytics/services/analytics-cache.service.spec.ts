@@ -2,7 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 
+import { MetricsService } from 'src/metrics/metrics.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import {
   ANALYTICS_CACHE_TTL_CATALOG_MS,
   ANALYTICS_CACHE_TTL_CLOSED_RANGE_MS,
@@ -13,6 +15,7 @@ import {
 describe('AnalyticsCacheService', () => {
   let service: AnalyticsCacheService;
   let cacheManager: { get: jest.Mock; set: jest.Mock };
+  let metricsMock: ReturnType<typeof createMetricsServiceMock>;
 
   const tenantId = 'tenant-1';
   const websiteIds = ['website-1'];
@@ -22,6 +25,7 @@ describe('AnalyticsCacheService', () => {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
     };
+    metricsMock = createMetricsServiceMock();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -37,6 +41,10 @@ describe('AnalyticsCacheService', () => {
               (_key: string, defaultValue?: unknown) => defaultValue,
             ),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: metricsMock,
         },
       ],
     }).compile();
@@ -202,6 +210,7 @@ describe('AnalyticsCacheService', () => {
 
   describe('when the L1 cache is disabled', () => {
     beforeEach(async () => {
+      metricsMock = createMetricsServiceMock();
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           AnalyticsCacheService,
@@ -217,10 +226,38 @@ describe('AnalyticsCacheService', () => {
               ),
             },
           },
+          {
+            provide: MetricsService,
+            useValue: metricsMock,
+          },
         ],
       }).compile();
 
       service = module.get<AnalyticsCacheService>(AnalyticsCacheService);
+    });
+
+    it('records only an analytics-redis hit when L1 is disabled', async () => {
+      cacheManager.get.mockResolvedValue({ value: 'cached' });
+
+      await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        jest.fn(),
+      );
+
+      expect(
+        metricsMock.recordCacheAccess.mock.calls.map(
+          ([cache, result]) => `${cache}:${result}`,
+        ),
+      ).toEqual(['analytics-redis:hit']);
+      expect(
+        metricsMock.recordCacheAccess.mock.calls.some(
+          ([cache]) => cache === 'analytics-lru',
+        ),
+      ).toBe(false);
     });
 
     it('always falls through to Redis (L2) instead of using an in-process LRU', async () => {
@@ -311,6 +348,80 @@ describe('AnalyticsCacheService', () => {
         { value: 'result' },
         ANALYTICS_CACHE_TTL_OPEN_RANGE_MS,
       );
+    });
+  });
+
+  describe('cache metrics', () => {
+    const recordCalls = () =>
+      metricsMock.recordCacheAccess.mock.calls.map(
+        ([cache, result]) => `${cache}:${result}`,
+      );
+
+    it('records lru miss + redis miss on first call and lru hit on second', async () => {
+      const factory = jest.fn().mockResolvedValue({ value: 'result' });
+
+      await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        factory,
+      );
+      expect(recordCalls()).toEqual([
+        'analytics-lru:miss',
+        'analytics-redis:miss',
+      ]);
+
+      await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        factory,
+      );
+      expect(recordCalls()).toEqual([
+        'analytics-lru:miss',
+        'analytics-redis:miss',
+        'analytics-lru:hit',
+      ]);
+    });
+
+    it('records lru miss, redis get-error then miss when Redis get throws', async () => {
+      cacheManager.get.mockRejectedValue(new Error('redis down'));
+
+      await service.getOrSet(
+        tenantId,
+        'heatmap',
+        websiteIds,
+        0,
+        1_000,
+        jest.fn(),
+      );
+
+      expect(recordCalls()).toEqual([
+        'analytics-lru:miss',
+        'analytics-redis:get-error',
+        'analytics-redis:miss',
+      ]);
+    });
+
+    it('records exactly one coalesced for two concurrent identical calls', async () => {
+      const factory = jest
+        .fn()
+        .mockImplementation(() => new Promise((r) => setTimeout(r, 10)));
+
+      await Promise.all([
+        service.getOrSet(tenantId, 'heatmap', websiteIds, 0, 1_000, factory),
+        service.getOrSet(tenantId, 'heatmap', websiteIds, 0, 1_000, factory),
+      ]);
+
+      const calls = metricsMock.recordCacheAccess.mock.calls;
+      expect(calls.filter(([, result]) => result === 'coalesced')).toHaveLength(
+        1,
+      );
+      expect(calls).toContainEqual(['analytics-redis', 'coalesced']);
     });
   });
 });

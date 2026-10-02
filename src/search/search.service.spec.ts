@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
@@ -6,6 +7,7 @@ import { OrchestrationConfigService } from '../cms-config/orchestration-config.s
 import { HybridSearchService } from './hybrid-search.service';
 import { BadRequestException } from '@nestjs/common';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('SearchService', () => {
   let service: SearchService;
@@ -25,6 +27,7 @@ describe('SearchService', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
           },
         },
         {
@@ -38,6 +41,10 @@ describe('SearchService', () => {
           useValue: {
             searchHybrid: jest.fn(),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();
@@ -226,5 +233,120 @@ describe('SearchService', () => {
         filterClauses.some((clause: any) => clause.term?.['organization.id']),
       ).toBe(false);
     });
+  });
+
+  describe('pinned_resources_mode', () => {
+    let tenantConfigService: { getSearchConfig: jest.Mock };
+
+    beforeEach(() => {
+      tenantConfigService = (service as any).tenantConfigService;
+    });
+
+    it('omits the priority sort tier when pinned_resources_mode is ignore', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({
+        pinned_resources_mode: 'ignore',
+      });
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort).not.toContainEqual({ priority: 'desc' });
+      expect(request.sort).toEqual([
+        '_score',
+        { 'service_at_location_id.raw': { order: 'asc' } },
+      ]);
+    });
+
+    it('keeps the priority sort tier when pinned_resources_mode is boost', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({
+        pinned_resources_mode: 'boost',
+      });
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort[0]).toEqual({ priority: 'desc' });
+    });
+
+    it('defaults to keeping the priority sort tier when pinned_resources_mode is missing', async () => {
+      tenantConfigService.getSearchConfig.mockResolvedValue({});
+
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+        query: {
+          query: 'housing',
+          query_type: 'text',
+          page: 1,
+          limit: 25,
+          filters: {},
+          taxonomy: [],
+          distance: 0,
+          sort: 'relevance',
+        },
+      });
+
+      const request = elasticsearchService.search.mock.calls[0][0];
+      expect(request.sort[0]).toEqual({ priority: 'desc' });
+    });
+  });
+
+  // Typo tolerance has to reach the query, not just exist as a helper. With
+  // `operator: AND` and no stemming on resources_*, one transposed letter
+  // returned zero results out of 63,580 — see internal/text-matching.
+  it('pairs every lexical clause with a de-boosted fuzzy fallback', async () => {
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+      query: {
+        // 'text' with a non-empty query resolves to the internal KEYWORD
+        // branch (getQueryType), which is the clause 51 of 59 tenants hit.
+        query: 'hosuing assistance',
+        query_type: 'text',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      } as SearchResourcesQueryDto,
+    });
+
+    const request = elasticsearchService.search.mock.calls[0][0];
+    const clauses: string[] =
+      JSON.stringify(request).match(/"multi_match":\{.*?\}/g) ?? [];
+    const fuzzy = clauses.filter((c) => c.includes('"fuzziness":"AUTO"'));
+    const exact = clauses.filter((c) => !c.includes('"fuzziness":"AUTO"'));
+
+    // One fallback per exact clause — never a replacement, or queries with no
+    // typo get reordered for no reason.
+    expect(exact.length).toBeGreaterThan(0);
+    expect(fuzzy.length).toBe(exact.length);
+    for (const c of fuzzy) {
+      expect(c).toContain('"prefix_length":2');
+      expect(c).toContain('"boost":0.01');
+    }
   });
 });

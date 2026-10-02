@@ -17,6 +17,7 @@ import {
 } from './dto/taxonomy-terms-query.dto';
 import { SuggestionCombinedResponseDto } from './dto/suggestion-response.dto';
 import { SuggestionService } from './suggestion.service';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 
 @ApiTags('Suggestion')
 @Controller('suggestion')
@@ -37,7 +38,11 @@ export class SuggestionController {
   })
   @ApiQuery({ name: 'query', required: false })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'accept-language',
     schema: {

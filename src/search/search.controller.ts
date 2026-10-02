@@ -12,7 +12,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
-import { MetricsService } from 'src/metrics/metrics.service';
 import {
   ApiBody,
   ApiHeader,
@@ -29,6 +28,7 @@ import { CustomHeaders } from '../common/decorators/CustomHeaders';
 import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { SEARCH_QUERY_TYPES } from './dto/search-query-type';
+import { RELEVANCE_CUTOFF_VALUES } from './internal/relevance-cutoff/types';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
@@ -39,6 +39,7 @@ import { AiSearchReRankQueryDto } from './dto/ai-search-re-rank-query.dto';
 import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto';
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { ArcjetGuard } from '../common/guards/arcjet.guard';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -50,13 +51,36 @@ const QUERY_TYPE_PARAM_DESCRIPTION =
 
 const SORT_PARAM_DESCRIPTION =
   'Presentation order of results. Independent of `query_type`: the query ' +
-  'engine decides which resources match, `sort` decides their order, and ' +
-  'pinned/prioritized resources stay on top in every mode. Values: ' +
+  'engine decides which resources match, `sort` decides their order. ' +
+  "Pinned/prioritized resource handling is controlled by the tenant's " +
+  '`pinned_resources_mode` setting (`boost` by default; `top` hard-sorts them ' +
+  'first; `ignore` disables them). For `hybrid` search, `boost` folds ' +
+  'pinned/priority into the relevance score; for other query types, `ignore` ' +
+  'removes the priority sort tier while other modes preserve it. Values: ' +
   '`relevance` (default — best match first; under `hybrid`, geographic ' +
-  'proximity is folded into the relevance score), `distance` (nearest ' +
-  'first; requires `coords`, otherwise falls back to `relevance`), `name` ' +
-  '(alphabetical by resource name), `organization` (alphabetical by ' +
-  'provider name). Honored for all query types, including `hybrid`.';
+  'proximity is folded into the relevance score), `distance` (nearest first; ' +
+  'requires `coords`, otherwise falls back to `relevance`), `name` ' +
+  '(alphabetical by resource name), `organization` (alphabetical by provider ' +
+  'name). Honored for all query types, including `hybrid`.';
+
+const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
+  'Opt-in trimming of low-relevance results (hybrid search only; ignored for ' +
+  'other query types). `off` (default) returns the full matched set and leaves ' +
+  'the response document unchanged. `on` keeps results scoring at least a ' +
+  'fraction of the top score — 0.2 of the top, tightened stepwise (up to 0.5) ' +
+  'when more than 1,000 results would survive, and never less than the top-20 ' +
+  "results' own scores — and **returns everything when the scores are too " +
+  'flat for that to remove anything meaningful** — a uniformly weak result set ' +
+  'is reported as such rather than cut arbitrarily. The cut is computed on ' +
+  'semantic and lexical relevance only: proximity still filters and ranks, but ' +
+  'never decides what is irrelevant, since how far someone will travel is ' +
+  'their own choice and not a property of the resource. It is applied as a ' +
+  'membership filter rather than a score threshold, so `sort` still orders ' +
+  'whatever survives — cut by relevance, then sort by distance, name or ' +
+  'organization. When a cutoff applies, `hits.total` reports the kept count ' +
+  'and the pre-cutoff total is preserved in ' +
+  '`relevance_cutoff.matched_before_cutoff`. A `relevance_cutoff` object is ' +
+  'added to the response whenever this param is `on`.';
 
 @ApiTags('Search')
 @Controller('search')
@@ -73,7 +97,6 @@ const SORT_PARAM_DESCRIPTION =
 export class SearchController {
   constructor(
     private readonly searchService: SearchService,
-    private readonly metricsService: MetricsService,
     private readonly aiSearchService: AiSearchService,
   ) {}
 
@@ -91,7 +114,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({
     name: 'limit',
     required: false,
@@ -154,18 +181,19 @@ export class SearchController {
     description: SORT_PARAM_DESCRIPTION,
     schema: { default: 'relevance' },
   })
+  @ApiQuery({
+    name: 'relevance_cutoff',
+    required: false,
+    enum: RELEVANCE_CUTOFF_VALUES,
+    description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
+    schema: { default: 'off' },
+  })
   @ApiQueryForComplexSearch()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchResourcesQueryDto,
   ): Promise<SearchResponse> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'getResources',
-      headers['x-tenant-id'],
-    );
-
     try {
       return this.searchService.searchResources({
         headers,
@@ -197,7 +225,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'Content-Type',
     required: true,
@@ -265,6 +297,13 @@ export class SearchController {
     description: SORT_PARAM_DESCRIPTION,
     schema: { default: 'relevance' },
   })
+  @ApiQuery({
+    name: 'relevance_cutoff',
+    required: false,
+    enum: RELEVANCE_CUTOFF_VALUES,
+    description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
+    schema: { default: 'off' },
+  })
   @ApiQueryForComplexSearch()
   @ApiBody({
     schema: {
@@ -285,12 +324,6 @@ export class SearchController {
     body: SearchResourcesBodyDto,
     @Req() req,
   ) {
-    this.metricsService.incrementSearchHit(
-      'POST',
-      'getResourcesPost',
-      headers['x-tenant-id'],
-    );
-
     // Validate Content-Type
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {
@@ -318,7 +351,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({ name: 'query', required: true, schema: { type: 'string' } })
   @ApiQuery({
     name: 'top_k',
@@ -330,12 +367,6 @@ export class SearchController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: AiSearchPredictQueryDto,
   ): Promise<AiSearchPredictResponseDto> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'predictSearch',
-      headers['x-tenant-id'],
-    );
-
     return this.aiSearchService.predict(headers, query);
   }
 
@@ -353,7 +384,11 @@ export class SearchController {
       default: 'en',
     },
   })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiQuery({
     name: 'need_weights',
     required: true,
@@ -371,12 +406,6 @@ export class SearchController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: AiSearchReRankQueryDto,
   ): Promise<AiSearchReRankResponseDto> {
-    this.metricsService.incrementSearchHit(
-      'GET',
-      'reRankSearch',
-      headers['x-tenant-id'],
-    );
-
     return this.aiSearchService.reRank(headers, {
       need_weights: this.parseNeedWeightsQuery(query.need_weights),
       top_k: query.top_k,

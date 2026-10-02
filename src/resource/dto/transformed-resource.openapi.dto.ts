@@ -9,56 +9,77 @@ export class ResourceLocationOpenApiDto {
 }
 
 export class ResourceAddressOpenApiDto {
-  @ApiPropertyOptional()
-  address_1?: string;
+  @ApiProperty()
+  address_1: string;
 
   @ApiPropertyOptional()
   address_2?: string;
 
-  @ApiPropertyOptional()
-  city?: string;
+  @ApiProperty()
+  city: string;
 
-  @ApiPropertyOptional()
-  stateProvince?: string;
+  @ApiProperty()
+  stateProvince: string;
 
-  @ApiPropertyOptional()
-  postalCode?: string;
+  @ApiProperty()
+  postalCode: string;
 
-  @ApiPropertyOptional()
-  country?: string;
+  @ApiProperty()
+  country: string;
 
-  @ApiPropertyOptional()
-  type?: string;
+  @ApiProperty()
+  type: string;
 
-  @ApiPropertyOptional({
-    description:
-      "Rank of this address among the resource's addresses. **One-based** " +
-      '— the primary address is rank 1, not 0. This differs from the ' +
-      'zero-based `rank` on phone numbers. See docs/phone-and-address-rank.md.',
-  })
-  rank?: number;
+  @ApiProperty()
+  rank: number;
 }
 
 export class ResourcePhoneNumberOpenApiDto {
-  @ApiPropertyOptional()
-  type?: string;
+  @ApiProperty()
+  type: string;
+
+  @ApiProperty()
+  number: string;
+
+  @ApiProperty()
+  rank: number;
 
   @ApiPropertyOptional()
-  number?: string;
+  description?: string;
+}
 
-  /**
-   * Zero-based — unlike the 1-based `rank` on addresses. See
-   * docs/phone-and-address-rank.md.
-   */
-  @ApiPropertyOptional({
-    description:
-      'Rank, not a score: **0 is the primary phone**, larger is less ' +
-      'preferred. Zero-based, unlike the 1-based `rank` on addresses. ' +
-      'The array is NOT guaranteed to be sorted by it — sort before ' +
-      'rendering, and never take element 0 as the primary. ' +
-      'See docs/phone-and-address-rank.md.',
-  })
-  rank?: number;
+export class ResourceQualityLinkOpenApiDto {
+  @ApiProperty()
+  url: string;
+
+  @ApiProperty()
+  displayText: string;
+
+  @ApiPropertyOptional()
+  subheadingText?: string;
+}
+
+export class ResourceContactsOpenApiDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiPropertyOptional()
+  title?: string;
+
+  @ApiPropertyOptional()
+  email?: string;
+
+  @ApiPropertyOptional({ type: [ResourcePhoneNumberOpenApiDto] })
+  phones?: ResourcePhoneNumberOpenApiDto[];
+
+  @ApiProperty()
+  priority: number;
+  
+  @ApiProperty()
+  rank: number;
 }
 
 export class ResourceTaxonomyOpenApiDto {
@@ -70,14 +91,14 @@ export class ResourceTaxonomyOpenApiDto {
 }
 
 export class ResourceFacetOpenApiDto {
-  @ApiPropertyOptional()
-  code?: string;
+  @ApiProperty()
+  code: string;
 
-  @ApiPropertyOptional()
-  taxonomyName?: string;
+  @ApiProperty()
+  taxonomyName: string;
 
-  @ApiPropertyOptional()
-  termName?: string;
+  @ApiProperty()
+  termName: string;
 }
 
 export class ResourceTranslationOpenApiDto {
@@ -91,22 +112,67 @@ export class ResourceTranslationOpenApiDto {
   serviceName?: string;
 
   @ApiPropertyOptional()
+  serviceSummary?: string;
+
+  @ApiPropertyOptional()
   serviceDescription?: string;
 
   @ApiPropertyOptional()
   organizationDescription?: string;
 
+  @ApiPropertyOptional({ type: [String] })
+  languages?: string[];
+
   @ApiPropertyOptional()
   hours?: string;
+
+  @ApiPropertyOptional()
+  hoursDescription?: string;
 
   @ApiPropertyOptional()
   fees?: string;
 
   @ApiPropertyOptional()
+  interpretationServices?: string;
+
+  @ApiPropertyOptional()
+  applicationProcess?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  requiredDocuments?: string[];
+
+  @ApiPropertyOptional()
+  eligibilities?: string;
+
+  @ApiPropertyOptional()
+  serviceAreaDescription?: string;
+
+  @ApiPropertyOptional()
+  transportation?: string;
+
+  @ApiPropertyOptional()
+  accessibility?: string;
+
+  @ApiPropertyOptional()
   alert?: string;
+
+  @ApiPropertyOptional()
+  alertDate?: string;
+
+  @ApiPropertyOptional({ type: [ResourceQualityLinkOpenApiDto] })
+  linkQualityUrls?: ResourceQualityLinkOpenApiDto[];
+
+  @ApiPropertyOptional({ type: [ResourcePhoneNumberOpenApiDto] })
+  phoneNumbers?: ResourcePhoneNumberOpenApiDto[];
+
+  @ApiPropertyOptional({ type: [ResourceContactsOpenApiDto] })
+  contacts?: ResourceContactsOpenApiDto[];
 
   @ApiPropertyOptional({ type: [ResourceTaxonomyOpenApiDto] })
   taxonomies?: ResourceTaxonomyOpenApiDto[];
+
+  @ApiPropertyOptional({ type: [ResourceFacetOpenApiDto] })
+  facets?: ResourceFacetOpenApiDto[];
 
   @ApiPropertyOptional({
     type: 'object',
@@ -120,7 +186,16 @@ export class TransformedResourceOpenApiDto {
   _id: string;
 
   @ApiPropertyOptional()
+  serviceAtLocationId?: string;
+
+  @ApiPropertyOptional()
   originalId?: string;
+
+  @ApiPropertyOptional()
+  phone?: string;
+
+  @ApiPropertyOptional()
+  address?: string;
 
   @ApiPropertyOptional()
   displayName?: string;
@@ -143,6 +218,9 @@ export class TransformedResourceOpenApiDto {
   @ApiPropertyOptional({ type: ResourceLocationOpenApiDto })
   location?: ResourceLocationOpenApiDto;
 
+  @ApiPropertyOptional()
+  locationName?: string;
+
   @ApiPropertyOptional({ type: [ResourceAddressOpenApiDto] })
   addresses?: ResourceAddressOpenApiDto[];
 
@@ -151,6 +229,9 @@ export class TransformedResourceOpenApiDto {
 
   @ApiPropertyOptional({ type: [String] })
   languages?: string[];
+
+  @ApiPropertyOptional()
+  serviceAreaName?: string;
 
   @ApiPropertyOptional({
     type: 'object',

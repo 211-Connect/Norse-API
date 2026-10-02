@@ -1,5 +1,13 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  Validate,
+} from 'class-validator';
+import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 export class SearchOrganizationQueryDto {
   @IsString()
@@ -9,6 +17,7 @@ export class SearchOrganizationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Validate(IsWithinMaxResultWindowConstraint)
   page = 1;
 
   @Type(() => Number)

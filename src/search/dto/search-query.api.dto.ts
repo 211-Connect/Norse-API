@@ -8,8 +8,10 @@ import {
   Max,
   MaxLength,
   Min,
+  Validate,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 export class SearchQueryApiDto {
   @ApiPropertyOptional({
@@ -33,10 +35,17 @@ export class SearchQueryApiDto {
   @IsEnum(SEARCH_QUERY_TYPES)
   query_type?: SearchQueryType;
 
-  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @ApiPropertyOptional({
+    minimum: 1,
+    default: 1,
+    description:
+      'Result offset must stay within Elasticsearch max_result_window: ' +
+      'page * limit may not exceed 10000 (defaults to limit 25 when omitted).',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Validate(IsWithinMaxResultWindowConstraint)
   page?: number;
 
   @ApiPropertyOptional({

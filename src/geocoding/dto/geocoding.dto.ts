@@ -4,9 +4,16 @@ import {
   IsOptional,
   IsInt,
   IsEnum,
+  IsArray,
   Min,
   Max,
   IsNotEmpty,
+  ArrayMinSize,
+  ArrayMaxSize,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  type ValidationArguments,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { LocaleDto } from './locale.dto';
@@ -16,6 +23,44 @@ export enum GeocodingProvider {
   MAPBOX = 'mapbox',
   OPENCAGE = 'opencage',
 }
+
+/** Mapbox Geocoding v5 feature types. */
+export enum GeocodingPlaceType {
+  COUNTRY = 'country',
+  REGION = 'region',
+  POSTCODE = 'postcode',
+  DISTRICT = 'district',
+  PLACE = 'place',
+  LOCALITY = 'locality',
+  NEIGHBORHOOD = 'neighborhood',
+  ADDRESS = 'address',
+  POI = 'poi',
+}
+
+@ValidatorConstraint({ name: 'lngLat' })
+class LngLatConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return (
+      Array.isArray(value) &&
+      value.length === 2 &&
+      value.every((n) => typeof n === 'number' && Number.isFinite(n)) &&
+      Math.abs(value[0]) <= 180 &&
+      Math.abs(value[1]) <= 90
+    );
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} must be "longitude,latitude" with longitude in ±180 and latitude in ±90`;
+  }
+}
+
+const commaList = ({ value }: { value: unknown }) =>
+  typeof value === 'string'
+    ? value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : value;
 
 export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
   @ApiProperty({
@@ -52,6 +97,37 @@ export class ForwardGeocodeQueryDto extends PartialType(LocaleDto) {
   @Max(10)
   @IsOptional()
   limit?: number = 5;
+
+  @ApiProperty({
+    description:
+      'Feature types to return, repeated or comma-separated (e.g. "address,poi"). Mapbox only; with the OpenCage provider this is a 400.',
+    example: ['address', 'poi'],
+    required: false,
+    enum: GeocodingPlaceType,
+    isArray: true,
+  })
+  @Transform(commaList)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(Object.values(GeocodingPlaceType).length)
+  @IsEnum(GeocodingPlaceType, { each: true })
+  @IsOptional()
+  types?: GeocodingPlaceType[];
+
+  @ApiProperty({
+    description:
+      'Bias results toward this point, as "longitude,latitude". Mapbox only; OpenCage ignores it.',
+    example: '-78.8986,35.994',
+    required: false,
+    type: String,
+  })
+  @Transform((params) => {
+    const parts = commaList(params);
+    return Array.isArray(parts) ? parts.map(Number) : parts;
+  })
+  @Validate(LngLatConstraint)
+  @IsOptional()
+  proximity?: [number, number];
 }
 
 export class ReverseGeocodeQueryDto extends PartialType(LocaleDto) {

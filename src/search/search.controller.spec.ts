@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { OrchestrationConfigService } from '../cms-config/orchestration-config.service';
 import { HybridSearchService } from './hybrid-search.service';
-import { MetricsService } from 'src/metrics/metrics.service';
 import { AiSearchService } from './ai-search.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 describe('SearchController', () => {
   let controller: SearchController;
@@ -27,6 +28,7 @@ describe('SearchController', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
+            getSearchConfig: jest.fn().mockResolvedValue({}),
           },
         },
         {
@@ -42,12 +44,6 @@ describe('SearchController', () => {
           },
         },
         {
-          provide: MetricsService,
-          useValue: {
-            incrementSearchHit: jest.fn(),
-          },
-        },
-        {
           provide: AiSearchService,
           useValue: {
             predict: jest.fn(),
@@ -59,6 +55,10 @@ describe('SearchController', () => {
           useValue: {
             getOrSet: jest.fn((_key, factory) => factory()),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

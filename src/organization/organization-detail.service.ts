@@ -7,7 +7,10 @@ import { Redirect } from 'src/common/schemas/redirect.schema';
 import { OrganizationDetail } from './types/organization-response.types';
 import { filterTranslationsByLocale } from './organization-detail.transform';
 
-type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
+// No unscoped tier: one used to retry `{ organizationId }` without a tenant
+// filter and returned other tenants' documents (ISS-1778). `/resource/:id`
+// still has one, added deliberately by #133 with no recorded reason.
+type LookupPath = 'primary' | 'fallback';
 
 type AggregatedOrganization = Organization & { _id: string };
 
@@ -50,11 +53,6 @@ export class OrganizationDetailService {
         _id: urlId,
       });
       lookupPath = 'fallback';
-    }
-
-    if (!results[0]) {
-      results = await this.aggregateOrganizations({ organizationId: urlId });
-      lookupPath = 'fallback_no_tenant';
     }
 
     const organization = results[0];

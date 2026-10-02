@@ -21,7 +21,7 @@ import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
-import { MetricsService } from 'src/metrics/metrics.service';
+import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import { SearchOrganizationQueryDto } from './dto/search-organization-query.dto';
 import { OrganizationSearchResponseDto } from './dto/search-organization-response.dto';
 import { OrganizationDetailResponseDto } from './dto/organization-detail-response.dto';
@@ -34,12 +34,15 @@ export class OrganizationController {
   constructor(
     private readonly service: OrganizationService,
     private readonly detailService: OrganizationDetailService,
-    private readonly metrics: MetricsService,
   ) {}
 
   @Get()
   @Version('1')
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiHeader({
     name: 'accept-language',
     required: false,
@@ -66,11 +69,6 @@ export class OrganizationController {
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchOrganizationQueryDto,
   ) {
-    this.metrics.incrementSearchHit(
-      'GET',
-      'organizationSearch',
-      headers['x-tenant-id'],
-    );
     return this.service.search({ headers, query });
   }
 
@@ -81,7 +79,11 @@ export class OrganizationController {
   @ApiTenantIdQuery()
   @ApiLocaleQuery()
   @ApiHeader({ name: 'accept-language', required: true })
-  @ApiHeader({ name: 'x-tenant-id', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
   @ApiParam({ name: 'id', description: 'Public organizationId' })
   @ApiResponse({ status: 200, type: OrganizationDetailResponseDto })
   @ApiResponse({ status: 404, description: 'Organization not found' })
@@ -89,11 +91,6 @@ export class OrganizationController {
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
-    this.metrics.incrementSearchHit(
-      'GET',
-      'organizationDetail',
-      headers['x-tenant-id'],
-    );
     return this.detailService.findById(id, { headers });
   }
 }

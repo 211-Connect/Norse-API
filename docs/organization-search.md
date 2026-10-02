@@ -8,11 +8,13 @@ and the `organization_id` filter on `/search`.
 ## Public endpoints
 
 - `GET /organization` — standalone, paginated organization typeahead search.
-  Unchanged by this work; documented here only for context.
+  Returns every organization in the tenant. Its consumer is ServiceNet
+  provider-feedback (INTEG-011), not the Norse search bar.
 - `GET /organization/:id` — organization detail lookup (Mongo-backed).
   Unrelated to this doc's scope.
-- `GET /suggestion` — combined taxonomy + organization typeahead, always
-  returning both in one round trip.
+- `GET /suggestion` — combined taxonomy + organization typeahead in one
+  round trip. The organization half is gated per tenant and omits
+  organizations with no service-at-locations (see below).
 - `GET /search?organization_id=<id>` — scopes resource search results to a
   single organization by its stable id. Composes with any `query_type`.
 
@@ -36,15 +38,67 @@ slim Elasticsearch `organizations` index (see `OrganizationService`,
 `SuggestionModule` can reuse it — see below. Nothing else in this repo
 imports it.
 
+`/organization` is **not** gated by `enable_organization_search` and does
+**not** filter on `service_at_location_count`: provider-feedback lists and
+searches every organization a partner may give feedback on, including ones
+with no published service-at-location. Changing either would change what
+ServiceNet receives.
+
 ## `GET /suggestion` — combined typeahead
 
-`/suggestion` is the combined-typeahead endpoint: it **always** returns
-both taxonomy and organization matches in a single request/response round
-trip. There is no opt-in/opt-out flag — that's deliberate. `GET /taxonomy`
-already exists as the dedicated taxonomy-search endpoint; `/suggestion`'s
-entire reason to exist is to save the frontend a second round trip by also
-returning organization matches for the same `query` in the same response.
-If only taxonomy results are needed, call `/taxonomy` directly instead.
+`/suggestion` is the combined-typeahead endpoint: it returns taxonomy and
+organization matches in a single request/response round trip. The response
+**shape** is unconditional — always `{ taxonomies, organizations }` — but
+whether `organizations` is populated is a per-tenant setting (next section).
+`GET /taxonomy` already exists as the dedicated taxonomy-search endpoint;
+`/suggestion`'s reason to exist is to save the frontend a second round trip
+by also returning organization matches for the same `query`. If only
+taxonomy results are needed, call `/taxonomy` directly instead.
+
+### Per-tenant gate: `enable_organization_search`
+
+Organization suggestions are off unless the tenant turns them on in Payload
+CMS (`ResourceDirectories.featureFlags.enableOrganizationSearch`, default
+off). Payload writes it to Redis DB 2 under `search_config:${tenantId}` as
+`enable_organization_search` (`src/cms-config/types/search-config-cache.ts`);
+`TenantConfigService.getSearchConfig` reads it through an in-process LRU
+cache, which also caches a miss as `{}`. When it is false or absent,
+`SuggestionService` skips the organization lookup entirely and returns
+`organizations: []`. The Norse frontend checks the same flag before showing
+the organization group.
+
+Turning the flag on is not enough by itself: the tenant's Dagster reader must
+also have `organization_search: true`, or the `organizations` index holds no
+documents for it.
+
+### Organizations with no service-at-locations are not suggested
+
+Selecting an organization suggestion runs `/search?organization_id=<id>`
+(below). An organization with no service-at-location in the tenant's
+directory would be offered and then return zero results — 1,387 of WA211's
+5,725 organizations when this was measured. `SuggestionService` therefore
+calls `OrganizationService.search` with the internal option
+`onlyWithResources: true`, which adds:
+
+```
+must_not: [{ term: { service_at_location_count: 0 } }]
+```
+
+`service_at_location_count` is written by Dagster on each `organizations`
+document: the number of the reader's own service-at-locations the
+organization owns, so for a reader that filters its directory (a taxonomy
+list, an attribute code) it counts only what that directory publishes.
+
+The filter **fails open**. It excludes only an explicit `0`, so a document
+without the field — indexed before Dagster wrote it, or while the field is
+still unmapped — stays suggestible. A `range: { gt: 0 }` filter would instead
+empty every tenant's organization suggestions until each one republished.
+This follows the `isCanonicalPublication` convention (ServiceNet filters
+`{$ne: false}`): publish every document, record a fact on it, let each
+consumer filter, and treat a missing fact as visible.
+
+`onlyWithResources` is not on `SearchOrganizationQueryDto`, so it is not part
+of the OpenAPI contract and `GET /organization` cannot set it.
 
 Response shape (`SuggestionCombinedResponseDto`,
 `src/suggestion/dto/suggestion-response.dto.ts`):
@@ -62,12 +116,13 @@ Response shape (`SuggestionCombinedResponseDto`,
 
 Both keys are flat arrays of only the fields a typeahead dropdown needs —
 neither exposes the raw Elasticsearch envelope (`took`/`timed_out`/`_score`/
-pagination metadata, etc.). `taxonomies` reuses
-`TaxonomyService.searchTaxonomiesV2` (the same mapping `GET /taxonomy` v2
-already uses: `{ id, code, name }` per item) rather than the unmapped
-`searchTaxonomies`, so there's exactly one place that knows how to flatten
-a taxonomy ES hit down to typeahead-sized fields. `organizations` calls the
+pagination metadata, etc.). `taxonomies` is
+`TaxonomyService.searchTaxonomies(...).items` — the same method `GET /taxonomy`
+calls, mapping each hit to `{ id, code, name }` — so there's exactly one
+place that knows how to flatten a taxonomy ES hit down to typeahead-sized
+fields. `organizations` calls the
 already-exported `OrganizationService.search()` with `page: 1, limit: 8`
+and `onlyWithResources: true`
 (typeahead sizing, not a paginated list) using the same `query` param
 already accepted for taxonomies — there is no separate organization query
 param. Results are flattened to `{ organization_id, name, city, state }`

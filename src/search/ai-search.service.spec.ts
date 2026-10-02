@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import {
   BadGatewayException,
@@ -6,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { AiSearchService } from './ai-search.service';
 import { HybridSearchService } from './hybrid-search.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
   'x-tenant-id': 'default',
@@ -37,6 +39,10 @@ describe('AiSearchService', () => {
             embedQuery: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]),
             getDocumentsCount: jest.fn(),
           },
+        },
+        {
+          provide: MetricsService,
+          useValue: createMetricsServiceMock(),
         },
       ],
     }).compile();

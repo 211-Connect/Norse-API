@@ -15,6 +15,11 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
+import {
+  RELEVANCE_CUTOFF_VALUES,
+  RelevanceCutoffValue,
+} from '../internal/relevance-cutoff/types';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -106,11 +111,19 @@ export class SearchResourcesQueryDto {
   @IsEnum(SEARCH_QUERY_TYPES)
   query_type: SearchQueryType = 'text';
 
-  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @ApiPropertyOptional({
+    minimum: 1,
+    default: 1,
+    description:
+      'Result offset must stay within Elasticsearch max_result_window: ' +
+      'page * limit may not exceed 10000 (ES can only return the first ' +
+      '10000 hits), e.g. with the default limit of 25 the highest page is 400.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Validate(IsWithinMaxResultWindowConstraint)
   page: number = 1;
 
   @ApiPropertyOptional({
@@ -240,4 +253,27 @@ export class SearchResourcesQueryDto {
   @IsOptional()
   @IsEnum(['relevance', 'distance', 'name', 'organization'])
   sort: 'relevance' | 'distance' | 'name' | 'organization' = 'relevance';
+
+  @ApiPropertyOptional({
+    enum: RELEVANCE_CUTOFF_VALUES,
+    default: 'off',
+    description:
+      'Opt-in trimming of low-relevance results. `off` (default) returns the ' +
+      'full matched set, byte-identical to previous behaviour. `on` keeps ' +
+      'results scoring at least a fraction of the top score — 0.2 of the top, ' +
+      'tightened stepwise (up to 0.5) when more than 1,000 results would ' +
+      'survive, and never less than the top-20 results own scores — and ' +
+      'returns everything when the scores are too flat for that to remove ' +
+      'anything ' +
+      'meaningful — a uniformly weak result set is reported as such rather ' +
+      'than cut arbitrarily. The cut is computed on semantic and lexical ' +
+      'relevance only: proximity still filters and ranks, but never decides ' +
+      'what is irrelevant. Hybrid search only (`query_type=hybrid`); ignored ' +
+      'for other query types. When a cutoff applies, `hits.total` reports the ' +
+      'kept count and the original is preserved in ' +
+      '`relevance_cutoff.matched_before_cutoff`.',
+  })
+  @IsOptional()
+  @IsEnum(RELEVANCE_CUTOFF_VALUES)
+  relevance_cutoff?: RelevanceCutoffValue = 'off';
 }

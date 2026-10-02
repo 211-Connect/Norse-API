@@ -49,7 +49,9 @@ describe('ShortUrlController', () => {
     });
 
     await expect(
-      controller.getOrCreateShortUrl('https://example.org/resource/1'),
+      controller.getOrCreateShortUrl({
+        url: 'https://example.org/resource/1',
+      }),
     ).resolves.toEqual({
       url: 'https://example.org/share/abc123',
     });

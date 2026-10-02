@@ -41,7 +41,7 @@ export class SuggestionService {
       searchConfig.enable_organization_search ?? false;
 
     const [taxonomyResult, organizations] = await Promise.all([
-      this.taxonomyService.searchTaxonomiesV2({
+      this.taxonomyService.searchTaxonomies({
         headers,
         query: {
           query: query.query,
@@ -67,6 +67,9 @@ export class SuggestionService {
         page: 1,
         limit: ORGANIZATION_SUGGESTION_LIMIT,
       },
+      // Selecting a suggestion runs `/search?organization_id=`; an org with no
+      // service-at-locations would be offered and then return nothing.
+      onlyWithResources: true,
     });
 
     return orgResults.hits.map((hit) => ({
