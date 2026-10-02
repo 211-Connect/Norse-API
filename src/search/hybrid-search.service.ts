@@ -26,6 +26,8 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { hybridShardPreference } from './internal/hybrid-shard-preference';
+import { HybridSearchIdentity } from './internal/hybrid-search-fingerprint';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
@@ -275,6 +277,20 @@ export class HybridSearchService {
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const identity: HybridSearchIdentity = {
+      tenantId,
+      lang,
+      queryStr,
+      filters,
+      taxonomies: hardScopeCodes,
+      coords,
+      distance,
+      age,
+      geoType: geo_type,
+      organizationId: organization_id,
+      geometry,
+    };
+    const preference = hybridShardPreference(identity);
     const t0 = performance.now();
 
     this.logger.debug(
@@ -309,7 +325,7 @@ export class HybridSearchService {
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId)
+      ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
       : [];
     const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
@@ -347,20 +363,7 @@ export class HybridSearchService {
     let cutoff: RelevanceCutoffDto | undefined;
 
     if (cutoffRequested) {
-      const cacheKey = relevanceCutoffCacheKey({
-        tenantId,
-        lang,
-        queryStr,
-        filters,
-        taxonomies: hardScopeCodes,
-        coords,
-        distance,
-        age,
-        geoType: geo_type,
-        organizationId: organization_id,
-        geometry,
-        pinnedMode,
-      });
+      const cacheKey = relevanceCutoffCacheKey({ ...identity, pinnedMode });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages.
@@ -369,6 +372,7 @@ export class HybridSearchService {
         () =>
           this.probeRelevanceCutoff({
             index,
+            preference,
             queryStr,
             queryVector,
             predicted: predictedTaxonomies,
@@ -393,6 +397,7 @@ export class HybridSearchService {
 
     const request = this.buildHybridQuery({
       index,
+      preference,
       queryStr,
       queryVector,
       predicted: predictedTaxonomies,
@@ -520,6 +525,7 @@ export class HybridSearchService {
   private async getTaxonomyCodes(
     queryVector: number[],
     tenantId: string,
+    preference: string,
   ): Promise<PredictedTaxonomy[]> {
     try {
       const result = await this.metrics.observeDownstream(
@@ -531,6 +537,7 @@ export class HybridSearchService {
             name: string;
           }>({
             index: 'hybrid_taxonomies',
+            preference,
             size: TAXONOMY_K,
             track_total_hits: false,
             _source: ['code', 'name'],
@@ -836,14 +843,22 @@ export class HybridSearchService {
    */
   private async probeRelevanceCutoff(args: {
     index: string;
+    preference: string;
     queryStr: string;
     queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
-    const { index, queryStr, queryVector, predicted, filters, pinnedMode } =
-      args;
+    const {
+      index,
+      preference,
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      pinnedMode,
+    } = args;
 
     const should = [
       ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
@@ -912,6 +927,7 @@ export class HybridSearchService {
 
     const head = await this.elasticsearchService.search<SearchSource>({
       index,
+      preference,
       size: CUTOFF_TOP_DOCS_FLOOR + 1,
       track_total_hits: true,
       _source: false,
@@ -955,6 +971,7 @@ export class HybridSearchService {
     const countSurvivors = async (threshold: number): Promise<number> => {
       const counted = await this.elasticsearchService.search<SearchSource>({
         index,
+        preference,
         size: 0,
         track_total_hits: true,
         min_score: threshold,
@@ -995,6 +1012,7 @@ export class HybridSearchService {
 
     const kept = await this.elasticsearchService.search<ProbeSource>({
       index,
+      preference,
       size: Math.max(survivors, 1),
       track_total_hits: false,
       min_score: threshold,
@@ -1014,6 +1032,7 @@ export class HybridSearchService {
     if (services.size < minKeep) {
       const widened = await this.elasticsearchService.search<ProbeSource>({
         index,
+        preference,
         size: SERVICE_FLOOR_WINDOW,
         track_total_hits: false,
         _source: ['service_id'],
@@ -1054,6 +1073,7 @@ export class HybridSearchService {
 
   private buildHybridQuery(args: {
     index: string;
+    preference: string;
     queryStr: string;
     queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
@@ -1068,6 +1088,7 @@ export class HybridSearchService {
   }): SearchRequest {
     const {
       index,
+      preference,
       queryStr,
       queryVector,
       predicted,
@@ -1153,6 +1174,7 @@ export class HybridSearchService {
 
     return {
       index,
+      preference,
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,
