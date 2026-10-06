@@ -24,7 +24,8 @@ import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
-import { shardPreference } from './internal/shard-preference';
+import { shardPreference } from 'src/common/elasticsearch/shard-preference';
+import { searchFingerprint } from './internal/search-fingerprint';
 
 export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -216,19 +217,22 @@ export class SearchService {
         SearchUtilsService.resolvePinnedResourcesMode(searchConfig),
       ),
       aggs: aggregations,
-      preference: shardPreference(queryType, {
-        tenantId,
-        lang: locale,
-        queryStr: typeof query === 'string' ? query : JSON.stringify(query),
-        filters,
-        taxonomies: [],
-        coords,
-        distance,
-        age,
-        geoType: geo_type,
-        organizationId: organization_id,
-        geometry,
-      }),
+      preference: shardPreference(
+        queryType,
+        searchFingerprint({
+          tenantId,
+          lang: locale,
+          queryStr: typeof query === 'string' ? query : JSON.stringify(query),
+          filters,
+          taxonomies: [],
+          coords,
+          distance,
+          age,
+          geoType: geo_type,
+          organizationId: organization_id,
+          geometry,
+        }),
+      ),
       ...specificQuery,
     };
 

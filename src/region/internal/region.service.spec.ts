@@ -276,6 +276,46 @@ describe('RegionService', () => {
     });
   });
 
+  describe('search: shard-copy preference', () => {
+    const preferenceOf = async (
+      input: Parameters<RegionService['search']>[0],
+    ) => {
+      await service.search(input);
+      return lastRequest().preference;
+    };
+
+    it('keeps one preference across limits and list order', async () => {
+      const preferences = [
+        await preferenceOf({
+          q: 'jack',
+          types: ['state', 'county'],
+          states: ['MO', 'KS'],
+        }),
+        await preferenceOf({
+          q: ' jack ',
+          types: ['county', 'state'],
+          states: ['KS', 'MO'],
+          limit: 25,
+        }),
+      ];
+
+      expect(preferences[0]).toEqual(expect.any(String));
+      expect(preferences[0]).not.toMatch(/^_/);
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('uses a different preference for a different search', async () => {
+      const preferences = [
+        await preferenceOf({ q: 'jack' }),
+        await preferenceOf({ q: 'jackson' }),
+        await preferenceOf({ q: 'jack', types: ['county'] }),
+        await preferenceOf({ q: 'jack', states: ['MO'] }),
+      ];
+
+      expect(new Set(preferences).size).toBe(4);
+    });
+  });
+
   describe('get', () => {
     it('looks the Region up by exact id', async () => {
       search.mockResolvedValue(hits(JACKSON));

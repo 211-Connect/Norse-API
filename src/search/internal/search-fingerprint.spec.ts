@@ -1,7 +1,7 @@
-import { SearchIdentity } from './search-fingerprint';
-import { shardPreference } from './shard-preference';
+import { shardPreference } from 'src/common/elasticsearch/shard-preference';
+import { SearchIdentity, searchFingerprint } from './search-fingerprint';
 
-describe('shardPreference', () => {
+describe('resource search shard preference', () => {
   const search: SearchIdentity = {
     tenantId: '34bf4d99-fd27-4818-a644-9b3964c00d9f',
     lang: 'en',
@@ -20,14 +20,14 @@ describe('shardPreference', () => {
     // A changed preference moves every in-flight hybrid search to the other
     // shard copy once — a visible reorder for API consumers — and the same
     // fingerprint keys the relevance-cutoff cache. Change it on purpose only.
-    expect(shardPreference('hybrid', search)).toBe(
+    expect(shardPreference('hybrid', searchFingerprint(search))).toBe(
       'hybrid-bbee2ef9aeff16a01cc03b04',
     );
   });
 
   it('separates search paths that share an identity', () => {
-    expect(shardPreference('keyword', search)).not.toBe(
-      shardPreference('hybrid', search),
+    expect(shardPreference('keyword', searchFingerprint(search))).not.toBe(
+      shardPreference('hybrid', searchFingerprint(search)),
     );
   });
 });

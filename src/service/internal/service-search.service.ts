@@ -44,7 +44,7 @@ import {
   CursorQuery,
   decodeCursor,
   encodeCursor,
-  shardPreference,
+  serviceShardPreference,
 } from './service-search.cursor';
 import { WithholdingService } from './withholding.service';
 
@@ -116,7 +116,7 @@ export class ServiceSearchService {
 
     const body: SearchRequest = {
       index: SERVICES_INDEX,
-      preference: shardPreference(cursorQuery),
+      preference: serviceShardPreference(cursorQuery),
       // One extra hit says whether a next page exists, so the last page
       // returns a null cursor instead of one that leads to an empty page.
       size: limit + 1,
@@ -167,7 +167,7 @@ export class ServiceSearchService {
 
     const buckets = await this.collectFacetBuckets(
       { bool: scope },
-      shardPreference(input),
+      serviceShardPreference(input),
     );
 
     // Normalized as the path is: codes are stored as written ("BD-1800."), the

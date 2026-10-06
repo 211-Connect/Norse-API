@@ -1,4 +1,4 @@
-import { hashCacheKey } from './hash-cache-key';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { normalizeTaxonomies } from './normalize-taxonomies';
 
 export const hybridDocumentsCountCacheKey = (

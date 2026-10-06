@@ -26,8 +26,11 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
-import { shardPreference } from './internal/shard-preference';
-import { SearchIdentity } from './internal/search-fingerprint';
+import { shardPreference } from 'src/common/elasticsearch/shard-preference';
+import {
+  SearchIdentity,
+  searchFingerprint,
+} from './internal/search-fingerprint';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
@@ -290,7 +293,7 @@ export class HybridSearchService {
       organizationId: organization_id,
       geometry,
     };
-    const preference = shardPreference('hybrid', identity);
+    const preference = shardPreference('hybrid', searchFingerprint(identity));
     const t0 = performance.now();
 
     this.logger.debug(

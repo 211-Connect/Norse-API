@@ -1,4 +1,4 @@
-import { hashCacheKey } from './hash-cache-key';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
 
 /**
