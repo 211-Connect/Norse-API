@@ -1,8 +1,5 @@
 import { hashCacheKey } from './hash-cache-key';
-import {
-  HybridSearchIdentity,
-  hybridSearchFingerprint,
-} from '../hybrid-search-fingerprint';
+import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
 
 /**
  * Keyed on the search's identity, so pages 2..n of the same search reuse one
@@ -23,10 +20,10 @@ import {
  * why `CUTOFF_PROBE_TTL_MS` is minutes rather than the cache default's hour.
  */
 export const relevanceCutoffCacheKey = (
-  args: HybridSearchIdentity & { pinnedMode: string },
+  args: SearchIdentity & { pinnedMode: string },
 ): string => {
   const fingerprint = hashCacheKey({
-    search: hybridSearchFingerprint(args),
+    search: searchFingerprint(args),
     pinnedMode: args.pinnedMode,
   });
 

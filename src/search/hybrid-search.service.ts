@@ -26,8 +26,8 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
-import { hybridShardPreference } from './internal/hybrid-shard-preference';
-import { HybridSearchIdentity } from './internal/hybrid-search-fingerprint';
+import { shardPreference } from './internal/shard-preference';
+import { SearchIdentity } from './internal/search-fingerprint';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
@@ -277,7 +277,7 @@ export class HybridSearchService {
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
-    const identity: HybridSearchIdentity = {
+    const identity: SearchIdentity = {
       tenantId,
       lang,
       queryStr,
@@ -290,7 +290,7 @@ export class HybridSearchService {
       organizationId: organization_id,
       geometry,
     };
-    const preference = hybridShardPreference(identity);
+    const preference = shardPreference('hybrid', identity);
     const t0 = performance.now();
 
     this.logger.debug(
