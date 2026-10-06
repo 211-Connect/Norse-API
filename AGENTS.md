@@ -46,7 +46,7 @@ in the frontend repo). This means:
 3. `LocaleMiddleware` (subset of controllers) — parses `accept-language` into `req.locale`.
 4. Guards, in whatever order a controller applies them, e.g.:
    - `KeycloakGuard` ([src/auth/guards](src/auth/guards)) — user auth, populates `@User()`.
-   - `ArcjetGuard` ([src/common/guards/arcjet.guard.ts](src/common/guards/arcjet.guard.ts)) — bot/abuse protection via Arcjet; never blocks (`isDenied()` is logged, not enforced) — check before assuming it blocks traffic.
+   - `ArcjetGuard` ([src/common/guards/arcjet.guard.ts](src/common/guards/arcjet.guard.ts)) — bot/abuse protection via Arcjet; only active when `ARCJET_KEY` is configured, otherwise the guard is a no-op. It never blocks (`isDenied()` is logged, not enforced) — check before assuming it blocks traffic.
    - `InternalApiGuard` — requires `x-internal-api-key` for internal-only routes.
 5. Global `ValidationPipe` (class-validator) runs with `whitelist: false` /
    `forbidNonWhitelisted: false` for now — see migration note below.
