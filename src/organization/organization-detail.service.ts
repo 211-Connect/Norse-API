@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model } from 'mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -33,6 +38,45 @@ export class OrganizationDetailService {
     const locale = options.headers['accept-language'];
     const organization = await this.findOrganizationWithFallback(id, tenantId);
     return this.transformOrganization(organization, locale);
+  }
+
+  // A Norse resource page knows only its tenant and the SAL id in its URL
+  // (ISS-2096). Deliberately tenant-scoped with no fallback tier: a miss is a
+  // 404, and an ambiguous match is refused rather than guessed.
+  async findByServiceAtLocation(
+    salId: string,
+    options: { headers: HeadersDto },
+  ): Promise<OrganizationDetail> {
+    const tenantId = options.headers['x-tenant-id'];
+    const locale = options.headers['accept-language'];
+    const results = await this.organizationModel
+      .aggregate<AggregatedOrganization>([
+        {
+          $match: {
+            tenant_id: tenantId,
+            'services.SERVICE_AT_LOCATIONS.ID': salId,
+          },
+        },
+        { $limit: 2 },
+      ])
+      .exec();
+
+    if (results.length > 1) {
+      this.logger.warn(
+        `Service-at-location matched several organizations: ${JSON.stringify({
+          tenantId,
+          salId,
+          organizationIds: results.map((org) => org.organizationId),
+        })}`,
+      );
+      throw new ConflictException(
+        'Service-at-location matches more than one organization',
+      );
+    }
+    if (!results[0]) {
+      throw new NotFoundException();
+    }
+    return this.transformOrganization(results[0], locale);
   }
 
   // Mirrors ResourceService: organizationId -> mongo _id (legacy links) ->
