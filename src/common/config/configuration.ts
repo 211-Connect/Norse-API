@@ -10,6 +10,7 @@ export default () => ({
     limit: parseInt(process.env.RATE_LIMIT_MAX, 10) || 60, // 60 request per minute
   },
   internalApiKey: process.env.INTERNAL_API_KEY || '',
+  ARCJET_KEY: process.env.ARCJET_KEY,
   PUSH_GATEWAY_URL: process.env.PROMETHEUS_PUSHGATEWAY_URL || '',
   PUSH_GATEWAY_USERNAME: process.env.PROMETHEUS_PUSHGATEWAY_USERNAME || '',
   PUSH_GATEWAY_PASSWORD: process.env.PROMETHEUS_PUSHGATEWAY_PASSWORD || '',

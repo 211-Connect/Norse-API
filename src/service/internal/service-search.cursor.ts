@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
+import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import { FieldValue } from '@elastic/elasticsearch/lib/api/types';
 import {
   ServiceFilterInput,
@@ -93,12 +94,11 @@ export function queryFingerprint(query: CursorQuery): string {
 }
 
 /**
- * Pinned per query, never per page: primary and replica copies hold different
- * deleted-doc counts, so their BM25 scores drift, and `search_after` on
- * `_score` across copies skips and repeats records.
+ * Pinned per query, never per page: `search_after` on `_score` across copies
+ * skips and repeats records. The cursor and the preference share one fingerprint.
  */
-export function shardPreference(query: CursorQuery): string {
-  return `services-${queryFingerprint(query)}`;
+export function serviceShardPreference(query: CursorQuery): string {
+  return shardPreference('services', queryFingerprint(query));
 }
 
 export function encodeCursor(

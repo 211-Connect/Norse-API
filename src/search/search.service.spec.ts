@@ -349,4 +349,79 @@ describe('SearchService', () => {
       expect(c).toContain('"boost":0.01');
     }
   });
+
+  describe('shard-copy preference', () => {
+    const headers = {
+      'x-tenant-id': 'tenant-1',
+      'accept-language': 'en',
+    } as any;
+    const baseQuery: SearchResourcesQueryDto = {
+      query: 'food',
+      query_type: 'text',
+      page: 1,
+      limit: 100,
+      filters: {},
+      taxonomy: [],
+      distance: 0,
+      sort: 'relevance',
+    };
+
+    const preferenceOf = async (query: any, h: any = headers) => {
+      elasticsearchService.search.mockClear();
+      await service.searchResources({ headers: h, query });
+      return elasticsearchService.search.mock.calls[0][0].preference;
+    };
+
+    it('pins a text search to a preference', async () => {
+      const preference = await preferenceOf(baseQuery);
+
+      expect(preference).toEqual(expect.any(String));
+      // A leading underscore is Elasticsearch's reserved preference syntax.
+      expect(preference).not.toMatch(/^_/);
+    });
+
+    it('keeps the same preference for every page, limit and sort of a search', async () => {
+      const preferences = [
+        await preferenceOf(baseQuery),
+        await preferenceOf({ ...baseQuery, page: 4, limit: 25 }),
+        await preferenceOf({ ...baseQuery, sort: 'name' }),
+      ];
+
+      expect(preferences[0]).toEqual(expect.any(String));
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('uses a different preference for a different search', async () => {
+      const base = await preferenceOf(baseQuery);
+      const otherText = await preferenceOf({ ...baseQuery, query: 'rent' });
+      const otherTenant = await preferenceOf(baseQuery, {
+        ...headers,
+        'x-tenant-id': 'tenant-b',
+      });
+      const otherFilter = await preferenceOf({
+        ...baseQuery,
+        organization_id: 'org-1',
+      });
+      const otherType = await preferenceOf({
+        ...baseQuery,
+        query: 'BD-1800',
+        query_type: 'taxonomy',
+      });
+      const sameTextAsTaxonomy = await preferenceOf({
+        ...baseQuery,
+        query: 'BD-1800',
+      });
+
+      expect(
+        new Set([
+          base,
+          otherText,
+          otherTenant,
+          otherFilter,
+          otherType,
+          sameTextAsTaxonomy,
+        ]).size,
+      ).toBe(6);
+    });
+  });
 });

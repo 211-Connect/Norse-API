@@ -4,3 +4,5 @@ export * from './facets-config-cache';
 export * from './orchestration-config-cache';
 export * from './schema-config';
 export * from './search-config-cache';
+export * from './suggestions-config-cache';
+export * from './topics-config-cache';

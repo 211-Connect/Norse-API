@@ -53,15 +53,21 @@ import { ServiceController } from './service/service.controller';
 import { ServiceSearchInternalModule } from './service/internal/service-search.module';
 import { OrganizationController } from './organization/organization.controller';
 
+const arcjetKey = configuration().ARCJET_KEY;
+
 @Module({
   imports: [
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
-    ArcjetModule.forRoot({
-      isGlobal: true,
-      key: process.env.ARCJET_KEY!,
-      rules: [],
-      proxies: [cloudflare()],
-    }),
+    ...(arcjetKey
+      ? [
+          ArcjetModule.forRoot({
+            isGlobal: true,
+            key: arcjetKey,
+            rules: [],
+            proxies: [cloudflare()],
+          }),
+        ]
+      : []),
     CmsConfigModule,
     MetricsModule,
     CacheModule.registerAsync({

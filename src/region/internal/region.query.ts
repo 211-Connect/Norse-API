@@ -3,6 +3,11 @@ import {
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
 import { RegionType } from './dto';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
+import {
+  scoreThenUnique,
+  shardPreference,
+} from 'src/common/elasticsearch/shard-preference';
 import { REGIONS_INDEX } from './region.constants';
 
 export const REGION_SUMMARY_FIELDS = [
@@ -152,6 +157,14 @@ export function buildRegionSearch(
   const q = input.q.trim();
   const base = {
     index: REGIONS_INDEX,
+    preference: shardPreference(
+      'regions',
+      hashCacheKey({
+        q,
+        types: [...(input.types ?? [])].sort(),
+        states: [...(input.states ?? [])].sort(),
+      }),
+    ),
     size: input.limit,
     track_total_hits: false,
     _source: REGION_SUMMARY_FIELDS,
@@ -216,7 +229,7 @@ export function buildRegionSearch(
         ],
       },
     },
-    sort: [{ _score: { order: 'desc' } }, { id: { order: 'asc' } }],
+    sort: scoreThenUnique('id'),
   };
 }
 

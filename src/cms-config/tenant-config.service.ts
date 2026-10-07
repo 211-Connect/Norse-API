@@ -12,7 +12,14 @@ import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
 import { MetricsService } from 'src/metrics/metrics.service';
-import { FacetConfig, FacetsConfigCache, SearchConfigCache } from './types';
+import {
+  FacetConfig,
+  FacetsConfigCache,
+  OrchestrationConfigCache,
+  SearchConfigCache,
+  SuggestionsConfigCache,
+  TopicsConfigCache,
+} from './types';
 import { LRU_CACHE_CONFIG } from './const/lru-cache-config';
 
 const CMS_FETCH_TIMEOUT_MS = 10_000;
@@ -32,6 +39,17 @@ export class TenantConfigService {
   private readonly searchConfigCache = new LRUCache<string, SearchConfigCache>(
     LRU_CACHE_CONFIG,
   );
+  private readonly topicsCache = new LRUCache<string, TopicsConfigCache>(
+    LRU_CACHE_CONFIG,
+  );
+  private readonly suggestionsCache = new LRUCache<
+    string,
+    SuggestionsConfigCache
+  >(LRU_CACHE_CONFIG);
+  private readonly orchestrationConfigCache = new LRUCache<
+    string,
+    OrchestrationConfigCache | null
+  >(LRU_CACHE_CONFIG);
 
   constructor(
     private readonly cmsRedisService: CmsRedisService,
@@ -215,6 +233,172 @@ export class TenantConfigService {
   }
 
   /**
+   * Reads tenant topics configuration written by PayloadCMS to Redis DB 2 under
+   * `topics:${tenantId}`. Returns a default empty shape when missing or on error.
+   */
+  async getTopics(tenantId: string): Promise<TopicsConfigCache> {
+    this.logger.debug(`Fetching topics config for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.topicsCache.get(tenantId);
+    if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
+      this.logger.debug(`In-memory cache hit for topics config: ${tenantId}`);
+      return inMemoryCached;
+    }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
+
+    try {
+      const redisKey = `topics:${tenantId}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
+        this.logger.debug(`Redis DB 2 hit for topics config: ${tenantId}`);
+        const topicsConfig = JSON.parse(redisValue) as TopicsConfigCache;
+        if (!topicsConfig.list || !Array.isArray(topicsConfig.list)) {
+          this.logger.error(
+            `Invalid topics format in Redis for tenant ${tenantId}. Expected TopicsConfigCache with list array. Got: ${redisValue}`,
+          );
+          const emptyConfig = this.createEmptyTopicsConfig(tenantId);
+          this.topicsCache.set(tenantId, emptyConfig);
+          return emptyConfig;
+        }
+        this.topicsCache.set(tenantId, topicsConfig);
+        return topicsConfig;
+      }
+    } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
+      this.logger.error(
+        `Error fetching topics config from Redis DB 2 for ${tenantId}: ${error.message}`,
+      );
+    }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
+
+    const emptyConfig = this.createEmptyTopicsConfig(tenantId);
+    this.topicsCache.set(tenantId, emptyConfig);
+    return emptyConfig;
+  }
+
+  private createEmptyTopicsConfig(tenantId: string): TopicsConfigCache {
+    return {
+      tenantId,
+      iconSize: '',
+      imageBorderRadius: '',
+      backTexts: {},
+      customHeadings: {},
+      list: [],
+    };
+  }
+
+  /**
+   * Reads tenant suggestions configuration written by PayloadCMS to Redis DB 2
+   * under `suggestions:${tenantId}`. Returns a default empty shape when missing
+   * or on error.
+   */
+  async getSuggestions(tenantId: string): Promise<SuggestionsConfigCache> {
+    this.logger.debug(`Fetching suggestions config for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.suggestionsCache.get(tenantId);
+    if (inMemoryCached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
+      this.logger.debug(
+        `In-memory cache hit for suggestions config: ${tenantId}`,
+      );
+      return inMemoryCached;
+    }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
+
+    try {
+      const redisKey = `suggestions:${tenantId}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
+        this.logger.debug(`Redis DB 2 hit for suggestions config: ${tenantId}`);
+        const suggestionsConfig = JSON.parse(
+          redisValue,
+        ) as SuggestionsConfigCache;
+        if (
+          !suggestionsConfig.suggestions ||
+          !Array.isArray(suggestionsConfig.suggestions)
+        ) {
+          this.logger.error(
+            `Invalid suggestions format in Redis for tenant ${tenantId}. Expected SuggestionsConfigCache with suggestions array. Got: ${redisValue}`,
+          );
+          const emptyConfig: SuggestionsConfigCache = {
+            tenantId,
+            suggestions: [],
+          };
+          this.suggestionsCache.set(tenantId, emptyConfig);
+          return emptyConfig;
+        }
+        this.suggestionsCache.set(tenantId, suggestionsConfig);
+        return suggestionsConfig;
+      }
+    } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
+      this.logger.error(
+        `Error fetching suggestions config from Redis DB 2 for ${tenantId}: ${error.message}`,
+      );
+    }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
+
+    const emptyConfig: SuggestionsConfigCache = {
+      tenantId,
+      suggestions: [],
+    };
+    this.suggestionsCache.set(tenantId, emptyConfig);
+    return emptyConfig;
+  }
+
+  /**
+   * Reads tenant orchestration configuration written by PayloadCMS to Redis DB 2
+   * under `orchestration_config:${tenantId}`. Returns null when missing or on
+   * error so the aggregate endpoint can omit it cleanly.
+   */
+  async getOrchestrationConfig(
+    tenantId: string,
+  ): Promise<OrchestrationConfigCache | null> {
+    this.logger.debug(`Fetching orchestration config for tenant: ${tenantId}`);
+
+    const inMemoryCached = this.orchestrationConfigCache.get(tenantId);
+    if (inMemoryCached !== undefined) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
+      this.logger.debug(
+        `In-memory cache hit for orchestration config: ${tenantId}`,
+      );
+      return inMemoryCached;
+    }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
+
+    try {
+      const redisKey = `orchestration_config:${tenantId}`;
+      const redisValue = await this.cmsRedisService.get(redisKey);
+
+      if (redisValue && typeof redisValue === 'string') {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
+        this.logger.debug(
+          `Redis DB 2 hit for orchestration config: ${tenantId}`,
+        );
+        const orchestrationConfig = JSON.parse(
+          redisValue,
+        ) as OrchestrationConfigCache;
+        this.orchestrationConfigCache.set(tenantId, orchestrationConfig);
+        return orchestrationConfig;
+      }
+    } catch (error) {
+      this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
+      this.logger.error(
+        `Error fetching orchestration config from Redis DB 2 for ${tenantId}: ${error.message}`,
+      );
+    }
+    this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
+
+    this.orchestrationConfigCache.set(tenantId, null);
+    return null;
+  }
+
+  /**
    *
    * @deprecated This method is only used as a fallback to fetch tenant configuration from Strapi when Redis DB 2 is unavailable or missing data.
    * It is not optimized for performance and should not be used as the primary method for fetching tenant configuration due to potential latency and load on the CMS.
@@ -297,6 +481,9 @@ export class TenantConfigService {
     this.facetsCache.clear();
     this.localesCache.clear();
     this.searchConfigCache.clear();
+    this.topicsCache.clear();
+    this.suggestionsCache.clear();
+    this.orchestrationConfigCache.clear();
     this.logger.log('All in-memory cache cleared');
   }
 
@@ -306,6 +493,9 @@ export class TenantConfigService {
     this.facetsCache.delete(tenantId);
     this.localesCache.delete(tenantId);
     this.searchConfigCache.delete(tenantId);
+    this.topicsCache.delete(tenantId);
+    this.suggestionsCache.delete(tenantId);
+    this.orchestrationConfigCache.delete(tenantId);
     this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }

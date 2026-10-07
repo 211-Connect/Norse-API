@@ -77,7 +77,7 @@ export class ResourceContactsOpenApiDto {
 
   @ApiProperty()
   priority: number;
-  
+
   @ApiProperty()
   rank: number;
 }

@@ -3,7 +3,7 @@ import {
   decodeCursor,
   encodeCursor,
   queryFingerprint,
-  shardPreference,
+  serviceShardPreference,
 } from './service-search.cursor';
 
 /**
@@ -72,7 +72,9 @@ describe('queryFingerprint', () => {
         [key]: [...values].reverse().concat(values[0]),
       };
       expect(queryFingerprint(shuffled)).toBe(queryFingerprint(FULL));
-      expect(shardPreference(shuffled)).toBe(shardPreference(FULL));
+      expect(serviceShardPreference(shuffled)).toBe(
+        serviceShardPreference(FULL),
+      );
     },
   );
 
@@ -108,7 +110,9 @@ describe('queryFingerprint', () => {
       },
     };
     expect(queryFingerprint(reordered)).toBe(queryFingerprint(FULL));
-    expect(shardPreference(reordered)).toBe(shardPreference(FULL));
+    expect(serviceShardPreference(reordered)).toBe(
+      serviceShardPreference(FULL),
+    );
   });
 
   it.each([
@@ -243,7 +247,7 @@ describe('queryFingerprint', () => {
       ['a representative filter', representative, '10f190d94e5611da'],
     ])('%s', (_label, query: CursorQuery, fingerprint) => {
       expect(queryFingerprint(query)).toBe(fingerprint);
-      expect(shardPreference(query)).toBe(`services-${fingerprint}`);
+      expect(serviceShardPreference(query)).toBe(`services-${fingerprint}`);
       expect(
         queryFingerprint({
           ...query,
