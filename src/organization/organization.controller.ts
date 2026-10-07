@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiHeader,
+  ApiOperation,
   ApiParam,
   ApiQuery,
   ApiResponse,
@@ -70,6 +71,44 @@ export class OrganizationController {
     query: SearchOrganizationQueryDto,
   ) {
     return this.service.search({ headers, query });
+  }
+
+  @Get('by-service-at-location/:salId')
+  @Version('1')
+  @UseGuards(ArcjetGuard)
+  @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @ApiTenantIdQuery()
+  @ApiLocaleQuery()
+  @ApiHeader({ name: 'accept-language', required: true })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
+  @ApiOperation({
+    summary: 'Organization that offers a service-at-location, in this tenant',
+    description:
+      'Resolves the one organization in the x-tenant-id tenant whose services carry this service@location id. Tenant-scoped only: no cross-tenant or legacy-id fallback. The same SAL id can belong to different organization documents in different tenants, so the tenant is required.',
+  })
+  @ApiParam({
+    name: 'salId',
+    description: 'service@location id (services[].SERVICE_AT_LOCATIONS[].ID)',
+  })
+  @ApiResponse({ status: 200, type: OrganizationDetailResponseDto })
+  @ApiResponse({
+    status: 404,
+    description: 'No organization in this tenant carries the service@location',
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'More than one organization in this tenant carries the service@location',
+  })
+  getOrganizationByServiceAtLocation(
+    @Param('salId') salId: string,
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+  ) {
+    return this.detailService.findByServiceAtLocation(salId, { headers });
   }
 
   @Get(':id')
