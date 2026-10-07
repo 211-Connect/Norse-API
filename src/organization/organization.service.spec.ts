@@ -62,6 +62,45 @@ describe('OrganizationService', () => {
     ]);
   });
 
+  describe('shard-copy preference', () => {
+    const preferenceOf = async (
+      query: { query: string; page: number; limit: number },
+      tenant = 'tenant-a',
+      onlyWithResources?: boolean,
+    ) => {
+      (elasticsearch.search as jest.Mock).mockClear();
+      await service.search({
+        headers: { 'x-tenant-id': tenant, 'accept-language': 'en' },
+        query,
+        onlyWithResources,
+      });
+      return (elasticsearch.search as jest.Mock).mock.calls[0][0].preference;
+    };
+
+    it('keeps one preference for every page and limit of a search', async () => {
+      const preferences = [
+        await preferenceOf({ query: 'Al', page: 1, limit: 10 }),
+        await preferenceOf({ query: 'Al', page: 3, limit: 25 }),
+      ];
+
+      expect(preferences[0]).toEqual(expect.any(String));
+      expect(preferences[0]).not.toMatch(/^_/);
+      expect(new Set(preferences).size).toBe(1);
+    });
+
+    it('uses a different preference for a different search', async () => {
+      const page = { page: 1, limit: 10 };
+      const preferences = [
+        await preferenceOf({ query: 'Al', ...page }),
+        await preferenceOf({ query: 'Bo', ...page }),
+        await preferenceOf({ query: 'Al', ...page }, 'tenant-b'),
+        await preferenceOf({ query: 'Al', ...page }, 'tenant-a', true),
+      ];
+
+      expect(new Set(preferences).size).toBe(4);
+    });
+  });
+
   it('lists all organizations for a tenant when query is blank', async () => {
     await service.search({
       headers: { 'x-tenant-id': 'tenant-a', 'accept-language': 'en' },

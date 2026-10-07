@@ -11,6 +11,11 @@ import { getIndexName } from 'src/common/lib/utils';
 import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
 import { SearchHit } from '@elastic/elasticsearch/lib/api/types';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
+import {
+  scoreThenUnique,
+  shardPreference,
+} from 'src/common/elasticsearch/shard-preference';
 
 const isTaxonomyCode = new RegExp(
   /^[a-zA-Z]{1,2}(-\d{1,4}(\.\d{1,4}){0,3})?$/i,
@@ -87,6 +92,14 @@ export class TaxonomyService {
           minimum_should_match: 1,
         },
       };
+      queryBuilder.preference = shardPreference(
+        'taxonomies',
+        hashCacheKey({ index: queryBuilder.index, searchQuery, isCode }),
+      );
+      // `id` is mapped unindexed text, so `code.raw` is the only sortable key.
+      // Dagster dedupes codes across ingest chunks but not within one, so a
+      // tie on both is possible; the preference keeps even that one stable.
+      queryBuilder.sort = scoreThenUnique('code.raw');
 
       this.logger.verbose(
         `queryBuilder = ${JSON.stringify(queryBuilder, null, 2)}`,

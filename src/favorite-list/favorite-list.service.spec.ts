@@ -306,9 +306,21 @@ describe('FavoriteListService', () => {
 
     const createFindChain = (data: unknown[]) => ({
       select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       exec: jest.fn().mockResolvedValue(data),
+    });
+
+    it('pages in a stable order', async () => {
+      const chain = createFindChain([]);
+      mockFavoriteListModel.find.mockReturnValue(chain);
+      countDocumentsExec.mockResolvedValue(0);
+
+      await service.findAll({ page: 2, limit: 10 }, { user });
+
+      // Without a sort, skip/limit pages over unspecified natural order.
+      expect(chain.sort).toHaveBeenCalledWith({ _id: 1 });
     });
 
     it('should return paginated lists for the user', async () => {
@@ -390,9 +402,20 @@ describe('FavoriteListService', () => {
 
     const createFindChain = (data: unknown[]) => ({
       select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       exec: jest.fn().mockResolvedValue(data),
+    });
+
+    it('pages in a stable order', async () => {
+      const chain = createFindChain([]);
+      mockFavoriteListModel.find.mockReturnValue(chain);
+      countDocumentsExec.mockResolvedValue(0);
+
+      await service.search({ name: 'a' }, { page: 2, limit: 10 }, { user });
+
+      expect(chain.sort).toHaveBeenCalledWith({ _id: 1 });
     });
 
     it('should search by name using a case-insensitive regex', async () => {

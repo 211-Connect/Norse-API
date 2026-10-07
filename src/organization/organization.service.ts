@@ -5,6 +5,11 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchOrganizationQueryDto } from './dto/search-organization-query.dto';
 import { OrganizationSearchResponseDto } from './dto/search-organization-response.dto';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
+import {
+  scoreThenUnique,
+  shardPreference,
+} from 'src/common/elasticsearch/shard-preference';
 
 export const ORGANIZATIONS_INDEX = 'organizations';
 
@@ -84,11 +89,19 @@ export class OrganizationService {
         'location',
       ],
       query: textQuery,
+      preference: shardPreference(
+        'organizations',
+        hashCacheKey({
+          tenantId: options.headers['x-tenant-id'],
+          text,
+          onlyWithResources: options.onlyWithResources ?? false,
+        }),
+      ),
       // organization_id last in both branches: without a unique final key,
       // score ties are ordered by Lucene doc order, which is not stable
       // between identical requests.
       sort: text
-        ? [{ _score: { order: 'desc' } }, { organization_id: { order: 'asc' } }]
+        ? scoreThenUnique('organization_id')
         : [
             { 'name.raw': { order: 'asc' } },
             { organization_id: { order: 'asc' } },

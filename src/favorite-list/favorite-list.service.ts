@@ -271,6 +271,7 @@ export class FavoriteListService {
       this.favoriteListModel
         .find(query)
         .select(selectFields)
+        .sort({ _id: 1 })
         .skip(skip)
         .limit(limit)
         .exec(),
@@ -307,6 +308,7 @@ export class FavoriteListService {
       this.favoriteListModel
         .find(mongoQuery)
         .select(selectFields)
+        .sort({ _id: 1 })
         .skip(skip)
         .limit(limit)
         .exec(),
