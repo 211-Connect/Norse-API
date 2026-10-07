@@ -96,4 +96,131 @@ describe('TenantConfigService cache metrics', () => {
       'tenant-config-app-redis:hit',
     ]);
   });
+
+  it('getTopics: returns parsed config and caches it in LRU', async () => {
+    const topicsConfig = {
+      tenantId: 'tenant-1',
+      iconSize: 'medium',
+      imageBorderRadius: '8px',
+      backTexts: { en: 'Back' },
+      customHeadings: { en: 'Help' },
+      list: [
+        {
+          name: 'Housing',
+          names: { en: 'Housing' },
+          subtopics: [],
+        },
+      ],
+    };
+    cmsRedisService.get.mockResolvedValue(JSON.stringify(topicsConfig));
+
+    await expect(service.getTopics('tenant-1')).resolves.toEqual(topicsConfig);
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+    ]);
+
+    await expect(service.getTopics('tenant-1')).resolves.toEqual(topicsConfig);
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+      'tenant-config-lru:hit',
+    ]);
+  });
+
+  it('getTopics: redis miss returns default empty shape', async () => {
+    cmsRedisService.get.mockResolvedValue(null);
+
+    await expect(service.getTopics('tenant-1')).resolves.toEqual({
+      tenantId: 'tenant-1',
+      iconSize: '',
+      imageBorderRadius: '',
+      backTexts: {},
+      customHeadings: {},
+      list: [],
+    });
+  });
+
+  it('getSuggestions: returns parsed config and caches it in LRU', async () => {
+    const suggestionsConfig = {
+      tenantId: 'tenant-1',
+      suggestions: [
+        {
+          taxonomies: 'BD-1800',
+          value: 'Emergency Shelter',
+          values: { en: 'Emergency Shelter' },
+        },
+      ],
+    };
+    cmsRedisService.get.mockResolvedValue(JSON.stringify(suggestionsConfig));
+
+    await expect(service.getSuggestions('tenant-1')).resolves.toEqual(
+      suggestionsConfig,
+    );
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+    ]);
+
+    await expect(service.getSuggestions('tenant-1')).resolves.toEqual(
+      suggestionsConfig,
+    );
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+      'tenant-config-lru:hit',
+    ]);
+  });
+
+  it('getSuggestions: redis miss returns default empty shape', async () => {
+    cmsRedisService.get.mockResolvedValue(null);
+
+    await expect(service.getSuggestions('tenant-1')).resolves.toEqual({
+      tenantId: 'tenant-1',
+      suggestions: [],
+    });
+  });
+
+  it('getOrchestrationConfig: returns parsed config and caches it in LRU', async () => {
+    const orchestrationConfig = {
+      tenantId: 'tenant-1',
+      schemas: [],
+    };
+    cmsRedisService.get.mockResolvedValue(JSON.stringify(orchestrationConfig));
+
+    await expect(service.getOrchestrationConfig('tenant-1')).resolves.toEqual(
+      orchestrationConfig,
+    );
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+    ]);
+
+    await expect(service.getOrchestrationConfig('tenant-1')).resolves.toEqual(
+      orchestrationConfig,
+    );
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:hit',
+      'tenant-config-lru:hit',
+    ]);
+  });
+
+  it('getOrchestrationConfig: redis miss returns null and caches null', async () => {
+    cmsRedisService.get.mockResolvedValue(null);
+
+    await expect(
+      service.getOrchestrationConfig('tenant-1'),
+    ).resolves.toBeNull();
+
+    // A second call should hit the LRU even though null is cached.
+    await expect(
+      service.getOrchestrationConfig('tenant-1'),
+    ).resolves.toBeNull();
+    expect(recordCalls()).toEqual([
+      'tenant-config-lru:miss',
+      'tenant-config-redis:miss',
+      'tenant-config-lru:hit',
+    ]);
+  });
 });
