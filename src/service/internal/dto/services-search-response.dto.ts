@@ -102,8 +102,13 @@ export class StatusFacetDto {
 
 export class TaxonomyFacetDto {
   @ApiProperty() code: string;
-  @ApiProperty({ description: 'The code; there is no source for AIRS labels.' })
-  name: string;
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      "The most common name the requested Resource Writers give this code in their taxonomy term reference (a tie takes the lowest name); null when none of them names it. Never the code, never another writer's name.",
+  })
+  name: string | null;
   @ApiProperty({ type: String, nullable: true }) parentCode: string | null;
   @ApiProperty({ description: 'Records at or under this node.' })
   recordCount: number;

@@ -47,6 +47,11 @@ import {
   serviceShardPreference,
 } from './service-search.cursor';
 import { WithholdingService } from './withholding.service';
+import { mostCommonName } from './taxonomy-names';
+import {
+  DEFAULT_TAXONOMY_LOCALE,
+  TaxonomyNameService,
+} from './taxonomy-name.service';
 
 /** Buckets per composite page; facets page until exhausted, never truncate. */
 export const FACET_PAGE_SIZE = 1000;
@@ -84,6 +89,7 @@ export class ServiceSearchService {
     private readonly elasticsearch: ElasticsearchService,
     private readonly regions: RegionService,
     private readonly withholdings: WithholdingService,
+    private readonly taxonomyNames: TaxonomyNameService,
   ) {}
 
   async search(
@@ -177,6 +183,19 @@ export class ServiceSearchService {
       buckets.taxonomyCodes.map((b) => normalizeAirsCode(b.key)),
     );
 
+    const tree = buildAirsTreeFromPathCounts(
+      buckets.taxonomyPath.map((b) => ({
+        code: b.key,
+        recordCount: b.count,
+      })),
+      coded,
+    );
+    const names = await this.taxonomyNames.resolve(
+      request.resourceWriterIds,
+      tree.map((n) => n.code),
+      DEFAULT_TAXONOMY_LOCALE,
+    );
+
     return {
       contributors: buckets.contributors
         .map((b) => ({ resourceWriterId: b.key, recordCount: b.count }))
@@ -186,13 +205,12 @@ export class ServiceSearchService {
         .filter((b) => b.key !== '')
         .map((b) => ({ value: b.key, recordCount: b.count }))
         .sort((a, b) => a.value.localeCompare(b.value)),
-      taxonomy: buildAirsTreeFromPathCounts(
-        buckets.taxonomyPath.map((b) => ({
-          code: b.key,
-          recordCount: b.count,
-        })),
-        coded,
-      ).map((n) => ({ ...n, name: n.code })),
+      taxonomy: tree.map((n) => ({
+        ...n,
+        name: mostCommonName(
+          [...names.values()].flatMap((byCode) => byCode.get(n.code) ?? []),
+        ),
+      })),
       appliedExclusions: appliedExclusions(input),
     };
   }
