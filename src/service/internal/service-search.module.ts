@@ -11,6 +11,7 @@ import { RegionServiceModule } from '../../region/internal';
 import { ServiceSearchController } from './service-search.controller';
 import { ServiceSearchService } from './service-search.service';
 import { WithholdingService } from './withholding.service';
+import { TaxonomyNameService } from './taxonomy-name.service';
 
 @Module({
   imports: [
@@ -28,6 +29,6 @@ import { WithholdingService } from './withholding.service';
     ]),
   ],
   controllers: [ServiceSearchController],
-  providers: [ServiceSearchService, WithholdingService],
+  providers: [ServiceSearchService, WithholdingService, TaxonomyNameService],
 })
 export class ServiceSearchInternalModule {}

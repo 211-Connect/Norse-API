@@ -17,10 +17,13 @@ import {
   ServicesFacetsResponseDto,
   ServicesSearchRequestDto,
   ServicesSearchResponseDto,
+  TaxonomyNamesRequestDto,
+  TaxonomyNamesResponseDto,
 } from './dto';
 import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
 import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 import { ServiceSearchService } from './service-search.service';
+import { TaxonomyNameService } from './taxonomy-name.service';
 
 /**
  * ServiceNet's record selector reads services through these routes (ADR 0023).
@@ -34,7 +37,10 @@ import { ServiceSearchService } from './service-search.service';
 @UseGuards(InternalApiGuard)
 @Controller('internal/services')
 export class ServiceSearchController {
-  constructor(private readonly searchService: ServiceSearchService) {}
+  constructor(
+    private readonly searchService: ServiceSearchService,
+    private readonly taxonomyNames: TaxonomyNameService,
+  ) {}
 
   @Post('search')
   @Version('1')
@@ -90,5 +96,23 @@ export class ServiceSearchController {
     @Body() body: ServicesFacetsRequestDto,
   ): Promise<ServicesFacetsResponseDto> {
     return this.searchService.facets(body);
+  }
+
+  @Post('taxonomy-names')
+  @Version('1')
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      "Each Resource Writer's own name for each requested taxonomy code, from its taxonomy term reference.",
+  })
+  @ApiBody({ type: TaxonomyNamesRequestDto })
+  @ApiResponse({ status: 200, type: TaxonomyNamesResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })
+  @ApiResponse({ status: 503, description: 'Elasticsearch timed out' })
+  taxonomyNamesFor(
+    @Body() body: TaxonomyNamesRequestDto,
+  ): Promise<TaxonomyNamesResponseDto> {
+    return this.taxonomyNames.lookup(body);
   }
 }
