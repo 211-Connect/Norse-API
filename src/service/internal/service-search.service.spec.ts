@@ -12,6 +12,12 @@ import {
 } from './service-search.service';
 import { WithholdingService } from './withholding.service';
 import { WITHHELD_SERVICE_IDS_PER_CLAUSE } from './service-search.query';
+import { TaxonomyNameService } from './taxonomy-name.service';
+import {
+  taxonomyTerm,
+  taxonomyTermsIndex,
+  taxonomyTermsIndexNotFound,
+} from 'src/common/testing/taxonomy-terms-index';
 
 const WRITER_A = 'writer-a';
 const WRITER_B = 'writer-b';
@@ -38,6 +44,7 @@ describe('ServiceSearchService', () => {
       elasticsearch,
       new RegionService(elasticsearch),
       withholdings,
+      new TaxonomyNameService(elasticsearch),
     );
     search.mockResolvedValue(emptyPage);
     mget.mockImplementation(async ({ ids }: { ids: string[] }) => ({
@@ -539,7 +546,7 @@ describe('ServiceSearchService', () => {
     });
 
     it('returns contributor, status and taxonomy counts in the Mongo shapes', async () => {
-      search.mockResolvedValue({
+      const aggregated = {
         aggregations: {
           contributors: composite([
             [WRITER_B, 2],
@@ -560,7 +567,8 @@ describe('ServiceSearchService', () => {
             ['BD-1800.2000', 1],
           ]),
         },
-      });
+      };
+      search.mockImplementation(taxonomyTermsIndex([], async () => aggregated));
 
       await expect(
         service.facets({ resourceWriterIds: [WRITER_A, WRITER_B] }),
@@ -576,21 +584,21 @@ describe('ServiceSearchService', () => {
         taxonomy: [
           {
             code: 'BD',
-            name: 'BD',
+            name: null,
             parentCode: null,
             recordCount: 4,
             synthesized: true,
           },
           {
             code: 'BD-1800',
-            name: 'BD-1800',
+            name: null,
             parentCode: 'BD',
             recordCount: 3,
             synthesized: false,
           },
           {
             code: 'BD-1800.2000',
-            name: 'BD-1800.2000',
+            name: null,
             parentCode: 'BD-1800',
             recordCount: 1,
             synthesized: false,
@@ -620,8 +628,11 @@ describe('ServiceSearchService', () => {
 
       const result = await service.facets({ resourceWriterIds: [WRITER_A] });
 
-      expect(search).toHaveBeenCalledTimes(2);
-      const second = lastRequest();
+      const aggregationRequests = search.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.index === 'services');
+      expect(aggregationRequests).toHaveLength(2);
+      const second = aggregationRequests[1];
       expect(Object.keys(second.aggs)).toEqual(['taxonomyPath']);
       expect(second.aggs.taxonomyPath.composite.after).toEqual({
         key: 'AA-999',
@@ -648,7 +659,9 @@ describe('ServiceSearchService', () => {
           aggregations: { taxonomyPath: composite([['ZZ', 1001]]) },
         });
       await service.facets({ resourceWriterIds: [WRITER_A] });
-      const facetPreferences = search.mock.calls.map(([b]) => b.preference);
+      const facetPreferences = search.mock.calls
+        .filter(([b]) => b.index === 'services')
+        .map(([b]) => b.preference);
 
       search.mockResolvedValue(emptyPage);
       await service.search({ resourceWriterIds: [WRITER_A] });
@@ -660,6 +673,139 @@ describe('ServiceSearchService', () => {
       search.mockResolvedValue({ aggregations: {} });
       await service.facets({ resourceWriterIds: [WRITER_B] });
       expect(lastRequest().preference).not.toBe(listing);
+    });
+  });
+
+  describe('taxonomy names (ISS-2165)', () => {
+    const composite = (buckets: [string, number][]) => ({
+      buckets: buckets.map(([key, doc_count]) => ({ key: { key }, doc_count })),
+    });
+    const facetsOver = (paths: [string, number][], codes: string[]) => ({
+      aggregations: {
+        contributors: composite([]),
+        statuses: composite([]),
+        taxonomyPath: composite(paths),
+        taxonomyCodes: composite(codes.map((c) => [c, 1])),
+      },
+    });
+    const namesOf = (taxonomy: { code: string; name: string | null }[]) =>
+      Object.fromEntries(taxonomy.map((n) => [n.code, n.name]));
+
+    it("names an HSIS writer's roots and intermediate nodes, and null where it has no name", async () => {
+      search.mockImplementation(
+        taxonomyTermsIndex(
+          [
+            taxonomyTerm(WRITER_A, 'BD', { en: 'Food' }, { isAncestor: true }),
+            taxonomyTerm(
+              WRITER_A,
+              'BD-1800',
+              { en: 'Emergency Food' },
+              {
+                isAncestor: true,
+              },
+            ),
+            taxonomyTerm(WRITER_A, 'BD-1800.2000', { en: 'Food Pantries' }),
+          ],
+          async () =>
+            facetsOver(
+              [
+                ['BD', 3],
+                ['BD-1800', 3],
+                ['BD-1800.2000', 2],
+                ['BD-1800.8200', 1],
+              ],
+              ['BD-1800.2000', 'BD-1800.8200'],
+            ),
+        ),
+      );
+
+      const { taxonomy } = await service.facets({
+        resourceWriterIds: [WRITER_A],
+      });
+
+      expect(namesOf(taxonomy)).toEqual({
+        BD: 'Food',
+        'BD-1800': 'Emergency Food',
+        'BD-1800.2000': 'Food Pantries',
+        'BD-1800.8200': null,
+      });
+    });
+
+    const bdFacets = async () => facetsOver([['BD', 3]], ['BD']);
+
+    it('takes the most common name among the requested writers', async () => {
+      search.mockImplementation(
+        taxonomyTermsIndex(
+          [
+            taxonomyTerm(WRITER_A, 'BD', { en: 'Groceries' }),
+            taxonomyTerm(WRITER_B, 'BD', { en: 'Food' }),
+            taxonomyTerm('writer-c', 'BD', { en: 'Food' }),
+          ],
+          bdFacets,
+        ),
+      );
+
+      const { taxonomy } = await service.facets({
+        resourceWriterIds: [WRITER_A, WRITER_B, 'writer-c'],
+      });
+
+      expect(namesOf(taxonomy)).toEqual({ BD: 'Food' });
+    });
+
+    it('breaks a tie with the lowest name', async () => {
+      search.mockImplementation(
+        taxonomyTermsIndex(
+          [
+            taxonomyTerm(WRITER_A, 'BD', { en: 'Zeta Food' }),
+            taxonomyTerm(WRITER_B, 'BD', { en: 'Alpha Food' }),
+          ],
+          bdFacets,
+        ),
+      );
+
+      const { taxonomy } = await service.facets({
+        resourceWriterIds: [WRITER_A, WRITER_B],
+      });
+
+      expect(namesOf(taxonomy)).toEqual({ BD: 'Alpha Food' });
+    });
+
+    it('never borrows a name from a writer outside the request', async () => {
+      search.mockImplementation(
+        taxonomyTermsIndex(
+          [taxonomyTerm(WRITER_B, 'BD', { en: 'Food' })],
+          bdFacets,
+        ),
+      );
+
+      const { taxonomy } = await service.facets({
+        resourceWriterIds: [WRITER_A],
+      });
+
+      expect(namesOf(taxonomy)).toEqual({ BD: null });
+    });
+
+    it('still answers, unnamed, before the reference index exists', async () => {
+      search.mockImplementation(async (request) => {
+        if (request.index === 'taxonomy_terms') {
+          throw taxonomyTermsIndexNotFound();
+        }
+        return bdFacets();
+      });
+
+      const { taxonomy } = await service.facets({
+        resourceWriterIds: [WRITER_A],
+      });
+
+      expect(taxonomy).toEqual([
+        {
+          code: 'BD',
+          name: null,
+          parentCode: null,
+          recordCount: 3,
+          synthesized: false,
+        },
+      ]);
     });
   });
 

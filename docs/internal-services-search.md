@@ -1,7 +1,8 @@
 # Internal services search and facets
 
 ServiceNet's record selector lists and facets services through two internal
-routes over the shared Elasticsearch `services` index. The index is loaded by
+routes over the shared Elasticsearch `services` index, and names taxonomy codes
+through a third over `taxonomy_terms` (see [Taxonomy names](#taxonomy-names)). The index is loaded by
 Dagster `configurable-readers` (Dagster PR #601, ISS-1867). See
 architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 
@@ -9,6 +10,7 @@ architecture-docs ADR 0023 (ArchitectureDocs PR #31) and INTEG-022.
 | --- | --- | --- |
 | `POST /internal/services/search` | `resourceWriterIds` (required), `filter.taxonomyCodes`, `filter.statuses`, `filter.geography.regionIds` and `filter.geography.points` (1 to 20 Places together; see [geography-filter.md](geography-filter.md)), `filter.virtual`, `filter.match`, `exclude`, `text`, `cursor`, `limit` (default 50, max 200) | `{ items, total, limit, nextCursor, appliedExclusions }` |
 | `POST /internal/services/facets` | `resourceWriterIds` (required), `filter.geography.regionIds`, `filter.geography.points`, `filter.virtual`, `filter.match`, `exclude` | `{ contributors, statuses, taxonomy, appliedExclusions }` |
+| `POST /internal/services/taxonomy-names` | `resourceWriterIds` (1 to 100), `codes` (1 to 5,000), `locale` (default `en`) | `{ names: { [resourceWriterId]: { [code]: name } } }` |
 
 Send `x-api-version: 1`, as for every versioned route, and
 `x-internal-api-key`. No `x-tenant-id`: the
@@ -17,7 +19,7 @@ can sit under several tenants.
 
 ## Status
 
-- **Unpublished.** `@ApiExcludeController()` keeps both routes out of
+- **Unpublished.** `@ApiExcludeController()` keeps all three routes out of
   `/swagger/json`, so the Norse SDK never sees them.
   `service-search.controller.spec.ts` checks the generated document.
 - **Internal key, not tenant scope.** They trust the writer set they are
@@ -167,6 +169,41 @@ over one fixture and compares the results.
     the two in step.
   - Contributor names are not in the index. ServiceNet resolves them, as its
     injected resolver does today.
+  - Each taxonomy node's `name` is read from the requested writers' term
+    reference, not the code. See [Taxonomy names](#taxonomy-names).
+
+## Taxonomy names
+
+Dagster publishes `taxonomy_terms` (ISS-1947, INTEG-029): one document per
+(Resource Writer, taxonomy, code) with `resourceWriterId`, `taxonomy`, `code`
+(keywords), `isAncestor`, `names` (`{ locale: name }`, stored but not indexed)
+and `publishedAt`. `taxonomy-name.service.ts` reads it for both routes, and
+`taxonomy-names.ts` holds the rules both share:
+
+- **One writer, one name per code.** A writer may name one code in two
+  taxonomies. Its own term beats a derived ancestor (`isAncestor`), then the
+  lowest name wins.
+- **Facets** (`taxonomy[].name: string | null`): the most common name among
+  the requested writers, a tie to the lowest name; `null` when none of them
+  names the code. Never the code, never a writer outside the request. Facets
+  name in `en`.
+- **Lookup** (`POST /internal/services/taxonomy-names`): each writer's own
+  name, for the record rows, lane summaries and record contents where a name
+  must be the record's own writer's. Writers and codes with no name are
+  omitted. There is no fallback to another locale.
+- **Codes are matched normalized** (`airs.ts` `normalizeAirsCode`: trimmed,
+  trailing `.`/`-` dropped), as the facet tree keys them; the lookup keys each
+  name by the code as sent. Dagster stores a writer's own term with the code
+  as written (`BD-1800.`) and a derived ancestor normalized, so each code is
+  queried as `X`, `X.` and `X-`.
+- **Reading.** `terms` on `resourceWriterId` and `code`, sorted by
+  writer, taxonomy, code (unique per document) and paged with `search_after`,
+  at most 5,000 codes per query to stay under ES's `terms` limit. Every page
+  carries one `taxonomy-terms-<fingerprint>` preference.
+- **Before the index exists** (Dagster's first reader run creates it), an
+  `index_not_found_exception` reads as no names: facets answer with
+  `name: null` and the lookup with `{ names: {} }`. Any other failure maps as
+  the other routes do (timeout `503`, else `502`).
 
 ## Withholdings by reference
 

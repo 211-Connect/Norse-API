@@ -31,6 +31,10 @@ import {
   SERVICES_EXCLUDE_MAX_TAXONOMY_CODES,
   SERVICES_EXCLUDE_MAX_WITHHOLDINGS,
 } from './dto';
+import {
+  taxonomyTerm,
+  taxonomyTermsIndex,
+} from 'src/common/testing/taxonomy-terms-index';
 
 /** More than the provisional 1,000 serviceIds cap ISS-1938 removed. */
 const MANY_SERVICE_IDS = 1500;
@@ -193,8 +197,9 @@ describe('ServiceSearchController (internal/services)', () => {
       const paths = Object.keys(res.body.paths);
       expect(paths).toContain('/published-control');
       expect(paths.filter((p) => p.includes('internal/services'))).toEqual([]);
+      expect(paths.filter((p) => p.includes('taxonomy-names'))).toEqual([]);
       expect(JSON.stringify(res.body)).not.toMatch(
-        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|ServicesExclusion|ServicesAppliedExclusion/,
+        /ServicesSearch|ServicesFacets|ServicesScopeFilter|ServicesGeography|ServiceListItem|ServicesExclusion|ServicesAppliedExclusion|TaxonomyNames/,
       );
     });
   });
@@ -721,6 +726,90 @@ describe('ServiceSearchController (internal/services)', () => {
         taxonomy: [],
         appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
+    });
+  });
+
+  describe('POST /internal/services/taxonomy-names', () => {
+    const lookup = (body: object) =>
+      request(app.getHttpServer())
+        .post('/internal/services/taxonomy-names')
+        .set('x-api-version', '1')
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .send(body);
+
+    it("answers each writer's names for the requested codes, keyed as requested", async () => {
+      search.mockImplementation(
+        taxonomyTermsIndex([
+          taxonomyTerm('writer-a', 'BD-1800', { en: 'Emergency Food' }),
+          taxonomyTerm('writer-b', 'BD-1800.', { en: 'Food Now' }),
+        ]),
+      );
+
+      const res = await lookup({
+        resourceWriterIds: ['writer-a', 'writer-b', 'writer-c'],
+        codes: ['BD-1800.', 'BH'],
+      }).expect(200);
+
+      expect(res.body).toEqual({
+        names: {
+          'writer-a': { 'BD-1800.': 'Emergency Food' },
+          'writer-b': { 'BD-1800.': 'Food Now' },
+        },
+      });
+    });
+
+    it('refuses a request without the internal key', async () => {
+      await request(app.getHttpServer())
+        .post('/internal/services/taxonomy-names')
+        .set('x-api-version', '1')
+        .send({ resourceWriterIds: ['writer-a'], codes: ['BD'] })
+        .expect(401);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    const codesOf = (n: number) =>
+      Array.from({ length: n }, (_, i) => `AA-${i}`);
+    const writersOf = (n: number) =>
+      Array.from({ length: n }, (_, i) => `writer-${i}`);
+
+    it.each([
+      ['no body', {}],
+      ['no codes', { resourceWriterIds: ['writer-a'] }],
+      ['no writers', { codes: ['BD'] }],
+      ['an empty writer list', { resourceWriterIds: [], codes: ['BD'] }],
+      ['an empty code list', { resourceWriterIds: ['writer-a'], codes: [] }],
+      ['a blank writer', { resourceWriterIds: [''], codes: ['BD'] }],
+      ['a non-string writer', { resourceWriterIds: [7], codes: ['BD'] }],
+      ['a blank code', { resourceWriterIds: ['writer-a'], codes: [''] }],
+      ['a non-string code', { resourceWriterIds: ['writer-a'], codes: [7] }],
+      ['codes as a string', { resourceWriterIds: ['writer-a'], codes: 'BD' }],
+      [
+        'a blank locale',
+        { resourceWriterIds: ['writer-a'], codes: ['BD'], locale: '' },
+      ],
+      [
+        'a non-string locale',
+        { resourceWriterIds: ['writer-a'], codes: ['BD'], locale: 1 },
+      ],
+      [
+        '5,001 codes',
+        { resourceWriterIds: ['writer-a'], codes: codesOf(5001) },
+      ],
+      ['101 writers', { resourceWriterIds: writersOf(101), codes: ['BD'] }],
+    ])('rejects %s with 400, without searching', async (_label, body) => {
+      await lookup(body).expect(400);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('accepts 100 writers and 5,000 codes', async () => {
+      search.mockImplementation(taxonomyTermsIndex([]));
+      await lookup({
+        resourceWriterIds: writersOf(100),
+        codes: codesOf(5000),
+        locale: 'es',
+      })
+        .expect(200)
+        .expect({ names: {} });
     });
   });
 });
