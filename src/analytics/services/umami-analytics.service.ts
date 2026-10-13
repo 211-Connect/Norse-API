@@ -15,7 +15,6 @@ import {
 } from '../internal/parsers';
 import { timeWindow } from '../internal/period';
 import { UmamiEvent } from '../internal/umami-events';
-import { isSearchQueryType } from '../internal/search-query-type';
 import { UmamiHttpService } from './umami-http.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
 import { ResourceService } from '../../resource/resource.service';
@@ -42,7 +41,6 @@ import type {
   ResourceMetric,
   Searches,
   SearchHits,
-  SearchQueryType,
   Stats,
   UmamiBatchResponse,
   UmamiEventDataValue,
@@ -57,6 +55,8 @@ import type {
 } from '../types';
 
 const SEARCH_RESOURCE_PREFIX = '/search/';
+
+type SearchEventName = 'search_text' | 'search_taxonomy' | 'search_hybrid';
 
 function toSortedEntries(map: Map<string, number>): SearchHits[] {
   return Array.from(map, ([x, y]) => ({ query: x, hits: y })).sort(
@@ -312,40 +312,48 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const queryRes = await this.umamiHttpService.fanOut<
-          MetricsExpandedEntry[]
-        >(input.websiteIds, 'metrics/expanded', {
-          startAt: startMs,
-          endAt: endMs,
-          type: 'query',
-        });
+        const eventNames: SearchEventName[] = [
+          'search_text',
+          'search_taxonomy',
+          'search_hybrid',
+        ];
+        const eventValues: Array<[SearchEventName, UmamiEventDataValue[][]]> =
+          [];
 
-        const queryMetrics = aggregateByEndpoint<MetricsExpandedEntry[]>(
-          'metrics/expanded',
-          queryRes,
-        );
+        for (const eventName of eventNames) {
+          const websiteValues = await this.umamiHttpService.fanOut<
+            UmamiEventDataValue[]
+          >(input.websiteIds, 'event-data/values', {
+            startAt: startMs,
+            endAt: endMs,
+            event: eventName,
+            propertyName: 'queryLabel',
+          });
+          eventValues.push([eventName, websiteValues]);
+        }
 
-        const labelByTypeMaps: Record<SearchQueryType, Map<string, number>> = {
-          text: new Map<string, number>(),
-          taxonomy: new Map<string, number>(),
-          hybrid: new Map<string, number>(),
+        const totalsByEvent: Record<SearchEventName, Map<string, number>> = {
+          search_text: new Map(),
+          search_taxonomy: new Map(),
+          search_hybrid: new Map(),
         };
-
-        for (const queryMetric of queryMetrics) {
-          const params = new URLSearchParams(queryMetric.name);
-          const label = params.get('query_label');
-          if (label === null) continue;
-          const rawType = params.get('query_type');
-          if (!isSearchQueryType(rawType)) continue;
-          const hits = Number(queryMetric.pageviews) || 0;
-          const bucket = labelByTypeMaps[rawType];
-          bucket.set(label, (bucket.get(label) ?? 0) + hits);
+        for (const [eventName, websiteValues] of eventValues) {
+          const totals = totalsByEvent[eventName];
+          for (const values of websiteValues) {
+            for (const { value, total } of values ?? []) {
+              if (!value) continue;
+              totals.set(
+                value,
+                (totals.get(value) ?? 0) + (Number(total) || 0),
+              );
+            }
+          }
         }
 
         return {
-          text: toSortedEntries(labelByTypeMaps.text),
-          taxonomy: toSortedEntries(labelByTypeMaps.taxonomy),
-          hybrid: toSortedEntries(labelByTypeMaps.hybrid),
+          text: toSortedEntries(totalsByEvent.search_text),
+          taxonomy: toSortedEntries(totalsByEvent.search_taxonomy),
+          hybrid: toSortedEntries(totalsByEvent.search_hybrid),
         };
       },
     );

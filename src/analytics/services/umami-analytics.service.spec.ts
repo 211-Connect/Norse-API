@@ -195,4 +195,107 @@ describe('UmamiAnalyticsService', () => {
       expect(result.referralSource).toBeNull();
     });
   });
+
+  describe('getSearches', () => {
+    it('groups each search event value into hit counts', async () => {
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          endpoint: string,
+          params: { event?: string },
+        ) => {
+          if (endpoint !== 'event-data/values') return [[]];
+
+          if (params.event === 'search_text') {
+            return [
+              [
+                { value: 'food', total: 7 },
+                { value: 'rent', total: 3 },
+              ],
+              [{ value: 'food', total: 1 }],
+            ];
+          }
+          if (params.event === 'search_taxonomy') {
+            return [
+              [{ value: 'Housing', total: 4 }],
+              [{ value: 'Housing', total: 2 }],
+            ];
+          }
+          return [
+            [{ value: 'Transit', total: 5 }],
+            [{ value: 'Transit', total: 2 }],
+          ];
+        },
+      );
+
+      const result = await service.getSearches({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+      });
+
+      expect(result).toEqual({
+        text: [
+          { query: 'food', hits: 8 },
+          { query: 'rent', hits: 3 },
+        ],
+        taxonomy: [{ query: 'Housing', hits: 6 }],
+        hybrid: [{ query: 'Transit', hits: 7 }],
+      });
+    });
+  });
+
+  describe('getExportSearchData', () => {
+    it('includes all rows when Umami returns a smaller page size than requested', async () => {
+      const eventCounts: Record<string, number> = {
+        search_text: 250,
+        search_taxonomy: 150,
+      };
+      const actualPageSize = 100;
+
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string; page: number },
+        ) => {
+          const count = eventCounts[params.eventName];
+          const offset = (params.page - 1) * actualPageSize;
+          const pageCount = Math.max(
+            0,
+            Math.min(actualPageSize, count - offset),
+          );
+
+          return [
+            {
+              count,
+              page: params.page,
+              pageSize: actualPageSize,
+              data: Array.from({ length: pageCount }, (_, index) =>
+                buildRow({
+                  queryLabel: `${params.eventName}-${offset + index}`,
+                }),
+              ),
+            },
+          ];
+        },
+      );
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.totalCount).toBe(400);
+      expect(result.data.filter((row) => row.queryType === 'text')).toHaveLength(
+        250,
+      );
+      expect(
+        result.data.filter((row) => row.queryType === 'taxonomy'),
+      ).toHaveLength(150);
+    });
+  });
 });
