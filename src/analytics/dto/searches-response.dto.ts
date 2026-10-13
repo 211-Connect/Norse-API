@@ -8,7 +8,7 @@ class SearchHits implements ISearchHits {
   })
   query: string;
   @ApiProperty({
-    description: 'Number of hits for the search query',
+    description: 'Number of matching search events for the query',
     example: 42,
   })
   hits: number;
@@ -16,17 +16,17 @@ class SearchHits implements ISearchHits {
 
 export class SearchesResponse implements Searches {
   @ApiProperty({
-    description: 'Search queries and their hit counts for text searches',
+    description: 'Query labels and counts for text search events',
     type: [SearchHits],
   })
   text: SearchHits[];
   @ApiProperty({
-    description: 'Search queries and their hit counts for taxonomy searches',
+    description: 'Query labels and counts for taxonomy search events',
     type: [SearchHits],
   })
   taxonomy: SearchHits[];
   @ApiProperty({
-    description: 'Search queries and their hit counts for hybrid searches',
+    description: 'Query labels and counts for hybrid search events',
     type: [SearchHits],
   })
   hybrid: SearchHits[];

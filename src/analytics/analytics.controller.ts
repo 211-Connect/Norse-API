@@ -227,7 +227,9 @@ export class AnalyticsController {
   @Get('searches')
   @Version('1')
   @ApiOperation({
-    summary: 'Get number of all search queries grouped by query type',
+    summary: 'Get counts of tracked search events grouped by query type',
+    description:
+      'Counts Umami search_text, search_taxonomy, and search_hybrid events.',
   })
   @ApiResponse({
     status: 200,
