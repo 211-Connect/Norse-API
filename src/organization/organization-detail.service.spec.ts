@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { OrganizationDetailService } from './organization-detail.service';
 import { Organization } from 'src/common/schemas/organization.schema';
 import { Redirect } from 'src/common/schemas/redirect.schema';
@@ -325,6 +325,68 @@ describe('OrganizationDetailService', () => {
 
     await expect(service.findById(orgId, { headers })).rejects.toMatchObject({
       response: { redirect: '/search/new-org-id' },
+    });
+  });
+  // ISS-2096: a Norse resource page knows only its tenant and the SAL id in
+  // its URL. Tenant-scoped only: no legacy-_id, cross-tenant, or redirect tier.
+  describe('findByServiceAtLocation', () => {
+    const matchOf = (pipeline: { $match?: Record<string, unknown> }[]) =>
+      pipeline.find((stage) => '$match' in stage)?.$match ?? {};
+
+    // clearAllMocks keeps queued mockResolvedValueOnce values, and the redirect
+    // test above leaves one unconsumed.
+    beforeEach(() => aggregateExec.mockReset());
+
+    it('returns the one org in the tenant whose services carry the SAL', async () => {
+      aggregateExec.mockResolvedValueOnce([buildOrg()]);
+
+      const result = (await service.findByServiceAtLocation(salId, {
+        headers,
+      })) as unknown as Record<string, any>;
+
+      expect(result.organizationId).toBe(orgId);
+      expect(result._id).toBeUndefined();
+      expect(mockAggregate).toHaveBeenCalledTimes(1);
+      expect(matchOf(seenPipelines[0])).toEqual({
+        tenant_id: tenantId,
+        'services.SERVICE_AT_LOCATIONS.ID': salId,
+      });
+    });
+
+    it('throws NotFound for an unknown SAL with no fallback or redirect lookup', async () => {
+      aggregateExec.mockResolvedValue([]);
+
+      await expect(
+        service.findByServiceAtLocation('unknown-sal', { headers }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(mockAggregate).toHaveBeenCalledTimes(1);
+      expect(mockRedirectModel.findById).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound for a real SAL sent under another tenant, querying only that tenant', async () => {
+      const otherTenant = '0e50850f-6a7f-49c1-9af8-7d124e2a7008';
+      aggregateExec.mockResolvedValue([]);
+
+      await expect(
+        service.findByServiceAtLocation(salId, {
+          headers: { ...headers, 'x-tenant-id': otherTenant },
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(seenPipelines).toHaveLength(1);
+      expect(matchOf(seenPipelines[0]).tenant_id).toBe(otherTenant);
+    });
+
+    it('refuses to pick when two orgs in the tenant carry the SAL', async () => {
+      aggregateExec.mockResolvedValueOnce([
+        buildOrg(),
+        buildOrg({ _id: 'other', organizationId: 'other-org' }),
+      ]);
+
+      await expect(
+        service.findByServiceAtLocation(salId, { headers }),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });
