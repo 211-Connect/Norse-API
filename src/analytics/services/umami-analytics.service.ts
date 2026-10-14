@@ -962,7 +962,7 @@ export class UmamiAnalyticsService {
       const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
       const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
 
-      const rawSessionId = this.getPivotPropertyValue(row, 'sessionId');
+      const rawSessionId = this.getPivotPropertyValue(row, 'session_id');
       const rawReferralSource = this.getPivotPropertyValue(row, 'utm_source');
 
       const searchResult: ReverseGeocodeOutput | null = searchCoords
