@@ -138,6 +138,9 @@ export class Resource {
   organizationName: string;
 
   @Prop()
+  organizationAlternateName: string;
+
+  @Prop()
   addresses: {
     address_1: string;
     address_2: string;
