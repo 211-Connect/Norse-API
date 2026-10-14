@@ -28,6 +28,7 @@ export const RESOURCE_EXAMPLE = {
   languages: ['English', 'Spanish'],
   lastAssuredDate: '2024-08-26T00:00:00',
   organizationName: 'EXAMPLE ORGANIZATION',
+  organizationAlternateName: 'EXAMPLE ORG',
   phoneNumbers: [
     {
       number: '(555) 555-5555',
