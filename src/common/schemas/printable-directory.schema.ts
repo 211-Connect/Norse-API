@@ -7,16 +7,6 @@ export const PRINTABLE_DIRECTORY_COVER_LAYOUTS = ['default'] as const;
 export type PrintableDirectoryCoverLayout =
   (typeof PRINTABLE_DIRECTORY_COVER_LAYOUTS)[number];
 
-export const PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS = [
-  'line',
-  'summary',
-  'full',
-  'custom-search',
-  'custom-resource',
-] as const;
-export type PrintableDirectoryResourceLayout =
-  (typeof PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS)[number];
-
 export const PRINTABLE_DIRECTORY_HEADER_FOOTER_LAYOUT_ITEMS = [
   'text',
   'logo',
@@ -46,6 +36,9 @@ export type PrintableDirectoryAccessPolicy =
 export class PrintableDirectoryLocalizedText {
   @Prop({ type: Object, default: {} })
   values: Record<string, string>;
+
+  @Prop({ type: [String], default: [] })
+  autoTranslatedLocales: string[];
 }
 
 @Schema({ _id: false })
@@ -84,9 +77,6 @@ export class PrintableDirectoryHeaderFooter {
 
   @Prop({ type: PrintableDirectoryLocalizedText, default: {} })
   textLocalized?: PrintableDirectoryLocalizedText;
-
-  @Prop({ type: String, default: null })
-  logoUrl?: string | null;
 }
 
 @Schema({ _id: false })
@@ -179,6 +169,22 @@ export class PrintableDirectory {
   @Prop({ required: true, trim: true })
   name: string;
 
+  @Prop({ required: true, type: String })
+  primaryLanguage: string;
+
+  /**
+   * Languages the directory is offered in (always including
+   * primaryLanguage). Undefined for directories created before it was
+   * stored; their locales are derived from content instead.
+   */
+  @Prop({ type: [String], default: undefined })
+  locales?: string[];
+
+  /** The directory's logo, printed wherever the header or footer layout
+   *  includes `logo`. Null: the tenant's own logo is used instead. */
+  @Prop({ type: String, default: null })
+  logoUrl?: string | null;
+
   @Prop({ type: String, default: null })
   updatedBy?: string | null;
 
@@ -207,17 +213,6 @@ export class PrintableDirectory {
     default: { layout: [] },
   })
   footer: PrintableDirectoryHeaderFooter;
-
-  @Prop({
-    required: true,
-    enum: PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS,
-    type: String,
-    default: 'line',
-  })
-  resourceLayout: PrintableDirectoryResourceLayout;
-
-  @Prop({ type: Boolean, default: false })
-  isBookletLayout: boolean;
 
   @Prop({ type: PrintableDirectoryDefaultQueryConfig, default: null })
   defaultQueryConfig?: PrintableDirectoryDefaultQueryConfig | null;

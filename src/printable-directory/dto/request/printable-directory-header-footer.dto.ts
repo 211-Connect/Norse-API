@@ -1,12 +1,5 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import {
-  ArrayUnique,
-  IsArray,
-  IsEnum,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { ApiProperty, PartialType } from '@nestjs/swagger';
+import { ArrayUnique, IsArray, IsEnum } from 'class-validator';
 import {
   PRINTABLE_DIRECTORY_HEADER_FOOTER_LAYOUT_ITEMS,
   PrintableDirectoryHeaderFooterLayoutItem,
@@ -25,10 +18,4 @@ export class PrintableDirectoryHeaderFooterDto extends PartialType(
   @ArrayUnique()
   @IsEnum(PRINTABLE_DIRECTORY_HEADER_FOOTER_LAYOUT_ITEMS, { each: true })
   layout: PrintableDirectoryHeaderFooterLayoutItem[];
-
-  @ApiPropertyOptional({ example: 'https://example.com/logo.svg' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(2000)
-  logoUrl?: string;
 }

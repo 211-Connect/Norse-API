@@ -23,5 +23,7 @@ declare global {
 
   type User = {
     id: string;
+    /** The token's `email` claim, when present. */
+    email?: string;
   };
 }

@@ -27,3 +27,21 @@ export { PrintableDirectoryListResponseDto } from './response/printable-director
 export { PrintableDirectoryPreviewSectionResourceDto } from './response/printable-directory-preview-section-resource.response.dto';
 export { PrintableDirectoryPreviewSectionDto } from './response/printable-directory-preview-section.response.dto';
 export { PrintableDirectoryPreviewResponseDto } from './response/printable-directory-preview.response.dto';
+
+export {
+  PrintableDirectoryDeliveryPrintOptionsDto,
+  CreatePrintableDirectoryDeliveryDto,
+  UpdatePrintableDirectoryDeliveryDto,
+  DuePrintableDirectoryDeliveriesQueryDto,
+  ClaimPrintableDirectoryDeliveryDto,
+  ReportPrintableDirectoryDeliveryResultDto,
+} from './request/printable-directory-delivery.dto';
+export {
+  PrintableDirectoryDeliveryLastRunResponseDto,
+  PrintableDirectoryDeliveryResponseDto,
+  PrintableDirectoryDeliveryListResponseDto,
+  DuePrintableDirectoryDeliveryDirectoryDto,
+  DuePrintableDirectoryDeliveryResponseDto,
+  DuePrintableDirectoryDeliveryListResponseDto,
+  ClaimPrintableDirectoryDeliveryResponseDto,
+} from './response/printable-directory-delivery.response.dto';

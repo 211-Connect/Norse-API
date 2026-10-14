@@ -46,6 +46,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
+import { PrintableDirectoryDeliveryController } from './printable-directory/printable-directory-delivery.controller';
+import { PrintableDirectoryDeliveryInternalController } from './printable-directory/printable-directory-delivery-internal.controller';
 import { PrintableDirectoryModule } from './printable-directory/printable-directory.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ServiceModule } from './service/service.module';
@@ -133,6 +135,8 @@ export class AppModule implements NestModule {
       SuggestionController,
       PrintableDirectoryController,
       PrintableDirectoryPublicController,
+      PrintableDirectoryDeliveryController,
+      PrintableDirectoryDeliveryInternalController,
       OrganizationController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
       // CDN-cached route (cache keys on URL, ignoring Vary).
@@ -149,6 +153,7 @@ export class AppModule implements NestModule {
         SuggestionController,
         PrintableDirectoryController,
         PrintableDirectoryPublicController,
+        PrintableDirectoryDeliveryInternalController,
         OrganizationController,
       );
   }

@@ -15,7 +15,4 @@ export class PrintableDirectoryHeaderFooterResponseDto {
 
   @ApiPropertyOptional({ type: PrintableDirectoryLocalizedTextResponseDto })
   textLocalized?: PrintableDirectoryLocalizedTextResponseDto;
-
-  @ApiPropertyOptional({ type: String, nullable: true })
-  logoUrl?: string | null;
 }
