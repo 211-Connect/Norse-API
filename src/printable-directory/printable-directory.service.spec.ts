@@ -5,11 +5,9 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  PrintableDirectory,
-  PrintableDirectorySection,
-} from 'src/common/schemas/printable-directory.schema';
+import { PrintableDirectory } from 'src/common/schemas/printable-directory.schema';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
+import { PrintableDirectoryDelivery } from 'src/common/schemas/printable-directory-delivery.schema';
 import { SearchService } from 'src/search/search.service';
 import { ResourceService } from 'src/resource/resource.service';
 import { FavoriteListService } from 'src/favorite-list/favorite-list.service';
@@ -28,6 +26,10 @@ describe('PrintableDirectoryService', () => {
 
   const mockFavoriteListModel = {
     findOne: jest.fn(),
+  };
+
+  const mockDeliveryModel = {
+    deleteMany: jest.fn(),
   };
 
   const mockSearchService = {
@@ -61,6 +63,10 @@ describe('PrintableDirectoryService', () => {
           useValue: mockFavoriteListModel,
         },
         {
+          provide: getModelToken(PrintableDirectoryDelivery.name),
+          useValue: mockDeliveryModel,
+        },
+        {
           provide: SearchService,
           useValue: mockSearchService,
         },
@@ -79,12 +85,38 @@ describe('PrintableDirectoryService', () => {
     jest.clearAllMocks();
   });
 
+  describe('remove', () => {
+    it('deletes the directory and its scheduled deliveries', async () => {
+      mockPrintableDirectoryModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: 'dir-1' }),
+      });
+      mockPrintableDirectoryModel.deleteOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({}),
+      });
+      mockDeliveryModel.deleteMany.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({}),
+      });
+
+      await service.remove('dir-1', scope);
+
+      expect(mockPrintableDirectoryModel.deleteOne).toHaveBeenCalledWith({
+        _id: 'dir-1',
+      });
+      expect(mockDeliveryModel.deleteMany).toHaveBeenCalledWith({
+        tenantId: 'tenant-1',
+        directoryId: 'dir-1',
+      });
+    });
+  });
+
   const createDirectoryDoc = (
     overrides?: Partial<{
-      sections: PrintableDirectorySection[];
+      sections: any[];
       tenantId: string;
       ownerUserId: string;
       name: string;
+      primaryLanguage: string;
+      cover: Record<string, unknown>;
       defaultQueryConfig: {
         locationName?: string | null;
         coords?: { latitude: number; longitude: number } | null;
@@ -97,11 +129,12 @@ describe('PrintableDirectoryService', () => {
       tenantId: overrides?.tenantId ?? scope.tenantId,
       ownerUserId: overrides?.ownerUserId ?? scope.userId,
       name: overrides?.name ?? 'Directory',
+      primaryLanguage: overrides?.primaryLanguage ?? 'en',
       updatedBy: scope.userId,
       accessPolicy: 'private',
-      cover: {
-        titleLocalized: { values: {} },
-        descriptionLocalized: { values: {} },
+      cover: overrides?.cover ?? {
+        titleLocalized: { values: {}, autoTranslatedLocales: [] },
+        descriptionLocalized: { values: {}, autoTranslatedLocales: [] },
         primaryColor: null,
         layoutType: 'default',
         coverImageUrlFront: null,
@@ -109,15 +142,13 @@ describe('PrintableDirectoryService', () => {
       },
       header: {
         layout: [],
-        textLocalized: { values: {} },
-        logoUrl: null,
+        textLocalized: { values: {}, autoTranslatedLocales: [] },
       },
       footer: {
         layout: [],
-        textLocalized: { values: {} },
-        logoUrl: null,
+        textLocalized: { values: {}, autoTranslatedLocales: [] },
       },
-      resourceLayout: 'standard',
+      logoUrl: null,
       defaultQueryConfig: overrides?.defaultQueryConfig ?? null,
       sections: overrides?.sections ?? [],
       createdAt: new Date('2026-07-08T08:00:00.000Z'),
@@ -130,28 +161,253 @@ describe('PrintableDirectoryService', () => {
     const doc = createDirectoryDoc({ name: 'My Directory' });
     mockPrintableDirectoryModel.create.mockResolvedValue(doc);
 
-    const result = await service.create({ name: 'My Directory' }, scope);
+    const result = await service.create(
+      { name: 'My Directory', primaryLanguage: 'en' },
+      scope,
+    );
 
     expect(mockPrintableDirectoryModel.create).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: scope.tenantId,
         ownerUserId: scope.userId,
         name: 'My Directory',
+        primaryLanguage: 'en',
       }),
     );
     expect(result.name).toBe('My Directory');
+    expect(result.primaryLanguage).toBe('en');
   });
 
-  it('defaults isBookletLayout to false when creating a directory', async () => {
+  it('throws BadRequestException when trying to update primaryLanguage', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    await expect(
+      service.update('directory-1', { primaryLanguage: 'es' }, scope),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('stores and returns autoTranslatedLocales for localized fields', async () => {
     const doc = createDirectoryDoc({ name: 'My Directory' });
     mockPrintableDirectoryModel.create.mockResolvedValue(doc);
 
-    const result = await service.create({ name: 'My Directory' }, scope);
+    const result = await service.create(
+      { name: 'My Directory', primaryLanguage: 'en' },
+      scope,
+    );
+
+    expect(result.cover.titleLocalized.autoTranslatedLocales).toEqual([]);
+    expect(result.header.textLocalized.autoTranslatedLocales).toEqual([]);
+  });
+
+  it('updates autoTranslatedLocales alongside values', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.update(
+      'directory-1',
+      {
+        cover: {
+          titleLocalized: {
+            values: { en: 'Title', es: 'Título' },
+            autoTranslatedLocales: ['es'],
+          },
+        },
+      },
+      scope,
+    );
+
+    expect(doc.cover.titleLocalized.values).toEqual({
+      en: 'Title',
+      es: 'Título',
+    });
+    expect(doc.cover.titleLocalized.autoTranslatedLocales).toEqual(['es']);
+    expect(result.cover.titleLocalized.autoTranslatedLocales).toEqual(['es']);
+  });
+
+  it('preserves existing autoTranslatedLocales when values are updated without the list', async () => {
+    const doc = createDirectoryDoc();
+    doc.cover.titleLocalized = {
+      values: { en: 'Title' },
+      autoTranslatedLocales: ['es'],
+    };
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.update(
+      'directory-1',
+      {
+        cover: {
+          titleLocalized: { values: { en: 'Updated title' } },
+        },
+      },
+      scope,
+    );
+
+    expect(doc.cover.titleLocalized.values).toEqual({ en: 'Updated title' });
+    expect(doc.cover.titleLocalized.autoTranslatedLocales).toEqual(['es']);
+    expect(result.cover.titleLocalized.autoTranslatedLocales).toEqual(['es']);
+  });
+
+  it('derives locales from all localized fields and includes primaryLanguage', async () => {
+    const doc = createDirectoryDoc({
+      primaryLanguage: 'en',
+      cover: {
+        titleLocalized: {
+          values: { en: 'Title', es: 'Título' },
+          autoTranslatedLocales: ['es'],
+        },
+        descriptionLocalized: { values: {}, autoTranslatedLocales: [] },
+        primaryColor: null,
+        layoutType: 'default',
+        coverImageUrlFront: null,
+        coverImageUrlBack: null,
+      },
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: {
+            values: { en: '', fr: 'Titre' },
+            autoTranslatedLocales: [],
+          },
+          descriptionLocalized: { values: {}, autoTranslatedLocales: [] },
+          maxResources: 10,
+          sources: [],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.getById('directory-1', scope);
+
+    expect(result.cover.titleLocalized.values).toEqual({
+      en: 'Title',
+      es: 'Título',
+    });
+    // Empty-string values are not counted; primaryLanguage is always included.
+    expect(result.locales).toEqual(['en', 'es', 'fr']);
+  });
+
+  it('stores locales at creation, always including primaryLanguage', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.create.mockResolvedValue(doc);
+
+    await service.create(
+      { name: 'My Directory', primaryLanguage: 'es', locales: ['fr', ' en '] },
+      scope,
+    );
 
     expect(mockPrintableDirectoryModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({ isBookletLayout: false }),
+      expect.objectContaining({ locales: ['en', 'es', 'fr'] }),
     );
-    expect(result.isBookletLayout).toBe(false);
+  });
+
+  it('defaults stored locales to the primary language', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.create.mockResolvedValue(doc);
+
+    await service.create(
+      { name: 'My Directory', primaryLanguage: 'en' },
+      scope,
+    );
+
+    expect(mockPrintableDirectoryModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ locales: ['en'] }),
+    );
+  });
+
+  it('updates locales and returns the stored list instead of deriving it', async () => {
+    const doc = createDirectoryDoc({
+      cover: {
+        titleLocalized: {
+          values: { en: 'Title', de: 'Titel' },
+          autoTranslatedLocales: [],
+        },
+        descriptionLocalized: { values: {}, autoTranslatedLocales: [] },
+        primaryColor: null,
+        layoutType: 'default',
+        coverImageUrlFront: null,
+        coverImageUrlBack: null,
+      },
+    });
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.update(
+      'directory-1',
+      { locales: ['es'] },
+      scope,
+    );
+
+    expect(doc.locales).toEqual(['en', 'es']);
+    // 'de' has content but isn't offered; 'es' is offered without content yet.
+    expect(result.locales).toEqual(['en', 'es']);
+  });
+
+  it('stores one directory-level logo and clears it with an empty string', async () => {
+    const doc = createDirectoryDoc();
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const withLogo = await service.update(
+      'directory-1',
+      { logoUrl: 'https://example.com/logo.png' },
+      scope,
+    );
+    expect(withLogo.logoUrl).toBe('https://example.com/logo.png');
+
+    const cleared = await service.update('directory-1', { logoUrl: '' }, scope);
+    expect(doc.logoUrl).toBeNull();
+    expect(cleared.logoUrl).toBeNull();
+  });
+
+  it('updates section autoTranslatedLocales alongside values', async () => {
+    const doc = createDirectoryDoc({
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: { values: { en: 'A' }, autoTranslatedLocales: [] },
+          descriptionLocalized: {
+            values: { en: 'Desc' },
+            autoTranslatedLocales: [],
+          },
+          maxResources: 10,
+          sources: [],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(doc),
+    });
+
+    const result = await service.updateSection(
+      'directory-1',
+      'section-1',
+      {
+        headingLocalized: {
+          values: { en: 'A', es: 'A es' },
+          autoTranslatedLocales: ['es'],
+        },
+      },
+      scope,
+    );
+
+    expect(result.sections[0].headingLocalized.autoTranslatedLocales).toEqual([
+      'es',
+    ]);
   });
 
   it('throws ConflictException when creating a directory with a slug already used in the tenant', async () => {
@@ -162,7 +418,14 @@ describe('PrintableDirectoryService', () => {
     mockPrintableDirectoryModel.create.mockRejectedValue(duplicateError);
 
     await expect(
-      service.create({ name: 'My Directory', slug: 'shelter-guide' }, scope),
+      service.create(
+        {
+          name: 'My Directory',
+          primaryLanguage: 'en',
+          slug: 'shelter-guide',
+        },
+        scope,
+      ),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -180,35 +443,6 @@ describe('PrintableDirectoryService', () => {
     await expect(
       service.update('directory-1', { slug: 'shelter-guide' }, scope),
     ).rejects.toThrow(ConflictException);
-  });
-
-  it('defaults isBookletLayout to false for existing directories missing the field in MongoDB', async () => {
-    const doc = createDirectoryDoc();
-    delete doc.isBookletLayout;
-    mockPrintableDirectoryModel.findOne.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(doc),
-    });
-
-    const result = await service.getById('directory-1', scope);
-
-    expect(result.isBookletLayout).toBe(false);
-  });
-
-  it('updates isBookletLayout when provided', async () => {
-    const doc = createDirectoryDoc();
-    mockPrintableDirectoryModel.findOne.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(doc),
-    });
-
-    const result = await service.update(
-      'directory-1',
-      { isBookletLayout: true },
-      scope,
-    );
-
-    expect(doc.isBookletLayout).toBe(true);
-    expect(doc.save).toHaveBeenCalled();
-    expect(result.isBookletLayout).toBe(true);
   });
 
   it('lists directories with pagination for owner scope', async () => {
@@ -412,6 +646,47 @@ describe('PrintableDirectoryService', () => {
     expect(result.sections[0].maxResources).toBe(2);
   });
 
+  it('resolves section text in the requested locale, falling back to the primary language', async () => {
+    const directory = createDirectoryDoc({
+      primaryLanguage: 'es',
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: {
+            values: { es: 'Encabezado', en: 'Heading', ko: '' },
+          },
+          descriptionLocalized: { values: { es: '', en: 'English only' } },
+          maxResources: 10,
+          sources: [],
+        },
+      ],
+    });
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(directory),
+    });
+
+    const english = await service.preview(
+      'directory-1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+    expect(english.sections[0].resolvedHeading).toBe('Heading');
+    expect(english.sections[0].resolvedDescription).toBe('English only');
+
+    // A blank Korean heading falls back to Spanish (primary), not English;
+    // with no primary description, there is none.
+    const korean = await service.preview(
+      'directory-1',
+      'ko',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'ko' },
+      scope,
+    );
+    expect(korean.sections[0].resolvedHeading).toBe('Encabezado');
+    expect(korean.sections[0].resolvedDescription).toBe('');
+  });
+
   it('uses directory query defaults when query source params miss coords and distance', async () => {
     const directory = createDirectoryDoc({
       defaultQueryConfig: {
@@ -603,7 +878,7 @@ describe('PrintableDirectoryService', () => {
     });
   });
 
-  it('fails preview when resource resolution has errors', async () => {
+  it('continues preview when resource resolution reports errors but keeps the missing resource out of the result', async () => {
     const directory = createDirectoryDoc({
       sections: [
         {
@@ -636,14 +911,14 @@ describe('PrintableDirectoryService', () => {
       meta: { requested: 1, successful: 0, failed: 1 },
     });
 
-    await expect(
-      service.preview(
-        'directory-1',
-        'en',
-        { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
-        scope,
-      ),
-    ).rejects.toThrow(BadRequestException);
+    const result = await service.preview(
+      'directory-1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+
+    expect(result.sections[0].resources).toEqual([]);
   });
 
   describe('previewBySlug', () => {

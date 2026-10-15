@@ -74,7 +74,11 @@ describe('PrintableDirectoryController', () => {
     mockService.update.mockResolvedValue({ id: 'directory-1' });
     mockService.remove.mockResolvedValue(undefined);
 
-    await controller.create({ name: 'Dir' }, request, user);
+    await controller.create(
+      { name: 'Dir', primaryLanguage: 'en' },
+      request,
+      user,
+    );
     await controller.getById('directory-1', request, user);
     await controller.update('directory-1', { name: 'Dir 2' }, request, user);
     const removeResult = await controller.remove('directory-1', request, user);

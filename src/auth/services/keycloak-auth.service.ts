@@ -139,6 +139,10 @@ export class KeycloakAuthService {
       // Populate req.user with details from the verified token.
       request.user = {
         id: userId,
+        email:
+          typeof verifiedPayload.email === 'string'
+            ? verifiedPayload.email
+            : undefined,
       };
 
       this.logger.log(
