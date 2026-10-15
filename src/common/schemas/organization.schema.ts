@@ -131,3 +131,11 @@ export class Organization {
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);
+
+// Serves GET /organization/service-at-location/:salId (ISS-2096), which looks
+// an org up by tenant + service@location id. Mongoose builds it on startup
+// (autoIndex), like the single-field indexes above.
+OrganizationSchema.index({
+  tenant_id: 1,
+  'services.SERVICE_AT_LOCATIONS.ID': 1,
+});

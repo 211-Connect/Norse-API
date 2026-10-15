@@ -3,6 +3,7 @@ import { buildAirsTreeFromPathCounts, normalizeAirsCode } from './airs';
 import { ServiceSearchService } from './service-search.service';
 import { RegionService } from '../../region/internal';
 import { WithholdingRef, WithholdingService } from './withholding.service';
+import { TaxonomyNameService } from './taxonomy-name.service';
 
 /**
  * Parity with ServiceNet's Mongo record source (`sharing-mongo/src/record-source.ts`)
@@ -417,20 +418,24 @@ function evaluateAggregations(docs: Doc[], request: Record<string, any>) {
 
 function serviceOver(docs: Doc[], withheld: Record<string, string[]> = {}) {
   const search = jest.fn(async (request: Record<string, any>) =>
-    request.aggs
-      ? evaluateAggregations(docs, request)
-      : evaluateSearch(docs, request),
+    request.index === 'taxonomy_terms'
+      ? { hits: { hits: [] } }
+      : request.aggs
+        ? evaluateAggregations(docs, request)
+        : evaluateSearch(docs, request),
   );
   const withholdings = {
     resolve: async (refs: WithholdingRef[]) =>
       refs.map((r) => ({ ...r, serviceIds: withheld[r.ownerWriterId] ?? [] })),
   } as unknown as WithholdingService;
+  const elasticsearch = { search } as unknown as ElasticsearchService;
   return {
     search,
     service: new ServiceSearchService(
-      { search } as unknown as ElasticsearchService,
+      elasticsearch,
       { assertExist: async () => undefined } as unknown as RegionService,
       withholdings,
+      new TaxonomyNameService(elasticsearch),
     ),
   };
 }
@@ -531,10 +536,14 @@ describe('services search parity with the Mongo record source', () => {
   it.each(WRITER_SETS.map((writers) => ({ writers })))(
     'returns the same facet options and counts: writers=$writers',
     async ({ writers }) => {
+      const mongo = mongoListFilterOptions(writers);
       await expect(
         service.facets({ resourceWriterIds: writers }),
       ).resolves.toEqual({
-        ...mongoListFilterOptions(writers),
+        ...mongo,
+        // Mongo named a node by its code; ES names it from the writers' term
+        // reference (ISS-2165), empty here.
+        taxonomy: mongo.taxonomy.map((n) => ({ ...n, name: null })),
         appliedExclusions: { serviceIds: [], rules: [], withholdings: [] },
       });
     },

@@ -215,6 +215,9 @@ export class TransformedResourceOpenApiDto {
   @ApiPropertyOptional()
   organizationName?: string;
 
+  @ApiPropertyOptional()
+  organizationAlternateName?: string;
+
   @ApiPropertyOptional({ type: ResourceLocationOpenApiDto })
   location?: ResourceLocationOpenApiDto;
 
