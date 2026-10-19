@@ -363,7 +363,8 @@ export class AnalyticsController {
     summary: 'Get detailed search event data for CSV export',
     description:
       'Returns search events with timestamps, coordinates, ZIP codes, and ' +
-      'anonymized unique user/session identifiers.',
+      'anonymized unique user/session identifiers. Includes search_text, ' +
+      'search_taxonomy, and search_hybrid events.',
   })
   @ApiResponse({
     status: 200,

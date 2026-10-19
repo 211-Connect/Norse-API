@@ -41,6 +41,7 @@ import type {
   ResourceMetric,
   Searches,
   SearchHits,
+  SearchQueryType,
   Stats,
   UmamiBatchResponse,
   UmamiEventDataValue,
@@ -508,14 +509,15 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const eventTypeByName: Record<string, 'text' | 'taxonomy'> = {
+        const eventTypeByName: Record<SearchEventName, SearchQueryType> = {
           search_text: 'text',
           search_taxonomy: 'taxonomy',
+          search_hybrid: 'hybrid',
         };
 
         const taggedRows: Array<{
           row: UmamiEventDataPivotRow;
-          queryType: 'text' | 'taxonomy';
+          queryType: SearchQueryType;
         }> = [];
 
         for (const [eventName, queryType] of Object.entries(eventTypeByName)) {
@@ -950,7 +952,7 @@ export class UmamiAnalyticsService {
 
   private async toExportRow(
     row: UmamiEventDataPivotRow,
-    queryType: 'text' | 'taxonomy',
+    queryType: SearchQueryType,
   ): Promise<SearchEventExportRow | null> {
     try {
       const queryLabel = this.getPivotPropertyValue(row, 'queryLabel');
