@@ -290,12 +290,57 @@ describe('UmamiAnalyticsService', () => {
       });
 
       expect(result.totalCount).toBe(400);
-      expect(result.data.filter((row) => row.queryType === 'text')).toHaveLength(
-        250,
-      );
+      expect(
+        result.data.filter((row) => row.queryType === 'text'),
+      ).toHaveLength(250);
       expect(
         result.data.filter((row) => row.queryType === 'taxonomy'),
       ).toHaveLength(150);
+    });
+
+    it('includes hybrid search events alongside text and taxonomy events', async () => {
+      const eventCounts: Record<string, number> = {
+        search_text: 2,
+        search_taxonomy: 1,
+        search_hybrid: 3,
+      };
+
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string },
+        ) => [
+          {
+            count: eventCounts[params.eventName],
+            page: 1,
+            pageSize: 1000,
+            data: Array.from(
+              { length: eventCounts[params.eventName] },
+              (_, index) =>
+                buildRow({ queryLabel: `${params.eventName}-${index}` }),
+            ),
+          },
+        ],
+      );
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.totalCount).toBe(6);
+      expect(
+        result.data.filter((row) => row.queryType === 'hybrid'),
+      ).toHaveLength(3);
+      expect(result.data).toContainEqual(
+        expect.objectContaining({
+          queryLabel: 'search_hybrid-0',
+          queryType: 'hybrid',
+        }),
+      );
     });
   });
 });
