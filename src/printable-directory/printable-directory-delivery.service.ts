@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import {
   PRINTABLE_DIRECTORY_MAX_DELIVERIES,
   PrintableDirectoryDelivery,
@@ -231,6 +231,7 @@ export class PrintableDirectoryDeliveryService {
     date: string,
   ): Promise<ClaimPrintableDirectoryDeliveryResponseDto> {
     this.parseCalendarDate(date);
+    this.assertDeliveryId(deliveryId);
 
     const claimed = await this.deliveryModel
       .findOneAndUpdate(
@@ -247,6 +248,7 @@ export class PrintableDirectoryDeliveryService {
     deliveryId: string,
     payload: ReportPrintableDirectoryDeliveryResultDto,
   ): Promise<PrintableDirectoryDeliveryResponseDto> {
+    this.assertDeliveryId(deliveryId);
     const delivery = await this.deliveryModel
       .findOneAndUpdate(
         { _id: deliveryId, tenantId },
@@ -277,6 +279,7 @@ export class PrintableDirectoryDeliveryService {
     locale: string | undefined,
     headers: HeadersDto,
   ): Promise<PrintableDirectoryPreviewResponseDto> {
+    this.assertDeliveryId(deliveryId);
     const delivery = await this.deliveryModel
       .findOne({ _id: deliveryId, tenantId })
       .exec();
@@ -298,6 +301,7 @@ export class PrintableDirectoryDeliveryService {
     deliveryId: string,
     tenantId: string,
   ): Promise<PrintableDirectoryDeliveryDocument> {
+    this.assertDeliveryId(deliveryId);
     const delivery = await this.deliveryModel
       .findOne({ _id: deliveryId, tenantId, directoryId })
       .exec();
@@ -307,6 +311,13 @@ export class PrintableDirectoryDeliveryService {
     }
 
     return delivery;
+  }
+
+  /** A malformed id can't match anything: 404, not a Mongoose CastError. */
+  private assertDeliveryId(deliveryId: string): void {
+    if (!isValidObjectId(deliveryId)) {
+      throw new NotFoundException('Scheduled delivery not found');
+    }
   }
 
   private normalizeSchedule(

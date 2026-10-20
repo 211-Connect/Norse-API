@@ -88,7 +88,7 @@ describe('PrintableDirectoryService', () => {
   describe('remove', () => {
     it('deletes the directory and its scheduled deliveries', async () => {
       mockPrintableDirectoryModel.findOne.mockReturnValue({
-        exec: jest.fn().mockResolvedValue({ _id: 'dir-1' }),
+        exec: jest.fn().mockResolvedValue({ _id: '6ad0dcb938dccb2e7af9f9d1' }),
       });
       mockPrintableDirectoryModel.deleteOne.mockReturnValue({
         exec: jest.fn().mockResolvedValue({}),
@@ -97,14 +97,14 @@ describe('PrintableDirectoryService', () => {
         exec: jest.fn().mockResolvedValue({}),
       });
 
-      await service.remove('dir-1', scope);
+      await service.remove('6ad0dcb938dccb2e7af9f9d1', scope);
 
       expect(mockPrintableDirectoryModel.deleteOne).toHaveBeenCalledWith({
-        _id: 'dir-1',
+        _id: '6ad0dcb938dccb2e7af9f9d1',
       });
       expect(mockDeliveryModel.deleteMany).toHaveBeenCalledWith({
         tenantId: 'tenant-1',
-        directoryId: 'dir-1',
+        directoryId: '6ad0dcb938dccb2e7af9f9d1',
       });
     });
   });
@@ -125,7 +125,7 @@ describe('PrintableDirectoryService', () => {
     }>,
   ) => {
     return {
-      _id: 'directory-1',
+      _id: '6ad0dcb938dccb2e7af9f9c1',
       tenantId: overrides?.tenantId ?? scope.tenantId,
       ownerUserId: overrides?.ownerUserId ?? scope.userId,
       name: overrides?.name ?? 'Directory',
@@ -185,7 +185,11 @@ describe('PrintableDirectoryService', () => {
     });
 
     await expect(
-      service.update('directory-1', { primaryLanguage: 'es' }, scope),
+      service.update(
+        '6ad0dcb938dccb2e7af9f9c1',
+        { primaryLanguage: 'es' },
+        scope,
+      ),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -209,7 +213,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.update(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       {
         cover: {
           titleLocalized: {
@@ -240,7 +244,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.update(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       {
         cover: {
           titleLocalized: { values: { en: 'Updated title' } },
@@ -287,7 +291,7 @@ describe('PrintableDirectoryService', () => {
       exec: jest.fn().mockResolvedValue(doc),
     });
 
-    const result = await service.getById('directory-1', scope);
+    const result = await service.getById('6ad0dcb938dccb2e7af9f9c1', scope);
 
     expect(result.cover.titleLocalized.values).toEqual({
       en: 'Title',
@@ -344,7 +348,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.update(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       { locales: ['es'] },
       scope,
     );
@@ -361,13 +365,17 @@ describe('PrintableDirectoryService', () => {
     });
 
     const withLogo = await service.update(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       { logoUrl: 'https://example.com/logo.png' },
       scope,
     );
     expect(withLogo.logoUrl).toBe('https://example.com/logo.png');
 
-    const cleared = await service.update('directory-1', { logoUrl: '' }, scope);
+    const cleared = await service.update(
+      '6ad0dcb938dccb2e7af9f9c1',
+      { logoUrl: '' },
+      scope,
+    );
     expect(doc.logoUrl).toBeNull();
     expect(cleared.logoUrl).toBeNull();
   });
@@ -394,7 +402,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.updateSection(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'section-1',
       {
         headingLocalized: {
@@ -441,7 +449,11 @@ describe('PrintableDirectoryService', () => {
     });
 
     await expect(
-      service.update('directory-1', { slug: 'shelter-guide' }, scope),
+      service.update(
+        '6ad0dcb938dccb2e7af9f9c1',
+        { slug: 'shelter-guide' },
+        scope,
+      ),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -476,11 +488,11 @@ describe('PrintableDirectoryService', () => {
       exec: jest.fn().mockResolvedValue(null),
     });
 
-    await expect(service.getById('directory-1', scope)).rejects.toThrow(
-      NotFoundException,
-    );
+    await expect(
+      service.getById('6ad0dcb938dccb2e7af9f9c1', scope),
+    ).rejects.toThrow(NotFoundException);
     expect(mockPrintableDirectoryModel.findOne).toHaveBeenCalledWith({
-      _id: 'directory-1',
+      _id: '6ad0dcb938dccb2e7af9f9c1',
       tenantId: scope.tenantId,
       $or: [
         { ownerUserId: scope.userId },
@@ -516,7 +528,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.reorderSections(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       { sectionIds: ['b', 'a'] },
       scope,
     );
@@ -548,7 +560,7 @@ describe('PrintableDirectoryService', () => {
 
     await expect(
       service.reorderSections(
-        'directory-1',
+        '6ad0dcb938dccb2e7af9f9c1',
         { sectionIds: ['missing'] },
         scope,
       ),
@@ -633,7 +645,7 @@ describe('PrintableDirectoryService', () => {
       });
 
     const result = await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,
@@ -667,7 +679,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const english = await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,
@@ -678,7 +690,7 @@ describe('PrintableDirectoryService', () => {
     // A blank Korean heading falls back to Spanish (primary), not English;
     // with no primary description, there is none.
     const korean = await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'ko',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'ko' },
       scope,
@@ -738,7 +750,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,
@@ -807,7 +819,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,
@@ -865,7 +877,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,
@@ -912,7 +924,7 @@ describe('PrintableDirectoryService', () => {
     });
 
     const result = await service.preview(
-      'directory-1',
+      '6ad0dcb938dccb2e7af9f9c1',
       'en',
       { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
       scope,

@@ -8,7 +8,7 @@ export class Location {
   @Prop()
   type: 'Point';
 
-  @Prop(Number)
+  @Prop({ type: [Number] })
   coordinates: number[];
 }
 
