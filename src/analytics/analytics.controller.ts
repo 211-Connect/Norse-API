@@ -67,11 +67,6 @@ import { ANALYTICS_CDN_TTL_OPEN_RANGE_S } from './internal/constants';
   schema: { default: '1' },
 })
 @ApiHeader({
-  name: TENANT_ID_HEADER,
-  description: 'Tenant ID',
-  required: true,
-})
-@ApiHeader({
   name: ANALYTICS_API_KEY_HEADER,
   description: 'Analytics API key for the tenant',
   required: true,
