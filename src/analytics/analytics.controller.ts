@@ -141,7 +141,8 @@ export class AnalyticsController {
   @Get('pageviews')
   @Version('1')
   @ApiOperation({
-    summary: 'Get pageview metrics per day',
+    summary:
+      'Get pageview metrics per day for date ranges of up to 8 months. For longer date ranges, aggregate the data by month.',
   })
   @ApiResponse({
     status: 200,
