@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import { randomUUID } from 'crypto';
 import {
   PRINTABLE_DIRECTORY_ACCESS_POLICIES,
@@ -287,7 +287,7 @@ export class PrintableDirectoryService {
     ids: string[],
   ): Promise<Map<string, PrintableDirectorySummary>> {
     const directories = await this.printableDirectoryModel
-      .find({ _id: { $in: ids }, tenantId })
+      .find({ _id: { $in: ids.filter((id) => isValidObjectId(id)) }, tenantId })
       .exec();
 
     return new Map(
@@ -308,6 +308,9 @@ export class PrintableDirectoryService {
     locale: string,
     headers: HeadersDto,
   ): Promise<PrintableDirectoryPreviewResponseDto> {
+    if (!isValidObjectId(directoryId)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({ _id: directoryId, tenantId })
       .exec();
@@ -1020,6 +1023,9 @@ export class PrintableDirectoryService {
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
@@ -1039,6 +1045,9 @@ export class PrintableDirectoryService {
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
@@ -1061,6 +1070,9 @@ export class PrintableDirectoryService {
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
