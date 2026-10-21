@@ -4,6 +4,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ResourceService } from './resource.service';
 import { Resource } from 'src/common/schemas/resource.schema';
 import { Redirect } from 'src/common/schemas/redirect.schema';
+import { ResourceTitleSnapshot } from 'src/common/schemas/resource-title-snapshot.schema';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 
 describe('ResourceService', () => {
@@ -21,6 +22,12 @@ describe('ResourceService', () => {
 
   const mockRedirectModel = {
     findById: jest.fn(),
+  };
+
+  const snapshotFindExec = jest.fn();
+  const mockTitleSnapshotModel = {
+    bulkWrite: jest.fn().mockResolvedValue({}),
+    find: jest.fn(() => ({ lean: () => ({ exec: snapshotFindExec }) })),
   };
 
   const tenantId = 'tenant-abc';
@@ -61,11 +68,16 @@ describe('ResourceService', () => {
           provide: getModelToken(Redirect.name),
           useValue: mockRedirectModel,
         },
+        {
+          provide: getModelToken(ResourceTitleSnapshot.name),
+          useValue: mockTitleSnapshotModel,
+        },
       ],
     }).compile();
 
     service = module.get<ResourceService>(ResourceService);
     jest.clearAllMocks();
+    snapshotFindExec.mockResolvedValue([]);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'debug').mockImplementation(() => undefined);
   });
@@ -188,6 +200,27 @@ describe('ResourceService', () => {
         expect.any(Object),
       ]);
     });
+
+    it('seeds a title snapshot for the loaded resource', async () => {
+      aggregateExec.mockResolvedValueOnce([
+        buildResource({ originalId: 'orig-1' }),
+      ]);
+
+      await service.findByOriginalId('orig-1', { headers });
+
+      expect(mockTitleSnapshotModel.bulkWrite).toHaveBeenCalledWith(
+        [
+          {
+            updateOne: {
+              filter: { tenant_id: tenantId, serviceAtLocationId: salId },
+              update: { $set: { displayName: 'Test Resource' } },
+              upsert: true,
+            },
+          },
+        ],
+        { ordered: false },
+      );
+    });
   });
 
   describe('findManyByIds', () => {
@@ -270,32 +303,180 @@ describe('ResourceService', () => {
   });
 
   describe('findTitlesByIds', () => {
-    it('returns titles from primary lookup', async () => {
+    it('resolves a serviceAtLocationId with a single live query', async () => {
       mockFindExec.mockResolvedValueOnce([
-        { serviceAtLocationId: salId, displayName: 'Primary Title' },
+        {
+          _id: 'mongo-1',
+          serviceAtLocationId: salId,
+          displayName: 'Primary Title',
+          tenant_id: tenantId,
+        },
       ]);
 
       const result = await service.findTitlesByIds([salId], tenantId);
 
+      expect(mockFind).toHaveBeenCalledTimes(1);
       expect(mockFind).toHaveBeenCalledWith(
-        { tenant_id: tenantId, serviceAtLocationId: { $in: [salId] } },
-        { serviceAtLocationId: 1, displayName: 1 },
+        {
+          tenant_id: tenantId,
+          $or: [
+            { serviceAtLocationId: { $in: [salId] } },
+            { _id: { $in: [salId] } },
+          ],
+        },
+        { _id: 1, serviceAtLocationId: 1, displayName: 1, tenant_id: 1 },
       );
       expect(result).toEqual([{ id: salId, displayName: 'Primary Title' }]);
     });
 
-    it('falls back to _id lookup for missing primary ids', async () => {
-      mockFindExec
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ _id: salId, displayName: 'Fallback Title' }]);
+    it('resolves a legacy mongo _id in the same query and logs the fallback', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        { _id: salId, displayName: 'Fallback Title', tenant_id: tenantId },
+      ]);
 
       const result = await service.findTitlesByIds([salId], tenantId);
 
-      expect(mockFind).toHaveBeenCalledTimes(2);
+      expect(mockFind).toHaveBeenCalledTimes(1);
       expect(service['logger'].warn).toHaveBeenCalledWith(
         expect.stringContaining('"handler":"findTitlesByIds"'),
       );
       expect(result).toEqual([{ id: salId, displayName: 'Fallback Title' }]);
+    });
+
+    it('resolves both id forms from one document', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        {
+          _id: 'mongo-1',
+          serviceAtLocationId: salId,
+          displayName: 'Both Ids',
+          tenant_id: tenantId,
+        },
+      ]);
+
+      const result = await service.findTitlesByIds(
+        [salId, 'mongo-1'],
+        tenantId,
+      );
+
+      expect(result).toEqual([
+        { id: salId, displayName: 'Both Ids' },
+        { id: 'mongo-1', displayName: 'Both Ids' },
+      ]);
+    });
+
+    it('does not resolve an id superseded by a republish', async () => {
+      mockFindExec.mockResolvedValueOnce([]);
+
+      const result = await service.findTitlesByIds(
+        ['sal-superseded'],
+        tenantId,
+      );
+
+      expect(result).toEqual([]);
+    });
+
+    it('snapshots resolved titles for later lookups', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        {
+          serviceAtLocationId: salId,
+          displayName: 'Primary Title',
+          tenant_id: tenantId,
+        },
+      ]);
+
+      await service.findTitlesByIds([salId], tenantId);
+
+      expect(mockTitleSnapshotModel.bulkWrite).toHaveBeenCalledWith(
+        [
+          {
+            updateOne: {
+              filter: { tenant_id: tenantId, serviceAtLocationId: salId },
+              update: { $set: { displayName: 'Primary Title' } },
+              upsert: true,
+            },
+          },
+        ],
+        { ordered: false },
+      );
+    });
+
+    it('does not snapshot a resource that has no serviceAtLocationId', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        { _id: salId, displayName: 'Legacy Title', tenant_id: tenantId },
+      ]);
+
+      const result = await service.findTitlesByIds([salId], tenantId);
+
+      expect(result).toEqual([{ id: salId, displayName: 'Legacy Title' }]);
+      expect(mockTitleSnapshotModel.bulkWrite).not.toHaveBeenCalled();
+    });
+
+    it('snapshots the serviceAtLocationId when a legacy _id resolves to a resource that has one', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        {
+          _id: 'legacy-mongo-id',
+          serviceAtLocationId: salId,
+          displayName: 'Legacy Title',
+          tenant_id: tenantId,
+        },
+      ]);
+
+      await service.findTitlesByIds(['legacy-mongo-id'], tenantId);
+
+      expect(mockTitleSnapshotModel.bulkWrite).toHaveBeenCalledWith(
+        [
+          {
+            updateOne: {
+              filter: { tenant_id: tenantId, serviceAtLocationId: salId },
+              update: { $set: { displayName: 'Legacy Title' } },
+              upsert: true,
+            },
+          },
+        ],
+        { ordered: false },
+      );
+    });
+
+    it('does not fail the lookup when snapshotting fails', async () => {
+      mockFindExec.mockResolvedValueOnce([
+        {
+          serviceAtLocationId: salId,
+          displayName: 'Primary Title',
+          tenant_id: tenantId,
+        },
+      ]);
+      mockTitleSnapshotModel.bulkWrite.mockRejectedValueOnce(
+        new Error('mongo down'),
+      );
+
+      const result = await service.findTitlesByIds([salId], tenantId);
+
+      expect(result).toEqual([{ id: salId, displayName: 'Primary Title' }]);
+    });
+
+    it('falls back to snapshots for resources that no longer exist', async () => {
+      mockFindExec.mockResolvedValueOnce([]);
+      snapshotFindExec.mockResolvedValueOnce([
+        { serviceAtLocationId: salId, displayName: 'Last Known Title' },
+      ]);
+
+      const result = await service.findTitlesByIds([salId], tenantId);
+
+      expect(snapshotFindExec).toHaveBeenCalledTimes(1);
+      expect(mockTitleSnapshotModel.find).toHaveBeenCalledWith(
+        { tenant_id: tenantId, serviceAtLocationId: { $in: [salId] } },
+        { serviceAtLocationId: 1, displayName: 1 },
+      );
+      expect(result).toEqual([{ id: salId, displayName: 'Last Known Title' }]);
+      expect(mockTitleSnapshotModel.bulkWrite).not.toHaveBeenCalled();
+    });
+
+    it('omits ids that cannot be resolved by any path', async () => {
+      mockFindExec.mockResolvedValueOnce([]);
+
+      const result = await service.findTitlesByIds(['gone-id'], tenantId);
+
+      expect(result).toEqual([]);
     });
   });
 

@@ -9,6 +9,7 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Resource } from 'src/common/schemas/resource.schema';
 import { Model, FilterQuery } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
+import { ResourceTitleSnapshot } from 'src/common/schemas/resource-title-snapshot.schema';
 import {
   TransformedResource,
   ResourceBatchResponse,
@@ -25,6 +26,12 @@ interface FallbackLookupLogContext {
   lookupPath: Exclude<LookupPath, 'primary'>;
 }
 
+interface ResourceTitleFields {
+  serviceAtLocationId?: string | null;
+  tenant_id?: string;
+  displayName?: string | null;
+}
+
 type AggregatedResource = Omit<Resource, 'translations'> & {
   _id: string;
   serviceAtLocationId?: string;
@@ -38,6 +45,8 @@ export class ResourceService {
   constructor(
     @InjectModel(Resource.name) private resourceModel: Model<Resource>,
     @InjectModel(Redirect.name) private redirectModel: Model<Redirect>,
+    @InjectModel(ResourceTitleSnapshot.name)
+    private readonly titleSnapshotModel: Model<ResourceTitleSnapshot>,
   ) {
     this.logger = new Logger(ResourceService.name);
   }
@@ -62,58 +71,146 @@ export class ResourceService {
     );
   }
 
+  /**
+   * Resolves display names for the given resource ids.
+   *
+   * Two tiers, in order:
+   *   1. live: one tenant-scoped lookup covering both id forms —
+   *      `serviceAtLocationId`, and the legacy mongo `_id`. Every hit is also
+   *      snapshotted (best-effort, keyed by the resource's own
+   *      `serviceAtLocationId`) so tier 2 keeps working once it is gone.
+   *   2. snapshot: the resource is no longer in `Resource` at all (deleted or
+   *      no longer ingested) — use the last-known title recorded while it was
+   *      still resolvable, so historical analytics do not show a bare id.
+   *
+   * Ids that resolve by neither are omitted; callers decide how to display
+   * those (analytics falls back to the raw id). See
+   * docs/resource-title-snapshots.md.
+   */
   async findTitlesByIds(
     ids: string[],
     tenantId?: string,
   ): Promise<{ id: string; displayName: string }[]> {
-    const uniqueIds = [...new Set(ids)];
+    const requestedIds = new Set(ids);
+    const uniqueIds = [...requestedIds];
     const titles: { id: string; displayName: string }[] = [];
     const foundIds = new Set<string>();
+    const snapshots: ResourceTitleFields[] = [];
     const tenantFilter = tenantId ? { tenant_id: tenantId } : {};
 
-    const primaryResults = await this.resourceModel
+    const resources = await this.resourceModel
       .find(
-        { ...tenantFilter, serviceAtLocationId: { $in: uniqueIds } },
-        { serviceAtLocationId: 1, displayName: 1 },
+        {
+          ...tenantFilter,
+          $or: [
+            { serviceAtLocationId: { $in: uniqueIds } },
+            { _id: { $in: uniqueIds } },
+          ],
+        },
+        { _id: 1, serviceAtLocationId: 1, displayName: 1, tenant_id: 1 },
       )
       .lean()
       .exec();
 
-    for (const resource of primaryResults) {
-      const requestedId = resource.serviceAtLocationId;
-      foundIds.add(requestedId);
-      titles.push({
-        id: requestedId,
-        displayName: resource.displayName,
-      });
+    for (const resource of resources) {
+      // One document can satisfy its serviceAtLocationId, its legacy _id, or
+      // both, so resolve every requested id it matches.
+      const matchedIds = [resource.serviceAtLocationId, resource._id].filter(
+        (id): id is string => !!id && requestedIds.has(id),
+      );
+
+      for (const id of matchedIds) {
+        if (foundIds.has(id)) continue;
+
+        if (id !== resource.serviceAtLocationId) {
+          this.logFallbackLookup({
+            tenantId,
+            serviceAtLocationId: id,
+            mongoId: resource._id,
+            handler: 'findTitlesByIds',
+            lookupPath: 'fallback',
+          });
+        }
+
+        foundIds.add(id);
+        titles.push({ id, displayName: resource.displayName });
+      }
+
+      // Snapshotted under the resource's own serviceAtLocationId, never a
+      // requested legacy _id: those are answered by the live lookup or not at
+      // all.
+      snapshots.push(resource);
     }
 
-    const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-    if (missingIds.length > 0) {
-      const fallbackResults = await this.resourceModel
+    const unresolvedIds = uniqueIds.filter((id) => !foundIds.has(id));
+    if (unresolvedIds.length > 0) {
+      const snapshotResults = await this.titleSnapshotModel
         .find(
-          { tenant_id: tenantId, _id: { $in: missingIds } },
-          { _id: 1, displayName: 1 },
+          { ...tenantFilter, serviceAtLocationId: { $in: unresolvedIds } },
+          { serviceAtLocationId: 1, displayName: 1 },
         )
         .lean()
         .exec();
 
-      for (const resource of fallbackResults) {
-        this.logFallbackLookup({
-          tenantId,
-          serviceAtLocationId: resource._id,
-          mongoId: resource._id,
-          handler: 'findTitlesByIds',
-          lookupPath: 'fallback',
-        });
+      for (const snapshot of snapshotResults) {
+        const requestedId = snapshot.serviceAtLocationId;
+        if (foundIds.has(requestedId)) continue;
+        foundIds.add(requestedId);
         titles.push({
-          id: resource._id,
-          displayName: resource.displayName,
+          id: requestedId,
+          displayName: snapshot.displayName,
         });
       }
     }
 
+    this.recordTitleSnapshots(snapshots);
+
     return titles;
+  }
+
+  /**
+   * Best-effort persistence of resolved resource titles, so historical
+   * analytics can still label a resource after it leaves the `Resource`
+   * collection. Never awaited on a read path and never throws — a failed
+   * snapshot must not fail the request.
+   *
+   * Rows are keyed by the resource's own `serviceAtLocationId`, so entries
+   * without one (a resource that only exists under a mongo `_id`) are skipped:
+   * those ids are answered by the live lookup instead.
+   */
+  private recordTitleSnapshots(entries: ResourceTitleFields[]): void {
+    if (entries.length === 0) return;
+
+    const deduped = new Map<string, ResourceTitleFields>();
+    for (const entry of entries) {
+      if (!entry.serviceAtLocationId || !entry.displayName) continue;
+      deduped.set(
+        `${entry.tenant_id ?? ''}:${entry.serviceAtLocationId}`,
+        entry,
+      );
+    }
+    if (deduped.size === 0) return;
+
+    const operations = [...deduped.values()].map((entry) => ({
+      updateOne: {
+        filter: {
+          tenant_id: entry.tenant_id ?? null,
+          serviceAtLocationId: entry.serviceAtLocationId,
+        },
+        update: { $set: { displayName: entry.displayName } },
+        upsert: true,
+      },
+    }));
+
+    void this.titleSnapshotModel
+      .bulkWrite(operations, { ordered: false })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Failed to snapshot resource titles: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
   }
 
   /**
@@ -299,6 +396,8 @@ export class ResourceService {
         });
       }
 
+      this.recordTitleSnapshots([resource]);
+
       return this.transformResourceWithTranslations(resource, locale, urlId);
     }
 
@@ -338,6 +437,8 @@ export class ResourceService {
 
       throw new NotFoundException();
     }
+
+    this.recordTitleSnapshots([resource]);
 
     return this.transformResourceWithTranslations(resource, locale, lookupId);
   }
@@ -399,9 +500,12 @@ export class ResourceService {
     foundIds: Set<string>,
     resolveId: (resource: AggregatedResource) => string,
   ): void {
+    const snapshots: ResourceTitleFields[] = [];
+
     for (const resource of resources) {
       const requestedId = resolveId(resource);
       foundIds.add(requestedId);
+      snapshots.push(resource);
 
       try {
         data[requestedId] = this.transformResourceWithTranslations(
@@ -421,6 +525,8 @@ export class ResourceService {
         }
       }
     }
+
+    this.recordTitleSnapshots(snapshots);
   }
 
   /**

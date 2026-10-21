@@ -289,8 +289,10 @@ export class UmamiAnalyticsService {
         }
 
         const resourceIds = resourceIdsViewMap.map((item) => item.id);
-        const resourceTitles =
-          await this.resourceService.findTitlesByIds(resourceIds);
+        const resourceTitles = await this.resourceService.findTitlesByIds(
+          resourceIds,
+          input.tenantId,
+        );
 
         const titleMap = new Map(
           resourceTitles.map((item) => [item.id, item.displayName]),
