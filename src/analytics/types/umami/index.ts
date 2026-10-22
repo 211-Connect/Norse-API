@@ -5,7 +5,6 @@ export * from './umami-event-data-pivot';
 export * from './umami-session';
 export * from './umami-session-response';
 export * from './search-query-type';
-export * from './search-by-label-by-type';
 export * from './stats';
 export * from './umami-event-payload';
 export * from './umami-website';
