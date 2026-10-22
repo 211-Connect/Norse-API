@@ -67,7 +67,7 @@ describe('UmamiAnalyticsService', () => {
         if (endpoint === 'events/series') {
           return Promise.resolve([eventSeries]);
         }
-        // metrics/expanded (path + query)
+        // metrics/expanded (path)
         return Promise.resolve([[]]);
       });
 

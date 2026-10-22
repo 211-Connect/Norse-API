@@ -184,16 +184,11 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const [pathRes, queryRes, eventsRes] = await Promise.all([
+        const [pathRes, eventsRes] = await Promise.all([
           this.umamiHttpService.fanOut<MetricsExpandedEntry[]>(
             input.websiteIds,
             'metrics/expanded',
             { startAt: startMs, endAt: endMs, type: 'path' },
-          ),
-          this.umamiHttpService.fanOut<MetricsExpandedEntry[]>(
-            input.websiteIds,
-            'metrics/expanded',
-            { startAt: startMs, endAt: endMs, type: 'query' },
           ),
           this.umamiHttpService.fanOut<{ x: string; y: number }[]>(
             input.websiteIds,
@@ -206,10 +201,6 @@ export class UmamiAnalyticsService {
           'metrics/expanded',
           pathRes,
         );
-        const queryMetrics = aggregateByEndpoint<MetricsExpandedEntry[]>(
-          'metrics/expanded',
-          queryRes,
-        );
         const events = aggregateByEndpoint<{ x: string; y: number }[]>(
           'events/series',
           eventsRes,
@@ -221,7 +212,6 @@ export class UmamiAnalyticsService {
         );
         const { searchCount, resourceMetrics } = parseMetrics(
           pathMetrics,
-          queryMetrics,
           hasTrailingSlash,
         );
 
@@ -275,11 +265,7 @@ export class UmamiAnalyticsService {
         const hasTrailingSlash = this.hasTrailingSlashConvention(
           input.tenantId,
         );
-        const { resourceMetrics } = parseMetrics(
-          pathMetrics,
-          [],
-          hasTrailingSlash,
-        );
+        const { resourceMetrics } = parseMetrics(pathMetrics, hasTrailingSlash);
         const resourceIdsViewMap = resourceMetrics
           .map((row) => ({ id: extractResourceId(row.x), views: row.y }))
           .filter((id): id is { id: string; views: number } => id.id !== null);
