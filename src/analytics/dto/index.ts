@@ -19,3 +19,6 @@ export * from './area-searches-response.dto';
 export * from './event-values-query.dto';
 export * from './event-values-response.dto';
 export * from './event-catalog-entry-response.dto';
+export * from './record-blocked-traffic.dto';
+export * from './blocked-traffic-query.dto';
+export * from './blocked-traffic-response.dto';
