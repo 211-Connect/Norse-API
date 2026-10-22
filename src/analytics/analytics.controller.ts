@@ -67,11 +67,6 @@ import { ANALYTICS_CDN_TTL_OPEN_RANGE_S } from './internal/constants';
   schema: { default: '1' },
 })
 @ApiHeader({
-  name: TENANT_ID_HEADER,
-  description: 'Tenant ID',
-  required: true,
-})
-@ApiHeader({
   name: ANALYTICS_API_KEY_HEADER,
   description: 'Analytics API key for the tenant',
   required: true,
@@ -146,7 +141,8 @@ export class AnalyticsController {
   @Get('pageviews')
   @Version('1')
   @ApiOperation({
-    summary: 'Get pageview metrics per day',
+    summary:
+      'Get pageview metrics per day for date ranges of up to 8 months. For longer date ranges, aggregate the data by month.',
   })
   @ApiResponse({
     status: 200,
@@ -363,7 +359,8 @@ export class AnalyticsController {
     summary: 'Get detailed search event data for CSV export',
     description:
       'Returns search events with timestamps, coordinates, ZIP codes, and ' +
-      'anonymized unique user/session identifiers.',
+      'anonymized unique user/session identifiers. Includes search_text, ' +
+      'search_taxonomy, and search_hybrid events.',
   })
   @ApiResponse({
     status: 200,

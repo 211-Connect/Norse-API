@@ -8,6 +8,10 @@ import {
   PrintableDirectory,
   PrintableDirectorySchema,
 } from 'src/common/schemas/printable-directory.schema';
+import {
+  PrintableDirectoryDelivery,
+  PrintableDirectoryDeliverySchema,
+} from 'src/common/schemas/printable-directory-delivery.schema';
 import { AuthModule } from 'src/auth/auth.module';
 import { FavoriteListModule } from 'src/favorite-list/favorite-list.module';
 import { ResourceModule } from 'src/resource/resource.module';
@@ -15,6 +19,9 @@ import { SearchModule } from 'src/search/search.module';
 import { PrintableDirectoryController } from './printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory-public.controller';
 import { PrintableDirectoryService } from './printable-directory.service';
+import { PrintableDirectoryDeliveryController } from './printable-directory-delivery.controller';
+import { PrintableDirectoryDeliveryInternalController } from './printable-directory-delivery-internal.controller';
+import { PrintableDirectoryDeliveryService } from './printable-directory-delivery.service';
 
 @Module({
   imports: [
@@ -25,12 +32,18 @@ import { PrintableDirectoryService } from './printable-directory.service';
     MongooseModule.forFeature([
       { name: PrintableDirectory.name, schema: PrintableDirectorySchema },
       { name: FavoriteList.name, schema: FavoriteListSchema },
+      {
+        name: PrintableDirectoryDelivery.name,
+        schema: PrintableDirectoryDeliverySchema,
+      },
     ]),
   ],
   controllers: [
     PrintableDirectoryController,
     PrintableDirectoryPublicController,
+    PrintableDirectoryDeliveryController,
+    PrintableDirectoryDeliveryInternalController,
   ],
-  providers: [PrintableDirectoryService],
+  providers: [PrintableDirectoryService, PrintableDirectoryDeliveryService],
 })
 export class PrintableDirectoryModule {}

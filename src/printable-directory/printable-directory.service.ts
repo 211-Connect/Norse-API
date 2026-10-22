@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isValidObjectId, Model } from 'mongoose';
 import { randomUUID } from 'crypto';
 import {
   PRINTABLE_DIRECTORY_ACCESS_POLICIES,
@@ -14,6 +14,7 @@ import {
   PrintableDirectoryAccessPolicy,
   PrintableDirectoryDefaultQueryConfig,
   PrintableDirectoryDocument,
+  PrintableDirectoryLocalizedText,
   PrintableDirectorySection,
   PrintableDirectorySectionSource,
 } from 'src/common/schemas/printable-directory.schema';
@@ -22,6 +23,7 @@ import {
   CreatePrintableDirectorySectionDto,
   CreatePrintableDirectorySourceDto,
   PrintableDirectoriesListQueryDto,
+  PrintableDirectoryLocalizedValuesDto,
   ReorderPrintableDirectorySectionsDto,
   ReorderPrintableDirectorySourcesDto,
   UpdatePrintableDirectoryDto,
@@ -44,10 +46,23 @@ import { SearchService } from 'src/search/search.service';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 import { ResourceService } from 'src/resource/resource.service';
 import { FavoriteListService } from 'src/favorite-list/favorite-list.service';
+import {
+  PrintableDirectoryDelivery,
+  PrintableDirectoryDeliveryDocument,
+} from 'src/common/schemas/printable-directory-delivery.schema';
 
 interface RequestScope {
   tenantId: string;
   userId: string;
+}
+
+/** What scheduled deliveries need to know about their directory. */
+export interface PrintableDirectorySummary {
+  id: string;
+  name: string;
+  slug: string | null;
+  primaryLanguage: string;
+  locales: string[];
 }
 
 @Injectable()
@@ -59,6 +74,8 @@ export class PrintableDirectoryService {
     private readonly printableDirectoryModel: Model<PrintableDirectoryDocument>,
     @InjectModel(FavoriteList.name)
     private readonly favoriteListModel: Model<FavoriteList>,
+    @InjectModel(PrintableDirectoryDelivery.name)
+    private readonly deliveryModel: Model<PrintableDirectoryDeliveryDocument>,
     private readonly searchService: SearchService,
     private readonly resourceService: ResourceService,
     private readonly favoriteListService: FavoriteListService,
@@ -109,12 +126,17 @@ export class PrintableDirectoryService {
         tenantId: scope.tenantId,
         ownerUserId: scope.userId,
         name: payload.name,
+        primaryLanguage: payload.primaryLanguage,
+        locales: this.normalizeLocales(
+          payload.locales ?? [],
+          payload.primaryLanguage,
+        ),
         updatedBy: scope.userId,
         accessPolicy: payload.accessPolicy ?? 'private',
         slug: payload.slug ?? null,
         cover: {
-          titleLocalized: { values: {} },
-          descriptionLocalized: { values: {} },
+          titleLocalized: { values: {}, autoTranslatedLocales: [] },
+          descriptionLocalized: { values: {}, autoTranslatedLocales: [] },
           primaryColor: null,
           layoutType: 'default',
           coverImageUrlFront: null,
@@ -122,16 +144,13 @@ export class PrintableDirectoryService {
         },
         header: {
           layout: [],
-          textLocalized: { values: {} },
-          logoUrl: null,
+          textLocalized: { values: {}, autoTranslatedLocales: [] },
         },
         footer: {
           layout: [],
-          textLocalized: { values: {} },
-          logoUrl: null,
+          textLocalized: { values: {}, autoTranslatedLocales: [] },
         },
-        resourceLayout: payload.resourceLayout ?? 'line',
-        isBookletLayout: payload.isBookletLayout ?? false,
+        logoUrl: payload.logoUrl || null,
         defaultQueryConfig: this.normalizeDefaultQueryConfig(
           payload.defaultQueryConfig,
         ),
@@ -159,22 +178,39 @@ export class PrintableDirectoryService {
   ): Promise<PrintableDirectoryResponseDto> {
     const directory = await this.getUpdatableDirectoryOrThrow(id, scope);
 
+    if (payload.primaryLanguage !== undefined) {
+      throw new BadRequestException(
+        'primaryLanguage is immutable after creation',
+      );
+    }
+
     if (payload.name !== undefined) {
       directory.name = payload.name;
+    }
+
+    if (payload.logoUrl !== undefined) {
+      directory.logoUrl = payload.logoUrl || null;
+    }
+
+    if (payload.locales !== undefined) {
+      directory.locales = this.normalizeLocales(
+        payload.locales,
+        directory.primaryLanguage ?? 'en',
+      );
     }
 
     if (payload.cover !== undefined) {
       directory.cover = {
         ...directory.cover,
         ...payload.cover,
-        titleLocalized:
-          payload.cover.titleLocalized !== undefined
-            ? { values: payload.cover.titleLocalized.values ?? {} }
-            : directory.cover.titleLocalized,
-        descriptionLocalized:
-          payload.cover.descriptionLocalized !== undefined
-            ? { values: payload.cover.descriptionLocalized.values ?? {} }
-            : directory.cover.descriptionLocalized,
+        titleLocalized: this.normalizeLocalizedText(
+          directory.cover.titleLocalized,
+          payload.cover.titleLocalized,
+        ),
+        descriptionLocalized: this.normalizeLocalizedText(
+          directory.cover.descriptionLocalized,
+          payload.cover.descriptionLocalized,
+        ),
       };
     }
 
@@ -182,10 +218,10 @@ export class PrintableDirectoryService {
       directory.header = {
         ...directory.header,
         ...payload.header,
-        textLocalized:
-          payload.header.textLocalized !== undefined
-            ? { values: payload.header.textLocalized.values ?? {} }
-            : directory.header.textLocalized,
+        textLocalized: this.normalizeLocalizedText(
+          directory.header.textLocalized,
+          payload.header.textLocalized,
+        ),
       };
     }
 
@@ -193,19 +229,11 @@ export class PrintableDirectoryService {
       directory.footer = {
         ...directory.footer,
         ...payload.footer,
-        textLocalized:
-          payload.footer.textLocalized !== undefined
-            ? { values: payload.footer.textLocalized.values ?? {} }
-            : directory.footer.textLocalized,
+        textLocalized: this.normalizeLocalizedText(
+          directory.footer.textLocalized,
+          payload.footer.textLocalized,
+        ),
       };
-    }
-
-    if (payload.resourceLayout !== undefined) {
-      directory.resourceLayout = payload.resourceLayout;
-    }
-
-    if (payload.isBookletLayout !== undefined) {
-      directory.isBookletLayout = payload.isBookletLayout;
     }
 
     if (payload.accessPolicy !== undefined) {
@@ -236,6 +264,68 @@ export class PrintableDirectoryService {
   async remove(id: string, scope: RequestScope): Promise<void> {
     const directory = await this.getOwnedDirectoryOrThrow(id, scope);
     await this.printableDirectoryModel.deleteOne({ _id: directory._id }).exec();
+    await this.deliveryModel
+      .deleteMany({
+        tenantId: scope.tenantId,
+        directoryId: String(directory._id),
+      })
+      .exec();
+  }
+
+  /** The directory if the user may edit it (owner or shared-edit). */
+  async getEditableDirectorySummary(
+    id: string,
+    scope: RequestScope,
+  ): Promise<PrintableDirectorySummary> {
+    const directory = await this.getUpdatableDirectoryOrThrow(id, scope);
+    return this.toSummary(directory);
+  }
+
+  /** Summaries of the tenant's directories with these ids; missing ones are left out. */
+  async getDirectorySummaries(
+    tenantId: string,
+    ids: string[],
+  ): Promise<Map<string, PrintableDirectorySummary>> {
+    const directories = await this.printableDirectoryModel
+      .find({ _id: { $in: ids.filter((id) => isValidObjectId(id)) }, tenantId })
+      .exec();
+
+    return new Map(
+      directories.map((directory) => {
+        const summary = this.toSummary(directory);
+        return [summary.id, summary];
+      }),
+    );
+  }
+
+  /**
+   * Preview for the scheduled delivery job (internal API, no user). Like the
+   * public slug preview, favorites_list sources resolve against the owner.
+   */
+  async previewForDelivery(
+    directoryId: string,
+    tenantId: string,
+    locale: string,
+    headers: HeadersDto,
+  ): Promise<PrintableDirectoryPreviewResponseDto> {
+    if (!isValidObjectId(directoryId)) {
+      throw new NotFoundException('Printable directory not found');
+    }
+    const directory = await this.printableDirectoryModel
+      .findOne({ _id: directoryId, tenantId })
+      .exec();
+
+    if (!directory) {
+      throw new NotFoundException('Printable directory not found');
+    }
+
+    return this.buildPreviewResponse(
+      directory,
+      locale,
+      headers,
+      tenantId,
+      directory.ownerUserId,
+    );
   }
 
   async createSection(
@@ -256,8 +346,14 @@ export class PrintableDirectoryService {
     directory.sections.push({
       id: randomUUID(),
       order: sectionOrder,
-      headingLocalized: payload.headingLocalized,
-      descriptionLocalized: payload.descriptionLocalized ?? { values: {} },
+      headingLocalized: this.normalizeLocalizedText(
+        undefined,
+        payload.headingLocalized,
+      ),
+      descriptionLocalized: this.normalizeLocalizedText(
+        undefined,
+        payload.descriptionLocalized,
+      ),
       maxResources: payload.maxResources ?? 100,
       sources,
     } as PrintableDirectorySection);
@@ -280,15 +376,17 @@ export class PrintableDirectoryService {
     const section = this.getSectionOrThrow(directory, sectionId);
 
     if (payload.headingLocalized !== undefined) {
-      section.headingLocalized = {
-        values: payload.headingLocalized.values ?? {},
-      };
+      section.headingLocalized = this.normalizeLocalizedText(
+        section.headingLocalized,
+        payload.headingLocalized,
+      );
     }
 
     if (payload.descriptionLocalized !== undefined) {
-      section.descriptionLocalized = {
-        values: payload.descriptionLocalized.values ?? {},
-      };
+      section.descriptionLocalized = this.normalizeLocalizedText(
+        section.descriptionLocalized,
+        payload.descriptionLocalized,
+      );
     }
 
     if (payload.maxResources !== undefined) {
@@ -587,10 +685,12 @@ export class PrintableDirectoryService {
       resolvedHeading: this.resolveLocalizedText(
         section.headingLocalized?.values ?? {},
         locale,
+        directory.primaryLanguage ?? 'en',
       ),
       resolvedDescription: this.resolveLocalizedText(
         section.descriptionLocalized?.values ?? {},
         locale,
+        directory.primaryLanguage ?? 'en',
       ),
       resources: mergedResources.slice(0, section.maxResources),
     };
@@ -903,17 +1003,29 @@ export class PrintableDirectoryService {
     return mergedParams;
   }
 
+  /**
+   * The text in `locale`, else in the directory's primary language (the
+   * language it was written in). Blank values count as missing.
+   */
   private resolveLocalizedText(
     values: Record<string, string>,
     locale: string,
+    primaryLanguage: string,
   ): string {
-    return values[locale] ?? values.en ?? '';
+    return (
+      [values[locale], values[primaryLanguage]].find((value): value is string =>
+        Boolean(value?.trim()),
+      ) ?? ''
+    );
   }
 
   private async getOwnedDirectoryOrThrow(
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
@@ -933,6 +1045,9 @@ export class PrintableDirectoryService {
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
@@ -955,6 +1070,9 @@ export class PrintableDirectoryService {
     id: string,
     scope: RequestScope,
   ): Promise<PrintableDirectoryDocument> {
+    if (!isValidObjectId(id)) {
+      throw new NotFoundException('Printable directory not found');
+    }
     const directory = await this.printableDirectoryModel
       .findOne({
         _id: id,
@@ -1052,17 +1170,18 @@ export class PrintableDirectoryService {
       tenantId: directory.tenantId,
       ownerUserId: directory.ownerUserId,
       name: directory.name,
+      primaryLanguage: directory.primaryLanguage ?? 'en',
       updatedBy: directory.updatedBy ?? null,
       accessPolicy:
         (directory.accessPolicy as PrintableDirectoryAccessPolicy) ??
         PRINTABLE_DIRECTORY_ACCESS_POLICIES[0],
       cover: {
-        titleLocalized: directory.cover?.titleLocalized ?? {
-          values: {},
-        },
-        descriptionLocalized: directory.cover?.descriptionLocalized ?? {
-          values: {},
-        },
+        titleLocalized: this.withLocalizedTextDefaults(
+          directory.cover?.titleLocalized,
+        ),
+        descriptionLocalized: this.withLocalizedTextDefaults(
+          directory.cover?.descriptionLocalized,
+        ),
         primaryColor: directory.cover?.primaryColor ?? null,
         layoutType: directory.cover?.layoutType ?? 'default',
         coverImageUrlFront: directory.cover?.coverImageUrlFront ?? null,
@@ -1070,16 +1189,17 @@ export class PrintableDirectoryService {
       },
       header: {
         layout: directory.header?.layout ?? [],
-        textLocalized: directory.header?.textLocalized ?? { values: {} },
-        logoUrl: directory.header?.logoUrl ?? null,
+        textLocalized: this.withLocalizedTextDefaults(
+          directory.header?.textLocalized,
+        ),
       },
       footer: {
         layout: directory.footer?.layout ?? [],
-        textLocalized: directory.footer?.textLocalized ?? { values: {} },
-        logoUrl: directory.footer?.logoUrl ?? null,
+        textLocalized: this.withLocalizedTextDefaults(
+          directory.footer?.textLocalized,
+        ),
       },
-      resourceLayout: directory.resourceLayout ?? 'line',
-      isBookletLayout: directory.isBookletLayout ?? false,
+      logoUrl: directory.logoUrl ?? null,
       slug: directory.slug ?? null,
       defaultQueryConfig: directory.defaultQueryConfig
         ? {
@@ -1098,8 +1218,12 @@ export class PrintableDirectoryService {
         .map((section) => ({
           id: section.id,
           order: section.order,
-          headingLocalized: section.headingLocalized ?? { values: {} },
-          descriptionLocalized: section.descriptionLocalized ?? { values: {} },
+          headingLocalized: this.withLocalizedTextDefaults(
+            section.headingLocalized,
+          ),
+          descriptionLocalized: this.withLocalizedTextDefaults(
+            section.descriptionLocalized,
+          ),
           maxResources: section.maxResources,
           sources: [...(section.sources ?? [])]
             .sort((left, right) => left.order - right.order)
@@ -1138,9 +1262,119 @@ export class PrintableDirectoryService {
               };
             }),
         })),
+      locales: this.getLocales(directory),
       createdAt: timestamps.createdAt?.toISOString(),
       updatedAt: timestamps.updatedAt?.toISOString(),
     };
+  }
+
+  private normalizeLocalizedText(
+    current: PrintableDirectoryLocalizedText | undefined,
+    payload: PrintableDirectoryLocalizedValuesDto | undefined,
+  ): PrintableDirectoryLocalizedText {
+    if (payload === undefined) {
+      return current ?? { values: {}, autoTranslatedLocales: [] };
+    }
+
+    return {
+      values: payload.values ?? current?.values ?? {},
+      autoTranslatedLocales:
+        payload.autoTranslatedLocales ?? current?.autoTranslatedLocales ?? [],
+    };
+  }
+
+  private withLocalizedTextDefaults(
+    text: PrintableDirectoryLocalizedText | undefined,
+  ): PrintableDirectoryLocalizedText {
+    return {
+      values: text?.values ?? {},
+      autoTranslatedLocales: text?.autoTranslatedLocales ?? [],
+    };
+  }
+
+  private getLocales(directory: PrintableDirectory): string[] {
+    return directory.locales?.length
+      ? this.normalizeLocales(
+          directory.locales,
+          directory.primaryLanguage ?? 'en',
+        )
+      : this.deriveLocales(directory, directory.primaryLanguage ?? 'en');
+  }
+
+  private toSummary(
+    directoryDocument: PrintableDirectoryDocument,
+  ): PrintableDirectorySummary {
+    const directory =
+      typeof directoryDocument.toObject === 'function'
+        ? directoryDocument.toObject()
+        : directoryDocument;
+
+    return {
+      id: String(directory._id),
+      name: directory.name,
+      slug: directory.slug ?? null,
+      primaryLanguage: directory.primaryLanguage ?? 'en',
+      locales: this.getLocales(directory),
+    };
+  }
+
+  /** Unique, trimmed, sorted, always including the primary language. */
+  private normalizeLocales(
+    locales: string[],
+    primaryLanguage: string,
+  ): string[] {
+    return Array.from(
+      new Set(
+        [primaryLanguage, ...locales]
+          .map((locale) => locale.trim())
+          .filter(Boolean),
+      ),
+    ).sort();
+  }
+
+  private deriveLocales(
+    directory: Record<string, unknown> | any,
+    primaryLanguage: string,
+  ): string[] {
+    const locales = new Set<string>();
+    locales.add(primaryLanguage);
+
+    const collect = (text?: { values?: Record<string, string> }) => {
+      if (!text?.values) return;
+      for (const [locale, value] of Object.entries(text.values)) {
+        if (typeof value === 'string' && value.length > 0) {
+          locales.add(locale);
+        }
+      }
+    };
+
+    const cover = (directory.cover ?? {}) as {
+      titleLocalized?: { values?: Record<string, string> };
+      descriptionLocalized?: { values?: Record<string, string> };
+    };
+    collect(cover.titleLocalized);
+    collect(cover.descriptionLocalized);
+
+    const header = (directory.header ?? {}) as {
+      textLocalized?: { values?: Record<string, string> };
+    };
+    collect(header.textLocalized);
+
+    const footer = (directory.footer ?? {}) as {
+      textLocalized?: { values?: Record<string, string> };
+    };
+    collect(footer.textLocalized);
+
+    const sections = (directory.sections ?? []) as Array<{
+      headingLocalized?: { values?: Record<string, string> };
+      descriptionLocalized?: { values?: Record<string, string> };
+    }>;
+    for (const section of sections) {
+      collect(section.headingLocalized);
+      collect(section.descriptionLocalized);
+    }
+
+    return Array.from(locales).sort();
   }
 
   private escapeRegex(value: string): string {

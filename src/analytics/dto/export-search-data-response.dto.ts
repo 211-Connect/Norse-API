@@ -1,5 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import type { SearchQueryType } from '../types';
+
 export class SearchEventExportRow {
   @ApiProperty({
     description: 'ISO-8601 timestamp of the search event',
@@ -24,11 +26,11 @@ export class SearchEventExportRow {
   queryLabel: string;
 
   @ApiProperty({
-    description: 'Search type: text or taxonomy',
-    enum: ['text', 'taxonomy'],
+    description: 'Search type: text, taxonomy, or hybrid',
+    enum: ['text', 'taxonomy', 'hybrid'],
     example: 'text',
   })
-  queryType: 'text' | 'taxonomy';
+  queryType: SearchQueryType;
 
   @ApiProperty({
     description: 'Search ZIP/postal code from reverse geocoding',

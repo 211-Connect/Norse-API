@@ -2,7 +2,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsBoolean,
+  ArrayMaxSize,
+  IsArray,
   IsEnum,
   IsNotEmpty,
   IsOptional,
@@ -14,9 +15,7 @@ import {
 } from 'class-validator';
 import {
   PRINTABLE_DIRECTORY_ACCESS_POLICIES,
-  PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS,
   PrintableDirectoryAccessPolicy,
-  PrintableDirectoryResourceLayout,
 } from 'src/common/schemas/printable-directory.schema';
 import { PrintableDirectoryDefaultQueryConfigDto } from '../common/printable-directory-default-query-config.dto';
 
@@ -26,6 +25,44 @@ export class CreatePrintableDirectoryDto {
   @IsNotEmpty()
   @MaxLength(200)
   name: string;
+
+  @ApiProperty({
+    example: 'en',
+    description:
+      'Locale code for the language the directory content was authored in. ' +
+      'Required at creation and immutable after creation.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10)
+  primaryLanguage: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['en', 'es'],
+    description:
+      'Locale codes the directory is offered in (translated, printed and ' +
+      'shared in). primaryLanguage is always included, even if omitted. ' +
+      'Defaults to [primaryLanguage] at creation.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  @MaxLength(10, { each: true })
+  locales?: string[];
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/logo.svg',
+    description:
+      "The directory's logo, printed wherever the header or footer layout " +
+      "includes `logo`. Empty to clear (the tenant's logo is used then).",
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  logoUrl?: string;
 
   @ApiPropertyOptional({ enum: PRINTABLE_DIRECTORY_ACCESS_POLICIES })
   @IsOptional()
@@ -51,20 +88,6 @@ export class CreatePrintableDirectoryDto {
       'slug must be lowercase kebab-case (letters, numbers, single hyphens between segments)',
   })
   slug?: string;
-
-  @ApiPropertyOptional({ enum: PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS })
-  @IsOptional()
-  @IsEnum(PRINTABLE_DIRECTORY_RESOURCE_LAYOUTS)
-  resourceLayout?: PrintableDirectoryResourceLayout;
-
-  @ApiPropertyOptional({
-    type: Boolean,
-    default: false,
-    description: `Enables booklet layout generation. When enabled, the brochure is formatted for booklet printing by ensuring the total page count is a multiple of four. If necessary, blank pages are inserted after the cover and before the back cover so that the cover remains the first page and the back cover remains the last page.`,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isBookletLayout?: boolean;
 
   @ApiPropertyOptional({
     type: PrintableDirectoryDefaultQueryConfigDto,

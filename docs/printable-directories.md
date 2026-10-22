@@ -18,24 +18,19 @@ Printable Directories provides tenant-scoped, user-authenticated APIs to assembl
   - `shared-read`
   - `shared-edit`
 - Audit field: `updatedBy`
-- Localized text fields use `{ values: { [locale]: string } }`
+- Localized text fields use `{ values: { [locale]: string }, autoTranslatedLocales: string[] }`
+  - `values`: map of locale to text
+  - `autoTranslatedLocales`: locales whose value was machine-translated and is safe to overwrite with an automatic re-translation; locales with values but not in this list are treated as human-edited and protected
   - cover: `titleLocalized`, `descriptionLocalized`
   - section: `headingLocalized`, `descriptionLocalized`
   - header/footer: `textLocalized`
 - Header/footer layout is an ordered array of tokens: `text | logo | domain | date`
+- Logo: one directory-level `logoUrl`, printed wherever the header or footer layout includes `logo` (null: the tenant's logo). Set on create/update; an empty string clears it.
 - Directory-level query defaults: `defaultQueryConfig` with optional `locationName`, `coords` (`{ latitude, longitude }` object), and `radius`
+- Primary language: `primaryLanguage` (locale code, e.g. `en`, `es`). Required at creation, immutable after creation, and always included in `locales`.
 - Locale configuration:
-  - `locales` (optional array of 2-3 letter locale codes): locales this directory supports; `undefined` if not configured
+  - `locales` (array of locale codes): the languages the directory is offered in (translated, printed and shared in), set on create/update and stored; `primaryLanguage` is always included and it defaults to `[primaryLanguage]`. Directories created before `locales` was stored have none, and get it derived from content instead (every locale with a non-empty value for any localized field).
   - `defaultLocale` (string, default `en`): fallback locale used when the requested/resolved locale has no localized value; replaces the previously hardcoded `en` fallback in localized-text resolution and preview locale resolution
-- Booklet layout: `isBookletLayout` (boolean, default `false`)
-  - When `true`, the printable document must be generated with a total page
-    count that is a multiple of four
-  - Blank pages are inserted after the cover (page 2) and/or before the back
-    cover (page n-1) as needed, so the cover stays the first page and the back
-    cover stays the last page
-  - Page generation/insertion happens client-side when rendering the preview
-    into a printable document; the API only stores and returns the flag
-  - Existing directories without the field stored in MongoDB default to `false`
 - Public sharing: `slug` (optional string, unique per tenant)
   - Never auto-generated; must be explicitly supplied by the client on create/update
   - Acts as a capability token for `GET /printable-directories/public/:slug/preview` (see below): resolution ignores `accessPolicy` entirely, including `private`
@@ -49,12 +44,13 @@ Base path: `/printable-directories`
   - paginated list for tenant scope
   - includes owned + shared-readable directories
 - `POST /`
-  - create directory (name required)
-  - optional `accessPolicy`, `resourceLayout`
+  - create directory (`name` and `primaryLanguage` required)
+  - optional `accessPolicy`, `slug`, `defaultQueryConfig`
 - `GET /:id`
   - returns one directory if readable under policy
 - `PATCH /:id`
   - update metadata and layout settings if editable under policy
+  - `primaryLanguage` is immutable after creation
 - `DELETE /:id`
   - owner delete
 
@@ -79,7 +75,7 @@ Preview:
   - de-duplicates resources by ID within section
   - enforces `maxResources`
   - localized fallback behavior: requested locale -> directory `defaultLocale` (default `en`) -> empty string
-  - fails whole preview when any source/resource resolution fails
+  - missing resources are omitted from the resolved section; warnings are logged for resolution errors
 
 ## Public Sharing (Preview by Slug)
 
@@ -101,6 +97,42 @@ for sharing a printable directory PDF via URL:
     `maxResources`, localized fallback)
   - clients should choose non-guessable slugs for directories that should not
     be publicly discoverable
+
+## Scheduled PDF Deliveries
+
+Recurring emails of a directory's PDF, sent by Norse's daily job (see Norse's
+`docs/scheduled-pdf-delivery.md`). Stored in `printableDirectoryDeliveries`,
+one document per schedule, deleted together with their directory.
+
+- `frequency`: `weekly` (`weekdays`, 0 = Sunday … 6) or `monthly`
+  (`monthDays`, 1–28).
+- `print`: `locale` (one of the directory's languages), `variant`,
+  `fontSize`, `booklet`.
+- `recipients`: 1–100 emails, trimmed, lowercased, deduplicated.
+- `createdByEmail`: taken from the token's `email` claim, never the body.
+- Limits: 100 deliveries per directory (`409` beyond that).
+
+User endpoints (Keycloak, directory edit access: owner or `shared-edit`):
+
+- `GET|POST /printable-directories/:id/deliveries`
+- `PATCH|DELETE /printable-directories/:id/deliveries/:deliveryId`
+
+The tenant-level `scheduledPdfDelivery` capability is enforced by Norse
+(ADR 0001), not here.
+
+Internal endpoints (`x-internal-api-key` + `x-tenant-id`), for the job:
+
+- `GET /internal/printable-directory-deliveries/due?date=YYYY-MM-DD` —
+  enabled deliveries whose weekday or month day matches the calendar date and
+  that are not yet claimed for it, each with a directory summary.
+- `POST /internal/printable-directory-deliveries/:deliveryId/claim` —
+  atomic; `{ claimed: false }` when already claimed for that date, so a
+  delivery is sent at most once a day.
+- `POST /internal/printable-directory-deliveries/:deliveryId/result` —
+  records `lastRun` (`sent | sent_as_link | failed | skipped`).
+- `GET /internal/printable-directory-deliveries/:deliveryId/preview` — the
+  directory preview resolved as its owner, in the delivery's locale by
+  default.
 
 ## Source Types
 
