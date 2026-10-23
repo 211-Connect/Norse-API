@@ -222,16 +222,6 @@ export class UmamiHttpService {
     return response as T;
   }
 
-  /**
-   * Issues the same call against N websites in parallel and returns the
-   * raw array of responses, ready to feed to `aggregateByEndpoint`.
-   *
-   * Any single failure rejects the whole call with `502 Bad Gateway` so the
-   * caller surfaces a single deterministic error to Norse. We deliberately
-   * do **not** soft-fail individual websites here — analytics responses
-   * are merged numerically and partial data would silently understate the
-   * totals.
-   */
   async fanOut<T = unknown>(
     websiteIds: string[],
     endpoint: ALLOWED_ENDPOINT,
