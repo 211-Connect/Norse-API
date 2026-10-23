@@ -1,5 +1,4 @@
 export * from './metric-entry';
-export * from './metrics-expanded-entry';
 export * from './umami-event-data-value';
 export * from './umami-event-data-pivot';
 export * from './umami-session';

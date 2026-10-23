@@ -44,10 +44,6 @@ export default () => ({
         parseInt(process.env.ANALYTICS_SESSION_CACHE_TTL_MS, 10) || 60_000,
       l1Enabled: process.env.ANALYTICS_L1_CACHE_ENABLED !== 'false',
     },
-    trailingSlashTenants: (process.env.TRAILING_SLASH_TENANTS || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
   },
   permissionsSideChannelUrl:
     process.env.PERMISSIONS_SIDECHANNEL_BASE_URL || 'http://unkey-auth:8081',

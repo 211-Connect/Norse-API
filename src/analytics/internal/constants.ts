@@ -54,7 +54,6 @@ export type ALLOWED_ENDPOINT =
   | 'pageviews'
   | 'stats'
   | 'events/series'
-  | 'metrics/expanded'
   | 'event-data/values'
   | 'event-data-pivot'
   | 'sessions';

@@ -193,7 +193,7 @@ export class AnalyticsController {
   @Get('resource-metrics')
   @Version('1')
   @ApiOperation({
-    summary: 'Get pageview metrics per resource',
+    summary: 'Get number of views per resource',
   })
   @ApiResponse({
     status: 200,
