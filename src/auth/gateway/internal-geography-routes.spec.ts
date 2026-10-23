@@ -1,8 +1,4 @@
-import {
-  INestApplication,
-  ValidationPipe,
-  VersioningType,
-} from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
@@ -19,6 +15,7 @@ import { GatewayIdentityGuard } from './gateway-identity.guard';
 import { GatewayPermissionsGuard } from './gateway-permissions.guard';
 import { PermissionsSideChannelService } from './permissions-side-channel.service';
 import { TenantScopeGuard } from './tenant-scope.guard';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 // ESM-only, which ts-jest cannot load; ArcjetGuard is overridden below anyway.
 jest.mock('@arcjet/nest', () => ({ ARCJET: 'ARCJET' }));
@@ -114,11 +111,7 @@ describe('Geography filter internal routes: internal key, not tenant scope', () 
 
     const app = moduleRef.createNestApplication({ logger: false });
     app.useGlobalPipes(new ValidationPipe({ transform: true }));
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     await app.init();
     return app;
   }

@@ -1,15 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
-import {
-  INestApplication,
-  ValidationPipe,
-  VersioningType,
-} from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 import { TenantConfigController } from './tenant-config.controller';
 import { TenantConfigService } from './tenant-config.service';
 import { buildSwaggerConfig } from '../common/swagger/swagger-config';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -93,11 +90,7 @@ describe('TenantConfigController', () => {
 
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ transform: true }));
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
     SwaggerModule.setup('swagger', app, document, {
       jsonDocumentUrl: 'swagger/json',

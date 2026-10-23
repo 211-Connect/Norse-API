@@ -3,7 +3,6 @@ import {
   Get,
   INestApplication,
   ValidationPipe,
-  VersioningType,
 } from '@nestjs/common';
 import { ApiTags, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule } from '@nestjs/config';
@@ -12,6 +11,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { buildSwaggerConfig } from 'src/common/swagger/swagger-config';
 import { RegionInternalModule } from './region.module';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -55,11 +55,7 @@ describe('RegionController (internal/regions)', () => {
         forbidNonWhitelisted: false,
       }),
     );
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
     SwaggerModule.setup('swagger', app, document, {
       jsonDocumentUrl: 'swagger/json',

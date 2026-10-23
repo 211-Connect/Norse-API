@@ -1,6 +1,11 @@
+import { releaseInfo } from '../release/release-info';
+
 export default () => ({
   port: parseInt(process.env.PORT, 10) || 8080,
   logLevel: process.env.LOG_LEVEL || 'warn',
+  // Set at image build time (Dockerfile ARGs); read through releaseInfo(),
+  // which reports `unknown` when unset. See src/common/release/release-info.ts.
+  release: releaseInfo(),
   MAPBOX_API_KEY: process.env.MAPBOX_API_KEY,
   MONGODB_URI: process.env.MONGODB_URI,
   REDIS_URL: process.env.REDIS_URL,
