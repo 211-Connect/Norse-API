@@ -124,9 +124,10 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           DEV_TAG="dev-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
-          echo "Publishing ${REGISTRY}/${IMAGE_NAME}:${DEV_TAG}"
+          echo "Publishing ${REGISTRY}/${IMAGE_NAME}:${DEV_TAG} and :development"
           docker buildx imagetools create \
             --tag "${REGISTRY}/${IMAGE_NAME}:${DEV_TAG}" \
+            --tag "${REGISTRY}/${IMAGE_NAME}:development" \
             "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
           echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
 
