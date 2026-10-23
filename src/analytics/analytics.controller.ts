@@ -51,14 +51,10 @@ import {
   TimezoneAnalyticsQueryDto,
   ZeroResultQueriesResponse,
 } from './dto';
-import { AnalyticsCdnCacheInterceptor } from './interceptors/analytics-cdn-cache.interceptor';
-import { SetCdnCacheTTL } from '../common/decorators/cdn-cache-ttl.decorator';
-import { ANALYTICS_CDN_TTL_OPEN_RANGE_S } from './internal/constants';
 
 @ApiTags('Analytics')
 @Controller('analytics')
 @UseGuards(AnalyticsApiKeyGuard)
-@UseInterceptors(AnalyticsCdnCacheInterceptor)
 @ApiSecurity('x-analytics-api-key')
 @ApiHeader({
   name: 'x-api-version',
@@ -385,7 +381,6 @@ export class AnalyticsController {
 
   @Get('heatmap')
   @Version('1')
-  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
   @ApiOperation({
     summary: 'Get search heatmap points',
   })
@@ -412,7 +407,6 @@ export class AnalyticsController {
 
   @Get('area-searches')
   @Version('1')
-  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
   @ApiOperation({
     summary: 'Get search metrics grouped by ZIP code and county',
   })
