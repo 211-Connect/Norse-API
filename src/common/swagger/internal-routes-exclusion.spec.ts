@@ -3,7 +3,6 @@ import {
   Get,
   INestApplication,
   ValidationPipe,
-  VersioningType,
 } from '@nestjs/common';
 import { ApiTags, SwaggerModule } from '@nestjs/swagger';
 import { ConfigModule } from '@nestjs/config';
@@ -14,6 +13,7 @@ import request from 'supertest';
 import { RegionInternalModule } from 'src/region/internal/region.module';
 import { ServiceSearchInternalModule } from 'src/service/internal/service-search.module';
 import { buildSwaggerConfig } from './swagger-config';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -58,11 +58,7 @@ describe('Geography filter internal routes, mounted together', () => {
 
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ transform: true }));
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
     SwaggerModule.setup('swagger', app, document, {
       jsonDocumentUrl: 'swagger/json',

@@ -1,5 +1,6 @@
 import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { HealthService } from './health.service';
+import { HealthResponseDto } from './dto/health-response.dto';
 import { ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SkipMetrics } from 'src/metrics/skip-metrics.decorator';
 import { Public } from 'src/auth/gateway/gateway-principal';
@@ -12,13 +13,8 @@ export class HealthController {
   @Get()
   @SkipMetrics()
   @Public()
-  @ApiResponse({
-    status: 200,
-    example: {
-      status: 'up',
-    },
-  })
-  getStatus() {
+  @ApiResponse({ status: 200, type: HealthResponseDto })
+  getStatus(): HealthResponseDto {
     return this.healthService.getServerHealth();
   }
 }

@@ -20,6 +20,10 @@ import configuration from './common/config/configuration';
 import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
+import {
+  ApiVersionMiddleware,
+  API_VERSION_MIDDLEWARE_ROUTES,
+} from './common/middleware/ApiVersionMiddleware';
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
@@ -121,6 +125,11 @@ const arcjetKey = configuration().ARCJET_KEY;
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
+    // First, so a request refused here still carries the release header.
+    consumer
+      .apply(ApiVersionMiddleware)
+      .forRoutes(API_VERSION_MIDDLEWARE_ROUTES);
+
     consumer.apply(ServiceProviderMiddleware).forRoutes({
       path: '*',
       method: RequestMethod.ALL,

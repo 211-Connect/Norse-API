@@ -78,6 +78,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
+          # Release identity (ISS-2482): the semver tag on a release, else
+          # <branch>-<sha>. One image per digest, so this names what built it.
+          build-args: |
+            APP_VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('{0}-{1}', github.ref_name, github.sha) }}
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

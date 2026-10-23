@@ -6,7 +6,6 @@ import {
   INestApplication,
   Post,
   ValidationPipe,
-  VersioningType,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { SwaggerModule } from '@nestjs/swagger';
@@ -35,6 +34,7 @@ import {
   taxonomyTerm,
   taxonomyTermsIndex,
 } from 'src/common/testing/taxonomy-terms-index';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 /** More than the provisional 1,000 serviceIds cap ISS-1938 removed. */
 const MANY_SERVICE_IDS = 1500;
@@ -103,11 +103,7 @@ describe('ServiceSearchController (internal/services)', () => {
         forbidNonWhitelisted: false,
       }),
     );
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
     SwaggerModule.setup('swagger', app, document, {
       jsonDocumentUrl: 'swagger/json',
