@@ -246,6 +246,64 @@ describe('UmamiAnalyticsService', () => {
     });
   });
 
+  describe('getAreaSearches', () => {
+    it('counts hybrid search events in area totals alongside text and taxonomy', async () => {
+      const rowsByEvent: Record<string, UmamiEventDataPivotRow[]> = {
+        search_text: [
+          buildRow({ searchZipCode: '10001' }),
+          buildRow({ searchZipCode: '10001' }),
+        ],
+        search_taxonomy: [buildRow({ searchZipCode: '10002' })],
+        search_hybrid: [
+          buildRow({ searchZipCode: '10001' }),
+          buildRow({ searchZipCode: '10001' }),
+        ],
+        search_zero_results: [buildRow({ searchZipCode: '10001' })],
+      };
+
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          endpoint: string,
+          params: { eventName: string },
+        ) => {
+          if (endpoint !== 'event-data-pivot') return [[]];
+          const rows = rowsByEvent[params.eventName] ?? [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+
+      const result = await service.getAreaSearches({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.zipCodeRows).toEqual([
+        { area: '10001', totalSearches: 5, zeroSearches: 1, zeroRate: 0.2 },
+        { area: '10002', totalSearches: 1, zeroSearches: 0, zeroRate: 0 },
+      ]);
+      expect(result.countyRows).toEqual([]);
+    });
+
+    it('drops rows without any area property', async () => {
+      umamiHttpService.fanOut.mockImplementation(async () => [
+        { data: [buildRow({})], count: 1 },
+      ]);
+
+      const result = await service.getAreaSearches({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.zipCodeRows).toEqual([]);
+      expect(result.countyRows).toEqual([]);
+    });
+  });
+
   describe('getExportSearchData', () => {
     it('includes all rows when Umami returns a smaller page size than requested', async () => {
       const eventCounts: Record<string, number> = {

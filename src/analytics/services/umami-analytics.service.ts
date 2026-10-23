@@ -629,7 +629,11 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const searchEvents = ['search_text', 'search_taxonomy'];
+        const searchEvents: SearchEventName[] = [
+          'search_text',
+          'search_taxonomy',
+          'search_hybrid',
+        ];
         const allRows: UmamiEventDataPivotRow[] = [];
 
         for (const eventName of searchEvents) {
