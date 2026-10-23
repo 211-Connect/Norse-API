@@ -14,6 +14,16 @@ export type BlockedTrafficClassification =
   (typeof BLOCKED_TRAFFIC_CLASSIFICATIONS)[number];
 
 /**
+ * Buckets are deleted by MongoDB this long after their `hour`: 2 years, so
+ * a season can be compared with the same season a year earlier.
+ *
+ * Mongoose creates the TTL index once and never updates it. To change this
+ * on a deployed database, also run
+ * `db.runCommand({ collMod: 'blocked_traffic_hourly', index: { keyPattern: { hour: 1 }, expireAfterSeconds: <new> } })`.
+ */
+export const BLOCKED_TRAFFIC_RETENTION_SECONDS = 2 * 365 * 24 * 60 * 60;
+
+/**
  * Requests Norse's Arcjet protection denied, counted per tenant, UTC hour,
  * classification and enforcement. One document per bucket; Norse instances
  * push per-minute deltas that are `$inc`-upserted into it, so concurrent
@@ -46,4 +56,11 @@ export const BlockedTrafficHourlySchema =
 BlockedTrafficHourlySchema.index(
   { tenantId: 1, hour: 1, classification: 1, enforced: 1 },
   { unique: true },
+);
+
+// TTL (see BLOCKED_TRAFFIC_RETENTION_SECONDS). Its own index: MongoDB only
+// allows a TTL on a single-field index.
+BlockedTrafficHourlySchema.index(
+  { hour: 1 },
+  { expireAfterSeconds: BLOCKED_TRAFFIC_RETENTION_SECONDS },
 );
