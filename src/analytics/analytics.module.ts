@@ -12,7 +12,6 @@ import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
 import { UmamiAuthService } from './services/umami-auth.service';
 import { UmamiHttpService } from './services/umami-http.service';
-import { AnalyticsCdnCacheInterceptor } from './interceptors/analytics-cdn-cache.interceptor';
 
 @Module({
   imports: [ConfigModule, ResourceModule, CmsConfigModule, GeocodingModule],
@@ -21,7 +20,6 @@ import { AnalyticsCdnCacheInterceptor } from './interceptors/analytics-cdn-cache
     AnalyticsApiKeyGuard,
     AnalyticsConfigService,
     AnalyticsCacheService,
-    AnalyticsCdnCacheInterceptor,
     AnalyticsInfoEnricherService,
     UmamiAuthService,
     UmamiHttpService,
