@@ -88,6 +88,12 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
   }
 }
 
+/** Shared with `SearchQueryApiDto`, which documents the same param. */
+export const ORGANIZATION_ID_DESCRIPTION =
+  'Scope results to resources belonging to a single organization, by its ' +
+  'stable organization id (the `organization_id` returned by /suggestion and ' +
+  '/organization). Composes with any query_type and with filters.';
+
 export class SearchResourcesQueryDto {
   @ApiPropertyOptional({
     description:
@@ -168,10 +174,7 @@ export class SearchResourcesQueryDto {
   filters: Record<string, string | string[]> = {};
 
   @ApiPropertyOptional({
-    description:
-      'Scope results to resources belonging to a single organization, by its ' +
-      'stable organization id (the `organization_id` returned by /suggestion and ' +
-      '/organization). Composes with any query_type and with filters.',
+    description: ORGANIZATION_ID_DESCRIPTION,
   })
   @IsOptional()
   @IsString()

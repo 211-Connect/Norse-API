@@ -142,6 +142,7 @@ Each section source has `type` and one matching payload:
   - requires `query` object with serialized `/search` params (+ optional body)
   - preview fallback: if `params.coords` or `params.distance` is missing, service uses directory `defaultQueryConfig.coords` / `defaultQueryConfig.radius`
   - precedence: source `query.params` values always override directory defaults
+  - `params.organization_id` scopes the source to one organization, as on `/search`
 - `favorites_list`
   - requires `favoritesListId`
 - `resource_ids`
