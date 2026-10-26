@@ -835,6 +835,60 @@ describe('PrintableDirectoryService', () => {
     );
   });
 
+  it('scopes a query source to its organization_id', async () => {
+    const directory = createDirectoryDoc({
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: { values: { en: 'Heading' } },
+          descriptionLocalized: { values: {} },
+          maxResources: 10,
+          sources: [
+            {
+              id: 'src-1',
+              order: 0,
+              type: 'query',
+              query: {
+                title: 'Food Lifeline',
+                params: { query_type: 'text', organization_id: 'org-123' },
+              },
+              favoritesListId: null,
+              resourceIds: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(directory),
+    });
+
+    mockSearchService.searchResources.mockResolvedValue({
+      search: {
+        took: 10,
+        timed_out: false,
+        _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+        hits: { total: { value: 0, relation: 'eq' }, hits: [] },
+      },
+      facets: [],
+    });
+
+    await service.preview(
+      '6ad0dcb938dccb2e7af9f9c1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+
+    expect(mockSearchService.searchResources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({ organization_id: 'org-123' }),
+      }),
+    );
+  });
+
   it('resolves preview favorites_list source using owner and tenant scope', async () => {
     const directory = createDirectoryDoc({
       sections: [

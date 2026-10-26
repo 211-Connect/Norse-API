@@ -11,6 +11,7 @@ import {
   Validate,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
+import { ORGANIZATION_ID_DESCRIPTION } from './search-query.dto';
 import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 export class SearchQueryApiDto {
@@ -73,6 +74,14 @@ export class SearchQueryApiDto {
   })
   @IsOptional()
   taxonomy?: string | string[];
+
+  @ApiPropertyOptional({
+    description: ORGANIZATION_ID_DESCRIPTION,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  organization_id?: string;
 
   @ApiPropertyOptional({ minimum: 0, default: 0 })
   @IsOptional()
