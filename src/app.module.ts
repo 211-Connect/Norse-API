@@ -47,6 +47,7 @@ import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-cont
 import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { BlockedTrafficInternalController } from './analytics/blocked-traffic-internal.controller';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
@@ -146,6 +147,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryPublicController,
       PrintableDirectoryDeliveryController,
       PrintableDirectoryDeliveryInternalController,
+      BlockedTrafficInternalController,
       OrganizationController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
       // CDN-cached route (cache keys on URL, ignoring Vary).
