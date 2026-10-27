@@ -16,7 +16,9 @@ import { FavoriteListModule } from 'src/favorite-list/favorite-list.module';
 import { SearchModule } from './search/search.module';
 import { ShortUrlModule } from './short-url/short-url.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import configuration from './common/config/configuration';
+import configuration, {
+  validateConfiguration,
+} from './common/config/configuration';
 import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
@@ -64,7 +66,11 @@ const arcjetKey = configuration().ARCJET_KEY;
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
+    ConfigModule.forRoot({
+      load: [configuration],
+      isGlobal: true,
+      validate: validateConfiguration,
+    }),
     ...(arcjetKey
       ? [
           ArcjetModule.forRoot({

@@ -1,5 +1,3 @@
-export const AUTH_VERIFY_TIMEOUT_MS = 5_000;
-export const AUTH_LOGIN_TIMEOUT_MS = 10_000;
 export const ANALYTICS_FETCH_TIMEOUT_MS = 60_000;
 export const ONE_DAY_MS = 86_400_000;
 export const MAX_RANGE_DAYS = 365;

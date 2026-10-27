@@ -17,7 +17,6 @@ import { AnalyticsCacheService } from './services/analytics-cache.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { BlockedTrafficService } from './services/blocked-traffic.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
-import { UmamiAuthService } from './services/umami-auth.service';
 import { UmamiHttpService } from './services/umami-http.service';
 
 @Module({
@@ -37,7 +36,6 @@ import { UmamiHttpService } from './services/umami-http.service';
     AnalyticsCacheService,
     AnalyticsInfoEnricherService,
     BlockedTrafficService,
-    UmamiAuthService,
     UmamiHttpService,
     UmamiAnalyticsService,
   ],

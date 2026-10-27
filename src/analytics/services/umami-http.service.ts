@@ -11,7 +11,6 @@ import {
   UmamiSendResponse,
   UmamiWebsite,
 } from '../types/umami';
-import { UmamiAuthService } from './umami-auth.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 
 export interface UmamiFanOutOptions {
@@ -21,13 +20,22 @@ export interface UmamiFanOutOptions {
 @Injectable()
 export class UmamiHttpService {
   private readonly logger = new Logger(UmamiHttpService.name);
+  private readonly apiKey: string;
   constructor(
     private readonly configService: ConfigService,
-    private readonly umamiAuth: UmamiAuthService,
     private readonly metrics: MetricsService,
-  ) {}
+  ) {
+    const apiKey = this.configService.get<string>('umami.apiKey');
+    if (!apiKey) {
+      throw new HttpException(
+        'Umami is not configured',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    this.apiKey = apiKey;
+  }
 
-  getApiUrl(): string {
+  private getApiUrl(): string {
     const apiUrl = this.configService.get<string>('umami.apiUrl');
     if (!apiUrl) {
       throw new HttpException(
@@ -36,19 +44,6 @@ export class UmamiHttpService {
       );
     }
     return apiUrl;
-  }
-
-  async getToken(): Promise<string> {
-    try {
-      return this.umamiAuth.getToken();
-    } catch (err) {
-      if (err instanceof HttpException) throw err;
-      const detail = err instanceof Error ? err.message : 'Unknown error';
-      throw new HttpException(
-        `Umami authentication failed: ${detail}`,
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
   }
 
   private getUserAgent(): string {
@@ -129,7 +124,7 @@ export class UmamiHttpService {
     );
   }
 
-  async fetchWebsite(websiteId: string, token: string): Promise<UmamiWebsite> {
+  async fetchWebsite(websiteId: string): Promise<UmamiWebsite> {
     const apiUrl = this.getApiUrl();
     const url = `${apiUrl}/api/websites/${encodeURIComponent(websiteId)}`;
 
@@ -141,7 +136,7 @@ export class UmamiHttpService {
         () =>
           fetch(url, {
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${this.apiKey}`,
               Accept: 'application/json',
             },
             signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
@@ -171,11 +166,10 @@ export class UmamiHttpService {
     return { id: data?.id ?? websiteId, name: data?.name ?? websiteId };
   }
 
-  async umamiFetch<T = unknown>(
+  private async umamiFetch<T = unknown>(
     websiteId: string,
     endpoint: ALLOWED_ENDPOINT,
     params: Record<string, string | number | undefined>,
-    token: string,
     options: UmamiFanOutOptions = {},
   ): Promise<T> {
     const apiUrl = this.getApiUrl();
@@ -192,7 +186,7 @@ export class UmamiHttpService {
         () =>
           fetch(url, {
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${this.apiKey}`,
               Accept: 'application/json',
             },
             signal: AbortSignal.timeout(timeoutMs),
@@ -228,12 +222,10 @@ export class UmamiHttpService {
     params: Record<string, string | number | undefined>,
     options: UmamiFanOutOptions = {},
   ): Promise<T[]> {
-    const token = await this.getToken();
-
     try {
       return await Promise.all(
         websiteIds.map((websiteId) =>
-          this.umamiFetch<T>(websiteId, endpoint, params, token, options),
+          this.umamiFetch<T>(websiteId, endpoint, params, options),
         ),
       );
     } catch (err) {
