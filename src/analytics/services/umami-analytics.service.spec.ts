@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { UmamiAnalyticsService } from './umami-analytics.service';
 import { UmamiHttpService } from './umami-http.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
@@ -11,6 +10,7 @@ import type { UmamiEventDataPivotRow } from '../types/umami/umami-event-data-piv
 describe('UmamiAnalyticsService', () => {
   let service: UmamiAnalyticsService;
   let umamiHttpService: { fanOut: jest.Mock };
+  let resourceService: { findTitlesByIds: jest.Mock };
   let analyticsCacheService: { getOrSet: jest.Mock };
 
   const buildRow = (
@@ -25,6 +25,7 @@ describe('UmamiAnalyticsService', () => {
 
   beforeEach(async () => {
     umamiHttpService = { fanOut: jest.fn() };
+    resourceService = { findTitlesByIds: jest.fn() };
     analyticsCacheService = {
       getOrSet: jest.fn((_tenantId, _key, _websiteIds, _startMs, _endMs, fn) =>
         fn(),
@@ -35,10 +36,9 @@ describe('UmamiAnalyticsService', () => {
       providers: [
         UmamiAnalyticsService,
         { provide: UmamiHttpService, useValue: umamiHttpService },
-        { provide: ResourceService, useValue: {} },
+        { provide: ResourceService, useValue: resourceService },
         { provide: AnalyticsCacheService, useValue: analyticsCacheService },
         { provide: GeocodingService, useValue: {} },
-        { provide: ConfigService, useValue: { get: jest.fn(() => []) } },
       ],
     }).compile();
 
@@ -46,8 +46,11 @@ describe('UmamiAnalyticsService', () => {
   });
 
   describe('getMetrics', () => {
-    it('maps each Umami event total to the correct AnalyticsMetrics field', async () => {
+    it('derives searches from the three search event totals and resourceViews from resource_viewed', async () => {
       const eventSeries = [
+        { x: 'search_text', y: 3 },
+        { x: 'search_taxonomy', y: 4 },
+        { x: 'search_hybrid', y: 5 },
         { x: UmamiEvent.SearchZeroResults, y: 1 },
         { x: UmamiEvent.DirectionClick, y: 2 },
         { x: UmamiEvent.PhoneClick, y: 3 },
@@ -67,7 +70,6 @@ describe('UmamiAnalyticsService', () => {
         if (endpoint === 'events/series') {
           return Promise.resolve([eventSeries]);
         }
-        // metrics/expanded (path)
         return Promise.resolve([[]]);
       });
 
@@ -80,8 +82,8 @@ describe('UmamiAnalyticsService', () => {
       });
 
       expect(result).toEqual({
-        searches: 0,
-        resourceViews: 0,
+        searches: 12,
+        resourceViews: 9,
         zeroResults: 1,
         directions: 2,
         phoneCalls: 3,
@@ -98,6 +100,35 @@ describe('UmamiAnalyticsService', () => {
       });
     });
 
+    it('sums search and resource_viewed totals across websites', async () => {
+      umamiHttpService.fanOut.mockImplementation((_websiteIds, endpoint) => {
+        if (endpoint === 'events/series') {
+          return Promise.resolve([
+            [
+              { x: 'search_text', y: 3 },
+              { x: UmamiEvent.ResourceViewed, y: 1 },
+            ],
+            [
+              { x: 'search_text', y: 4 },
+              { x: UmamiEvent.ResourceViewed, y: 2 },
+            ],
+          ]);
+        }
+        return Promise.resolve([[]]);
+      });
+
+      const result = await service.getMetrics({
+        tenantId: 'tenant-1',
+        start: '2025-01-01T00:00:00.000Z',
+        end: '2025-01-02T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+        timezone: 'UTC',
+      });
+
+      expect(result.searches).toBe(7);
+      expect(result.resourceViews).toBe(3);
+    });
+
     it('defaults every metric to 0 when there are no events', async () => {
       umamiHttpService.fanOut.mockResolvedValue([[]]);
 
@@ -111,6 +142,92 @@ describe('UmamiAnalyticsService', () => {
 
       expect(result.smsClicks).toBe(0);
       expect(result.phoneCalls).toBe(0);
+    });
+  });
+
+  describe('getResourceMetrics', () => {
+    it('uses resourceTitle from resource_viewed events and groups views by resourceId', async () => {
+      const firstWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-2', resourceTitle: 'Library' }),
+      ];
+      const secondWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+      ];
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          endpoint: string,
+          params: { eventName?: string },
+        ) => {
+          expect(endpoint).toBe('event-data-pivot');
+          expect(params.eventName).toBe(UmamiEvent.ResourceViewed);
+          return [
+            { data: firstWebsiteRows, count: firstWebsiteRows.length },
+            { data: secondWebsiteRows, count: secondWebsiteRows.length },
+          ];
+        },
+      );
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+      });
+
+      expect(result).toEqual([
+        { title: 'Food Bank', views: 5 },
+        { title: 'Library', views: 1 },
+      ]);
+      expect(resourceService.findTitlesByIds).not.toHaveBeenCalled();
+    });
+
+    it('looks up titles by id only when a resource_viewed event has no resourceTitle', async () => {
+      const rows = [
+        buildRow({ resourceId: 'legacy-resource' }),
+        buildRow({ resourceId: 'named-resource', resourceTitle: 'Current Name' }),
+        buildRow({ resourceId: 'unknown-resource' }),
+      ];
+      umamiHttpService.fanOut.mockResolvedValue([
+        { data: rows, count: rows.length },
+      ]);
+      resourceService.findTitlesByIds.mockResolvedValue([
+        { id: 'legacy-resource', displayName: 'Legacy Name' },
+      ]);
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(resourceService.findTitlesByIds).toHaveBeenCalledWith([
+        'legacy-resource',
+        'unknown-resource',
+      ]);
+      expect(result).toEqual([
+        { title: 'Legacy Name', views: 1 },
+        { title: 'Current Name', views: 1 },
+        { title: 'unknown-resource', views: 1 },
+      ]);
+    });
+
+    it('returns an empty list when no resource_viewed events exist', async () => {
+      umamiHttpService.fanOut.mockResolvedValue([[]]);
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result).toEqual([]);
     });
   });
 

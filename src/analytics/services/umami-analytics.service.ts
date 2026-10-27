@@ -5,14 +5,9 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
 import { aggregateByEndpoint } from '../internal/aggregators';
-import {
-  parseMetrics,
-  sumEventTotals,
-  toMetricEntries,
-} from '../internal/parsers';
+import { sumEventTotals, toMetricEntries } from '../internal/parsers';
 import { timeWindow } from '../internal/period';
 import { UmamiEvent } from '../internal/umami-events';
 import { UmamiHttpService } from './umami-http.service';
@@ -34,7 +29,6 @@ import type {
   EventValuesResponse,
   HeatmapPoint,
   LanguageSwitch,
-  MetricsExpandedEntry,
   PageviewEntry,
   PaginatedSessions,
   ResourceByEntry,
@@ -55,21 +49,18 @@ import type {
   ReverseGeocodeOutput,
 } from '../types';
 
-const SEARCH_RESOURCE_PREFIX = '/search/';
-
 type SearchEventName = 'search_text' | 'search_taxonomy' | 'search_hybrid';
+
+const SEARCH_EVENT_NAMES: readonly SearchEventName[] = [
+  'search_text',
+  'search_taxonomy',
+  'search_hybrid',
+];
 
 function toSortedEntries(map: Map<string, number>): SearchHits[] {
   return Array.from(map, ([x, y]) => ({ query: x, hits: y })).sort(
     (a, b) => b.hits - a.hits,
   );
-}
-
-function extractResourceId(path: string): string | null {
-  const idx = path.indexOf(SEARCH_RESOURCE_PREFIX);
-  if (idx === -1) return null;
-  const id = path.slice(idx + SEARCH_RESOURCE_PREFIX.length);
-  return id.length > 0 ? id : null;
 }
 
 function resolveTimeWindow(start: string, end: string): TimeWindow {
@@ -117,16 +108,7 @@ export class UmamiAnalyticsService {
     private readonly resourceService: ResourceService,
     private readonly analyticsCacheService: AnalyticsCacheService,
     private readonly geocodingService: GeocodingService,
-    private readonly configService: ConfigService,
   ) {}
-
-  private hasTrailingSlashConvention(tenantId: string): boolean {
-    const trailingSlashTenants = this.configService.get<string[]>(
-      'analytics.trailingSlashTenants',
-      [],
-    );
-    return trailingSlashTenants.includes(tenantId);
-  }
 
   async getStats(input: AnalyticsInput): Promise<Stats> {
     const { startMs, endMs } = resolveTimeWindow(input.start, input.end);
@@ -184,43 +166,29 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const [pathRes, eventsRes] = await Promise.all([
-          this.umamiHttpService.fanOut<MetricsExpandedEntry[]>(
-            input.websiteIds,
-            'metrics/expanded',
-            { startAt: startMs, endAt: endMs, type: 'path' },
-          ),
-          this.umamiHttpService.fanOut<{ x: string; y: number }[]>(
-            input.websiteIds,
-            'events/series',
-            { startAt: startMs, endAt: endMs, timezone: input.timezone },
-          ),
-        ]);
+        const eventsRes = await this.umamiHttpService.fanOut<
+          { x: string; y: number }[]
+        >(input.websiteIds, 'events/series', {
+          startAt: startMs,
+          endAt: endMs,
+          timezone: input.timezone,
+        });
 
-        const pathMetrics = aggregateByEndpoint<MetricsExpandedEntry[]>(
-          'metrics/expanded',
-          pathRes,
-        );
         const events = aggregateByEndpoint<{ x: string; y: number }[]>(
           'events/series',
           eventsRes,
         );
 
         const eventTotals = sumEventTotals(events);
-        const hasTrailingSlash = this.hasTrailingSlashConvention(
-          input.tenantId,
-        );
-        const { searchCount, resourceMetrics } = parseMetrics(
-          pathMetrics,
-          hasTrailingSlash,
-        );
 
-        const sumY = (entries: { y: number }[]) =>
-          entries.reduce((sum, e) => sum + (Number(e?.y) || 0), 0);
+        const searches = SEARCH_EVENT_NAMES.reduce(
+          (sum, eventName) => sum + (eventTotals[eventName] ?? 0),
+          0,
+        );
 
         return {
-          searches: searchCount,
-          resourceViews: sumY(resourceMetrics),
+          searches,
+          resourceViews: eventTotals[UmamiEvent.ResourceViewed] ?? 0,
           zeroResults: eventTotals[UmamiEvent.SearchZeroResults] ?? 0,
           directions: eventTotals[UmamiEvent.DirectionClick] ?? 0,
           phoneCalls: eventTotals[UmamiEvent.PhoneClick] ?? 0,
@@ -249,43 +217,57 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const pathRes = await this.umamiHttpService.fanOut<
-          MetricsExpandedEntry[]
-        >(input.websiteIds, 'metrics/expanded', {
-          startAt: startMs,
-          endAt: endMs,
-          type: 'path',
-        });
-
-        const pathMetrics = aggregateByEndpoint<MetricsExpandedEntry[]>(
-          'metrics/expanded',
-          pathRes,
+        const eventRows = await this.fetchAllPivotRows(
+          input.websiteIds,
+          startMs,
+          endMs,
+          UmamiEvent.ResourceViewed,
         );
+        const metricsByResourceId = new Map<
+          string,
+          { title: string | undefined; views: number }
+        >();
 
-        const hasTrailingSlash = this.hasTrailingSlashConvention(
-          input.tenantId,
-        );
-        const { resourceMetrics } = parseMetrics(pathMetrics, hasTrailingSlash);
-        const resourceIdsViewMap = resourceMetrics
-          .map((row) => ({ id: extractResourceId(row.x), views: row.y }))
-          .filter((id): id is { id: string; views: number } => id.id !== null);
+        for (const row of eventRows) {
+          const resourceId = this.getPivotPropertyValue(
+            row,
+            'resourceId',
+          )?.trim();
+          if (!resourceId) continue;
 
-        if (resourceIdsViewMap.length === 0) {
+          const resourceTitle =
+            this.getPivotPropertyValue(row, 'resourceTitle')?.trim() ||
+            undefined;
+          const metric = metricsByResourceId.get(resourceId);
+          if (metric) {
+            metric.views++;
+            metric.title ??= resourceTitle;
+          } else {
+            metricsByResourceId.set(resourceId, {
+              title: resourceTitle,
+              views: 1,
+            });
+          }
+        }
+
+        if (metricsByResourceId.size === 0) {
           return [];
         }
 
-        const resourceIds = resourceIdsViewMap.map((item) => item.id);
-        const resourceTitles =
-          await this.resourceService.findTitlesByIds(resourceIds);
-
+        const fallbackIds = Array.from(metricsByResourceId)
+          .filter(([, metric]) => !metric.title)
+          .map(([id]) => id);
+        const fallbackTitles = fallbackIds.length
+          ? await this.resourceService.findTitlesByIds(fallbackIds)
+          : [];
         const titleMap = new Map(
-          resourceTitles.map((item) => [item.id, item.displayName]),
+          fallbackTitles.map((item) => [item.id, item.displayName]),
         );
 
-        return resourceIdsViewMap.map((item) => ({
-          title: titleMap.get(item.id) ?? item.id,
-          views: item.views,
-        }));
+        return Array.from(metricsByResourceId, ([id, metric]) => ({
+          title: metric.title ?? titleMap.get(id) ?? id,
+          views: metric.views,
+        })).sort((a, b) => b.views - a.views);
       },
     );
   }
@@ -299,15 +281,10 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const eventNames: SearchEventName[] = [
-          'search_text',
-          'search_taxonomy',
-          'search_hybrid',
-        ];
         const eventValues: Array<[SearchEventName, UmamiEventDataValue[][]]> =
           [];
 
-        for (const eventName of eventNames) {
+        for (const eventName of SEARCH_EVENT_NAMES) {
           const websiteValues = await this.umamiHttpService.fanOut<
             UmamiEventDataValue[]
           >(input.websiteIds, 'event-data/values', {
@@ -629,14 +606,9 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const searchEvents: SearchEventName[] = [
-          'search_text',
-          'search_taxonomy',
-          'search_hybrid',
-        ];
         const allRows: UmamiEventDataPivotRow[] = [];
 
-        for (const eventName of searchEvents) {
+        for (const eventName of SEARCH_EVENT_NAMES) {
           const rows = await this.fetchAllPivotRows(
             input.websiteIds,
             startMs,
@@ -918,7 +890,6 @@ export class UmamiAnalyticsService {
       if (aggregated?.data) {
         rows.push(...aggregated.data);
       }
-
       if (page === 1) {
         totalPages = Math.max(
           1,
