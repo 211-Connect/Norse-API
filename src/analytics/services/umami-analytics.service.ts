@@ -217,37 +217,57 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const responses = await this.umamiHttpService.fanOut<
-          UmamiEventDataValue[]
-        >(input.websiteIds, 'event-data/values', {
-          startAt: startMs,
-          endAt: endMs,
-          event: UmamiEvent.ResourceViewed,
-          propertyName: 'resourceId',
-        });
-
-        const aggregated = aggregateByEndpoint<UmamiEventDataValue[]>(
-          'event-data/values',
-          responses,
+        const eventRows = await this.fetchAllPivotRows(
+          input.websiteIds,
+          startMs,
+          endMs,
+          UmamiEvent.ResourceViewed,
         );
-        const resourceMetrics = toMetricEntries(aggregated);
+        const metricsByResourceId = new Map<
+          string,
+          { title: string | undefined; views: number }
+        >();
 
-        if (resourceMetrics.length === 0) {
+        for (const row of eventRows) {
+          const resourceId = this.getPivotPropertyValue(
+            row,
+            'resourceId',
+          )?.trim();
+          if (!resourceId) continue;
+
+          const resourceTitle =
+            this.getPivotPropertyValue(row, 'resourceTitle')?.trim() ||
+            undefined;
+          const metric = metricsByResourceId.get(resourceId);
+          if (metric) {
+            metric.views++;
+            metric.title ??= resourceTitle;
+          } else {
+            metricsByResourceId.set(resourceId, {
+              title: resourceTitle,
+              views: 1,
+            });
+          }
+        }
+
+        if (metricsByResourceId.size === 0) {
           return [];
         }
 
-        const resourceIds = resourceMetrics.map((row) => row.x);
-        const resourceTitles =
-          await this.resourceService.findTitlesByIds(resourceIds);
-
+        const fallbackIds = Array.from(metricsByResourceId)
+          .filter(([, metric]) => !metric.title)
+          .map(([id]) => id);
+        const fallbackTitles = fallbackIds.length
+          ? await this.resourceService.findTitlesByIds(fallbackIds)
+          : [];
         const titleMap = new Map(
-          resourceTitles.map((item) => [item.id, item.displayName]),
+          fallbackTitles.map((item) => [item.id, item.displayName]),
         );
 
-        return resourceMetrics.map(({ x, y }) => ({
-          title: titleMap.get(x) ?? x,
-          views: y,
-        }));
+        return Array.from(metricsByResourceId, ([id, metric]) => ({
+          title: metric.title ?? titleMap.get(id) ?? id,
+          views: metric.views,
+        })).sort((a, b) => b.views - a.views);
       },
     );
   }
@@ -870,7 +890,6 @@ export class UmamiAnalyticsService {
       if (aggregated?.data) {
         rows.push(...aggregated.data);
       }
-      ą;
       if (page === 1) {
         totalPages = Math.max(
           1,

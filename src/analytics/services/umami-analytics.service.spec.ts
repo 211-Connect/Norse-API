@@ -146,28 +146,31 @@ describe('UmamiAnalyticsService', () => {
   });
 
   describe('getResourceMetrics', () => {
-    it('groups resource_viewed events by resourceId across websites', async () => {
+    it('uses resourceTitle from resource_viewed events and groups views by resourceId', async () => {
+      const firstWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-2', resourceTitle: 'Library' }),
+      ];
+      const secondWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+      ];
       umamiHttpService.fanOut.mockImplementation(
         async (
           _websiteIds: string[],
           endpoint: string,
-          params: { event?: string; propertyName?: string },
+          params: { eventName?: string },
         ) => {
-          expect(endpoint).toBe('event-data/values');
-          expect(params.event).toBe(UmamiEvent.ResourceViewed);
-          expect(params.propertyName).toBe('resourceId');
+          expect(endpoint).toBe('event-data-pivot');
+          expect(params.eventName).toBe(UmamiEvent.ResourceViewed);
           return [
-            [
-              { value: 'resource-1', total: 3 },
-              { value: 'resource-2', total: 1 },
-            ],
-            [{ value: 'resource-1', total: 2 }],
+            { data: firstWebsiteRows, count: firstWebsiteRows.length },
+            { data: secondWebsiteRows, count: secondWebsiteRows.length },
           ];
         },
       );
-      resourceService.findTitlesByIds.mockResolvedValue([
-        { id: 'resource-1', displayName: 'Food Bank' },
-      ]);
 
       const result = await service.getResourceMetrics({
         tenantId: 'tenant-1',
@@ -178,7 +181,39 @@ describe('UmamiAnalyticsService', () => {
 
       expect(result).toEqual([
         { title: 'Food Bank', views: 5 },
-        { title: 'resource-2', views: 1 },
+        { title: 'Library', views: 1 },
+      ]);
+      expect(resourceService.findTitlesByIds).not.toHaveBeenCalled();
+    });
+
+    it('looks up titles by id only when a resource_viewed event has no resourceTitle', async () => {
+      const rows = [
+        buildRow({ resourceId: 'legacy-resource' }),
+        buildRow({ resourceId: 'named-resource', resourceTitle: 'Current Name' }),
+        buildRow({ resourceId: 'unknown-resource' }),
+      ];
+      umamiHttpService.fanOut.mockResolvedValue([
+        { data: rows, count: rows.length },
+      ]);
+      resourceService.findTitlesByIds.mockResolvedValue([
+        { id: 'legacy-resource', displayName: 'Legacy Name' },
+      ]);
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(resourceService.findTitlesByIds).toHaveBeenCalledWith([
+        'legacy-resource',
+        'unknown-resource',
+      ]);
+      expect(result).toEqual([
+        { title: 'Legacy Name', views: 1 },
+        { title: 'Current Name', views: 1 },
+        { title: 'unknown-resource', views: 1 },
       ]);
     });
 
