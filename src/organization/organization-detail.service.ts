@@ -118,9 +118,18 @@ export class OrganizationDetailService {
       return organization;
     }
 
-    const redirect = await this.redirectModel.findById(urlId).exec();
+    // A re-keyed organization (ISS-2517): this tenant's redirect row names
+    // the new id, and the target is Norse's organization destination, the
+    // org-scoped search. Another tenant's row never redirects this one.
+    const redirect = await this.redirectModel
+      .findOne({ _id: urlId, tenantId }, { newId: 1 })
+      .lean()
+      .exec();
     if (redirect) {
-      throw new NotFoundException({ redirect: `/search/${redirect.newId}` });
+      throw new NotFoundException({
+        message: 'Not Found',
+        redirect: `/search?${new URLSearchParams({ organization_id: redirect.newId })}`,
+      });
     }
 
     throw new NotFoundException();
