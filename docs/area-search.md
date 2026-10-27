@@ -31,14 +31,12 @@ directories all get the same behaviour.
 
 `SearchUtilsService.buildRegionFilter`: per Region, a `bool.should` of
 
-- `service_area` `geo_shape` intersects `indexed_shape(regions, id, REGION_SERVICE_AREA_PATH)`
+- `service_area` `geo_shape` intersects `indexed_shape(regions, id, geometry)`
 - `location.point` `geo_shape` intersects `indexed_shape(regions, id, geometry)`
 
 ES reads each shape by id from the `regions` index; nothing large is sent and
 the request stays a cacheable GET. Unknown ids are a 400 from one `mget`
-(`RegionService.getSummaries`). `REGION_SERVICE_AREA_PATH` is `geometry` until
-Dagster loads `geometry_interior` (the shape shrunk by ~1 km, against border
-contact — see [geography-filter.md](geography-filter.md#known-behaviour-border-contact)).
+(`RegionService.getSummaries`).
 
 The Region ids join the search fingerprint only when present, so every
 search without them keeps its shard preference and cache keys.
@@ -82,4 +80,4 @@ what Norse draws as the searched area. The internal
 
 Answers with `Deprecation: true`, is `deprecated` in OpenAPI, and logs
 `Deprecated POST /search called: tenant=… geo_type=…`. Removed once the logs
-show no callers (ticket T8).
+show no callers (see Norse `docs/area-search-tickets.md`).

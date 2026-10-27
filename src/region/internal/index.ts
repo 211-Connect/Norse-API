@@ -4,7 +4,6 @@ export {
   REGIONS_INDEX,
   REGION_GEOMETRY_PATH,
   REGION_ID_PATTERN,
-  REGION_SERVICE_AREA_PATH,
   regionIdMessage,
   unknownRegionsError,
 } from './region.constants';

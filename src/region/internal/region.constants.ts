@@ -17,14 +17,6 @@ export const REGION_ID_PATTERN =
 /** Where a Region document keeps its boundary. */
 export const REGION_GEOMETRY_PATH = 'geometry';
 
-/**
- * The boundary a resource's `service_area` is matched against in an area
- * search. Switch to `geometry_interior` (the shape shrunk by ~1 km, so a
- * service area that only touches the border does not match) once Dagster
- * loads it — see docs/area-search.md.
- */
-export const REGION_SERVICE_AREA_PATH = REGION_GEOMETRY_PATH;
-
 /** The validation message for a Region id, alone or as each item of a list. */
 export function regionIdMessage({ property, value }: ValidationArguments) {
   const subject = Array.isArray(value) ? `each value in ${property}` : property;

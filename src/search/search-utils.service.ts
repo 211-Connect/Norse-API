@@ -17,11 +17,7 @@ import {
 import { FacetConfig, PinnedResourcesMode } from '../cms-config/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
-import {
-  REGION_GEOMETRY_PATH,
-  REGION_SERVICE_AREA_PATH,
-  REGIONS_INDEX,
-} from 'src/region/internal';
+import { REGION_GEOMETRY_PATH, REGIONS_INDEX } from 'src/region/internal';
 
 /**
  * Sortable field names per index. The two indices are built by separate
@@ -231,25 +227,22 @@ export class SearchUtilsService {
    * index by id, so no geometry is sent — see docs/area-search.md.
    */
   static buildRegionFilter(regionIds: string[]): QueryDslQueryContainer {
-    const shape = (id: string, path: string) => ({
-      indexed_shape: { index: REGIONS_INDEX, id, path },
-      relation: 'intersects' as const,
-    });
-
     return {
       bool: {
-        should: regionIds.flatMap((id) => [
-          {
+        should: regionIds.flatMap((id) =>
+          ['service_area', 'location.point'].map((field) => ({
             geo_shape: {
-              service_area: shape(id, REGION_SERVICE_AREA_PATH),
+              [field]: {
+                indexed_shape: {
+                  index: REGIONS_INDEX,
+                  id,
+                  path: REGION_GEOMETRY_PATH,
+                },
+                relation: 'intersects' as const,
+              },
             },
-          },
-          {
-            geo_shape: {
-              'location.point': shape(id, REGION_GEOMETRY_PATH),
-            },
-          },
-        ]),
+          })),
+        ),
         minimum_should_match: 1,
       },
     };
