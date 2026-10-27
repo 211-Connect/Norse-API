@@ -1,4 +1,8 @@
-import { ApiProperty, getSchemaPath } from '@nestjs/swagger';
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  getSchemaPath,
+} from '@nestjs/swagger';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
 import {
   ResourceBatchMeta,
@@ -60,7 +64,8 @@ export class ResourceBatchMetaDto implements ResourceBatchMeta {
 
 export class ResourceBatchResponseDto {
   @ApiProperty({
-    description: 'Successfully fetched resources, keyed by resource ID',
+    description:
+      'Successfully fetched resources, keyed by the requested resource ID (for a re-keyed id, see `redirects`)',
     type: 'object',
     additionalProperties: {
       $ref: getSchemaPath(TransformedResourceOpenApiDto),
@@ -93,4 +98,16 @@ export class ResourceBatchResponseDto {
     type: ResourceBatchMetaDto,
   })
   meta: ResourceBatchMetaDto;
+
+  @ApiPropertyOptional({
+    description:
+      "Requested id -> the id the record has now, for each requested id that was re-keyed (found by following this tenant's redirects). The record is in `data` under the REQUESTED id; its own `serviceAtLocationId` is the new one. Absent when nothing was redirected.",
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    example: {
+      '550e8400-e29b-41d4-a716-446655440002':
+        '0f1e2d3c-4b5a-4968-8776-655443322110',
+    },
+  })
+  redirects?: Record<string, string>;
 }

@@ -49,4 +49,10 @@ export interface ResourceBatchResponse {
   data: TransformedResourceMap;
   errors: ResourceBatchError[];
   meta: ResourceBatchMeta;
+  /**
+   * Requested id -> the id the record has now, for each requested id that
+   * was found by following this tenant's `redirects` (a re-key). The record
+   * itself is in `data` under the requested id (ISS-2516).
+   */
+  redirects?: Record<string, string>;
 }

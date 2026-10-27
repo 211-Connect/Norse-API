@@ -23,6 +23,7 @@ describe('ResourceService', () => {
   const mockRedirectModel = {
     findById: jest.fn(),
     findOne: jest.fn(() => ({ lean: () => ({ exec: redirectExec }) })),
+    find: jest.fn(() => ({ lean: () => ({ exec: async () => [] }) })),
   };
 
   const tenantId = 'tenant-abc';

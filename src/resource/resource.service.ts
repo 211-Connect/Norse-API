@@ -111,6 +111,37 @@ export class ResourceService {
           id: resource._id,
           displayName: resource.displayName,
         });
+        foundIds.add(resource._id);
+      }
+    }
+
+    // Re-keyed ids (ISS-2516), under the requested id, as findManyByIds does.
+    const stillMissing = uniqueIds.filter((id) => !foundIds.has(id));
+    if (tenantId && stillMissing.length > 0) {
+      const rows = await this.redirectModel
+        .find({ _id: { $in: stillMissing }, tenantId }, { newId: 1 })
+        .lean()
+        .exec();
+      if (rows.length > 0) {
+        const targets = await this.resourceModel
+          .find(
+            {
+              tenant_id: tenantId,
+              serviceAtLocationId: { $in: rows.map((row) => row.newId) },
+            },
+            { serviceAtLocationId: 1, displayName: 1 },
+          )
+          .lean()
+          .exec();
+        const nameByNewId = new Map(
+          targets.map((t) => [t.serviceAtLocationId, t.displayName]),
+        );
+        for (const row of rows) {
+          const displayName = nameByNewId.get(row.newId);
+          if (displayName !== undefined) {
+            titles.push({ id: row._id, displayName });
+          }
+        }
       }
     }
 
@@ -208,23 +239,22 @@ export class ResourceService {
       );
     }
 
+    const redirects = await this.followRedirects(
+      uniqueIds.filter((id) => !foundIds.has(id)),
+      tenantId,
+      locale,
+      data,
+      errors,
+      foundIds,
+    );
+
     for (const id of uniqueIds) {
       if (!foundIds.has(id)) {
-        const redirect = await this.redirectModel.findById(id).exec();
-
-        if (redirect) {
-          errors.push({
-            id,
-            reason: `Resource not found (redirect available: /search/${redirect.newId})`,
-            statusCode: 404,
-          });
-        } else {
-          errors.push({
-            id,
-            reason: 'Resource not found',
-            statusCode: 404,
-          });
-        }
+        errors.push({
+          id,
+          reason: 'Resource not found',
+          statusCode: 404,
+        });
       }
     }
 
@@ -236,7 +266,61 @@ export class ResourceService {
         successful: Object.keys(data).length,
         failed: errors.length,
       },
+      ...(Object.keys(redirects).length > 0 ? { redirects } : {}),
     };
+  }
+
+  /**
+   * Re-keyed ids (ISS-2516): for each id still missing, follow this tenant's
+   * `redirects` row to the new id and resolve that, tenant-scoped. The
+   * record goes into `data` under the id that was ASKED for, because every
+   * caller (favorite lists, printable directories, Norse) indexes the result
+   * by its own ids; the returned map says what each became. One hop only: a
+   * row whose target does not resolve leaves the id missing.
+   */
+  private async followRedirects(
+    missingIds: string[],
+    tenantId: string,
+    locale: string,
+    data: Record<string, TransformedResource>,
+    errors: ResourceBatchResponse['errors'],
+    foundIds: Set<string>,
+  ): Promise<Record<string, string>> {
+    if (missingIds.length === 0) return {};
+
+    const rows = await this.redirectModel
+      .find({ _id: { $in: missingIds }, tenantId }, { newId: 1 })
+      .lean()
+      .exec();
+    if (rows.length === 0) return {};
+
+    const newIdByOldId = new Map(rows.map((row) => [row._id, row.newId]));
+    const targets = await this.aggregateResources(
+      {
+        tenant_id: tenantId,
+        serviceAtLocationId: { $in: [...new Set(newIdByOldId.values())] },
+      },
+      locale,
+    );
+    const targetByNewId = new Map(
+      targets.map((target) => [target.serviceAtLocationId, target]),
+    );
+
+    const redirects: Record<string, string> = {};
+    for (const [oldId, newId] of newIdByOldId) {
+      const target = targetByNewId.get(newId);
+      if (!target) continue;
+      this.collectTransformedResources(
+        [target],
+        locale,
+        data,
+        errors,
+        foundIds,
+        () => oldId,
+      );
+      redirects[oldId] = newId;
+    }
+    return redirects;
   }
 
   /**
