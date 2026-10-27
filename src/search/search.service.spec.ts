@@ -8,6 +8,7 @@ import { HybridSearchService } from './hybrid-search.service';
 import { BadRequestException } from '@nestjs/common';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { SearchLocationService } from './internal/location/search-location.service';
 
 describe('SearchService', () => {
   let service: SearchService;
@@ -45,6 +46,11 @@ describe('SearchService', () => {
         {
           provide: MetricsService,
           useValue: createMetricsServiceMock(),
+        },
+        {
+          // No region/location in these specs: the query passes through.
+          provide: SearchLocationService,
+          useValue: { resolve: jest.fn(async (query) => ({ query })) },
         },
       ],
     }).compile();

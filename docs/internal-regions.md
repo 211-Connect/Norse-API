@@ -30,9 +30,10 @@ Send `x-api-version: 1`, as for every versioned route, and
 
 ## Region ids
 
-`state:MO` (postal code), `county:29095` (5-digit FIPS), `zip:64130`. The
+`state:MO` (postal code), `county:29095` (5-digit FIPS), `place:5363000`
+(7-digit Census place GEOID, once cities are seeded), `zip:64130`. The
 `:id` route validates the form exactly
-(`^(state:[A-Z]{2}|county:\d{5}|zip:\d{5})$`): a malformed id is 400, a
+(`^(state:[A-Z]{2}|county:\d{5}|place:\d{7}|zip:\d{5})$`): a malformed id is 400, a
 well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
 
 ## Typeahead

@@ -145,3 +145,32 @@ describe('geocoding.mapper', () => {
     });
   });
 });
+
+describe('mapMapboxFeatureToGeocodeResponse state_code (area search)', () => {
+  it('reads the state code from the region context', () => {
+    const result = mapMapboxFeatureToGeocodeResponse(
+      {
+        place_name: 'Yakima, Washington, United States',
+        center: [-120.5, 46.6],
+        place_type: ['place'],
+        context: [{ id: 'region.1', text: 'Washington', short_code: 'US-WA' }],
+      },
+      'en',
+    );
+    expect(result.state_code).toBe('WA');
+    expect(result.region).toBe('Washington');
+  });
+
+  it('reads a state hit its own code', () => {
+    const result = mapMapboxFeatureToGeocodeResponse(
+      {
+        place_name: 'Washington, United States',
+        center: [-120, 48],
+        place_type: ['region'],
+        properties: { short_code: 'US-WA' },
+      },
+      'en',
+    );
+    expect(result.state_code).toBe('WA');
+  });
+});

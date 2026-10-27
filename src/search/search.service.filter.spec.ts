@@ -10,6 +10,7 @@ import { OrchestrationConfigService } from '../cms-config/orchestration-config.s
 import { HybridSearchService } from './hybrid-search.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { SearchLocationService } from './internal/location/search-location.service';
 
 describe('SearchService Logic', () => {
   let service: SearchService;
@@ -71,6 +72,11 @@ describe('SearchService Logic', () => {
         {
           provide: MetricsService,
           useValue: createMetricsServiceMock(),
+        },
+        {
+          // No region/location in these specs: the query passes through.
+          provide: SearchLocationService,
+          useValue: { resolve: jest.fn(async (query) => ({ query })) },
         },
       ],
     }).compile();

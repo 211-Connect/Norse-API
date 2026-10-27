@@ -19,6 +19,7 @@ export interface SearchIdentity {
   geoType: string | undefined;
   organizationId: string | undefined;
   geometry: unknown;
+  regionIds?: string[];
 }
 
 export const searchFingerprint = (search: SearchIdentity): string =>
@@ -34,4 +35,8 @@ export const searchFingerprint = (search: SearchIdentity): string =>
     geoType: search.geoType ?? null,
     organizationId: search.organizationId ?? null,
     geometry: search.geometry ?? null,
+    // Only when present, so every search without Regions keeps its identity.
+    ...(search.regionIds?.length
+      ? { regionIds: [...search.regionIds].sort() }
+      : {}),
   });

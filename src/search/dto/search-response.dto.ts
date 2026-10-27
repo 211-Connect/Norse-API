@@ -261,6 +261,46 @@ export class RelevanceCutoffDto {
   candidates_examined: number;
 }
 
+export class ResolvedRegionDto {
+  @ApiProperty({ example: 'county:53077' })
+  id: string;
+
+  @ApiProperty({ enum: ['state', 'county', 'place', 'zip'] })
+  type: 'state' | 'county' | 'place' | 'zip';
+
+  @ApiProperty({ example: 'Yakima County, WA' })
+  name: string;
+}
+
+/**
+ * Where the search was scoped, when `region` or `location` decided it. Absent
+ * for `coords` searches and searches with no location.
+ */
+export class ResolvedLocationDto {
+  @ApiProperty({
+    required: false,
+    description: 'The `location` text, when the search was resolved from it.',
+    example: 'Yakima',
+  })
+  input?: string;
+
+  @ApiProperty({
+    type: [ResolvedRegionDto],
+    description:
+      'The Regions searched. Empty when `location` resolved to a point (an address), which is searched with `coords` and `distance`.',
+  })
+  regions: ResolvedRegionDto[];
+
+  @ApiProperty({
+    type: [Number],
+    required: false,
+    description:
+      '[longitude, latitude] the search measured distance from, when there is one.',
+    example: [-120.5061, 46.6022],
+  })
+  coords?: [number, number];
+}
+
 export class SearchResponseDto {
   @ApiProperty({ type: SearchHitsContainer })
   search: {
@@ -275,6 +315,9 @@ export class SearchResponseDto {
 
   @ApiProperty({ type: RelevanceCutoffDto, required: false, nullable: true })
   relevance_cutoff?: RelevanceCutoffDto;
+
+  @ApiProperty({ type: ResolvedLocationDto, required: false })
+  resolved_location?: ResolvedLocationDto;
 }
 
 export type SearchResponse = SearchResponseDto;

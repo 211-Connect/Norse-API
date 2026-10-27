@@ -2,7 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Header,
   HttpCode,
+  Logger,
   Query,
   Body,
   Req,
@@ -15,6 +17,7 @@ import { SearchService } from './search.service';
 import {
   ApiBody,
   ApiHeader,
+  ApiOperation,
   ApiQuery,
   ApiResponse,
   ApiTags,
@@ -95,6 +98,8 @@ const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
   },
 })
 export class SearchController {
+  private readonly logger = new Logger(SearchController.name);
+
   constructor(
     private readonly searchService: SearchService,
     private readonly aiSearchService: AiSearchService,
@@ -128,7 +133,8 @@ export class SearchController {
     name: 'distance',
     required: false,
     description:
-      'Radius in miles. Only takes effect when `coords` is also set.',
+      'Radius in miles. Only takes effect when `coords` is also set, and ' +
+      'never with `region`: an area is searched as its shape.',
     schema: { default: 0, type: 'integer', minimum: 0 },
   })
   @ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } })
@@ -151,7 +157,8 @@ export class SearchController {
       '`proximity`: skips the service_area check; returns anything within `distance` of ' +
       '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
       '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
-      'shape; POST only, 400s on GET without a body.',
+      'shape; POST only, 400s on GET without a body. Deprecated: search an ' +
+      'area with `region` or `location` instead. Ignored when `region` is set.',
   })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
   @ApiQuery({
@@ -214,6 +221,16 @@ export class SearchController {
   @Version('1')
   @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
+  @Header('Deprecation', 'true')
+  @ApiOperation({
+    deprecated: true,
+    summary: 'Deprecated: use GET /search with `region` or `location`.',
+    description:
+      'Kept only for existing callers of `geo_type=boundary` with a GeoJSON ' +
+      'body. Area search is `GET /search?region=county:53077` (or ' +
+      '`location=Yakima`); see docs/area-search.md. Responses carry a ' +
+      '`Deprecation` header; the route will be removed.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Search resources (POST)',
@@ -244,7 +261,8 @@ export class SearchController {
     name: 'distance',
     required: false,
     description:
-      'Radius in miles. Only takes effect when `coords` is also set.',
+      'Radius in miles. Only takes effect when `coords` is also set, and ' +
+      'never with `region`: an area is searched as its shape.',
     schema: { default: 0, type: 'integer', minimum: 0 },
   })
   @ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } })
@@ -329,6 +347,11 @@ export class SearchController {
     if (!contentType || !contentType.includes('application/json')) {
       throw new BadRequestException('Content-Type must be application/json');
     }
+
+    // Counted to know when the route can go (docs/area-search.md).
+    this.logger.warn(
+      `Deprecated POST /search called: tenant=${headers['x-tenant-id']} geo_type=${query.geo_type ?? 'none'}`,
+    );
 
     return this.searchService.searchResources({
       headers,

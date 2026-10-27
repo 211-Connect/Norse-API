@@ -31,3 +31,33 @@ describe('resource search shard preference', () => {
     );
   });
 });
+
+describe('searchFingerprint regionIds', () => {
+  const base = {
+    tenantId: 't',
+    lang: 'en',
+    queryStr: 'food',
+    filters: {},
+    taxonomies: [],
+    coords: undefined,
+    distance: 0,
+    age: undefined,
+    geoType: undefined,
+    organizationId: undefined,
+    geometry: undefined,
+  };
+
+  it('keeps the identity of a search without Regions', () => {
+    expect(searchFingerprint({ ...base, regionIds: [] })).toBe(
+      searchFingerprint(base),
+    );
+  });
+
+  it('separates searches by Region set, ignoring order', () => {
+    const a = searchFingerprint({ ...base, regionIds: ['county:1', 'zip:2'] });
+    expect(a).not.toBe(searchFingerprint(base));
+    expect(
+      searchFingerprint({ ...base, regionIds: ['zip:2', 'county:1'] }),
+    ).toBe(a);
+  });
+});

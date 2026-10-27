@@ -968,6 +968,7 @@ export class PrintableDirectoryService {
           }
         : null,
       radius: raw.radius ?? null,
+      regionId: raw.regionId ?? null,
     };
   }
 
@@ -982,6 +983,17 @@ export class PrintableDirectoryService {
       return mergedParams;
     }
 
+    const isUnset = (value: unknown) => value === undefined || value === null;
+
+    // An area default applies only to sources with no location of their own.
+    if (
+      defaults.regionId &&
+      isUnset(mergedParams.region) &&
+      isUnset(mergedParams.coords)
+    ) {
+      mergedParams.region = defaults.regionId;
+    }
+
     if (
       (mergedParams.coords === undefined || mergedParams.coords === null) &&
       defaults.coords
@@ -992,7 +1004,9 @@ export class PrintableDirectoryService {
       ];
     }
 
+    // A Region is searched as its shape: no radius.
     if (
+      isUnset(mergedParams.region) &&
       (mergedParams.distance === undefined || mergedParams.distance === null) &&
       defaults.radius !== undefined &&
       defaults.radius !== null
@@ -1211,6 +1225,7 @@ export class PrintableDirectoryService {
                 }
               : null,
             radius: directory.defaultQueryConfig.radius ?? null,
+            regionId: directory.defaultQueryConfig.regionId ?? null,
           }
         : null,
       sections: [...(directory.sections ?? [])]

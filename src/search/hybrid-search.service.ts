@@ -292,6 +292,7 @@ export class HybridSearchService {
       geoType: geo_type,
       organizationId: organization_id,
       geometry,
+      regionIds: q.region,
     };
     const preference = shardPreference('hybrid', searchFingerprint(identity));
     const t0 = performance.now();
@@ -352,6 +353,7 @@ export class HybridSearchService {
       geo_type,
       geometry,
       organization_id,
+      q.region,
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 

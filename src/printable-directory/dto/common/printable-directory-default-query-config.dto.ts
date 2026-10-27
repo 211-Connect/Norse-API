@@ -4,11 +4,13 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
+import { REGION_ID_PATTERN, regionIdMessage } from 'src/region/internal';
 
 export class PrintableDirectoryCoordsDto {
   @ApiPropertyOptional({
@@ -68,4 +70,20 @@ export class PrintableDirectoryDefaultQueryConfigDto {
   @Min(0)
   @Max(1000)
   radius?: number | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    example: 'county:53077',
+    description:
+      'Region the directory is scoped to (`region` on GET /search), for an ' +
+      'area default location such as a county or city. When set, query ' +
+      'sources without their own location search this Region and `radius` ' +
+      'is not applied; `coords` is then only the origin for distance sort. ' +
+      'See docs/area-search.md.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(REGION_ID_PATTERN, { message: regionIdMessage })
+  regionId?: string | null;
 }
