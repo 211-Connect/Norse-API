@@ -37,8 +37,7 @@ export default () => ({
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
   umami: {
     apiUrl: process.env.UMAMI_API_URL || '',
-    username: process.env.UMAMI_USERNAME || '',
-    password: process.env.UMAMI_PASSWORD || '',
+    apiKey: process.env.UMAMI_API_KEY || '',
   },
   analytics: {
     cache: {
@@ -53,3 +52,13 @@ export default () => ({
   permissionsSideChannelUrl:
     process.env.PERMISSIONS_SIDECHANNEL_BASE_URL || 'http://unkey-auth:8081',
 });
+
+export function validateConfiguration(
+  environment: Record<string, unknown>,
+): Record<string, unknown> {
+  const apiKey = environment.UMAMI_API_KEY;
+  if (typeof apiKey !== 'string' || !apiKey.trim()) {
+    throw new Error('UMAMI_API_KEY is required');
+  }
+  return environment;
+}
