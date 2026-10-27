@@ -58,6 +58,7 @@ export class ResourceService {
     return this.findResourceAndTransform(
       { tenant_id: tenantId, originalId: id },
       id,
+      tenantId,
       options,
     );
   }
@@ -302,15 +303,7 @@ export class ResourceService {
       return this.transformResourceWithTranslations(resource, locale, urlId);
     }
 
-    const redirect = await this.redirectModel.findById(urlId).exec();
-
-    if (redirect) {
-      throw new NotFoundException({
-        redirect: `/search/${redirect.newId}`,
-      });
-    }
-
-    throw new NotFoundException();
+    throw await this.notFound(urlId, tenantId);
   }
 
   /**
@@ -319,6 +312,7 @@ export class ResourceService {
   private async findResourceAndTransform(
     matchQuery: FilterQuery<Resource>,
     lookupId: string,
+    tenantId: string,
     options: { headers: HeadersDto },
   ): Promise<TransformedResource> {
     const locale = options.headers['accept-language'];
@@ -328,18 +322,42 @@ export class ResourceService {
     this.logger.debug(`Resource lookupId=${lookupId}, found=${!!resource}`);
 
     if (!resource) {
-      const redirect = await this.redirectModel.findById(lookupId).exec();
-
-      if (redirect) {
-        throw new NotFoundException({
-          redirect: `/search/${redirect.newId}`,
-        });
-      }
-
-      throw new NotFoundException();
+      throw await this.notFound(lookupId, tenantId);
     }
 
     return this.transformResourceWithTranslations(resource, locale, lookupId);
+  }
+
+  /**
+   * The 404 for a missed lookup. When this tenant has a `redirects` row for
+   * the id (a re-key moved the record), the body carries where it went; the
+   * global HttpExceptionFilter passes `redirect` through (ISS-2514). Scoped by
+   * tenant: another tenant's row for the same id never redirects this one.
+   */
+  private async notFound(
+    oldId: string,
+    tenantId: string,
+  ): Promise<NotFoundException> {
+    const redirect = await this.findRedirect(oldId, tenantId);
+
+    if (redirect) {
+      return new NotFoundException({
+        message: 'Not Found',
+        redirect: `/search/${redirect.newId}`,
+      });
+    }
+
+    return new NotFoundException();
+  }
+
+  private async findRedirect(
+    oldId: string,
+    tenantId: string,
+  ): Promise<Pick<Redirect, 'newId'> | null> {
+    return this.redirectModel
+      .findOne({ _id: oldId, tenantId }, { newId: 1 })
+      .lean()
+      .exec();
   }
 
   private async aggregateResources(
