@@ -19,8 +19,10 @@ describe('ResourceService', () => {
     find: mockFind,
   };
 
+  const redirectExec = jest.fn();
   const mockRedirectModel = {
     findById: jest.fn(),
+    findOne: jest.fn(() => ({ lean: () => ({ exec: redirectExec }) })),
   };
 
   const tenantId = 'tenant-abc';
@@ -109,9 +111,7 @@ describe('ResourceService', () => {
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([]);
-      mockRedirectModel.findById.mockReturnValue({
-        exec: jest.fn().mockResolvedValue(null),
-      });
+      redirectExec.mockResolvedValueOnce(null);
 
       await expect(service.findById(salId, { headers })).rejects.toThrow(
         NotFoundException,
@@ -142,13 +142,15 @@ describe('ResourceService', () => {
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([]);
-      mockRedirectModel.findById.mockReturnValue({
-        exec: jest.fn().mockResolvedValue({ newId: 'new-sal-id' }),
-      });
+      redirectExec.mockResolvedValueOnce({ newId: 'new-sal-id' });
 
       await expect(service.findById(salId, { headers })).rejects.toMatchObject({
         response: { redirect: '/search/new-sal-id' },
       });
+      expect(mockRedirectModel.findOne).toHaveBeenCalledWith(
+        { _id: salId, tenantId },
+        { newId: 1 },
+      );
     });
 
     it('does not return a resource from another tenant when none exists at all', async () => {
