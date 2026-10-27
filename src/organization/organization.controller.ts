@@ -26,6 +26,7 @@ import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descri
 import { SearchOrganizationQueryDto } from './dto/search-organization-query.dto';
 import { OrganizationSearchResponseDto } from './dto/search-organization-response.dto';
 import { OrganizationDetailResponseDto } from './dto/organization-detail-response.dto';
+import { OrganizationNotFoundResponseDto } from './dto/organization-not-found.dto';
 import { OrganizationService } from './organization.service';
 import { OrganizationDetailService } from './organization-detail.service';
 
@@ -125,7 +126,12 @@ export class OrganizationController {
   })
   @ApiParam({ name: 'id', description: 'Public organizationId' })
   @ApiResponse({ status: 200, type: OrganizationDetailResponseDto })
-  @ApiResponse({ status: 404, description: 'Organization not found' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Organization not found in this tenant. When the id was re-keyed, `redirect` names its org-scoped search.',
+    type: OrganizationNotFoundResponseDto,
+  })
   getOrganizationById(
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
