@@ -4,6 +4,7 @@ import type {
   UmamiEventDataValue,
   UmamiEventDataPivotResponse,
   UmamiEventDataPivotRow,
+  UmamiBreakdownRow,
   UmamiSession,
 } from '../types';
 import { ALLOWED_ENDPOINT } from './constants';
@@ -100,6 +101,10 @@ export function aggregateByEndpoint<T = unknown>(
     const values = Array.from(merged, ([value, total]) => ({ value, total }));
     values.sort((a, b) => b.total - a.total);
     return values as unknown as T;
+  }
+
+  if (endpoint === 'breakdown') {
+    return (responses as UmamiBreakdownRow[][]).flat() as unknown as T;
   }
 
   if (endpoint === 'sessions') {

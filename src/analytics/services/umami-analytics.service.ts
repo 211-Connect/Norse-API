@@ -41,9 +41,9 @@ import type {
   UmamiEventDataValue,
   UmamiEventDataPivotResponse,
   UmamiEventDataPivotRow,
+  UmamiBreakdownRow,
   UmamiEventPayload,
   UmamiSendResponse,
-  UmamiSession,
   UmamiSessionResponse,
   ZeroResultQuery,
   ReverseGeocodeOutput,
@@ -525,21 +525,32 @@ export class UmamiAnalyticsService {
       startMs,
       endMs,
       async () => {
-        const sessions = await this.fetchAllSessions(
-          input.websiteIds,
-          startMs,
-          endMs,
+        const breakdownRes = await this.umamiHttpService.fanOut<
+          UmamiBreakdownRow[]
+        >(input.websiteIds, 'breakdown', {
+          startAt: startMs,
+          endAt: endMs,
+          fields: JSON.stringify(['city', 'region', 'country']),
+        });
+        const breakdownRows = aggregateByEndpoint<UmamiBreakdownRow[]>(
+          'breakdown',
+          breakdownRes,
         );
 
-        const addressBySession: Array<{
+        const addressByLocation: Array<{
           address: string;
           visits: number;
         }> = [];
 
-        for (const session of sessions) {
-          const city = session.city?.trim();
-          const region = session.region?.trim();
-          const country = session.country?.trim();
+        for (const {
+          city: cityValue,
+          region: regionValue,
+          country: countryValue,
+          visits,
+        } of breakdownRows) {
+          const city = cityValue?.trim();
+          const region = regionValue?.trim();
+          const country = countryValue?.trim();
 
           if (!city && !region) continue;
 
@@ -547,14 +558,14 @@ export class UmamiAnalyticsService {
             ? [city, region, country].filter(Boolean).join(', ')
             : [region, country].filter(Boolean).join(', ');
 
-          addressBySession.push({
+          addressByLocation.push({
             address,
-            visits: Number(session.visits) || 0,
+            visits: Number(visits) || 0,
           });
         }
 
         const uniqueAddresses = [
-          ...new Set(addressBySession.map((s) => s.address)),
+          ...new Set(addressByLocation.map((s) => s.address)),
         ];
 
         const coordsByAddress = new Map<
@@ -575,7 +586,7 @@ export class UmamiAnalyticsService {
 
         const binMap = new Map<string, HeatmapPoint>();
 
-        for (const { address, visits } of addressBySession) {
+        for (const { address, visits } of addressByLocation) {
           const coords = coordsByAddress.get(address);
           if (!coords) continue;
 
@@ -594,6 +605,8 @@ export class UmamiAnalyticsService {
 
         return Array.from(binMap.values()).sort((a, b) => b.weight - a.weight);
       },
+      undefined,
+      'breakdown',
     );
   }
 
@@ -782,45 +795,6 @@ export class UmamiAnalyticsService {
         return entries;
       },
     );
-  }
-
-  private async fetchAllSessions(
-    websiteIds: string[],
-    startMs: number,
-    endMs: number,
-  ): Promise<UmamiSession[]> {
-    const pageSize = 1000;
-    const maxPages = 100;
-    const sessions: UmamiSession[] = [];
-    let page = 1;
-
-    while (page <= maxPages) {
-      const responses =
-        await this.umamiHttpService.fanOut<UmamiSessionResponse>(
-          websiteIds,
-          'sessions',
-          { startAt: startMs, endAt: endMs, page, pageSize },
-        );
-
-      const aggregated = aggregateByEndpoint<UmamiSessionResponse>(
-        'sessions',
-        responses,
-      );
-
-      const data = aggregated?.data ?? [];
-      if (data.length === 0) break;
-
-      sessions.push(...data);
-      page++;
-    }
-
-    if (page > maxPages) {
-      this.logger.warn(
-        `Heatmap session pagination hit the ${maxPages}-page safety cap; results may be incomplete`,
-      );
-    }
-
-    return sessions;
   }
 
   private async forwardGeocodeAddress(
