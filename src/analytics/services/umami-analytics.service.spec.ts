@@ -12,6 +12,7 @@ describe('UmamiAnalyticsService', () => {
   let umamiHttpService: { fanOut: jest.Mock };
   let resourceService: { findTitlesByIds: jest.Mock };
   let analyticsCacheService: { getOrSet: jest.Mock };
+  let geocodingService: { forwardGeocode: jest.Mock };
 
   const buildRow = (
     properties: Record<string, string>,
@@ -31,6 +32,7 @@ describe('UmamiAnalyticsService', () => {
         fn(),
       ),
     };
+    geocodingService = { forwardGeocode: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,7 +40,7 @@ describe('UmamiAnalyticsService', () => {
         { provide: UmamiHttpService, useValue: umamiHttpService },
         { provide: ResourceService, useValue: resourceService },
         { provide: AnalyticsCacheService, useValue: analyticsCacheService },
-        { provide: GeocodingService, useValue: {} },
+        { provide: GeocodingService, useValue: geocodingService },
       ],
     }).compile();
 
@@ -518,4 +520,64 @@ describe('UmamiAnalyticsService', () => {
       );
     });
   });
+
+  describe('getHeatmap', () => {
+    it('uses breakdown visits and preserves region-only locations', async () => {
+      umamiHttpService.fanOut.mockResolvedValue([
+        [
+          {
+            city: 'Paris',
+            region: 'Ile-de-France',
+            country: 'France',
+            visits: 7,
+          },
+          { city: null, region: 'Ontario', country: 'Canada', visits: 4 },
+        ],
+        [
+          {
+            city: 'Paris',
+            region: 'Ile-de-France',
+            country: 'France',
+            visits: 3,
+          },
+        ],
+      ]);
+      geocodingService.forwardGeocode.mockImplementation(
+        async ({ address }: { address: string }) => [
+          {
+            coordinates:
+              address === 'Paris, Ile-de-France, France'
+                ? ([2.3522, 48.8566] as [number, number])
+                : ([-75.6972, 45.4215] as [number, number]),
+          },
+        ],
+      );
+
+      const result = await service.getHeatmap({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+      });
+
+      expect(result).toEqual([
+        { lng: 2.3522, lat: 48.8566, weight: 10 },
+        { lng: -75.6972, lat: 45.4215, weight: 4 },
+      ]);
+      expect(umamiHttpService.fanOut).toHaveBeenCalledTimes(1);
+      expect(umamiHttpService.fanOut).toHaveBeenCalledWith(
+        ['website-1', 'website-2'],
+        'breakdown',
+        {
+          startAt: Date.parse('2026-09-30T00:00:00.000Z'),
+          endAt: Date.parse('2026-10-01T00:00:00.000Z'),
+          fields: JSON.stringify(['city', 'region', 'country']),
+        },
+      );
+      expect(geocodingService.forwardGeocode).toHaveBeenCalledWith(
+        expect.objectContaining({ address: 'Ontario, Canada' }),
+      );
+    });
+  });
+
 });

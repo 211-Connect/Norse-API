@@ -15,7 +15,7 @@ export class HeatmapPointResponse implements HeatmapPoint {
   lat: number;
 
   @ApiProperty({
-    description: 'Aggregate weight (number of searches) at this location',
+    description: 'Aggregate Umami visits at this location',
     example: 15,
   })
   weight: number;

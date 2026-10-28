@@ -386,7 +386,9 @@ export class AnalyticsController {
   @Get('heatmap')
   @Version('1')
   @ApiOperation({
-    summary: 'Get search heatmap points',
+    summary: 'Get visitor traffic heatmap points',
+    description:
+      'Weights use Umami visits from pageview events. Each website contributes at most 500 location groups.',
   })
   @ApiResponse({
     status: 200,
