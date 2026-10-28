@@ -1,9 +1,8 @@
 # Area search on `GET /search`
 
 Searching by an **area** (state, county, city, ZIP) instead of a point and a
-radius, over plain GET. The product-level design and tickets live in Norse:
-`docs/area-search.md` and `docs/area-search-tickets.md`. This page is the API
-side.
+radius, over plain GET. The product-level design lives in Norse
+`docs/area-search.md`; this page is the API side.
 
 ## Three ways to say where
 
@@ -80,4 +79,4 @@ what Norse draws as the searched area. The internal
 
 Answers with `Deprecation: true`, is `deprecated` in OpenAPI, and logs
 `Deprecated POST /search called: tenant=… geo_type=…`. Removed once the logs
-show no callers (see Norse `docs/area-search-tickets.md`).
+show no callers.
