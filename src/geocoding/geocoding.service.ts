@@ -15,6 +15,7 @@ import {
   ReverseGeocodeResponseDto,
 } from './dto/geocoding.dto';
 import { IGeocodingProvider } from './providers/geocoding-provider.interface';
+import { RegionService } from 'src/region/internal';
 
 export const GEOCODING_PROVIDERS_TOKEN = 'GEOCODING_PROVIDERS';
 
@@ -27,6 +28,7 @@ export class GeocodingService {
     @Inject(GEOCODING_PROVIDERS_TOKEN)
     private readonly providers: Record<GeocodingProvider, IGeocodingProvider>,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly regionService: RegionService,
   ) {}
 
   private getProvider(
@@ -58,7 +60,8 @@ export class GeocodingService {
       query.proximity && providerKey === GeocodingProvider.MAPBOX
         ? query.proximity.map((n) => n.toFixed(3)).join(',')
         : '';
-    const cacheKey = `geocode:forward:${providerKey}:${address}:${locale}:${limit}:${types}:${proximity}`;
+    // v2: Mapbox hits carry `region_id` (docs/area-search.md).
+    const cacheKey = `geocode:forward:v2:${providerKey}:${address}:${locale}:${limit}:${types}:${proximity}`;
 
     const cachedResult =
       await this.cacheManager.get<ForwardGeocodeResponseDto[]>(cacheKey);
@@ -70,6 +73,9 @@ export class GeocodingService {
       const results = await this.getProvider(query.provider).forwardGeocode(
         query,
       );
+      if (providerKey === GeocodingProvider.MAPBOX) {
+        await this.attachRegions(results);
+      }
       await this.cacheManager.set(cacheKey, results, this.cacheTTL);
       return results;
     } catch (error) {
@@ -86,6 +92,28 @@ export class GeocodingService {
         'Failed to geocode address. Please try again later.',
       );
     }
+  }
+
+  /**
+   * Adds the id of the Region each hit is an area of (null for points). A
+   * failed lookup leaves the hit a point rather than failing the geocode.
+   */
+  private async attachRegions(
+    results: ForwardGeocodeResponseDto[],
+  ): Promise<void> {
+    await Promise.all(
+      results.map(async (result) => {
+        const region = await this.regionService
+          .regionOf(result)
+          .catch((error) => {
+            this.logger.warn(
+              `Region lookup failed for "${result.address}": ${error?.message}`,
+            );
+            return null;
+          });
+        result.region_id = region?.id ?? null;
+      }),
+    );
   }
 
   /**

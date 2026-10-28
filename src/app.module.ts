@@ -39,6 +39,8 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { RegionInternalModule } from './region/internal/region.module';
+import { RegionPublicModule } from './region/public/region-public.module';
+import { RegionPublicController } from './region/public/region-public.controller';
 import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { GatewayIdentityGuard } from './auth/gateway/gateway-identity.guard';
@@ -108,6 +110,7 @@ const arcjetKey = configuration().ARCJET_KEY;
     SuggestionModule,
     GeocodingModule,
     RegionInternalModule,
+    RegionPublicModule,
     AnalyticsModule,
     TaxonomyScorecardModule,
     PrintableDirectoryModule,
@@ -155,6 +158,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryDeliveryInternalController,
       BlockedTrafficInternalController,
       OrganizationController,
+      RegionPublicController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
       // CDN-cached route (cache keys on URL, ignoring Vary).
       ServiceController,

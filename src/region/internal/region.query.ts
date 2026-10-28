@@ -8,7 +8,7 @@ import {
   scoreThenUnique,
   shardPreference,
 } from 'src/common/elasticsearch/shard-preference';
-import { REGIONS_INDEX } from './region.constants';
+import { REGION_GEOMETRY_PATH, REGIONS_INDEX } from './region.constants';
 
 export const REGION_SUMMARY_FIELDS = [
   'id',
@@ -240,5 +240,32 @@ export function buildRegionGet(id: string): SearchRequest {
     track_total_hits: false,
     _source: REGION_DETAIL_FIELDS,
     query: { term: { id } },
+  };
+}
+
+/** Every Region whose boundary contains the point (`[lng, lat]`). */
+export function buildRegionsContaining(point: [number, number]): SearchRequest {
+  return {
+    index: REGIONS_INDEX,
+    // One Region per type, unless the point sits on a shared border.
+    size: 10,
+    track_total_hits: false,
+    _source: REGION_SUMMARY_FIELDS,
+    // A border point then resolves the same way every time.
+    sort: [{ id: 'asc' }],
+    query: {
+      bool: {
+        filter: [
+          {
+            geo_shape: {
+              [REGION_GEOMETRY_PATH]: {
+                shape: { type: 'point', coordinates: point },
+                relation: 'intersects',
+              },
+            },
+          },
+        ],
+      },
+    },
   };
 }
