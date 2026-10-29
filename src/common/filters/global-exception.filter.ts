@@ -71,12 +71,21 @@ export class HttpExceptionFilter implements ExceptionFilter {
       );
     }
 
+    // `redirect` is the one field a service may add to an error body: a
+    // re-keyed record's old id answers 404 with where it went (ISS-2514).
+    // Passed by name, never spread, so nothing else leaks from a response.
+    const redirect =
+      exception instanceof HttpException
+        ? (exception.getResponse() as any)?.redirect
+        : undefined;
+
     const payload = {
       status,
       message,
       path: req?.originalUrl,
       method: req?.method,
       tenant: req?.tenantId,
+      ...(typeof redirect === 'string' ? { redirect } : {}),
     };
 
     res.status(status).json(payload);
