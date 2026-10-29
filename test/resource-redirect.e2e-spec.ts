@@ -209,3 +209,34 @@ describe('Resource 404 body in the OpenAPI document', () => {
     },
   );
 });
+
+describe('Batch response redirects in the OpenAPI document (ISS-2516)', () => {
+  let app: INestApplication;
+  let document: any;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [ResourceRedirectTestModule],
+    }).compile();
+    app = moduleFixture.createNestApplication();
+    await app.init();
+    document = SwaggerModule.createDocument(app, buildSwaggerConfig());
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('documents an optional redirects map of requested id -> new id', () => {
+    const schema = document.components.schemas.ResourceBatchResponseDto;
+    // Additive: the existing required fields are unchanged.
+    expect(schema.required).toEqual(
+      expect.arrayContaining(['data', 'errors', 'meta']),
+    );
+    expect(schema.required).not.toContain('redirects');
+    expect(schema.properties.redirects).toMatchObject({
+      type: 'object',
+      additionalProperties: { type: 'string' },
+    });
+  });
+});
