@@ -18,7 +18,11 @@ describe('OrganizationDetailService', () => {
     },
   );
   const mockOrganizationModel = { aggregate: mockAggregate };
-  const mockRedirectModel = { findById: jest.fn(() => ({ exec: jest.fn() })) };
+  const mockRedirectModel = {
+    findOne: jest
+      .fn()
+      .mockImplementation(() => ({ lean: () => ({ exec: jest.fn() }) })),
+  };
 
   const tenantId = '53fe1d2f-7366-4535-be92-400f701f0ab9';
   const orgId = 'e2ee3025-1389-52a7-861d-ac8b42eb3f04';
@@ -273,8 +277,8 @@ describe('OrganizationDetailService', () => {
     aggregateExec
       .mockResolvedValueOnce([]) // primary: tenant + organizationId
       .mockResolvedValueOnce([]); // fallback: tenant + _id
-    mockRedirectModel.findById.mockReturnValueOnce({
-      exec: jest.fn().mockResolvedValueOnce(null),
+    mockRedirectModel.findOne.mockReturnValueOnce({
+      lean: () => ({ exec: jest.fn().mockResolvedValueOnce(null) }),
     });
 
     await expect(service.findById(orgId, { headers })).rejects.toBeInstanceOf(
@@ -287,8 +291,8 @@ describe('OrganizationDetailService', () => {
   // the unscoped query was still being sent (ISS-1778).
   it('never issues a query without a tenant filter', async () => {
     aggregateExec.mockResolvedValue([]);
-    mockRedirectModel.findById.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(null),
+    mockRedirectModel.findOne.mockReturnValue({
+      lean: () => ({ exec: jest.fn().mockResolvedValue(null) }),
     });
 
     await expect(service.findById(orgId, { headers })).rejects.toBeInstanceOf(
@@ -305,8 +309,8 @@ describe('OrganizationDetailService', () => {
 
   it("refuses an organization the caller's tenant does not own", async () => {
     aggregateExec.mockResolvedValue([]);
-    mockRedirectModel.findById.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(null),
+    mockRedirectModel.findOne.mockReturnValue({
+      lean: () => ({ exec: jest.fn().mockResolvedValue(null) }),
     });
 
     await expect(
@@ -319,13 +323,19 @@ describe('OrganizationDetailService', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
-    mockRedirectModel.findById.mockReturnValueOnce({
-      exec: jest.fn().mockResolvedValueOnce({ newId: 'new-org-id' }),
+    mockRedirectModel.findOne.mockReturnValueOnce({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValueOnce({ newId: 'new-org-id' }),
+      }),
     });
 
     await expect(service.findById(orgId, { headers })).rejects.toMatchObject({
-      response: { redirect: '/search/new-org-id' },
+      response: { redirect: '/search?organization_id=new-org-id' },
     });
+    expect(mockRedirectModel.findOne).toHaveBeenCalledWith(
+      { _id: orgId, tenantId },
+      { newId: 1 },
+    );
   });
   // ISS-2096: a Norse resource page knows only its tenant and the SAL id in
   // its URL. Tenant-scoped only: no legacy-_id, cross-tenant, or redirect tier.
@@ -361,7 +371,7 @@ describe('OrganizationDetailService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
 
       expect(mockAggregate).toHaveBeenCalledTimes(1);
-      expect(mockRedirectModel.findById).not.toHaveBeenCalled();
+      expect(mockRedirectModel.findOne).not.toHaveBeenCalled();
     });
 
     it('throws NotFound for a real SAL sent under another tenant, querying only that tenant', async () => {
