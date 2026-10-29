@@ -1,11 +1,4 @@
-import type {
-  MetricEntry,
-  MetricsExpandedEntry,
-  SearchByLabelByType,
-  SearchQueryType,
-  UmamiEventDataValue,
-} from '../types';
-import { isSearchQueryType } from './search-query-type';
+import type { MetricEntry, UmamiEventDataValue } from '../types';
 
 export function toMetricEntries(
   rows: UmamiEventDataValue[] | undefined | null,
@@ -27,81 +20,4 @@ export function sumEventTotals(
     acc[e.x] = (acc[e.x] ?? 0) + (Number(e?.y) || 0);
     return acc;
   }, {});
-}
-
-function stripTrailingSlash(name: string): string {
-  const qIndex = name.indexOf('?');
-  if (qIndex > 0 && name[qIndex - 1] === '/') {
-    return name.slice(0, qIndex - 1) + name.slice(qIndex);
-  }
-  if (qIndex === -1 && name.endsWith('/')) {
-    return name.slice(0, -1);
-  }
-  return name;
-}
-
-function stripQueryString(name: string): string {
-  const qIndex = name.indexOf('?');
-  return qIndex === -1 ? name : name.slice(0, qIndex);
-}
-
-export function parseMetrics(
-  metricsData: MetricsExpandedEntry[] | undefined | null,
-  queryMetricsData: MetricsExpandedEntry[] | undefined | null,
-  hasTrailingSlash = false,
-): {
-  searchCount: number;
-  resourceMetrics: MetricEntry[];
-  searchByLabelByType: SearchByLabelByType;
-} {
-  let searchCount = 0;
-  const resourceMetrics: MetricEntry[] = [];
-
-  for (const metricData of metricsData ?? []) {
-    if (metricData?.name == null) continue;
-    const name = hasTrailingSlash
-      ? stripTrailingSlash(metricData.name)
-      : metricData.name;
-    const pathOnly = stripQueryString(name);
-    const isRoot = pathOnly === '/search' || pathOnly.endsWith('/search');
-    if (isRoot) {
-      searchCount += Number(metricData.pageviews) || 0;
-    } else if (name.includes('/search/')) {
-      resourceMetrics.push({
-        x: name,
-        y: Number(metricData.pageviews) || 0,
-      });
-    }
-  }
-
-  resourceMetrics.sort((a, b) => b.y - a.y);
-
-  const labelByTypeMaps: Record<SearchQueryType, Map<string, number>> = {
-    text: new Map<string, number>(),
-    taxonomy: new Map<string, number>(),
-    hybrid: new Map<string, number>(),
-  };
-
-  for (const m of queryMetricsData ?? []) {
-    if (m?.name == null) continue;
-    const params = new URLSearchParams(m.name);
-    const label = params.get('query_label');
-    if (label === null) continue;
-    const rawType = params.get('query_type');
-    if (!isSearchQueryType(rawType)) continue;
-    const views = Number(m.pageviews) || 0;
-    const bucket = labelByTypeMaps[rawType];
-    bucket.set(label, (bucket.get(label) ?? 0) + views);
-  }
-
-  const toSortedEntries = (map: Map<string, number>): MetricEntry[] =>
-    Array.from(map, ([x, y]) => ({ x, y })).sort((a, b) => b.y - a.y);
-
-  const searchByLabelByType: SearchByLabelByType = {
-    text: toSortedEntries(labelByTypeMaps.text),
-    taxonomy: toSortedEntries(labelByTypeMaps.taxonomy),
-    hybrid: toSortedEntries(labelByTypeMaps.hybrid),
-  };
-
-  return { searchCount, resourceMetrics, searchByLabelByType };
 }

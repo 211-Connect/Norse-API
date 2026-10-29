@@ -1,6 +1,11 @@
+import { releaseInfo } from '../release/release-info';
+
 export default () => ({
   port: parseInt(process.env.PORT, 10) || 8080,
   logLevel: process.env.LOG_LEVEL || 'warn',
+  // Set at image build time (Dockerfile ARGs); read through releaseInfo(),
+  // which reports `unknown` when unset. See src/common/release/release-info.ts.
+  release: releaseInfo(),
   MAPBOX_API_KEY: process.env.MAPBOX_API_KEY,
   MONGODB_URI: process.env.MONGODB_URI,
   REDIS_URL: process.env.REDIS_URL,
@@ -32,8 +37,7 @@ export default () => ({
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
   umami: {
     apiUrl: process.env.UMAMI_API_URL || '',
-    username: process.env.UMAMI_USERNAME || '',
-    password: process.env.UMAMI_PASSWORD || '',
+    apiKey: process.env.UMAMI_API_KEY || '',
   },
   analytics: {
     cache: {
@@ -44,11 +48,17 @@ export default () => ({
         parseInt(process.env.ANALYTICS_SESSION_CACHE_TTL_MS, 10) || 60_000,
       l1Enabled: process.env.ANALYTICS_L1_CACHE_ENABLED !== 'false',
     },
-    trailingSlashTenants: (process.env.TRAILING_SLASH_TENANTS || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
   },
   permissionsSideChannelUrl:
     process.env.PERMISSIONS_SIDECHANNEL_BASE_URL || 'http://unkey-auth:8081',
 });
+
+export function validateConfiguration(
+  environment: Record<string, unknown>,
+): Record<string, unknown> {
+  const apiKey = environment.UMAMI_API_KEY;
+  if (typeof apiKey !== 'string' || !apiKey.trim()) {
+    throw new Error('UMAMI_API_KEY is required');
+  }
+  return environment;
+}

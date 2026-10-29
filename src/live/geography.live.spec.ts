@@ -16,11 +16,7 @@
 import { writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import {
-  INestApplication,
-  ValidationPipe,
-  VersioningType,
-} from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { Test } from '@nestjs/testing';
@@ -50,6 +46,7 @@ import {
 } from 'src/common/testing/read-only-elasticsearch';
 import { ReadOnlyCollection } from 'src/common/testing/read-only-mongo';
 import { interiorGrid, pointsAtDepth } from './interior-points';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
 
@@ -372,11 +369,7 @@ describeLive('Geography filter routes against live Elasticsearch', () => {
         forbidNonWhitelisted: false,
       }),
     );
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     // Listening up front: supertest on an unbound server races under concurrency.
     await app.listen(0, '127.0.0.1');
     baseUrl = await app.getUrl();

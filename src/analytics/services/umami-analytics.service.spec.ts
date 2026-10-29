@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { UmamiAnalyticsService } from './umami-analytics.service';
 import { UmamiHttpService } from './umami-http.service';
 import { AnalyticsCacheService } from './analytics-cache.service';
@@ -11,7 +10,9 @@ import type { UmamiEventDataPivotRow } from '../types/umami/umami-event-data-piv
 describe('UmamiAnalyticsService', () => {
   let service: UmamiAnalyticsService;
   let umamiHttpService: { fanOut: jest.Mock };
+  let resourceService: { findTitlesByIds: jest.Mock };
   let analyticsCacheService: { getOrSet: jest.Mock };
+  let geocodingService: { forwardGeocode: jest.Mock };
 
   const buildRow = (
     properties: Record<string, string>,
@@ -25,20 +26,21 @@ describe('UmamiAnalyticsService', () => {
 
   beforeEach(async () => {
     umamiHttpService = { fanOut: jest.fn() };
+    resourceService = { findTitlesByIds: jest.fn() };
     analyticsCacheService = {
       getOrSet: jest.fn((_tenantId, _key, _websiteIds, _startMs, _endMs, fn) =>
         fn(),
       ),
     };
+    geocodingService = { forwardGeocode: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UmamiAnalyticsService,
         { provide: UmamiHttpService, useValue: umamiHttpService },
-        { provide: ResourceService, useValue: {} },
+        { provide: ResourceService, useValue: resourceService },
         { provide: AnalyticsCacheService, useValue: analyticsCacheService },
-        { provide: GeocodingService, useValue: {} },
-        { provide: ConfigService, useValue: { get: jest.fn(() => []) } },
+        { provide: GeocodingService, useValue: geocodingService },
       ],
     }).compile();
 
@@ -46,8 +48,11 @@ describe('UmamiAnalyticsService', () => {
   });
 
   describe('getMetrics', () => {
-    it('maps each Umami event total to the correct AnalyticsMetrics field', async () => {
+    it('derives searches from the three search event totals and resourceViews from resource_viewed', async () => {
       const eventSeries = [
+        { x: 'search_text', y: 3 },
+        { x: 'search_taxonomy', y: 4 },
+        { x: 'search_hybrid', y: 5 },
         { x: UmamiEvent.SearchZeroResults, y: 1 },
         { x: UmamiEvent.DirectionClick, y: 2 },
         { x: UmamiEvent.PhoneClick, y: 3 },
@@ -67,7 +72,6 @@ describe('UmamiAnalyticsService', () => {
         if (endpoint === 'events/series') {
           return Promise.resolve([eventSeries]);
         }
-        // metrics/expanded (path + query)
         return Promise.resolve([[]]);
       });
 
@@ -80,8 +84,8 @@ describe('UmamiAnalyticsService', () => {
       });
 
       expect(result).toEqual({
-        searches: 0,
-        resourceViews: 0,
+        searches: 12,
+        resourceViews: 9,
         zeroResults: 1,
         directions: 2,
         phoneCalls: 3,
@@ -98,6 +102,35 @@ describe('UmamiAnalyticsService', () => {
       });
     });
 
+    it('sums search and resource_viewed totals across websites', async () => {
+      umamiHttpService.fanOut.mockImplementation((_websiteIds, endpoint) => {
+        if (endpoint === 'events/series') {
+          return Promise.resolve([
+            [
+              { x: 'search_text', y: 3 },
+              { x: UmamiEvent.ResourceViewed, y: 1 },
+            ],
+            [
+              { x: 'search_text', y: 4 },
+              { x: UmamiEvent.ResourceViewed, y: 2 },
+            ],
+          ]);
+        }
+        return Promise.resolve([[]]);
+      });
+
+      const result = await service.getMetrics({
+        tenantId: 'tenant-1',
+        start: '2025-01-01T00:00:00.000Z',
+        end: '2025-01-02T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+        timezone: 'UTC',
+      });
+
+      expect(result.searches).toBe(7);
+      expect(result.resourceViews).toBe(3);
+    });
+
     it('defaults every metric to 0 when there are no events', async () => {
       umamiHttpService.fanOut.mockResolvedValue([[]]);
 
@@ -111,6 +144,92 @@ describe('UmamiAnalyticsService', () => {
 
       expect(result.smsClicks).toBe(0);
       expect(result.phoneCalls).toBe(0);
+    });
+  });
+
+  describe('getResourceMetrics', () => {
+    it('uses resourceTitle from resource_viewed events and groups views by resourceId', async () => {
+      const firstWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-2', resourceTitle: 'Library' }),
+      ];
+      const secondWebsiteRows = [
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+        buildRow({ resourceId: 'resource-1', resourceTitle: 'Food Bank' }),
+      ];
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          endpoint: string,
+          params: { eventName?: string },
+        ) => {
+          expect(endpoint).toBe('event-data-pivot');
+          expect(params.eventName).toBe(UmamiEvent.ResourceViewed);
+          return [
+            { data: firstWebsiteRows, count: firstWebsiteRows.length },
+            { data: secondWebsiteRows, count: secondWebsiteRows.length },
+          ];
+        },
+      );
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+      });
+
+      expect(result).toEqual([
+        { title: 'Food Bank', views: 5 },
+        { title: 'Library', views: 1 },
+      ]);
+      expect(resourceService.findTitlesByIds).not.toHaveBeenCalled();
+    });
+
+    it('looks up titles by id only when a resource_viewed event has no resourceTitle', async () => {
+      const rows = [
+        buildRow({ resourceId: 'legacy-resource' }),
+        buildRow({ resourceId: 'named-resource', resourceTitle: 'Current Name' }),
+        buildRow({ resourceId: 'unknown-resource' }),
+      ];
+      umamiHttpService.fanOut.mockResolvedValue([
+        { data: rows, count: rows.length },
+      ]);
+      resourceService.findTitlesByIds.mockResolvedValue([
+        { id: 'legacy-resource', displayName: 'Legacy Name' },
+      ]);
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(resourceService.findTitlesByIds).toHaveBeenCalledWith([
+        'legacy-resource',
+        'unknown-resource',
+      ]);
+      expect(result).toEqual([
+        { title: 'Legacy Name', views: 1 },
+        { title: 'Current Name', views: 1 },
+        { title: 'unknown-resource', views: 1 },
+      ]);
+    });
+
+    it('returns an empty list when no resource_viewed events exist', async () => {
+      umamiHttpService.fanOut.mockResolvedValue([[]]);
+
+      const result = await service.getResourceMetrics({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result).toEqual([]);
     });
   });
 
@@ -246,6 +365,64 @@ describe('UmamiAnalyticsService', () => {
     });
   });
 
+  describe('getAreaSearches', () => {
+    it('counts hybrid search events in area totals alongside text and taxonomy', async () => {
+      const rowsByEvent: Record<string, UmamiEventDataPivotRow[]> = {
+        search_text: [
+          buildRow({ searchZipCode: '10001' }),
+          buildRow({ searchZipCode: '10001' }),
+        ],
+        search_taxonomy: [buildRow({ searchZipCode: '10002' })],
+        search_hybrid: [
+          buildRow({ searchZipCode: '10001' }),
+          buildRow({ searchZipCode: '10001' }),
+        ],
+        search_zero_results: [buildRow({ searchZipCode: '10001' })],
+      };
+
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          endpoint: string,
+          params: { eventName: string },
+        ) => {
+          if (endpoint !== 'event-data-pivot') return [[]];
+          const rows = rowsByEvent[params.eventName] ?? [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+
+      const result = await service.getAreaSearches({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.zipCodeRows).toEqual([
+        { area: '10001', totalSearches: 5, zeroSearches: 1, zeroRate: 0.2 },
+        { area: '10002', totalSearches: 1, zeroSearches: 0, zeroRate: 0 },
+      ]);
+      expect(result.countyRows).toEqual([]);
+    });
+
+    it('drops rows without any area property', async () => {
+      umamiHttpService.fanOut.mockImplementation(async () => [
+        { data: [buildRow({})], count: 1 },
+      ]);
+
+      const result = await service.getAreaSearches({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.zipCodeRows).toEqual([]);
+      expect(result.countyRows).toEqual([]);
+    });
+  });
+
   describe('getExportSearchData', () => {
     it('includes all rows when Umami returns a smaller page size than requested', async () => {
       const eventCounts: Record<string, number> = {
@@ -343,4 +520,64 @@ describe('UmamiAnalyticsService', () => {
       );
     });
   });
+
+  describe('getHeatmap', () => {
+    it('uses breakdown visits and preserves region-only locations', async () => {
+      umamiHttpService.fanOut.mockResolvedValue([
+        [
+          {
+            city: 'Paris',
+            region: 'Ile-de-France',
+            country: 'France',
+            visits: 7,
+          },
+          { city: null, region: 'Ontario', country: 'Canada', visits: 4 },
+        ],
+        [
+          {
+            city: 'Paris',
+            region: 'Ile-de-France',
+            country: 'France',
+            visits: 3,
+          },
+        ],
+      ]);
+      geocodingService.forwardGeocode.mockImplementation(
+        async ({ address }: { address: string }) => [
+          {
+            coordinates:
+              address === 'Paris, Ile-de-France, France'
+                ? ([2.3522, 48.8566] as [number, number])
+                : ([-75.6972, 45.4215] as [number, number]),
+          },
+        ],
+      );
+
+      const result = await service.getHeatmap({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1', 'website-2'],
+      });
+
+      expect(result).toEqual([
+        { lng: 2.3522, lat: 48.8566, weight: 10 },
+        { lng: -75.6972, lat: 45.4215, weight: 4 },
+      ]);
+      expect(umamiHttpService.fanOut).toHaveBeenCalledTimes(1);
+      expect(umamiHttpService.fanOut).toHaveBeenCalledWith(
+        ['website-1', 'website-2'],
+        'breakdown',
+        {
+          startAt: Date.parse('2026-09-30T00:00:00.000Z'),
+          endAt: Date.parse('2026-10-01T00:00:00.000Z'),
+          fields: JSON.stringify(['city', 'region', 'country']),
+        },
+      );
+      expect(geocodingService.forwardGeocode).toHaveBeenCalledWith(
+        expect.objectContaining({ address: 'Ontario, Canada' }),
+      );
+    });
+  });
+
 });

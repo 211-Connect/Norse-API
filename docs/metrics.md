@@ -168,8 +168,6 @@ The fetch-based calls below has an explicit timeout so slow downstreams surface 
 | `ml_broker`                  | 10s                                |
 | `embedding`                  | 10s                                |
 | `cms`                        | 10s                                |
-| `umami` `verify`             | 5s                                 |
-| `umami` `login`              | 10s                                |
 | `umami` analytics fetch/send | 60s (`ANALYTICS_FETCH_TIMEOUT_MS`) |
 
 ### Elasticsearch `operation` values

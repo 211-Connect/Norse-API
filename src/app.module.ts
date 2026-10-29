@@ -16,10 +16,16 @@ import { FavoriteListModule } from 'src/favorite-list/favorite-list.module';
 import { SearchModule } from './search/search.module';
 import { ShortUrlModule } from './short-url/short-url.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import configuration from './common/config/configuration';
+import configuration, {
+  validateConfiguration,
+} from './common/config/configuration';
 import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
+import {
+  ApiVersionMiddleware,
+  API_VERSION_MIDDLEWARE_ROUTES,
+} from './common/middleware/ApiVersionMiddleware';
 import { ResourceModule } from './resource/resource.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TenantMiddleware } from './common/middleware/TenantMiddleware';
@@ -43,6 +49,7 @@ import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-cont
 import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { BlockedTrafficInternalController } from './analytics/blocked-traffic-internal.controller';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
@@ -59,7 +66,11 @@ const arcjetKey = configuration().ARCJET_KEY;
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
+    ConfigModule.forRoot({
+      load: [configuration],
+      isGlobal: true,
+      validate: validateConfiguration,
+    }),
     ...(arcjetKey
       ? [
           ArcjetModule.forRoot({
@@ -121,6 +132,11 @@ const arcjetKey = configuration().ARCJET_KEY;
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
+    // First, so a request refused here still carries the release header.
+    consumer
+      .apply(ApiVersionMiddleware)
+      .forRoutes(API_VERSION_MIDDLEWARE_ROUTES);
+
     consumer.apply(ServiceProviderMiddleware).forRoutes({
       path: '*',
       method: RequestMethod.ALL,
@@ -137,6 +153,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryPublicController,
       PrintableDirectoryDeliveryController,
       PrintableDirectoryDeliveryInternalController,
+      BlockedTrafficInternalController,
       OrganizationController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
       // CDN-cached route (cache keys on URL, ignoring Vary).

@@ -1,10 +1,10 @@
 import type {
   MetricEntry,
-  MetricsExpandedEntry,
   Stats,
   UmamiEventDataValue,
   UmamiEventDataPivotResponse,
   UmamiEventDataPivotRow,
+  UmamiBreakdownRow,
   UmamiSession,
 } from '../types';
 import { ALLOWED_ENDPOINT } from './constants';
@@ -62,51 +62,6 @@ export function mergeMetricEntries(
   return Array.from(merged, ([x, y]) => ({ x, y }));
 }
 
-export function mergeMetricsExpanded(
-  dataList: MetricsExpandedEntry[][],
-): MetricsExpandedEntry[] {
-  const merged = new Map<
-    string,
-    {
-      pageviews: number;
-      visitors: number;
-      visits: number;
-      bounces: number;
-      totaltime: number;
-    }
-  >();
-
-  for (const rows of dataList ?? []) {
-    for (const row of rows ?? []) {
-      if (row?.name == null) continue;
-      const current = merged.get(row.name) ?? {
-        pageviews: 0,
-        visitors: 0,
-        visits: 0,
-        bounces: 0,
-        totaltime: 0,
-      };
-
-      current.pageviews += Number(row.pageviews) || 0;
-      current.visitors += Number(row.visitors) || 0;
-      current.visits += Number(row.visits) || 0;
-      current.bounces += Number(row.bounces) || 0;
-      current.totaltime += Number(row.totaltime) || 0;
-
-      merged.set(row.name, current);
-    }
-  }
-
-  return Array.from(merged, ([name, totals]) => ({
-    name,
-    pageviews: String(totals.pageviews),
-    visitors: totals.visitors,
-    visits: totals.visits,
-    bounces: totals.bounces,
-    totaltime: String(totals.totaltime),
-  }));
-}
-
 export function aggregateByEndpoint<T = unknown>(
   endpoint: ALLOWED_ENDPOINT,
   responses: unknown[],
@@ -148,10 +103,8 @@ export function aggregateByEndpoint<T = unknown>(
     return values as unknown as T;
   }
 
-  if (endpoint === 'metrics/expanded') {
-    return mergeMetricsExpanded(
-      responses as MetricsExpandedEntry[][],
-    ) as unknown as T;
+  if (endpoint === 'breakdown') {
+    return (responses as UmamiBreakdownRow[][]).flat() as unknown as T;
   }
 
   if (endpoint === 'sessions') {

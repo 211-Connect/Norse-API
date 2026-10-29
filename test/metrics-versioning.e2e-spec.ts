@@ -1,9 +1,10 @@
-import { INestApplication, VersioningType } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { MetricsController } from 'src/metrics/metrics.controller';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 /**
  * Prometheus does not send `x-api-version`, so /metrics must be
@@ -39,11 +40,7 @@ describe('MetricsController versioning (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.enableVersioning({
-      type: VersioningType.HEADER,
-      header: 'x-api-version',
-      defaultVersion: '1',
-    });
+    app.enableVersioning(apiVersioningOptions);
     await app.init();
   });
 

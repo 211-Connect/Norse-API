@@ -6,9 +6,10 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { VersioningType, LogLevel, ValidationPipe } from '@nestjs/common';
+import { LogLevel, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 import { buildSwaggerConfig } from './common/swagger/swagger-config';
+import { configureHttp } from './common/http/configure-http';
 import { useInternalServicesBodyLimit } from './service/internal/internal-services-body';
 
 const logLevelMap: Record<string, LogLevel[]> = {
@@ -39,12 +40,7 @@ async function bootstrap() {
 
   useInternalServicesBodyLimit(app);
   app.use(helmet());
-  app.enableCors();
-  app.enableVersioning({
-    type: VersioningType.HEADER,
-    header: 'x-api-version',
-    defaultVersion: '1',
-  });
+  configureHttp(app);
 
   const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
   SwaggerModule.setup('swagger', app, document, {

@@ -6,7 +6,6 @@ import { LRUCache } from 'lru-cache';
 import { analyticsWebsiteNamesRedisKey } from '../internal/analytics-redis-keys';
 import { ANALYTICS_CACHE_TTL_CATALOG_MS } from '../internal/constants';
 import { UmamiHttpService } from './umami-http.service';
-import { UmamiAuthService } from './umami-auth.service';
 import type { AnalyticsInfo, WebsiteName } from '../types';
 
 @Injectable()
@@ -19,7 +18,6 @@ export class AnalyticsInfoEnricherService {
 
   constructor(
     private readonly umamiHttpService: UmamiHttpService,
-    private readonly umamiAuth: UmamiAuthService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {
     this.namesLru = new LRUCache<string, WebsiteName[]>({
@@ -80,12 +78,10 @@ export class AnalyticsInfoEnricherService {
       return empty;
     }
 
-    const token = await this.umamiAuth.getToken();
-
     const results = await Promise.all(
       websiteIds.map(async (id) => {
         try {
-          return await this.umamiHttpService.fetchWebsite(id, token);
+          return await this.umamiHttpService.fetchWebsite(id);
         } catch (err) {
           this.logger.warn(
             `Failed to fetch website name for ${id}: ${err instanceof Error ? err.message : 'Unknown error'}`,

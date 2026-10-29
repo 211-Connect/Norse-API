@@ -80,7 +80,7 @@ in the frontend repo). This means:
 | `suggestion/`                | Search/autocomplete suggestions — always returns combined taxonomy+organization typeahead results in one round trip (delegates the taxonomy half to `TaxonomyService`) — see [docs/organization-search.md](docs/organization-search.md).                                                                                                                 |
 | `service/`                   | Service detail by id (MongoDB). `service/internal` holds the unpublished, internal-key-guarded (not tenant-scoped) services search, facets and taxonomy-names routes ServiceNet's record selector uses (facets and the lookup name taxonomy codes from each writer's ES `taxonomy_terms` reference), which apply ServiceNet Withholdings read by reference from MongoDB `sharing_withheld_*` (read-only) — see [docs/internal-services-search.md](docs/internal-services-search.md) and [docs/geography-filter.md](docs/geography-filter.md). |
 | `short-url/`                 | URL shortening/redirects.                                                                                                                                                                                                                                                                                                                                |
-| `analytics/`                 | Umami-backed analytics endpoints, with an internal-only surface (`analytics/internal`) and an LRU + Redis two-tier cache (`ANALYTICS_*` env vars).                                                                                                                                                                                                       |
+| `analytics/`                 | Umami-backed analytics endpoints, with an internal-only surface (`analytics/internal`) and an LRU + Redis two-tier cache (`ANALYTICS_*` env vars). Also stores hourly blocked-bot counts pushed by Norse (MongoDB, not Umami) — see [docs/blocked-traffic.md](docs/blocked-traffic.md).                                                                                                                                                                                                       |
 | `cms-config/`                | Tenant/orchestration config sourced from a CMS, cached via `cms-redis.service.ts`.                                                                                                                                                                                                                                                                       |
 | `auth/`                      | Keycloak-based auth guard/services.                                                                                                                                                                                                                                                                                                                      |
 | `health/`                    | Health check endpoint.                                                                                                                                                                                                                                                                                                                                   |
@@ -208,8 +208,16 @@ Scaffold `<module>/dto/`, `<module>.controller.ts`, `<module>.service.ts`, and
 ## Bootstrap & integrations
 
 - [src/main.ts](src/main.ts) sets up the global `HttpExceptionFilter`, the global
-  `ValidationPipe` (see whitelist note above), Helmet, CORS, and header-based API
-  versioning (`x-api-version` via `VersioningType.HEADER`).
+  `ValidationPipe` (see whitelist note above), Helmet, and — through
+  [src/common/http/configure-http.ts](src/common/http/configure-http.ts), which the
+  e2e specs call too — CORS and header-based API versioning. `x-api-version` is
+  optional and defaults to `1` via a custom extractor
+  ([src/common/versioning/api-version.ts](src/common/versioning/api-version.ts));
+  `VersioningType.HEADER` with `defaultVersion` does **not** do that (a header-less
+  request matches only `VERSION_NEUTRAL` routes, ISS-2481). An `x-api-version` no
+  route is declared under is a `400` from `ApiVersionMiddleware`, which also sets
+  `x-norse-api-release` on every response (ISS-2482). Adding a route under a new
+  version means adding it to `SUPPORTED_API_VERSIONS`.
 - [src/app.module.ts](src/app.module.ts) wires infra providers and registers domain
   modules: Redis cache (`cache-manager-redis-store`), a Redis-backed rate limiter, and
   the MongoDB connection (Mongoose).

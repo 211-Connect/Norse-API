@@ -24,6 +24,12 @@ ARG NODE_ENV=production
 ENV NODE_ENV=$NODE_ENV
 ARG PORT=8080
 ENV PORT=$PORT
+# Release identity, reported on /health and the x-norse-api-release header.
+# Last in the stage so a new value never invalidates the cached layers above.
+ARG APP_VERSION=unknown
+ENV APP_VERSION=$APP_VERSION
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
 EXPOSE $PORT
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

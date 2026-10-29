@@ -1,5 +1,3 @@
-export const AUTH_VERIFY_TIMEOUT_MS = 5_000;
-export const AUTH_LOGIN_TIMEOUT_MS = 10_000;
 export const ANALYTICS_FETCH_TIMEOUT_MS = 60_000;
 export const ONE_DAY_MS = 86_400_000;
 export const MAX_RANGE_DAYS = 365;
@@ -16,10 +14,6 @@ export const MAX_RANGE_DAYS = 365;
  */
 export const ANALYTICS_CACHE_TTL_OPEN_RANGE_MS = 5 * 60 * 1_000; // 5 minutes
 export const ANALYTICS_CACHE_TTL_CLOSED_RANGE_MS = 60 * 60 * 1_000; // 1 hour
-
-/** CDN / reverse-proxy max-age equivalents in seconds */
-export const ANALYTICS_CDN_TTL_OPEN_RANGE_S = 5 * 60; // 5 minutes
-export const ANALYTICS_CDN_TTL_CLOSED_RANGE_S = 60 * 60; // 1 hour
 
 /**
  * Cache TTL for slow-changing, admin-style analytics metadata — data that
@@ -58,7 +52,7 @@ export type ALLOWED_ENDPOINT =
   | 'pageviews'
   | 'stats'
   | 'events/series'
-  | 'metrics/expanded'
   | 'event-data/values'
   | 'event-data-pivot'
+  | 'breakdown'
   | 'sessions';

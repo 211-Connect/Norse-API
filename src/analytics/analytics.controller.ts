@@ -20,6 +20,7 @@ import {
 import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
+import { BlockedTrafficService } from './services/blocked-traffic.service';
 import {
   AnalyticsApiKeyGuard,
   ANALYTICS_API_KEY_HEADER,
@@ -29,6 +30,8 @@ import {
   AnalyticsInfoResponse,
   AnalyticsMetricsResponse,
   AreaSearchesResponse,
+  BlockedTrafficQueryDto,
+  BlockedTrafficResponse,
   CommonAnalyticsQuery,
   EventCatalogEntryResponse,
   EventValuesQueryDto,
@@ -51,14 +54,10 @@ import {
   TimezoneAnalyticsQueryDto,
   ZeroResultQueriesResponse,
 } from './dto';
-import { AnalyticsCdnCacheInterceptor } from './interceptors/analytics-cdn-cache.interceptor';
-import { SetCdnCacheTTL } from '../common/decorators/cdn-cache-ttl.decorator';
-import { ANALYTICS_CDN_TTL_OPEN_RANGE_S } from './internal/constants';
 
 @ApiTags('Analytics')
 @Controller('analytics')
 @UseGuards(AnalyticsApiKeyGuard)
-@UseInterceptors(AnalyticsCdnCacheInterceptor)
 @ApiSecurity('x-analytics-api-key')
 @ApiHeader({
   name: 'x-api-version',
@@ -76,6 +75,7 @@ export class AnalyticsController {
     private readonly umamiAnalyticsService: UmamiAnalyticsService,
     private readonly analyticsConfigService: AnalyticsConfigService,
     private readonly infoEnricher: AnalyticsInfoEnricherService,
+    private readonly blockedTrafficService: BlockedTrafficService,
   ) {}
 
   @Get('info')
@@ -197,7 +197,7 @@ export class AnalyticsController {
   @Get('resource-metrics')
   @Version('1')
   @ApiOperation({
-    summary: 'Get pageview metrics per resource',
+    summary: 'Get number of views per resource',
   })
   @ApiResponse({
     status: 200,
@@ -385,9 +385,10 @@ export class AnalyticsController {
 
   @Get('heatmap')
   @Version('1')
-  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
   @ApiOperation({
-    summary: 'Get search heatmap points',
+    summary: 'Get visitor traffic heatmap points',
+    description:
+      'Weights use Umami visits from pageview events. Each website contributes at most 500 location groups.',
   })
   @ApiResponse({
     status: 200,
@@ -412,7 +413,6 @@ export class AnalyticsController {
 
   @Get('area-searches')
   @Version('1')
-  @SetCdnCacheTTL(ANALYTICS_CDN_TTL_OPEN_RANGE_S)
   @ApiOperation({
     summary: 'Get search metrics grouped by ZIP code and county',
   })
@@ -484,6 +484,32 @@ export class AnalyticsController {
       tenantId,
       websiteIds,
     });
+  }
+
+  @Get('blocked-traffic')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get requests blocked as automated traffic for the tenant',
+    description:
+      'Counts of requests Norse bot protection denied, by classification, with 1-hour resolution. Not from Umami: these requests never load the page. Blocked requests are not in pageviews or any other analytics endpoint.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved blocked traffic',
+    type: BlockedTrafficResponse,
+  })
+  getBlockedTraffic(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: BlockedTrafficQueryDto,
+  ): Promise<BlockedTrafficResponse> {
+    return this.blockedTrafficService.getStats(
+      tenantId,
+      query.start,
+      query.end,
+      {
+        hourly: query.hourly ?? false,
+      },
+    );
   }
 
   @Post('events')
