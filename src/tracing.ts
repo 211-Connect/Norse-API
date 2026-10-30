@@ -1,26 +1,107 @@
 import 'dotenv/config';
 
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import type { ClientRequest, IncomingMessage } from 'node:http';
+import { join } from 'node:path';
+
+import type { Span } from '@opentelemetry/api';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { NestInstrumentation } from '@opentelemetry/instrumentation-nestjs-core';
-import { NodeSDK } from '@opentelemetry/sdk-node';
-
 import {
   defaultResource,
   resourceFromAttributes,
+  type Resource,
 } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import { NodeSDK } from '@opentelemetry/sdk-node';
 import {
   AlwaysOnSampler,
   ParentBasedSampler,
   TraceIdRatioBasedSampler,
-} from '@opentelemetry/sdk-trace-node';
+} from '@opentelemetry/sdk-trace';
+import {
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+  ATTR_SERVICE_INSTANCE_ID,
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from '@opentelemetry/semantic-conventions';
+
+/** Service name used in both the production and the dev namespace. */
+export const SERVICE_NAME = 'norse-api';
+
+const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
 
 let sdk: NodeSDK | undefined;
 
-function buildBasicAuthHeaders(): Record<string, string> | undefined {
-  const username = process.env.OTEL_EXPORTER_OTLP_USERNAME;
-  const password = process.env.OTEL_EXPORTER_OTLP_PASSWORD;
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
+    ) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const PACKAGE_VERSION = readPackageVersion();
+
+/**
+ * Resource describing this pod/process. `deployment.environment.name` separates
+ * production from dev — `service.name` stays `norse-api` in both namespaces.
+ */
+export function buildServiceResource(
+  env: NodeJS.ProcessEnv = process.env,
+): Resource {
+  return defaultResource().merge(
+    resourceFromAttributes({
+      [ATTR_SERVICE_NAME]: SERVICE_NAME,
+      [ATTR_SERVICE_VERSION]:
+        env.APP_VERSION?.trim() || PACKAGE_VERSION || '0.0.0',
+      [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]:
+        env.DEPLOYMENT_ENVIRONMENT?.trim() || DEFAULT_DEPLOYMENT_ENVIRONMENT,
+      [ATTR_SERVICE_INSTANCE_ID]: env.HOSTNAME?.trim() || randomUUID(),
+    }),
+  );
+}
+
+/**
+ * Exporter URL. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is honoured verbatim;
+ * otherwise the OTLP base endpoint gets the `/v1/traces` suffix. Endpoint
+ * agnostic on purpose: the current Tempo endpoint and the wave 2 in-cluster
+ * Alloy endpoint only differ in `OTEL_EXPORTER_OTLP_ENDPOINT`.
+ */
+export function resolveTraceExporterUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const tracesEndpoint = env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?.trim();
+  if (tracesEndpoint) return tracesEndpoint;
+
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
+  if (!endpoint) return undefined;
+
+  return `${endpoint.replace(/\/+$/, '')}/v1/traces`;
+}
+
+/** Rejects strings that `new URL()` cannot parse or that are not http(s). */
+export function isUsableEndpointUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.hostname.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildBasicAuthHeaders(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  const username = env.OTEL_EXPORTER_OTLP_USERNAME;
+  const password = env.OTEL_EXPORTER_OTLP_PASSWORD;
 
   if (!username || !password) {
     return undefined;
@@ -31,28 +112,108 @@ function buildBasicAuthHeaders(): Record<string, string> | undefined {
   };
 }
 
-if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
-  console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
-} else {
-  console.log(
-    'Initializing tracing with endpoint:',
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-  );
+function firstHeaderValue(
+  value: string | string[] | undefined,
+): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
 
-  sdk = new NodeSDK({
+/** `req.url` on a server request, `req.path` on a client request. */
+function getRequestPath(request: ClientRequest | IncomingMessage): string {
+  if ('url' in request && typeof request.url === 'string') {
+    return request.url;
+  }
+  if ('path' in request && typeof request.path === 'string') {
+    return request.path;
+  }
+  return '/';
+}
+
+function stripQueryString(path: string): string {
+  const queryStart = path.indexOf('?');
+  const withoutQuery = queryStart === -1 ? path : path.slice(0, queryStart);
+  return withoutQuery.length > 0 ? withoutQuery : '/';
+}
+
+function getRequestOrigin(
+  request: ClientRequest | IncomingMessage,
+): string | undefined {
+  if ('headers' in request) {
+    const host = firstHeaderValue(
+      request.headers.host as string | string[] | undefined,
+    );
+    if (!host) return undefined;
+    const forwardedProto = firstHeaderValue(
+      request.headers['x-forwarded-proto'] as string | string[] | undefined,
+    );
+    const encrypted =
+      'socket' in request &&
+      Boolean(
+        (request.socket as { encrypted?: boolean } | undefined)?.encrypted,
+      );
+    const protocol = forwardedProto ?? (encrypted ? 'https' : 'http');
+    return `${protocol}://${host}`;
+  }
+
+  const hostHeader = request.getHeader('host');
+  const host =
+    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) || request.host;
+  if (!host) return undefined;
+  const protocol =
+    'protocol' in request && request.protocol ? request.protocol : 'http:';
+  return `${protocol}//${String(host)}`;
+}
+
+/**
+ * Privacy rule for spans: URL attributes carry the path only, never the query
+ * string (search text, locations, coordinates). Applies to incoming server
+ * spans and to outgoing client spans alike.
+ *
+ * instrumentation-http@0.300 sets `url.path`/`url.query` on server spans and
+ * `url.full` on client spans; the older `http.target`/`http.url` attributes are
+ * still written here so no query string survives under either semconv.
+ */
+export function sanitizeRequestUrlAttributes(
+  span: Span,
+  request: ClientRequest | IncomingMessage,
+): void {
+  const path = stripQueryString(getRequestPath(request));
+  const origin = getRequestOrigin(request);
+  const absoluteUrl = origin ? `${origin}${path}` : path;
+
+  span.setAttribute('http.target', path);
+  span.setAttribute('url.path', path);
+  span.setAttribute('url.query', '');
+  span.setAttribute('http.url', absoluteUrl);
+  span.setAttribute('url.full', absoluteUrl);
+}
+
+function createSdk(exporterUrl: string): NodeSDK {
+  return new NodeSDK({
+    // Parent-based sampling: a request that arrives with a `traceparent` keeps
+    // the caller's decision (Norse sends -01 sampled / -00 unsampled; Envoy
+    // edge tracing samples header-less requests), so the only ratio this
+    // service controls is the root one. Production and dev both run at
+    // OTEL_TRACES_SAMPLER_ARG=1.0 — keep this sampler unchanged.
     sampler: new ParentBasedSampler({
       root: new TraceIdRatioBasedSampler(
         parseFloat(process.env.OTEL_TRACES_SAMPLER_ARG || '1.0'),
       ),
       remoteParentSampled: new AlwaysOnSampler(),
     }),
-    resource: defaultResource().merge(
-      resourceFromAttributes({
-        [ATTR_SERVICE_NAME]: 'norse-api',
-      }),
-    ),
+    resource: buildServiceResource(),
+    // NodeSDK merges the detected resources (incl. OTEL_RESOURCE_ATTRIBUTES)
+    // on top of `resource`, so pin the service name here as well: it must stay
+    // `norse-api` in every environment.
+    serviceName: SERVICE_NAME,
+    // SDK 3.0 exports metrics and logs over OTLP by default when the exporter
+    // env vars are unset. This service exports traces only: logs go to stdout
+    // (collected by the Alloy DaemonSet) and metrics are scraped.
+    metricReaders: [],
+    logRecordProcessors: [],
     traceExporter: new OTLPTraceExporter({
-      url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.replace(/\/$/, '')}/v1/traces`,
+      url: exporterUrl,
       headers: buildBasicAuthHeaders(),
     }),
     instrumentations: [
@@ -63,18 +224,47 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
         '@opentelemetry/instrumentation-fs': {
           enabled: false,
         },
+        '@opentelemetry/instrumentation-dns': {
+          enabled: false,
+        },
+        '@opentelemetry/instrumentation-net': {
+          enabled: false,
+        },
         '@opentelemetry/instrumentation-http': {
           ignoreIncomingRequestHook: (req) => {
             const path = (req.url ?? '').split('?')[0];
             return path === '/metrics' || path === '/health';
           },
+          requestHook: sanitizeRequestUrlAttributes,
         },
       }),
       new NestInstrumentation(),
     ],
   });
+}
 
-  sdk.start();
+const exporterUrl = resolveTraceExporterUrl();
+
+if (!exporterUrl) {
+  console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
+} else if (!isUsableEndpointUrl(exporterUrl)) {
+  console.log(
+    'Tracing disabled: invalid OpenTelemetry exporter endpoint (expected an http(s) URL)',
+  );
+} else {
+  console.log('Initializing tracing with endpoint:', exporterUrl);
+  try {
+    sdk = createSdk(exporterUrl);
+    sdk.start();
+  } catch (error) {
+    // Telemetry must never take the service down: a broken exporter config
+    // disables tracing instead of failing startup.
+    console.log(
+      'Tracing disabled: failed to initialize OpenTelemetry SDK',
+      error,
+    );
+    sdk = undefined;
+  }
 }
 
 /**

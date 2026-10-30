@@ -39,10 +39,14 @@
     "@nestjs/mongoose": "^10.1.0",
     "@nestjs/platform-express": "^10.4.22",
     "@nestjs/swagger": "^7.4.2",
-    "@opentelemetry/auto-instrumentations-node": "^0.80.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
-    "@opentelemetry/instrumentation-nestjs-core": "^0.68.0",
-    "@opentelemetry/sdk-node": "^0.222.0",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/auto-instrumentations-node": "0.82.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.300.0",
+    "@opentelemetry/instrumentation-nestjs-core": "0.71.0",
+    "@opentelemetry/resources": "3.0.0",
+    "@opentelemetry/sdk-node": "0.300.0",
+    "@opentelemetry/sdk-trace": "3.0.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "@prometheus-io/client": "0.16.1",
     "body-parser": "^1.20.4",
     "cache-manager": "^7.2.8",
@@ -111,5 +115,8 @@
     "moduleNameMapper": {
       "^src/(.*)$": "<rootDir>/$1"
     }
+  },
+  "overrides": {
+    "@opentelemetry/api": "^1.10.0"
   }
 }
