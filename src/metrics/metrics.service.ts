@@ -9,7 +9,7 @@ import {
   Pushgateway,
   collectDefaultMetrics,
   register,
-} from 'prom-client';
+} from '@prometheus-io/client';
 
 const DURATION_BUCKETS_SECONDS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
@@ -40,7 +40,7 @@ export class MetricsService implements OnModuleDestroy {
   private readonly httpDurationHistogram: Histogram<string>;
   private readonly downstreamRequestsCounter: Counter<string>;
   private readonly downstreamDurationHistogram: Histogram<string>;
-  private readonly cacheRequestsCounter: Counter;
+  private readonly cacheRequestsCounter: Counter<string>;
   private readonly gateway: Pushgateway<PrometheusContentType> | null;
   private readonly pushIntervalMs: number;
   private readonly instanceId = `${os.hostname()}:${process.pid}`;
