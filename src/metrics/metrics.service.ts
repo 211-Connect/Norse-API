@@ -58,7 +58,7 @@ export class MetricsService {
     this.downstreamDurationHistogram = this.createOrGetHistogram({
       name: 'norse_downstream_duration_seconds',
       help: 'Downstream request duration in seconds',
-      labelNames: ['dependency', 'operation'],
+      labelNames: ['dependency', 'operation', 'outcome'],
       buckets: DURATION_BUCKETS_SECONDS,
       registers: [register],
     });
@@ -159,7 +159,7 @@ export class MetricsService {
   ): void {
     this.downstreamRequestsCounter.inc({ dependency, operation, outcome });
     this.downstreamDurationHistogram.observe(
-      { dependency, operation },
+      { dependency, operation, outcome },
       (performance.now() - start) / 1000,
     );
   }

@@ -76,8 +76,27 @@ DigitalOcean, leave the endpoint disabled (the default).
 | `norse_http_requests_total`                    | Counter   | `method`, `handler`, `status`, `tenant_id`, `domain` | Auto-recorded by `MetricsInterceptor` for every route **without** `@SkipMetrics()`. `handler` is `ClassName.methodName`; `domain` is the controller class name lowercased with the `Controller` suffix stripped (e.g. `search`, `resource`, `organization`) — it exists for convenient `sum by (domain)` queries; `tenant_id` is `request.tenantId` as validated by TenantMiddleware, otherwise `unknown`.                                                                                                                                                                                                                                 |
 | `norse_http_request_duration_seconds`          | Histogram | `method`, `handler`                                  | HTTP request duration. Buckets: `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Deliberately **no** `tenant_id`/`status` labels (cardinality).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `norse_downstream_requests_total`              | Counter   | `dependency`, `operation`, `outcome`                 | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success.                                                                                                                                                                                                       |
-| `norse_downstream_duration_seconds`            | Histogram | `dependency`, `operation`                            | Downstream call duration, same buckets as the HTTP histogram.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `norse_downstream_duration_seconds`            | Histogram | `dependency`, `operation`, `outcome`                 | Downstream call duration, same buckets as the HTTP histogram. Carries the same `outcome` (`ok` \| `timeout` \| `error`) as `norse_downstream_requests_total`, so failure latency can be measured per dependency.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `norse_cache_requests_total`                   | Counter   | `cache`, `result`                                    | Cache accesses. `cache` names the cache; `result`: `hit` \| `miss` \| `coalesced` \| `get-error`. `cache` values are a fixed TypeScript union (`CacheName` in `src/metrics/metrics.service.ts`), so the label stays bounded: `request-redis` (RequestCacheService, Redis), `analytics-lru` (AnalyticsCacheService L1, in-process LRU), `analytics-redis` (AnalyticsCacheService L2, app Redis), `tenant-config-lru` (TenantConfigService in-process LRUs), `tenant-config-redis` (TenantConfigService CMS Redis, DB 2, written by PayloadCMS), `tenant-config-app-redis` (TenantConfigService app-Redis fallback, Keycloak realm id only). |
+
+### Downstream duration by outcome
+
+`norse_downstream_duration_seconds` carries the same `outcome` label as
+`norse_downstream_requests_total` (both are recorded by `recordDownstream`, so they always
+agree). `outcome` is the bounded enum `ok` \| `timeout` \| `error`; no other label was added,
+so cardinality grows by at most 3x for this histogram.
+
+p95 latency of failing downstream calls:
+
+```promql
+histogram_quantile(0.95, sum by (dependency, operation, le) (rate(norse_downstream_duration_seconds_bucket{outcome!="ok"}[5m])))
+```
+
+Failure share of the time spent per dependency:
+
+```promql
+sum by (dependency, outcome) (rate(norse_downstream_duration_seconds_sum[5m]))
+```
 
 ### Downstream timeouts
 
