@@ -16,14 +16,6 @@ export default () => ({
   },
   internalApiKey: process.env.INTERNAL_API_KEY || '',
   ARCJET_KEY: process.env.ARCJET_KEY,
-  PUSH_GATEWAY_URL: process.env.PROMETHEUS_PUSHGATEWAY_URL || '',
-  PUSH_GATEWAY_USERNAME: process.env.PROMETHEUS_PUSHGATEWAY_USERNAME || '',
-  PUSH_GATEWAY_PASSWORD: process.env.PROMETHEUS_PUSHGATEWAY_PASSWORD || '',
-  PUSH_INTERVAL_MS:
-    parseInt(process.env.PROMETHEUS_PUSH_INTERVAL_MS, 10) || 15_000,
-  PUSH_METRICS_ENABLED: !['false', '0', 'no', 'off'].includes(
-    (process.env.PROMETHEUS_PUSH_METRICS_ENABLED ?? '').trim().toLowerCase(),
-  ),
   METRICS_ENDPOINT_ENABLED: ['true', '1', 'yes', 'on'].includes(
     (process.env.PROMETHEUS_METRICS_ENDPOINT_ENABLED ?? '')
       .trim()
