@@ -59,7 +59,6 @@ type TransportClass = typeof Transport;
 
 export function readOnlyConnection(Base: ConnectionClass): ConnectionClass {
   class ReadOnlyConnection extends Base {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     request(params: ConnectionRequestParams, options: any): any {
       assertReadOnlyRequest(params.method, params.path);
       return super.request(params, options);
@@ -81,7 +80,6 @@ export function readOnlyTransport(
   budget: number,
 ): TransportClass {
   class ReadOnlyTransport extends Base {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     request(
       params: TransportRequestParams,
       options?: TransportRequestOptions,

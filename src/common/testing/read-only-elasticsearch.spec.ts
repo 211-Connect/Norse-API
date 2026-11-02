@@ -15,7 +15,6 @@ import {
 const wire: { method: string; path: string }[] = [];
 
 class RecordingConnection extends BaseConnection {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async request(params: ConnectionRequestParams): Promise<any> {
     wire.push({ method: params.method, path: params.path });
     const body = params.path.endsWith('_search')
