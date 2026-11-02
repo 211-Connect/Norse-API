@@ -1,0 +1,9 @@
+# Direct dependencies whose locked version is deprecated on npm but cannot be
+# upgraded yet. Format: one package name per line.
+
+# Transitive via fetch-blob; upstream still depends on it.
+node-domexception
+
+# eslint 8 is end-of-life on npm. The dev-tooling item upgrades to eslint 9
+# (flat config). Remove this line once that lands.
+eslint
