@@ -43,6 +43,13 @@ import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { ArcjetGuard } from '../common/guards/arcjet.guard';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
+import {
+  SearchType,
+  UsageMetricsService,
+  searchOutcomeFromHits,
+  searchTypeFor,
+} from '../metrics/usage-metrics.service';
+import { Request } from 'express';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -171,6 +178,7 @@ export class SearchController {
   constructor(
     private readonly searchService: SearchService,
     private readonly aiSearchService: AiSearchService,
+    private readonly usageMetrics: UsageMetricsService,
   ) {}
 
   @Get()
@@ -203,12 +211,17 @@ export class SearchController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchResourcesQueryDto,
+    @Req() req: Request,
   ): Promise<SearchResponse> {
     try {
-      return this.searchService.searchResources({
-        headers,
-        query,
-      });
+      return this.trackSearch(
+        req,
+        searchTypeFor(query.query_type, query.query),
+        this.searchService.searchResources({
+          headers,
+          query,
+        }),
+      );
     } catch (error) {
       // Attach minimal context and rethrow a controlled HTTP exception
       const message = error?.message ?? 'Search failed';
@@ -332,7 +345,7 @@ export class SearchController {
     query: SearchResourcesQueryDto,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: SearchResourcesBodyDto,
-    @Req() req,
+    @Req() req: Request,
   ) {
     // Validate Content-Type
     const contentType = req.headers['content-type'];
@@ -340,11 +353,15 @@ export class SearchController {
       throw new BadRequestException('Content-Type must be application/json');
     }
 
-    return this.searchService.searchResources({
-      headers,
-      query,
-      body,
-    });
+    return this.trackSearch(
+      req,
+      searchTypeFor(query.query_type, query.query),
+      this.searchService.searchResources({
+        headers,
+        query,
+        body,
+      }),
+    );
   }
 
   @Get('pins')
@@ -452,6 +469,33 @@ export class SearchController {
       need_weights: this.parseNeedWeightsQuery(query.need_weights),
       top_k: query.top_k,
     });
+  }
+
+  /**
+   * Records the usage counter once the search settles: `results` /
+   * `zero_results` from the response, `error` when the promise rejects.
+   */
+  private async trackSearch(
+    req: Request | undefined,
+    searchType: SearchType,
+    pending: Promise<SearchResponse>,
+  ): Promise<SearchResponse> {
+    const context = {
+      tenantId: req?.tenantId,
+      acceptLanguage: req?.headers?.['accept-language'],
+    };
+    try {
+      const response = await pending;
+      this.usageMetrics.recordSearchRequest(
+        context,
+        searchType,
+        searchOutcomeFromHits(response.search?.hits),
+      );
+      return response;
+    } catch (error) {
+      this.usageMetrics.recordSearchRequest(context, searchType, 'error');
+      throw error;
+    }
   }
 
   private parseNeedWeightsQuery(

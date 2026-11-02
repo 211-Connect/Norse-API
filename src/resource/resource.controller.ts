@@ -5,8 +5,14 @@ import {
   Post,
   Version,
   Body,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import { Request } from 'express';
+import {
+  UsageMetricsService,
+  resourceOutcomeFromError,
+} from 'src/metrics/usage-metrics.service';
 import { ResourceService } from './resource.service';
 import {
   ApiBody,
@@ -43,7 +49,10 @@ import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descri
 @ApiTenantIdQuery()
 @ApiLocaleQuery()
 export class ResourceController {
-  constructor(private readonly resourceService: ResourceService) {}
+  constructor(
+    private readonly resourceService: ResourceService,
+    private readonly usageMetrics: UsageMetricsService,
+  ) {}
 
   @Get(':id')
   @Version('1')
@@ -64,10 +73,14 @@ export class ResourceController {
   async getResourceById(
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Req() req: Request,
   ): Promise<TransformedResource> {
-    return this.resourceService.findById(id, {
-      headers,
-    });
+    return this.trackResource(
+      req,
+      this.resourceService.findById(id, {
+        headers,
+      }),
+    );
   }
 
   @Get('original/:id')
@@ -89,10 +102,14 @@ export class ResourceController {
   getResourceByOriginalId(
     @Param('id') id: string, // The path parameter named id, but it is original ID
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Req() req: Request,
   ): Promise<TransformedResource> {
-    return this.resourceService.findByOriginalId(id, {
-      headers,
-    });
+    return this.trackResource(
+      req,
+      this.resourceService.findByOriginalId(id, {
+        headers,
+      }),
+    );
   }
 
   @Post('titles')
@@ -155,5 +172,30 @@ export class ResourceController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ): Promise<ResourceBatchResponse> {
     return this.resourceService.findManyByIds(dto.ids, { headers });
+  }
+
+  /**
+   * Records the usage counter once the lookup settles: `found` on a document,
+   * `not_found` for a 404, `error` for anything else.
+   */
+  private async trackResource<T>(
+    req: Request | undefined,
+    pending: Promise<T>,
+  ): Promise<T> {
+    const context = {
+      tenantId: req?.tenantId,
+      acceptLanguage: req?.headers?.['accept-language'],
+    };
+    try {
+      const resource = await pending;
+      this.usageMetrics.recordResourceRequest(context, 'found');
+      return resource;
+    } catch (error) {
+      this.usageMetrics.recordResourceRequest(
+        context,
+        resourceOutcomeFromError(error),
+      );
+      throw error;
+    }
   }
 }
