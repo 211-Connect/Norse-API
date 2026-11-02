@@ -2,7 +2,7 @@ import {
   BadGatewayException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Counter, register } from '@prometheus-io/client';
+import { Counter, Histogram, register } from '@prometheus-io/client';
 import { MetricsService } from './metrics.service';
 
 describe('MetricsService', () => {
@@ -121,6 +121,36 @@ describe('MetricsService', () => {
       operation: 'predict',
       outcome: 'error',
     });
+  });
+
+  it('observes the downstream duration histogram with the same outcome labels', async () => {
+    const metric = register.getSingleMetric(
+      'norse_downstream_duration_seconds',
+    ) as Histogram<string>;
+
+    await service.observeDownstream('ml_broker', 'predict', async () => 'ok');
+
+    await expect(
+      service.observeDownstream('ml_broker', 'predict', async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    const counts = (await metric.get()).values.filter((v) =>
+      v.metricName?.endsWith('_count'),
+    );
+    expect(counts).toHaveLength(2);
+    for (const count of counts) {
+      expect(count.labels).toMatchObject({
+        dependency: 'ml_broker',
+        operation: 'predict',
+      });
+      expect(count.value).toBe(1);
+    }
+    expect(counts.map((count) => count.labels.outcome).sort()).toEqual([
+      'error',
+      'ok',
+    ]);
   });
 
   const expectOutcome = async (
