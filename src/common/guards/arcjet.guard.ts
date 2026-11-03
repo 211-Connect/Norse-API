@@ -9,6 +9,7 @@ import {
 import { ARCJET, ArcjetNest, ArcjetNestRequest } from '@arcjet/nest';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 @Injectable()
 export class ArcjetGuard implements CanActivate {
@@ -50,7 +51,7 @@ export class ArcjetGuard implements CanActivate {
         event: 'arcjet_denied',
         reason: decision.reason,
         tenantId: req.headers['x-tenant-id'],
-        pathName: req.url,
+        pathName: requestPathForLog(req),
       });
     }
 
@@ -59,7 +60,7 @@ export class ArcjetGuard implements CanActivate {
         event: 'arcjet_error',
         reason: decision.reason,
         tenantId: req.headers['x-tenant-id'],
-        pathName: req.url,
+        pathName: requestPathForLog(req),
       });
     }
 
