@@ -28,6 +28,11 @@ import {
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
 
+import {
+  SanitizingSpanExporter,
+  stripUrlQueryAndFragment,
+} from './tracing-sanitizing-exporter';
+
 /** Service name used in both the production and the dev namespace. */
 export const SERVICE_NAME = 'norse-api';
 
@@ -159,8 +164,7 @@ function getRequestPath(request: UrlBearingRequest): string {
 }
 
 function stripQueryString(path: string): string {
-  const queryStart = path.indexOf('?');
-  const withoutQuery = queryStart === -1 ? path : path.slice(0, queryStart);
+  const withoutQuery = stripUrlQueryAndFragment(path);
   return withoutQuery.length > 0 ? withoutQuery : '/';
 }
 
@@ -287,10 +291,18 @@ function createSdk(exporterUrl: string): NodeSDK {
     // (collected by the Alloy DaemonSet) and metrics are scraped.
     metricReaders: [],
     logRecordProcessors: [],
-    traceExporter: new OTLPTraceExporter({
-      url: exporterUrl,
-      headers: buildBasicAuthHeaders(),
-    }),
+    // Two layers keep query strings out of traces: the request hooks above stop
+    // instrumentation-http/-undici from writing them, and this exporter wrapper
+    // is the backstop for spans nobody hooks (instrumentation-nestjs-core puts
+    // `req.originalUrl` into `url.full` on every Controller.method span). The
+    // backstop also holds when traces go straight to Tempo, i.e. when the
+    // collector's privacy processor is not in the path.
+    traceExporter: new SanitizingSpanExporter(
+      new OTLPTraceExporter({
+        url: exporterUrl,
+        headers: buildBasicAuthHeaders(),
+      }),
+    ),
     instrumentations: buildServiceInstrumentations(),
   });
 }
