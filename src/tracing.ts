@@ -15,6 +15,7 @@ import {
   type Resource,
 } from '@opentelemetry/resources';
 import { NodeSDK } from '@opentelemetry/sdk-node';
+import type { NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import {
   AlwaysOnSampler,
   ParentBasedSampler,
@@ -119,8 +120,16 @@ function firstHeaderValue(
   return value;
 }
 
+/**
+ * Minimal shape shared by every instrumented request: `instrumentation-http`
+ * passes `IncomingMessage`/`ClientRequest`, `instrumentation-undici` passes
+ * `{ origin, path }` (global `fetch`, the Elasticsearch client, OpenCage).
+ */
+type UrlBearingRequest =
+  ClientRequest | IncomingMessage | { origin: string; path: string };
+
 /** `req.url` on a server request, `req.path` on a client request. */
-function getRequestPath(request: ClientRequest | IncomingMessage): string {
+function getRequestPath(request: UrlBearingRequest): string {
   if ('url' in request && typeof request.url === 'string') {
     return request.url;
   }
@@ -136,32 +145,38 @@ function stripQueryString(path: string): string {
   return withoutQuery.length > 0 ? withoutQuery : '/';
 }
 
-function getRequestOrigin(
-  request: ClientRequest | IncomingMessage,
-): string | undefined {
-  if ('headers' in request) {
+function getRequestOrigin(request: UrlBearingRequest): string | undefined {
+  // instrumentation-undici hands over the request URL split into origin/path.
+  if ('origin' in request && typeof request.origin === 'string') {
+    return request.origin;
+  }
+  const httpRequest = request as ClientRequest | IncomingMessage;
+  if ('headers' in httpRequest) {
     const host = firstHeaderValue(
-      request.headers.host as string | string[] | undefined,
+      httpRequest.headers.host as string | string[] | undefined,
     );
     if (!host) return undefined;
     const forwardedProto = firstHeaderValue(
-      request.headers['x-forwarded-proto'] as string | string[] | undefined,
+      httpRequest.headers['x-forwarded-proto'] as string | string[] | undefined,
     );
     const encrypted =
-      'socket' in request &&
+      'socket' in httpRequest &&
       Boolean(
-        (request.socket as { encrypted?: boolean } | undefined)?.encrypted,
+        (httpRequest.socket as { encrypted?: boolean } | undefined)?.encrypted,
       );
     const protocol = forwardedProto ?? (encrypted ? 'https' : 'http');
     return `${protocol}://${host}`;
   }
 
-  const hostHeader = request.getHeader('host');
+  const hostHeader = httpRequest.getHeader('host');
   const host =
-    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) || request.host;
+    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) ||
+    httpRequest.host;
   if (!host) return undefined;
   const protocol =
-    'protocol' in request && request.protocol ? request.protocol : 'http:';
+    'protocol' in httpRequest && httpRequest.protocol
+      ? httpRequest.protocol
+      : 'http:';
   return `${protocol}//${String(host)}`;
 }
 
@@ -171,12 +186,14 @@ function getRequestOrigin(
  * spans and to outgoing client spans alike.
  *
  * instrumentation-http@0.300 sets `url.path`/`url.query` on server spans and
- * `url.full` on client spans; the older `http.target`/`http.url` attributes are
- * still written here so no query string survives under either semconv.
+ * `url.full` on client spans; instrumentation-undici sets `url.full`,
+ * `url.path` and `url.query` on every client span (including `fetch`, which
+ * OpenCage uses). The older `http.target`/`http.url` attributes are still
+ * written here so no query string survives under either semconv.
  */
 export function sanitizeRequestUrlAttributes(
   span: Span,
-  request: ClientRequest | IncomingMessage,
+  request: UrlBearingRequest,
 ): void {
   const path = stripQueryString(getRequestPath(request));
   const origin = getRequestOrigin(request);
@@ -187,6 +204,45 @@ export function sanitizeRequestUrlAttributes(
   span.setAttribute('url.query', '');
   span.setAttribute('http.url', absoluteUrl);
   span.setAttribute('url.full', absoluteUrl);
+}
+
+export type ServiceInstrumentations = NodeSDKConfiguration['instrumentations'];
+
+/**
+ * Instrumentations shared by the running service and the privacy tests.
+ * `instrumentation-undici` must be configured explicitly: it is enabled by
+ * default by `getNodeAutoInstrumentations` and it writes `url.full`,
+ * `url.path` and `url.query` from the real request URL (OpenCage sends the API
+ * key and the geocoded address in the query string).
+ */
+export function buildServiceInstrumentations(): ServiceInstrumentations {
+  return [
+    getNodeAutoInstrumentations({
+      '@opentelemetry/instrumentation-express': {
+        enabled: false,
+      },
+      '@opentelemetry/instrumentation-fs': {
+        enabled: false,
+      },
+      '@opentelemetry/instrumentation-dns': {
+        enabled: false,
+      },
+      '@opentelemetry/instrumentation-net': {
+        enabled: false,
+      },
+      '@opentelemetry/instrumentation-http': {
+        ignoreIncomingRequestHook: (req) => {
+          const path = (req.url ?? '').split('?')[0];
+          return path === '/metrics' || path === '/health';
+        },
+        requestHook: sanitizeRequestUrlAttributes,
+      },
+      '@opentelemetry/instrumentation-undici': {
+        requestHook: sanitizeRequestUrlAttributes,
+      },
+    }),
+    new NestInstrumentation(),
+  ];
 }
 
 function createSdk(exporterUrl: string): NodeSDK {
@@ -216,30 +272,7 @@ function createSdk(exporterUrl: string): NodeSDK {
       url: exporterUrl,
       headers: buildBasicAuthHeaders(),
     }),
-    instrumentations: [
-      getNodeAutoInstrumentations({
-        '@opentelemetry/instrumentation-express': {
-          enabled: false,
-        },
-        '@opentelemetry/instrumentation-fs': {
-          enabled: false,
-        },
-        '@opentelemetry/instrumentation-dns': {
-          enabled: false,
-        },
-        '@opentelemetry/instrumentation-net': {
-          enabled: false,
-        },
-        '@opentelemetry/instrumentation-http': {
-          ignoreIncomingRequestHook: (req) => {
-            const path = (req.url ?? '').split('?')[0];
-            return path === '/metrics' || path === '/health';
-          },
-          requestHook: sanitizeRequestUrlAttributes,
-        },
-      }),
-      new NestInstrumentation(),
-    ],
+    instrumentations: buildServiceInstrumentations(),
   });
 }
 
