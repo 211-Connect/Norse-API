@@ -128,11 +128,14 @@ this, and both are needed:
 1. **Request hooks.** `buildServiceInstrumentations()` registers
    `sanitizeRequestUrlAttributes` as the `requestHook` of
    `@opentelemetry/instrumentation-http` and `@opentelemetry/instrumentation-undici`.
-   The hook runs when the span starts and overwrites `url.path`, `url.query`
-   (`""`), `http.target`, `http.url` and `url.full` with the path-only form, so those
-   two instrumentations never write the query string in the first place — incoming
-   server spans and outgoing `fetch`/undici client spans alike (OpenCage sends the
-   geocoded address and the API key in its query string).
+   Both instrumentations build the span attributes from the real URL and start the
+   span before calling the hook, so the hook overwrites the values they already set:
+   `url.path`, `url.query` (`""`), `http.target`, `http.url` and `url.full` are
+   replaced with the path-only form while the span is starting. Those two
+   instrumentations therefore never **export** the query string — incoming server
+   spans and outgoing `fetch`/undici client spans alike (OpenCage sends the geocoded
+   address and the API key in its query string). The hook is not a guarantee on its
+   own: it is the first layer, and the exporter backstop below is the second.
 2. **Exporter backstop.** The process wraps its OTLP exporter in
    `SanitizingSpanExporter` ([src/tracing-sanitizing-exporter.ts](../src/tracing-sanitizing-exporter.ts)),
    which sanitises **every** span on the way out: it strips the query string and the
