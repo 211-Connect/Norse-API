@@ -53,20 +53,43 @@ describe('tracing', () => {
       );
     });
 
-    it('defaults to production, the package version and a random instance id', () => {
+    it('defaults to unknown, the package version and a random instance id', () => {
       const mod = loadTracingModule();
 
       const attributes = mod.buildServiceResource({}).attributes;
 
       expect(attributes['service.name']).toBe('norse-api');
       expect(attributes['service.version']).toBe('1.0.0');
-      expect(attributes['deployment.environment.name']).toBe('production');
+      expect(attributes['deployment.environment.name']).toBe('unknown');
       expect(attributes['service.instance.id']).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
       expect(
         mod.buildServiceResource({}).attributes['service.instance.id'],
       ).not.toBe(attributes['service.instance.id']);
+    });
+  });
+
+  describe('warnIfDeploymentEnvironmentMissing', () => {
+    it('warns exactly once, naming only the variable, when it is unset', () => {
+      delete process.env.DEPLOYMENT_ENVIRONMENT;
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      loadTracingModule();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        'DEPLOYMENT_ENVIRONMENT is not set: telemetry is labelled deployment.environment.name=unknown',
+      );
+    });
+
+    it('does not warn when DEPLOYMENT_ENVIRONMENT is set', () => {
+      process.env.DEPLOYMENT_ENVIRONMENT = 'dev';
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      loadTracingModule();
+
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 
@@ -223,6 +246,7 @@ describe('tracing', () => {
 
   it('wires the exporter, resource and service name; shutdownTracing is idempotent', async () => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:4318/';
+    process.env.DEPLOYMENT_ENVIRONMENT = 'dev';
     delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
     const start = jest.fn();
     const shutdown = jest.fn().mockResolvedValue(undefined);
@@ -257,7 +281,7 @@ describe('tracing', () => {
     expect(configs[0].serviceName).toBe('norse-api');
     expect(configs[0].resource.attributes['service.name']).toBe('norse-api');
     expect(configs[0].resource.attributes['deployment.environment.name']).toBe(
-      'production',
+      'dev',
     );
 
     await expect(mod.shutdownTracing()).resolves.toBeUndefined();

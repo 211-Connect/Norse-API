@@ -31,7 +31,12 @@ import {
 /** Service name used in both the production and the dev namespace. */
 export const SERVICE_NAME = 'norse-api';
 
-const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
+/**
+ * No default on purpose: a wrong `production` label silently hides in Tempo.
+ * The deployment must set `DEPLOYMENT_ENVIRONMENT`; without it telemetry is
+ * labelled `unknown` and startup logs one warning.
+ */
+const UNKNOWN_DEPLOYMENT_ENVIRONMENT = 'unknown';
 
 let sdk: NodeSDK | undefined;
 
@@ -61,10 +66,24 @@ export function buildServiceResource(
       [ATTR_SERVICE_VERSION]:
         env.APP_VERSION?.trim() || PACKAGE_VERSION || '0.0.0',
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]:
-        env.DEPLOYMENT_ENVIRONMENT?.trim() || DEFAULT_DEPLOYMENT_ENVIRONMENT,
+        env.DEPLOYMENT_ENVIRONMENT?.trim() || UNKNOWN_DEPLOYMENT_ENVIRONMENT,
       [ATTR_SERVICE_INSTANCE_ID]: env.HOSTNAME?.trim() || randomUUID(),
     }),
   );
+}
+
+/**
+ * Warns once at startup when the deployment forgot `DEPLOYMENT_ENVIRONMENT`.
+ * The message names the variable only — never other environment values.
+ */
+export function warnIfDeploymentEnvironmentMissing(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!env.DEPLOYMENT_ENVIRONMENT?.trim()) {
+    console.warn(
+      'DEPLOYMENT_ENVIRONMENT is not set: telemetry is labelled deployment.environment.name=unknown',
+    );
+  }
 }
 
 /**
@@ -277,6 +296,8 @@ function createSdk(exporterUrl: string): NodeSDK {
 }
 
 const exporterUrl = resolveTraceExporterUrl();
+
+warnIfDeploymentEnvironmentMissing();
 
 if (!exporterUrl) {
   console.log('Tracing disabled: OTEL_EXPORTER_OTLP_ENDPOINT not defined');
