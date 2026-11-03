@@ -73,8 +73,16 @@ The environment is expressed per signal, never in the service name:
 | Metrics | Prometheus label `env` (set by the ServiceMonitor) | `production`, `dev` |
 
 Pods must carry the label `app.kubernetes.io/name: norse-api`. The ServiceMonitor
-selects on it (see [metrics.md](metrics.md)), and Loki derives `service_name` from it —
-without the label, logs are unscoped and the scrape target disappears.
+selects on it (see [metrics.md](metrics.md)), so a pod without the label is never
+scraped: `up{job="norse-api"}` has no series for it.
+
+Logs stay reachable. The Alloy relabel rule that builds `service_name` prefers
+`app.kubernetes.io/name` and falls back to the pod's container name, so
+`{service_name="norse-api"}` still matches as long as the container is named
+`norse-api` (the chart names it that; renaming the container would move its streams to
+the new `service_name` value). What the missing label costs in Loki is the
+`app_kubernetes_io_name` stream label and every query that selects on it — the log
+scope itself does not disappear.
 
 ## Log fields
 
@@ -177,8 +185,11 @@ Optional: `PROMETHEUS_METRICS_TOKEN` (bearer token for `/metrics`),
 Every direct dependency's locked version must be free of npm deprecation warnings.
 `scripts/check-deprecated.sh` checks `package.json` against `package-lock.json` using
 `npm view <pkg>@<version> deprecated`, and the deploy workflow fails before building if
-a hit is found. Exceptions live in `scripts/deprecated-allowlist.txt` (one package per
-line, with a comment saying why and what would unblock it) — see
+a hit is found. It iterates the keys of `dependencies` and `devDependencies`, so
+transitive packages are out of scope by design — fix one by bumping the dependency that
+pulls it in, or with an `overrides` entry, not by allowlisting it. Exceptions live in
+`scripts/deprecated-allowlist.txt` (one direct dependency per line, with a comment
+saying why and what would unblock it) — see
 [AGENTS.md](../AGENTS.md#dependency-deprecation-rule).
 
 NestJS 10 is unmaintained; new packages must stay NestJS 10-compatible
