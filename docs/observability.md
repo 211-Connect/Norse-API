@@ -105,18 +105,44 @@ and client identifiers are sensitive. The hard rule is that telemetry carries no
 strings at all — for incoming server spans **and** outgoing client spans (Elasticsearch,
 ML Broker, geocoding, Umami, c211-auth can all carry search text):
 
-| Attribute     | Value                        |
-| ------------- | ---------------------------- |
-| `http.target` | path only                    |
-| `url.path`    | path only                    |
-| `url.query`   | `""` (never the query)       |
-| `http.url`    | `origin + path`              |
-| `url.full`    | `origin + path`              |
+| Attribute     | Value                                                    |
+| ------------- | -------------------------------------------------------- |
+| `http.target` | path only                                                |
+| `url.path`    | path only                                                |
+| `url.query`   | never present on an exported span (see the layers below) |
+| `http.url`    | `origin + path`                                          |
+| `url.full`    | `origin + path`                                          |
 
 Both old (`http.target`/`http.url`) and stable (`url.path`/`url.query`/`url.full`)
-attributes are overwritten so no query survives under either convention. The same rule
-applies to log fields, span names, and metric labels: bounded enums only, no search
-text, locations, coordinates, client IPs, API keys, cache keys or full URLs.
+attributes are overwritten so no query survives under either convention. Two layers do
+this, and both are needed:
+
+1. **Request hooks.** `buildServiceInstrumentations()` registers
+   `sanitizeRequestUrlAttributes` as the `requestHook` of
+   `@opentelemetry/instrumentation-http` and `@opentelemetry/instrumentation-undici`.
+   The hook runs when the span starts and overwrites `url.path`, `url.query`
+   (`""`), `http.target`, `http.url` and `url.full` with the path-only form, so those
+   two instrumentations never write the query string in the first place — incoming
+   server spans and outgoing `fetch`/undici client spans alike (OpenCage sends the
+   geocoded address and the API key in its query string).
+2. **Exporter backstop.** The process wraps its OTLP exporter in
+   `SanitizingSpanExporter` ([src/tracing-sanitizing-exporter.ts](../src/tracing-sanitizing-exporter.ts)),
+   which sanitises **every** span on the way out: it strips the query string and the
+   fragment from `url.full`, `http.url`, `http.target` and from the span name, and
+   deletes `url.query` outright (an empty value is still a place to look). No request
+   hook can do this for `@opentelemetry/instrumentation-nestjs-core`, which sets
+   `url.full = req.originalUrl` on each `Controller.method` span
+   (`nestjs.type=request_context`); the hook does not see that span, the exporter does.
+   That is also why the rule still holds when `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+   points straight at Tempo: no collector, and therefore no collector privacy
+   processor, is in the path.
+
+`src/tracing-nestjs-privacy.spec.ts` drives `buildServiceInstrumentations()` plus the
+real exporter wrapper through `GET /search?query=PRIVATE-SEARCH-TEXT` and asserts the
+query survives in no attribute and no span name.
+
+The same rule applies to log fields, span names, and metric labels: bounded enums only,
+no search text, locations, coordinates, client IPs, API keys, cache keys or full URLs.
 
 ## Environment variables
 
@@ -136,8 +162,10 @@ Optional: `PROMETHEUS_METRICS_TOKEN` (bearer token for `/metrics`),
 
 ## Verifying a deployment
 
-- Traces: `{ resource.service.name = "norse-api" && (span.http.target =~ ".*\\?.*" || span.url.query != "") }`
-  in Tempo must return nothing.
+- Traces: `{ resource.service.name = "norse-api" && (span.http.target =~ ".*\\?.*" || span.url.query != "" || span.url.full =~ ".*\\?.*") }`
+  in Tempo must return nothing. `url.full` is in the check on purpose: it is the
+  attribute `instrumentation-nestjs-core` fills from `req.originalUrl` on
+  `Controller.method` spans, and the only span the request hooks cannot reach.
 - Logs: `{namespace="norse-api-dev", service_name="norse-api"} | json | trace_id != ""`
   returns lines, and `|~ "query="` returns nothing.
 - Metrics: `up{job="norse-api"}` is `1` in both namespaces.
