@@ -92,11 +92,17 @@ p95 latency of failing downstream calls:
 histogram_quantile(0.95, sum by (dependency, operation, le) (rate(norse_downstream_duration_seconds_bucket{outcome!="ok"}[5m])))
 ```
 
-Failure share of the time spent per dependency:
+Failure share of the time spent per dependency (fraction in `[0, 1]` — failing seconds
+over total seconds, both from the same histogram):
 
 ```promql
-sum by (dependency, outcome) (rate(norse_downstream_duration_seconds_sum[5m]))
+sum by (dependency) (rate(norse_downstream_duration_seconds_sum{outcome!="ok"}[5m]))
+  /
+sum by (dependency) (rate(norse_downstream_duration_seconds_sum[5m]))
 ```
+
+The denominator is required: `_sum` alone is absolute seconds, so it only tells you how
+much wall-clock time a dependency consumed, not how much of it failed.
 
 ### Downstream timeouts
 
