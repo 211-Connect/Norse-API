@@ -51,11 +51,16 @@ One cluster, two namespaces: `service.name` is `norse-api` in **both**, and only
 | ------------------------------ | ----------------------------------------------------------------- |
 | `service.name`                 | `norse-api` (constant; `OTEL_SERVICE_NAME` does not override it)   |
 | `service.version`              | `APP_VERSION` env, else `package.json` version                     |
-| `deployment.environment.name`  | `DEPLOYMENT_ENVIRONMENT` env, default `production`                 |
+| `deployment.environment.name`  | `DEPLOYMENT_ENVIRONMENT` env; `unknown` when unset (startup warning) |
 | `service.instance.id`          | `HOSTNAME` (pod name), else a random UUID                          |
 
 `defaultResource()` is merged in, so `OTEL_RESOURCE_ATTRIBUTES` and the SDK's detected
 host attributes (e.g. `host.name`, `process.pid`) are still present.
+
+There is **no `production` fallback**: an unset `DEPLOYMENT_ENVIRONMENT` yields
+`deployment.environment.name=unknown` and one startup warning
+(`DEPLOYMENT_ENVIRONMENT is not set: ...`). Both namespaces must set the variable in the
+deployment (the chart renders `env` from values, so an empty `env: []` means `unknown`).
 
 ## Environment convention
 
@@ -118,7 +123,7 @@ text, locations, coordinates, client IPs, API keys, cache keys or full URLs.
 ```
 OTEL_EXPORTER_OTLP_ENDPOINT=http://kube-prometheus-stack-alloy-otlp.monitoring.svc:4318
 OTEL_TRACES_SAMPLER_ARG=1.0
-DEPLOYMENT_ENVIRONMENT=production   # dev namespace: dev
+DEPLOYMENT_ENVIRONMENT=production   # required; dev namespace: dev (unset -> unknown)
 APP_VERSION=<image tag>
 PROMETHEUS_METRICS_ENDPOINT_ENABLED=true
 # removed: PROMETHEUS_PUSHGATEWAY_URL, PROMETHEUS_PUSHGATEWAY_USERNAME/PASSWORD, PROMETHEUS_PUSH_*
