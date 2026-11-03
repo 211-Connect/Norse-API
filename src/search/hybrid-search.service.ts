@@ -58,6 +58,12 @@ const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+type HybridSearchOptions = {
+  headers: HeadersDto;
+  query: SearchResourcesQueryDto;
+  body?: SearchResourcesBodyDto;
+};
+
 const EMBEDDING_TIMEOUT_MS = 10_000;
 
 // When a tenant sets `pinned_resources_mode` to `boost`, pinned/priority stop
@@ -255,11 +261,94 @@ export class HybridSearchService {
     });
   }
 
-  async searchHybrid(options: {
-    headers: HeadersDto;
-    query: SearchResourcesQueryDto;
-    body?: SearchResourcesBodyDto;
-  }): Promise<SearchResponse> {
+  async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
+    const t0 = performance.now();
+    const { request, tenantFacets, cutoff, lang, tEmbedMs, tTaxonomyMs } =
+      await this.prepareHybridSearch(options, { rank: true });
+
+    const tSearchStart = performance.now();
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'hybrid_search',
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(request),
+    );
+    const tSearchMs = Math.round(performance.now() - tSearchStart);
+
+    const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
+      const normalizedFacets = SearchUtilsService.normalizeDocFacets(
+        hit._source,
+        lang,
+      );
+      return {
+        _index: hit._index,
+        _id: hit._id,
+        _score: hit._score ?? null,
+        _source: { ...hit._source, facets: normalizedFacets },
+        sort: hit.sort as number[] | undefined,
+      };
+    });
+
+    const facets = SearchUtilsService.transformAggregations(
+      tenantFacets,
+      data.aggregations,
+      lang,
+    );
+
+    const totalHits =
+      typeof data.hits.total === 'number'
+        ? data.hits.total
+        : (data.hits.total?.value ?? 0);
+
+    const totalMs = Math.round(performance.now() - t0);
+    this.logger.log(
+      `[Hybrid search] timings - embedding: ${tEmbedMs}ms | taxonomy lookup: ${tTaxonomyMs}ms | search: ${tSearchMs}ms | total: ${totalMs}ms`,
+    );
+
+    return {
+      search: {
+        took: data.took,
+        timed_out: data.timed_out,
+        _shards: {
+          total: data._shards.total,
+          successful: data._shards.successful,
+          skipped: data._shards.skipped ?? 0,
+          failed: data._shards.failed,
+        },
+        hits: {
+          total: { value: totalHits, relation: 'eq' },
+          max_score: hits[0]?._score ?? null,
+          hits,
+        },
+      },
+      facets,
+      // Omitted entirely when the caller did not opt in, so the response
+      // document is unchanged for every existing consumer.
+      ...(cutoff ? { relevance_cutoff: cutoff } : {}),
+    };
+  }
+
+  /**
+   * The request behind a map's pins: the same population as `searchHybrid`, but
+   * unranked by default. Filters alone decide membership here, so embedding the
+   * query and running exact cosine over the population would buy only the order
+   * of a truncated set. `relevance_cutoff` does read scores, so it keeps them.
+   */
+  async buildPinsRequest(options: HybridSearchOptions): Promise<SearchRequest> {
+    const { request } = await this.prepareHybridSearch(options, {
+      rank: options.query.relevance_cutoff === 'on',
+    });
+
+    return request;
+  }
+
+  private async prepareHybridSearch(
+    options: HybridSearchOptions,
+    { rank }: { rank: boolean },
+  ) {
     const { headers, query: q } = options;
     const {
       query,
@@ -294,7 +383,6 @@ export class HybridSearchService {
       geometry,
     };
     const preference = shardPreference('hybrid', searchFingerprint(identity));
-    const t0 = performance.now();
 
     this.logger.debug(
       `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
@@ -303,7 +391,7 @@ export class HybridSearchService {
     // Browse mode (empty query): skip embedding — many embedding servers 400 on
     // empty input, causing a 503. Filters + sort carry the result set; vector
     // scoring is simply omitted for browse.
-    const wantsVector = queryStr.trim().length > 0;
+    const wantsVector = rank && queryStr.trim().length > 0;
     const tEmbedStart = performance.now();
 
     const [embedResult, tenantFacets, searchConfig] = await Promise.all([
@@ -414,69 +502,7 @@ export class HybridSearchService {
       sort,
     });
 
-    const tSearchStart = performance.now();
-    const data = await this.metrics.observeDownstream(
-      'elasticsearch',
-      'hybrid_search',
-      () =>
-        this.elasticsearchService.search<
-          SearchSource,
-          Record<string, AggregationsStringTermsAggregate>
-        >(request),
-    );
-    const tSearchMs = Math.round(performance.now() - tSearchStart);
-
-    const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
-      const normalizedFacets = SearchUtilsService.normalizeDocFacets(
-        hit._source,
-        lang,
-      );
-      return {
-        _index: hit._index,
-        _id: hit._id,
-        _score: hit._score ?? null,
-        _source: { ...hit._source, facets: normalizedFacets },
-        sort: hit.sort as number[] | undefined,
-      };
-    });
-
-    const facets = SearchUtilsService.transformAggregations(
-      tenantFacets,
-      data.aggregations,
-      lang,
-    );
-
-    const totalHits =
-      typeof data.hits.total === 'number'
-        ? data.hits.total
-        : (data.hits.total?.value ?? 0);
-
-    const totalMs = Math.round(performance.now() - t0);
-    this.logger.log(
-      `[Hybrid search] timings - embedding: ${tEmbedMs}ms | taxonomy lookup: ${tTaxonomyMs}ms | search: ${tSearchMs}ms | total: ${totalMs}ms`,
-    );
-
-    return {
-      search: {
-        took: data.took,
-        timed_out: data.timed_out,
-        _shards: {
-          total: data._shards.total,
-          successful: data._shards.successful,
-          skipped: data._shards.skipped ?? 0,
-          failed: data._shards.failed,
-        },
-        hits: {
-          total: { value: totalHits, relation: 'eq' },
-          max_score: hits[0]?._score ?? null,
-          hits,
-        },
-      },
-      facets,
-      // Omitted entirely when the caller did not opt in, so the response
-      // document is unchanged for every existing consumer.
-      ...(cutoff ? { relevance_cutoff: cutoff } : {}),
-    };
+    return { request, tenantFacets, cutoff, lang, tEmbedMs, tTaxonomyMs };
   }
 
   async embedQuery(query: string): Promise<number[]> {

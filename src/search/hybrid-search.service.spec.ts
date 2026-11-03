@@ -216,6 +216,38 @@ describe('HybridSearchService', () => {
     ]);
   });
 
+  describe('buildPinsRequest', () => {
+    const pinsQuery = { query: 'food', page: 1, limit: 1000 } as any;
+
+    it('skips the embedding and taxonomy lookup, keeping the same filters', async () => {
+      const embed = jest.spyOn(service, 'embedQuery');
+
+      const request: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, filters: { language: 'en' } },
+      });
+
+      expect(embed).not.toHaveBeenCalled();
+      expect(esSearch).not.toHaveBeenCalled();
+      expect(request.size).toBe(1000);
+      expect(JSON.stringify(request.query)).toContain('"tenant_id":"tenant-a"');
+      expect(JSON.stringify(request.query)).not.toContain('cosineSimilarity');
+    });
+
+    it('keeps the embedding when relevance_cutoff reads the scores', async () => {
+      const embed = jest
+        .spyOn(service, 'embedQuery')
+        .mockResolvedValue([0.1, 0.2]);
+
+      await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, relevance_cutoff: 'on' },
+      });
+
+      expect(embed).toHaveBeenCalledWith('food');
+    });
+  });
+
   describe('sort param (ISS-1367)', () => {
     it('honors sort=distance by emitting a _geo_distance tier when coords are present', async () => {
       await service.searchHybrid({

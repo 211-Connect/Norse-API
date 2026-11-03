@@ -129,6 +129,38 @@ describe('SearchService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  describe('searchPins', () => {
+    it('sends the list query as a first-page projection without facets', async () => {
+      await service.searchPins({
+        headers: { 'x-tenant-id': 'tenant-a', 'accept-language': 'en' } as any,
+        query: {
+          query: 'food',
+          query_type: 'text',
+          page: 7,
+          limit: 25,
+          filters: {},
+        } as any,
+      });
+
+      const request = (elasticsearchService.search as jest.Mock).mock
+        .calls[0][0];
+
+      expect(request.from).toBe(0);
+      expect(request.size).toBe(1000);
+      expect(request.aggs).toBeUndefined();
+      expect(request._source).toContain('location.point');
+    });
+
+    it('rejects the queries GET /search rejects', async () => {
+      await expect(
+        service.searchPins({
+          headers: { 'x-tenant-id': 'tenant-a' } as any,
+          query: { query: 42, query_type: 'text' } as any,
+        }),
+      ).rejects.toThrow('Invalid query type');
+    });
+  });
+
   describe('organization_id filter', () => {
     const hasOrgTerm = (filterClauses: any[]) =>
       filterClauses.some(
