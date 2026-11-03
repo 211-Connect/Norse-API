@@ -21,13 +21,6 @@ import {
 delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { buildServiceInstrumentations, buildServiceResource } =
-  require('../../src/tracing') as typeof import('../../src/tracing');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { SanitizingSpanExporter } =
-  require('../../src/tracing-sanitizing-exporter') as typeof import('../../src/tracing-sanitizing-exporter');
-
 const PRIVATE_SEARCH_TEXT = 'PRIVATE-SEARCH-TEXT';
 
 @Controller('search')
@@ -42,6 +35,17 @@ class ProbeController {
 class ProbeModule {}
 
 async function main(): Promise<void> {
+  // Dynamic imports keep the service modules' top-level side effects after the
+  // `delete process.env...` lines above: `src/tracing` starts its own SDK when
+  // an exporter endpoint is configured, so it must not be loaded before the
+  // deletes or the probe would export its PRIVATE-SEARCH-TEXT request to a real
+  // endpoint. `await import()` compiles to `require()` in CommonJS, so module
+  // load order is preserved without the lint-suppressing directive.
+  const { buildServiceInstrumentations, buildServiceResource } =
+    await import('../../src/tracing');
+  const { SanitizingSpanExporter } =
+    await import('../../src/tracing-sanitizing-exporter');
+
   const exporter = new InMemorySpanExporter();
   const spanProcessor = new SimpleSpanProcessor({
     exporter: new SanitizingSpanExporter(exporter),
@@ -56,12 +60,11 @@ async function main(): Promise<void> {
   sdk.start();
 
   // `@nestjs/core` and `http` must be loaded after `sdk.start()`, otherwise the
-  // Nest/http instrumentations cannot patch them.
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const { NestFactory } =
-    require('@nestjs/core') as typeof import('@nestjs/core');
-  const http = require('node:http') as typeof import('node:http');
-  /* eslint-enable @typescript-eslint/no-require-imports */
+  // Nest/http instrumentations cannot patch them. Static imports would be
+  // hoisted above `sdk.start()`, so `await import()` is required here: it
+  // compiles to `require()` at this point in CommonJS and preserves the order.
+  const { NestFactory } = await import('@nestjs/core');
+  const http = await import('node:http');
 
   const app = await NestFactory.create(ProbeModule, { logger: false });
   await app.listen(0);
