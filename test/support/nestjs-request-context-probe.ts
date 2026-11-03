@@ -18,8 +18,13 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace';
 
-delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+// `src/tracing` runs `dotenv/config`, and dotenv does not override a variable
+// that is already defined. Deleting the keys would let a developer `.env` with
+// a real OTLP endpoint re-enable tracing inside the probe and export
+// PRIVATE-SEARCH-TEXT to that endpoint; empty strings are defined, so the
+// service sees "tracing disabled" and never starts an SDK.
+process.env.OTEL_EXPORTER_OTLP_ENDPOINT = '';
+process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = '';
 
 const PRIVATE_SEARCH_TEXT = 'PRIVATE-SEARCH-TEXT';
 
@@ -36,11 +41,10 @@ class ProbeModule {}
 
 async function main(): Promise<void> {
   // Dynamic imports keep the service modules' top-level side effects after the
-  // `delete process.env...` lines above: `src/tracing` starts its own SDK when
-  // an exporter endpoint is configured, so it must not be loaded before the
-  // deletes or the probe would export its PRIVATE-SEARCH-TEXT request to a real
-  // endpoint. `await import()` compiles to `require()` in CommonJS, so module
-  // load order is preserved without the lint-suppressing directive.
+  // environment assignments above: `src/tracing` starts its own SDK when an
+  // exporter endpoint is configured, so it must not be loaded first.
+  // `await import()` compiles to `require()` in CommonJS, so module load order
+  // is preserved without the lint-suppressing directive.
   const { buildServiceInstrumentations, buildServiceResource } =
     await import('../../src/tracing');
   const { SanitizingSpanExporter } =

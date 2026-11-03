@@ -20,6 +20,7 @@ import {
   AlwaysOnSampler,
   ParentBasedSampler,
   TraceIdRatioBasedSampler,
+  type SpanExporter,
 } from '@opentelemetry/sdk-trace';
 import {
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
@@ -268,6 +269,25 @@ export function buildServiceInstrumentations(): ServiceInstrumentations {
   ];
 }
 
+/**
+ * Production span exporter: the OTLP exporter (unless a delegate is supplied)
+ * wrapped in the `SanitizingSpanExporter` privacy backstop.
+ *
+ * Exported so `tracing-wiring.spec.ts` can pin the wiring. Every other suite
+ * stays green when the wrapper is dropped: the request hooks already strip the
+ * URLs they see, and the Nest handler spans only the backstop covers are
+ * exercised through the probe, which wraps the exporter itself.
+ */
+export function buildTraceExporter(
+  exporterUrl: string,
+  delegate: SpanExporter = new OTLPTraceExporter({
+    url: exporterUrl,
+    headers: buildBasicAuthHeaders(),
+  }),
+): SpanExporter {
+  return new SanitizingSpanExporter(delegate);
+}
+
 function createSdk(exporterUrl: string): NodeSDK {
   return new NodeSDK({
     // Parent-based sampling: a request that arrives with a `traceparent` keeps
@@ -297,12 +317,7 @@ function createSdk(exporterUrl: string): NodeSDK {
     // `req.originalUrl` into `url.full` on every Controller.method span). The
     // backstop also holds when traces go straight to Tempo, i.e. when the
     // collector's privacy processor is not in the path.
-    traceExporter: new SanitizingSpanExporter(
-      new OTLPTraceExporter({
-        url: exporterUrl,
-        headers: buildBasicAuthHeaders(),
-      }),
-    ),
+    traceExporter: buildTraceExporter(exporterUrl),
     instrumentations: buildServiceInstrumentations(),
   });
 }
