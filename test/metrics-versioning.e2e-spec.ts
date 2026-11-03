@@ -44,12 +44,16 @@ describe('MetricsController versioning (e2e)', () => {
     await app.close();
   });
 
-  it('GET /metrics without x-api-version header -> 200 with prometheus text', async () => {
+  it('GET /metrics without x-api-version header -> 200 with OpenMetrics', async () => {
     const res = await request(app.getHttpServer()).get('/metrics');
     expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('text/plain');
-    expect(res.text).toContain('# TYPE norse_http_requests_total counter');
+    // Exemplars require OpenMetrics; the Prometheus text format would drop them.
+    expect(res.headers['content-type']).toContain(
+      'application/openmetrics-text',
+    );
+    expect(res.text).toContain('# TYPE norse_http_requests counter');
     expect(res.text).toContain('process_cpu_seconds_total');
+    expect(res.text.trimEnd().endsWith('# EOF')).toBe(true);
   });
 
   it('GET /metrics with x-api-version: 1 -> 200', async () => {
