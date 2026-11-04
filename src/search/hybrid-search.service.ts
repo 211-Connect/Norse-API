@@ -262,11 +262,9 @@ export class HybridSearchService {
   }
 
   async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
-    const t0 = performance.now();
-    const { request, tenantFacets, cutoff, lang, tEmbedMs, tTaxonomyMs } =
+    const { request, tenantFacets, cutoff, lang } =
       await this.prepareHybridSearch(options, { rank: true });
 
-    const tSearchStart = performance.now();
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
       'hybrid_search',
@@ -276,7 +274,6 @@ export class HybridSearchService {
           Record<string, AggregationsStringTermsAggregate>
         >(request),
     );
-    const tSearchMs = Math.round(performance.now() - tSearchStart);
 
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
       const normalizedFacets = SearchUtilsService.normalizeDocFacets(
@@ -302,11 +299,6 @@ export class HybridSearchService {
       typeof data.hits.total === 'number'
         ? data.hits.total
         : (data.hits.total?.value ?? 0);
-
-    const totalMs = Math.round(performance.now() - t0);
-    this.logger.log(
-      `[Hybrid search] timings - embedding: ${tEmbedMs}ms | taxonomy lookup: ${tTaxonomyMs}ms | search: ${tSearchMs}ms | total: ${totalMs}ms`,
-    );
 
     return {
       search: {
@@ -392,7 +384,6 @@ export class HybridSearchService {
     // empty input, causing a 503. Filters + sort carry the result set; vector
     // scoring is simply omitted for browse.
     const wantsVector = rank && queryStr.trim().length > 0;
-    const tEmbedStart = performance.now();
 
     const [embedResult, tenantFacets, searchConfig] = await Promise.all([
       wantsVector
@@ -410,15 +401,12 @@ export class HybridSearchService {
     const queryVector = embedResult;
     const pinnedMode =
       SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
-    const tEmbedMs = Math.round(performance.now() - tEmbedStart);
 
-    const tTaxonomyStart = performance.now();
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
       ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
       : [];
-    const tTaxonomyMs = Math.round(performance.now() - tTaxonomyStart);
 
     this.logger.log(
       `[Hybrid search] - query="${queryStr}" | predicted codes: [${predictedTaxonomies
@@ -502,7 +490,7 @@ export class HybridSearchService {
       sort,
     });
 
-    return { request, tenantFacets, cutoff, lang, tEmbedMs, tTaxonomyMs };
+    return { request, tenantFacets, cutoff, lang };
   }
 
   async embedQuery(query: string): Promise<number[]> {
