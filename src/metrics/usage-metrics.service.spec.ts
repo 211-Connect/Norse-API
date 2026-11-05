@@ -181,6 +181,26 @@ describe('UsageMetricsService', () => {
       expect(tenantConfig.getCachedTenantLocales).not.toHaveBeenCalled();
     });
 
+    it('maps an uncached tenant UUID to unknown instead of creating a series', async () => {
+      tenantConfig.getCachedTenantLocales.mockReturnValue(undefined);
+
+      service.recordSearchRequest(
+        { tenantId: '00000000-0000-4000-8000-000000000000' },
+        'keyword',
+        'results',
+      );
+
+      const values = (await getMetric('norse_search_requests_total').get())
+        .values;
+      expect(values).toHaveLength(1);
+      expect(values[0].labels).toEqual({
+        tenant_id: 'unknown',
+        locale: 'en',
+        search_type: 'keyword',
+        outcome: 'results',
+      });
+    });
+
     it('accepts tenant locales outside the platform list from the cache', async () => {
       tenantConfig.getCachedTenantLocales.mockReturnValue(['xx-YY']);
 
@@ -199,6 +219,8 @@ describe('UsageMetricsService', () => {
     });
 
     it('records the resource counter with only bounded labels', async () => {
+      tenantConfig.getCachedTenantLocales.mockReturnValue(['zh-Hant']);
+
       service.recordResourceRequest(
         { tenantId: 'tenant-1', acceptLanguage: 'zh-Hant-TW' },
         'not_found',
@@ -219,6 +241,7 @@ describe('UsageMetricsService', () => {
     });
 
     it('increments an existing series instead of duplicating it', async () => {
+      tenantConfig.getCachedTenantLocales.mockReturnValue(['en']);
       const context = { tenantId: 'tenant-1', acceptLanguage: 'en' };
       service.recordSearchRequest(context, 'keyword', 'error');
       service.recordSearchRequest(context, 'keyword', 'error');
