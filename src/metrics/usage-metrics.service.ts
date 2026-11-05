@@ -249,8 +249,11 @@ export class UsageMetricsService {
         ? undefined
         : this.tenantConfigService.getCachedTenantLocales(tenantId);
 
+    // A format-valid but uncached UUID must not create its own metric series.
+    const tenantLabel = tenantLocales === undefined ? UNKNOWN_TENANT : tenantId;
+
     return {
-      tenant_id: tenantId,
+      tenant_id: tenantLabel,
       locale: resolveLocale(context.acceptLanguage, tenantLocales),
     };
   }
