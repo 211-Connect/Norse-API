@@ -146,7 +146,7 @@ describe('SearchService', () => {
         .calls[0][0];
 
       expect(request.from).toBe(0);
-      expect(request.size).toBe(1000);
+      expect(request.size).toBe(10000);
       expect(request.aggs).toBeUndefined();
       expect(request._source).toContain('location.point');
     });

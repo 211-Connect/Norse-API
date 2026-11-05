@@ -9,7 +9,7 @@ import {
 import { SearchSource } from '../dto/search-response.dto';
 import { SearchUtilsService } from '../search-utils.service';
 
-export const SEARCH_PINS_LIMIT = 1000;
+export const SEARCH_PINS_LIMIT = 10_000;
 
 /**
  * Narrows a list request to what a pin needs: no facets, no full documents, and
@@ -43,10 +43,12 @@ export const toPinsRequest = (request: SearchRequest): SearchRequest => {
 export const toPinsResponse = (
   data: EsSearchResponse<SearchSource>,
 ): SearchPinsResponseDto => {
+  const { total: hitsTotal } = data.hits;
   const total =
-    typeof data.hits.total === 'number'
-      ? data.hits.total
-      : (data.hits.total?.value ?? 0);
+    typeof hitsTotal === 'number' ? hitsTotal : (hitsTotal?.value ?? 0);
+  // Classic search stops counting at the limit, so its total can't exceed it.
+  const isCountCut =
+    typeof hitsTotal === 'object' && hitsTotal.relation === 'gte';
 
   const pins = data.hits.hits.flatMap((hit): SearchPinDto[] => {
     const point = SearchUtilsService.parseLocationPoint(
@@ -66,5 +68,5 @@ export const toPinsResponse = (
     ];
   });
 
-  return { total, truncated: total > SEARCH_PINS_LIMIT, pins };
+  return { total, truncated: total > SEARCH_PINS_LIMIT || isCountCut, pins };
 };

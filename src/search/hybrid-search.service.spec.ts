@@ -217,7 +217,7 @@ describe('HybridSearchService', () => {
   });
 
   describe('buildPinsRequest', () => {
-    const pinsQuery = { query: 'food', page: 1, limit: 1000 } as any;
+    const pinsQuery = { query: 'food', page: 1, limit: 10000 } as any;
 
     it('skips the embedding and taxonomy lookup, keeping the same filters', async () => {
       const embed = jest.spyOn(service, 'embedQuery');
@@ -229,7 +229,7 @@ describe('HybridSearchService', () => {
 
       expect(embed).not.toHaveBeenCalled();
       expect(esSearch).not.toHaveBeenCalled();
-      expect(request.size).toBe(1000);
+      expect(request.size).toBe(10000);
       expect(JSON.stringify(request.query)).toContain('"tenant_id":"tenant-a"');
       expect(JSON.stringify(request.query)).not.toContain('cosineSimilarity');
     });

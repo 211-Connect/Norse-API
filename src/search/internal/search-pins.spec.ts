@@ -81,5 +81,10 @@ describe('toPinsResponse', () => {
     expect(toPinsResponse(response([], SEARCH_PINS_LIMIT + 1)).truncated).toBe(
       true,
     );
+    expect(
+      toPinsResponse(
+        response([], { value: SEARCH_PINS_LIMIT, relation: 'gte' }),
+      ).truncated,
+    ).toBe(true);
   });
 });
