@@ -1,6 +1,10 @@
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 
 jest.mock('dotenv/config', () => ({}));
+jest.mock('@opentelemetry/auto-instrumentations-node', () => ({
+  getNodeAutoInstrumentations: jest.fn(() => []),
+}));
 
 const PRIVATE_SEARCH_TEXT = 'PRIVATE-SEARCH-TEXT';
 const PRIVATE_URL = `/search?query=${PRIVATE_SEARCH_TEXT}`;
@@ -104,5 +108,33 @@ describe('production tracing wiring', () => {
     expect(otlpExporters[0].exportedSpans).toEqual([
       { name: 'GET /search', attributes: { 'url.full': '/search' } },
     ]);
+  });
+
+  it('serializes redis and ioredis statements to the command name only', () => {
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+    (getNodeAutoInstrumentations as jest.Mock).mockClear();
+
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const tracing = require('./tracing') as {
+        buildServiceInstrumentations: () => unknown;
+      };
+      tracing.buildServiceInstrumentations();
+    });
+
+    const config = (getNodeAutoInstrumentations as jest.Mock).mock.calls[0][0];
+    expect(
+      config['@opentelemetry/instrumentation-redis'].dbStatementSerializer(
+        'GET',
+        ['geocode:forward:x'],
+      ),
+    ).toBe('GET');
+    expect(
+      config['@opentelemetry/instrumentation-ioredis'].dbStatementSerializer(
+        'GET',
+        ['geocode:forward:x'],
+      ),
+    ).toBe('GET');
   });
 });

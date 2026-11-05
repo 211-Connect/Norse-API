@@ -264,6 +264,14 @@ export function buildServiceInstrumentations(): ServiceInstrumentations {
       '@opentelemetry/instrumentation-undici': {
         requestHook: sanitizeRequestUrlAttributes,
       },
+      // Statement = command name only: cache keys carry geocoded addresses
+      // and coordinates (privacy rule).
+      '@opentelemetry/instrumentation-redis': {
+        dbStatementSerializer: (cmdName: string) => cmdName,
+      },
+      '@opentelemetry/instrumentation-ioredis': {
+        dbStatementSerializer: (cmdName: string) => cmdName,
+      },
     }),
     new NestInstrumentation(),
   ];
