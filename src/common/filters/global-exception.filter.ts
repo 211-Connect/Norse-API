@@ -44,7 +44,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const path = req ? requestPathForLog(req) : '';
     if (this.detectSuspiciousPatterns(url)) {
       this.securityLogger.warn(
-        `Potential injection attempt detected: ${req?.method} ${req?.ip || 'unknown IP'} - Status: ${status}`,
+        `Potential injection attempt detected: ${req?.method} ${path} - Status: ${status}`,
         {
           tenant: req?.tenantId,
           method: req?.method,
