@@ -3,7 +3,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Counter, Pushgateway, register } from 'prom-client';
+import { Counter, Pushgateway, register } from '@prometheus-io/client';
 import { MetricsService } from './metrics.service';
 
 describe('MetricsService', () => {

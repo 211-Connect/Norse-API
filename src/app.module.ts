@@ -16,6 +16,8 @@ import { FavoriteListModule } from 'src/favorite-list/favorite-list.module';
 import { SearchModule } from './search/search.module';
 import { ShortUrlModule } from './short-url/short-url.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { LoggerModule } from 'nestjs-pino';
+import { buildLoggerOptions } from './common/logger/logger-config';
 import configuration, {
   validateConfiguration,
 } from './common/config/configuration';
@@ -70,6 +72,12 @@ const arcjetKey = configuration().ARCJET_KEY;
       load: [configuration],
       isGlobal: true,
       validate: validateConfiguration,
+    }),
+    LoggerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        buildLoggerOptions(configService.get<string>('logLevel') ?? 'warn'),
     }),
     ...(arcjetKey
       ? [

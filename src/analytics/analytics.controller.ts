@@ -6,7 +6,6 @@ import {
   Post,
   Query,
   UseGuards,
-  UseInterceptors,
   Version,
 } from '@nestjs/common';
 import {

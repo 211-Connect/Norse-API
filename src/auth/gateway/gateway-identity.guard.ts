@@ -9,6 +9,7 @@ import {
   PUBLIC_KEY,
 } from './gateway-principal';
 import { Logger } from '@nestjs/common';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 /**
  * Resolves req.authMode ('gateway' | 'legacy') for every request.
@@ -50,7 +51,7 @@ export class GatewayIdentityGuard implements CanActivate {
       request.authMode = 'gateway';
       request.gatewayPrincipal = { externalId, keyId };
       this.logger.debug(
-        `Gateway identity resolved for ${request.method} ${request.originalUrl}`,
+        `Gateway identity resolved for ${request.method} ${requestPathForLog(request)}`,
       );
       return true;
     }
@@ -60,7 +61,7 @@ export class GatewayIdentityGuard implements CanActivate {
     const missing =
       !externalId && !keyId ? 'both' : !externalId ? 'external-id' : 'key-id';
     this.logger.debug(
-      `No gateway identity (missing: ${missing}) for ${request.method} ${request.originalUrl}, routing to legacy path`,
+      `No gateway identity (missing: ${missing}) for ${request.method} ${requestPathForLog(request)}, routing to legacy path`,
     );
 
     return true;

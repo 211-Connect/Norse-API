@@ -191,7 +191,10 @@ describe('UmamiAnalyticsService', () => {
     it('looks up titles by id only when a resource_viewed event has no resourceTitle', async () => {
       const rows = [
         buildRow({ resourceId: 'legacy-resource' }),
-        buildRow({ resourceId: 'named-resource', resourceTitle: 'Current Name' }),
+        buildRow({
+          resourceId: 'named-resource',
+          resourceTitle: 'Current Name',
+        }),
         buildRow({ resourceId: 'unknown-resource' }),
       ];
       umamiHttpService.fanOut.mockResolvedValue([
@@ -579,5 +582,4 @@ describe('UmamiAnalyticsService', () => {
       );
     });
   });
-
 });

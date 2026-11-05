@@ -6,9 +6,10 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { ARCJET, ArcjetNest } from '@arcjet/nest';
+import { ARCJET, ArcjetNest, ArcjetNestRequest } from '@arcjet/nest';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 @Injectable()
 export class ArcjetGuard implements CanActivate {
@@ -41,15 +42,16 @@ export class ArcjetGuard implements CanActivate {
       return true;
     }
 
-    const decision = await this.arcjet.protect(req);
+    // pino-http widens express Request.id to ReqId (string | number); Arcjet
+    // expects the pre-pino-http shape.
+    const decision = await this.arcjet.protect(req as ArcjetNestRequest);
 
     if (decision.isDenied()) {
       this.logger.warn({
         event: 'arcjet_denied',
         reason: decision.reason,
-        ip: decision.ip,
         tenantId: req.headers['x-tenant-id'],
-        pathName: req.url,
+        pathName: requestPathForLog(req),
       });
     }
 
@@ -57,9 +59,8 @@ export class ArcjetGuard implements CanActivate {
       this.logger.error({
         event: 'arcjet_error',
         reason: decision.reason,
-        ip: decision.ip,
         tenantId: req.headers['x-tenant-id'],
-        pathName: req.url,
+        pathName: requestPathForLog(req),
       });
     }
 
