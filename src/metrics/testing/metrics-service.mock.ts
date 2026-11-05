@@ -5,5 +5,7 @@ export const createMetricsServiceMock = () => ({
   recordHttpRequest: jest.fn(),
   recordCacheAccess: jest.fn(),
   getMetrics: jest.fn(async () => '# HELP mocked\n'),
-  getContentType: jest.fn(() => 'text/plain; version=0.0.4; charset=utf-8'),
+  getContentType: jest.fn(
+    () => 'application/openmetrics-text; version=1.0.0; charset=utf-8',
+  ),
 });

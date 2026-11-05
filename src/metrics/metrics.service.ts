@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { TraceFlags, isSpanContextValid, trace } from '@opentelemetry/api';
 import {
   Counter,
   Histogram,
+  Registry,
   collectDefaultMetrics,
   register,
 } from '@prometheus-io/client';
@@ -9,6 +11,32 @@ import {
 const DURATION_BUCKETS_SECONDS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 ];
+
+// Histogram exemplars exist only in the OpenMetrics exposition, and the client
+// refuses to build an exemplar-enabled metric on a Prometheus registry. Switch
+// the process registry before any metric is created; MetricsController serves
+// the matching content type from `register.contentType`.
+register.setContentType(Registry.OPENMETRICS_CONTENT_TYPE);
+
+/**
+ * Trace id to attach as an exemplar label, or undefined when the active span
+ * context is invalid or unsampled. Exemplars must not claim a trace that
+ * Tempo will never store.
+ */
+function sampledTraceId(): string | undefined {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (!spanContext || !isSpanContextValid(spanContext)) return undefined;
+  if ((spanContext.traceFlags & TraceFlags.SAMPLED) !== TraceFlags.SAMPLED) {
+    return undefined;
+  }
+  return spanContext.traceId;
+}
+
+/** OpenMetrics exemplar labels for the active sampled span, if any. */
+function exemplarLabels(): { trace_id: string } | undefined {
+  const traceId = sampledTraceId();
+  return traceId ? { trace_id: traceId } : undefined;
+}
 
 export type DownstreamOutcome = 'ok' | 'timeout' | 'error';
 
@@ -45,6 +73,7 @@ export class MetricsService {
       help: 'HTTP request duration in seconds',
       labelNames: ['method', 'handler'],
       buckets: DURATION_BUCKETS_SECONDS,
+      enableExemplars: true,
       registers: [register],
     });
 
@@ -60,6 +89,7 @@ export class MetricsService {
       help: 'Downstream request duration in seconds',
       labelNames: ['dependency', 'operation', 'outcome'],
       buckets: DURATION_BUCKETS_SECONDS,
+      enableExemplars: true,
       registers: [register],
     });
 
@@ -72,8 +102,8 @@ export class MetricsService {
   }
 
   /**
-   * Exposes the Prometheus text exposition of the global register.
-   * Used by MetricsController for GET /metrics (scrape mode).
+   * Exposes the OpenMetrics exposition of the global register (required for
+   * exemplars). Used by MetricsController for GET /metrics (scrape mode).
    */
   getMetrics(): Promise<string> {
     return register.metrics();
@@ -101,7 +131,11 @@ export class MetricsService {
       tenant_id: tenantId,
       domain,
     });
-    this.httpDurationHistogram.observe({ method, handler }, durationSeconds);
+    this.httpDurationHistogram.observe({
+      labels: { method, handler },
+      value: durationSeconds,
+      exemplarLabels: exemplarLabels(),
+    });
   }
 
   /**
@@ -158,10 +192,11 @@ export class MetricsService {
     start: number,
   ): void {
     this.downstreamRequestsCounter.inc({ dependency, operation, outcome });
-    this.downstreamDurationHistogram.observe(
-      { dependency, operation, outcome },
-      (performance.now() - start) / 1000,
-    );
+    this.downstreamDurationHistogram.observe({
+      labels: { dependency, operation, outcome },
+      value: (performance.now() - start) / 1000,
+      exemplarLabels: exemplarLabels(),
+    });
   }
 
   private createOrGetCounter(

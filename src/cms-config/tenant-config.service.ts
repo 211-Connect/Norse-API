@@ -191,6 +191,15 @@ export class TenantConfigService {
   }
 
   /**
+   * Tenant locales from the in-process LRU only, or undefined when this pod has
+   * not populated it yet. Never performs I/O: callers on the request hot path
+   * (usage metrics) must not add Redis or CMS calls.
+   */
+  getCachedTenantLocales(tenantId: string): string[] | undefined {
+    return this.localesCache.get(tenantId);
+  }
+
+  /**
    * Reads tenant search configuration written by PayloadCMS to Redis DB 2 under
    * `search_config:${tenantId}`. Returns an empty object when missing or on
    * error so callers can safely fall back to default search behavior.

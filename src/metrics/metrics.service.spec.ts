@@ -2,8 +2,25 @@ import {
   BadGatewayException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Counter, Histogram, register } from '@prometheus-io/client';
+import { TraceFlags, trace, type SpanContext } from '@opentelemetry/api';
+import { Counter, Histogram, Registry, register } from '@prometheus-io/client';
 import { MetricsService } from './metrics.service';
+
+const SAMPLED_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+const SPAN_ID = 'b7ad6b7169203331';
+
+/** Makes this span context the one returned by `trace.getActiveSpan()`. */
+const mockActiveSpanContext = (spanContext: SpanContext): void => {
+  jest
+    .spyOn(trace, 'getActiveSpan')
+    .mockReturnValue(trace.wrapSpanContext(spanContext));
+};
+
+const spanContextWith = (traceFlags: TraceFlags): SpanContext => ({
+  traceId: SAMPLED_TRACE_ID,
+  spanId: SPAN_ID,
+  traceFlags,
+});
 
 describe('MetricsService', () => {
   let service: MetricsService;
@@ -69,6 +86,70 @@ describe('MetricsService', () => {
     );
     expect(count).toBeDefined();
     expect(count.value).toBe(1);
+  });
+
+  it('serves metrics as OpenMetrics', async () => {
+    expect(service.getContentType()).toBe(Registry.OPENMETRICS_CONTENT_TYPE);
+    expect(register.contentType).toBe(Registry.OPENMETRICS_CONTENT_TYPE);
+    expect(await service.getMetrics()).toContain('# EOF');
+  });
+
+  it('attaches a trace_id exemplar to the http duration histogram for a sampled span', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.SAMPLED));
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toMatch(
+      /norse_http_request_duration_seconds_bucket\{[^\n]*\} 1 # \{trace_id="0af7651916cd43dd8448eb211c80319c"\}/,
+    );
+  });
+
+  it('attaches no exemplar when the active span is unsampled', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.NONE));
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toContain('norse_http_request_duration_seconds_count');
+    expect(output).not.toContain('trace_id=');
+  });
+
+  it('attaches no exemplar when there is no active span', async () => {
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toContain('norse_http_request_duration_seconds_count');
+    expect(output).not.toContain('trace_id=');
+  });
+
+  it('attaches a trace_id exemplar to the downstream duration histogram for a sampled span', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.SAMPLED));
+    await service.observeDownstream('ml_broker', 'predict', async () => 'ok');
+
+    const output = await service.getMetrics();
+    expect(output).toMatch(
+      /norse_downstream_duration_seconds_bucket\{[^\n]*\} 1 # \{trace_id="0af7651916cd43dd8448eb211c80319c"\}/,
+    );
   });
 
   it('records cache access counter series with labels and value 1', async () => {

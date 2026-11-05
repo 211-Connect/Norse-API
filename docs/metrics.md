@@ -77,6 +77,8 @@ DigitalOcean, leave the endpoint disabled (the default).
 | `norse_http_request_duration_seconds`          | Histogram | `method`, `handler`                                  | HTTP request duration. Buckets: `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`. Deliberately **no** `tenant_id`/`status` labels (cardinality).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `norse_downstream_requests_total`              | Counter   | `dependency`, `operation`, `outcome`                 | Calls to downstream dependencies (`dependency` values: `elasticsearch`, `ml_broker`, `mapbox`, `opencage`, `umami`, `embedding`, `cms`). `outcome`: `ok` \| `timeout` \| `error`. `timeout` = the thrown error's `name` is `TimeoutError` or `AbortError` (native fetch abort/timeout, elasticsearch `TimeoutError`); `error` = any other thrown error **or** a non-2xx HTTP response (via the per-call classifier); `ok` = success.                                                                                                                                                                                                       |
 | `norse_downstream_duration_seconds`            | Histogram | `dependency`, `operation`, `outcome`                 | Downstream call duration, same buckets as the HTTP histogram. Carries the same `outcome` (`ok` \| `timeout` \| `error`) as `norse_downstream_requests_total`, so failure latency can be measured per dependency.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `norse_search_requests_total`                  | Counter   | `tenant_id`, `locale`, `search_type`, `outcome`      | One per search HTTP request (`GET`/`POST /search`, `GET /organization`), recorded at the controller boundary after the request settles. `search_type` is a fixed enum: `keyword` \| `match_all` \| `taxonomy` \| `more_like_this` \| `hybrid` \| `organization`. `outcome`: `results` \| `zero_results` \| `error`. `locale` and `tenant_id` rules below. `/internal/*` routes are never counted. |
+| `norse_resource_requests_total`                | Counter   | `tenant_id`, `locale`, `outcome`                     | One per single-resource lookup (`GET /resource/:id`, `GET /resource/original/:id`). `outcome`: `found` \| `not_found` (404) \| `error`. Never carries the resource id, query text, location or coordinates. |
 | `norse_cache_requests_total`                   | Counter   | `cache`, `result`                                    | Cache accesses. `cache` names the cache; `result`: `hit` \| `miss` \| `coalesced` \| `get-error`. `cache` values are a fixed TypeScript union (`CacheName` in `src/metrics/metrics.service.ts`), so the label stays bounded: `request-redis` (RequestCacheService, Redis), `analytics-lru` (AnalyticsCacheService L1, in-process LRU), `analytics-redis` (AnalyticsCacheService L2, app Redis), `tenant-config-lru` (TenantConfigService in-process LRUs), `tenant-config-redis` (TenantConfigService CMS Redis, DB 2, written by PayloadCMS), `tenant-config-app-redis` (TenantConfigService app-Redis fallback, Keycloak realm id only). |
 
 ### Downstream duration by outcome
@@ -139,6 +141,67 @@ Search calls by type:
 
 ```promql
 sum by (operation) (increase(norse_downstream_requests_total{dependency="elasticsearch", operation=~"resources_.*|hybrid_search"}[7d]))
+```
+
+## Usage metrics (tenant × language × outcome)
+
+`norse_search_requests_total` and `norse_resource_requests_total` answer "how much
+search/resource usage, in which language, with which result". They are recorded
+**once per HTTP request** at the controller boundary (`SearchController`,
+`OrganizationController`, `ResourceController`), after the request settles — never
+per Elasticsearch call. Routes under `/internal/*` are not wired, so they are
+excluded.
+
+- `tenant_id`: the validated `request.tenantId` (TenantMiddleware), else `unknown`.
+- `locale`: lowercase primary subtag of the highest-priority `accept-language`
+  entry (`es-MX,es;q=0.9` → `es`, `ES` → `es`, `zh-Hant-TW` → `zh`). The subtag is
+  allowed only when it is in the tenant's **cached** configured locales (in-process
+  LRU — no Redis/CMS I/O on the request path) or in the platform locale list;
+  otherwise `other`. A missing or empty header is `en`, the same default the
+  services use. Script and region subtags are dropped, so `zh-Hans` and `zh-Hant`
+  both become `zh`.
+- `search_type` (fixed enum, derived from the code paths):
+  `keyword` (text query with content), `match_all` (empty text query),
+  `taxonomy`, `more_like_this`, `hybrid`, `organization` (organization typeahead,
+  ES operation `organization_search`).
+- `outcome`: search `results` | `zero_results` | `error`; resource
+  `found` | `not_found` | `error` (`not_found` is the 404 path only).
+
+No query text, filters, coords, location, resource id or cache key is a label.
+The platform locale list is the primary-subtag reduction of the Norse CMS locale
+list (`src/payload/i18n/locales.ts`): 38 values, `zh-Hans`/`zh-Hant` collapsing
+to `zh`.
+
+### Cardinality budget
+
+Worst case per pod, per series actually observed:
+
+| Metric | Bound |
+| --- | --- |
+| `norse_search_requests_total` | tenants × locales × 6 search types × 3 outcomes |
+| `norse_resource_requests_total` | tenants × locales × 3 outcomes |
+
+The item budget assumed **50+ tenants × 13 locales × ~6 types × 3 outcomes ≈ 12k**
+search series and ≈ 2k resource series. The code has **38** platform locales
+(39 locale values including `other`), so the ceiling is
+**50 × 39 × 6 × 3 ≈ 35k** search series and **50 × 39 × 3 ≈ 5.9k** resource
+series per pod. That is still bounded by construction (no free-form label values)
+and much smaller in practice: a pod only creates series for requests it serves,
+per-tenant allowlists are narrower than the platform list, and not every
+combination occurs. Re-check this budget before adding another label.
+
+### PromQL
+
+Searches per tenant and language over a week:
+
+```promql
+sum by (tenant_id, locale) (increase(norse_search_requests_total{env="production"}[7d]))
+```
+
+Zero-result share per language over a week:
+
+```promql
+sum by (locale) (increase(norse_search_requests_total{outcome="zero_results"}[7d])) / sum by (locale) (increase(norse_search_requests_total[7d]))
 ```
 
 ## HTTP counter caveats
