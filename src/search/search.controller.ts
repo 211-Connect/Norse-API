@@ -354,7 +354,7 @@ export class SearchController {
   @ApiOperation({
     summary: 'Map pins for a search',
     description:
-      'The locations of a search independent of list pagination, up to 1000. ' +
+      'The locations of a search independent of list pagination, up to 10,000. ' +
       'Takes the same params as GET /search; `page` and `limit` are ignored. ' +
       'Matches without coordinates are left out, including from `total`.',
   })
