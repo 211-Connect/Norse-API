@@ -331,6 +331,10 @@ export class SearchUtilsService {
   ): { lat: number; lon: number } | null {
     if (!point) return null;
 
+    if (typeof point === 'object' && 'coordinates' in point) {
+      return SearchUtilsService.parseLocationPoint(point.coordinates);
+    }
+
     if (typeof point === 'object' && !Array.isArray(point)) {
       const lat = Number(point.lat);
       const lon = Number(point.lon);

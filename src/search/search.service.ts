@@ -26,6 +26,12 @@ import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import { searchFingerprint } from './internal/search-fingerprint';
+import { SearchPinsResponseDto } from './dto/search-pins-response.dto';
+import {
+  SEARCH_PINS_LIMIT,
+  toPinsRequest,
+  toPinsResponse,
+} from './internal/search-pins';
 
 export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -34,6 +40,12 @@ interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
   AND?: (string | ComplexQuery)[];
 }
+
+type SearchOptions = {
+  headers: HeadersDto;
+  query: SearchResourcesQueryDto;
+  body?: SearchResourcesBodyDto;
+};
 
 @Injectable()
 export class SearchService {
@@ -82,11 +94,110 @@ export class SearchService {
     }
   }
 
-  async searchResources(options: {
-    headers: HeadersDto;
-    query: SearchResourcesQueryDto;
-    body?: SearchResourcesBodyDto;
-  }): Promise<SearchResponse> {
+  private assertSearchableQuery(query: SearchResourcesQueryDto['query']): void {
+    const isStringQuery = typeof query === 'string';
+    const isStringArrayQuery =
+      Array.isArray(query) && query.every((entry) => typeof entry === 'string');
+
+    if (!(isStringQuery || isStringArrayQuery || this.isComplexQuery(query))) {
+      throw new BadRequestException('Invalid query type');
+    }
+  }
+
+  async searchResources(options: SearchOptions): Promise<SearchResponse> {
+    this.assertSearchableQuery(options.query.query);
+
+    if (options.query.query_type === 'hybrid') {
+      return this.hybridSearchService.searchHybrid(options);
+    }
+
+    const { request, queryType, tenantFacets, locale } =
+      await this.buildClassicRequest(options);
+
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      `resources_${queryType}`,
+      () =>
+        this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >(request),
+    );
+
+    if (data.hits?.hits) {
+      data.hits.hits = data.hits.hits.map((hit) => {
+        if (hit._source) {
+          const normalizedFacets = SearchUtilsService.normalizeDocFacets(
+            hit._source,
+            locale,
+          );
+          hit._source = { ...hit._source, facets: normalizedFacets };
+        }
+        return hit;
+      });
+    }
+
+    const facets = SearchUtilsService.transformAggregations(
+      tenantFacets,
+      data.aggregations,
+      locale,
+    );
+
+    const totalHits =
+      typeof data.hits.total === 'number'
+        ? data.hits.total
+        : (data.hits.total?.value ?? 0);
+
+    this.logger.debug(
+      `Search completed: ${totalHits} results, ${facets.length} facets`,
+    );
+
+    return {
+      search: {
+        took: data.took,
+        timed_out: data.timed_out,
+        _shards: {
+          total: data._shards.total,
+          successful: data._shards.successful,
+          skipped: data._shards.skipped ?? 0,
+          failed: data._shards.failed,
+        },
+        hits: data.hits,
+      },
+      facets,
+    };
+  }
+
+  /**
+   * Every location a search matches, up to `SEARCH_PINS_LIMIT`: the same request
+   * as `searchResources` narrowed by `toPinsRequest`, so the two cannot disagree
+   * on what matches.
+   */
+  async searchPins(options: SearchOptions): Promise<SearchPinsResponseDto> {
+    const { query: q } = options;
+    this.assertSearchableQuery(q.query);
+
+    const pinsOptions = {
+      ...options,
+      query: { ...q, page: 1, limit: SEARCH_PINS_LIMIT },
+    };
+
+    const isHybrid = q.query_type === 'hybrid';
+    const request = isHybrid
+      ? await this.hybridSearchService.buildPinsRequest(pinsOptions)
+      : (await this.buildClassicRequest(pinsOptions)).request;
+
+    const data = await this.metrics.observeDownstream(
+      'elasticsearch',
+      isHybrid ? 'hybrid_pins' : 'resources_pins',
+      () =>
+        this.elasticsearchService.search<SearchSource>(toPinsRequest(request)),
+    );
+
+    return toPinsResponse(data);
+  }
+
+  private async buildClassicRequest(options: SearchOptions) {
     const { headers, query: q } = options;
     const {
       query,
@@ -102,21 +213,10 @@ export class SearchService {
       sort,
     } = q;
 
-    const isStringQuery = typeof query === 'string';
-    const isStringArrayQuery =
-      Array.isArray(query) && query.every((entry) => typeof entry === 'string');
     const isComplexObjectQuery = this.isComplexQuery(query);
-
-    if (!(isStringQuery || isStringArrayQuery || isComplexObjectQuery)) {
-      throw new BadRequestException('Invalid query type');
-    }
 
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
-
-    if (query_type === 'hybrid') {
-      return this.hybridSearchService.searchHybrid(options);
-    }
 
     const indexName = getIndexName(headers, 'resources');
 
@@ -236,58 +336,7 @@ export class SearchService {
       ...specificQuery,
     };
 
-    const data = await this.metrics.observeDownstream(
-      'elasticsearch',
-      `resources_${queryType}`,
-      () =>
-        this.elasticsearchService.search<
-          SearchSource,
-          Record<string, AggregationsStringTermsAggregate>
-        >(finalQuery),
-    );
-
-    if (data.hits?.hits) {
-      data.hits.hits = data.hits.hits.map((hit) => {
-        if (hit._source) {
-          const normalizedFacets = SearchUtilsService.normalizeDocFacets(
-            hit._source,
-            locale,
-          );
-          hit._source = { ...hit._source, facets: normalizedFacets };
-        }
-        return hit;
-      });
-    }
-
-    const facets = SearchUtilsService.transformAggregations(
-      tenantFacets,
-      data.aggregations,
-      locale,
-    );
-
-    const totalHits =
-      typeof data.hits.total === 'number'
-        ? data.hits.total
-        : (data.hits.total?.value ?? 0);
-
-    this.logger.debug(
-      `Search completed: ${totalHits} results, ${facets.length} facets`,
-    );
-
-    return {
-      search: {
-        took: data.took,
-        timed_out: data.timed_out,
-        _shards: {
-          total: data._shards.total,
-          successful: data._shards.successful,
-          skipped: data._shards.skipped ?? 0,
-          failed: data._shards.failed,
-        },
-        hits: data.hits,
-      },
-      facets,
-    };
+    return { request: finalQuery, queryType, tenantFacets, locale };
   }
 
   private getQueryType(
