@@ -261,12 +261,6 @@ p95 latency per handler:
 histogram_quantile(0.95, sum by (handler, le) (rate(norse_http_request_duration_seconds_bucket[5m])))
 ```
 
-## Migration note
-
-`norse_search_hits_total` and `norse_resource_hits_total` were **removed** and replaced by
-`norse_http_requests_total` (organization hits were previously mislabeled under
-`norse_search_hits_total`). **Dashboards must switch** to the new metric.
-
 ## CDN effect
 
 Endpoints decorated with `@SetCdnCacheTTL` are served from the CDN on cache hits, so

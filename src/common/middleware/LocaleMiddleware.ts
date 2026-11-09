@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { acceptLanguageSchema } from '../dto/headers.dto';
+import { requestPathForLog } from '../lib/request-path';
 
 @Injectable()
 export class LocaleMiddleware implements NestMiddleware {
@@ -45,7 +46,7 @@ export class LocaleMiddleware implements NestMiddleware {
         rawLocale !== validation.data
       ) {
         this.logger.warn(
-          `Mismatched locale query param on ${req.originalUrl}: locale=${JSON.stringify(rawLocale)} accept-language=${JSON.stringify(req.headers['accept-language'])}`,
+          `Mismatched locale query param on ${requestPathForLog(req)}: accept-language=${JSON.stringify(req.headers['accept-language'])}`,
         );
         throw new BadRequestException(
           'locale query parameter does not match accept-language header.',

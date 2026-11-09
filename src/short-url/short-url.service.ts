@@ -11,6 +11,7 @@ import { ShortenedUrl } from 'src/common/schemas/shortened-url.schema';
 import { nanoid } from 'nanoid';
 import { ShortUrlResponseDto } from './dto/short-url-response.dto';
 import { FindShortUrlOptions } from './types/find-short-url-options.types';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 @Injectable()
 export class ShortUrlService {
@@ -195,7 +196,7 @@ export class ShortUrlService {
       }
 
       this.logger.debug(
-        `Retrieved short URL: ${id} -> ${shortenedUrl.originalUrl}`,
+        `Retrieved short URL: ${id} -> ${requestPathForLog({ url: shortenedUrl.originalUrl })}`,
       );
 
       return {
@@ -225,7 +226,7 @@ export class ShortUrlService {
       // Check if shortened URL already exists
       const shortenedUrl = await this.getOrCreateWithUpsert(originalUrl);
       this.logger.debug(
-        `${shortenedUrl.isNew ? 'Created new' : 'Found existing'} short URL: ${originalUrl} -> ${shortenedUrl.shortId}`,
+        `${shortenedUrl.isNew ? 'Created new' : 'Found existing'} short URL: ${requestPathForLog({ url: originalUrl })} -> ${shortenedUrl.shortId}`,
       );
 
       return {
@@ -237,7 +238,7 @@ export class ShortUrlService {
       }
 
       this.logger.error(
-        `Error creating/retrieving short URL for: ${originalUrl}`,
+        `Error creating/retrieving short URL for: ${requestPathForLog({ url: originalUrl })}`,
         error.stack,
       );
 

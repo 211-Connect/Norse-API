@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { xTenantIdSchema } from '../dto/headers.dto';
+import { requestPathForLog } from '../lib/request-path';
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -22,7 +23,7 @@ export class TenantMiddleware implements NestMiddleware {
     if (!validation.success) {
       const flattened = validation.error.flatten();
       this.logger.warn(
-        `Invalid Tenant Header on ${req.originalUrl}: ${JSON.stringify(flattened)}`,
+        `Invalid Tenant Header on ${requestPathForLog(req)}: ${JSON.stringify(flattened)}`,
       );
       throw new BadRequestException('Missing or invalid x-tenant-id header.');
     }
@@ -38,7 +39,7 @@ export class TenantMiddleware implements NestMiddleware {
     if (rawTenantId !== undefined) {
       if (typeof rawTenantId !== 'string' || rawTenantId !== validation.data) {
         this.logger.warn(
-          `Mismatched tenant_id query param on ${req.originalUrl}: tenant_id=${JSON.stringify(rawTenantId)} x-tenant-id=${validation.data}`,
+          `Mismatched tenant_id query param on ${requestPathForLog(req)}: x-tenant-id=${validation.data}`,
         );
         throw new BadRequestException(
           'tenant_id query parameter does not match x-tenant-id header.',

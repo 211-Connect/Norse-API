@@ -12,6 +12,7 @@ import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { NOT_TENANT_SCOPED_KEY, PUBLIC_KEY } from './gateway-principal';
 import { requiredSlug, resolveTargetTenant } from './tenant-scope.util';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 const PLATFORM_ADMIN_SLUG = 'norse-api.admin';
 
@@ -93,7 +94,7 @@ export class TenantScopeGuard implements CanActivate {
         externalId: request.gatewayPrincipal.externalId,
         keyId: request.gatewayPrincipal.keyId,
         method: request.method,
-        path: request.originalUrl,
+        path: requestPathForLog(request),
         target: target ?? 'none',
         timestamp: Date.now(),
       });
@@ -132,7 +133,7 @@ export class TenantScopeGuard implements CanActivate {
     target?: string,
   ) {
     this.logger.warn(
-      `Tenant scope deny: method=${request.method} path=${request.originalUrl} result=${result} keyId=${request.gatewayPrincipal?.keyId}${target ? ` target=${target}` : ''}`,
+      `Tenant scope deny: method=${request.method} path=${requestPathForLog(request)} result=${result} keyId=${request.gatewayPrincipal?.keyId}${target ? ` target=${target}` : ''}`,
     );
   }
 }
