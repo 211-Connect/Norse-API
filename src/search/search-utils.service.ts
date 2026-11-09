@@ -17,6 +17,7 @@ import {
 import { FacetConfig, PinnedResourcesMode } from '../cms-config/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
+import { REGION_GEOMETRY_PATH, REGIONS_INDEX } from 'src/region/internal';
 
 /**
  * Sortable field names per index. The two indices are built by separate
@@ -80,6 +81,7 @@ export class SearchUtilsService {
     geoType: string | undefined,
     geometry: SearchResourcesBodyDto['geometry'],
     organizationId?: string,
+    regionIds?: string[],
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
 
@@ -142,6 +144,12 @@ export class SearchUtilsService {
           ],
         },
       });
+    }
+
+    // An area search replaces every point/boundary rule below.
+    if (regionIds?.length) {
+      filters.push(SearchUtilsService.buildRegionFilter(regionIds));
+      return filters;
     }
 
     if (geoType === 'boundary') {
@@ -210,6 +218,34 @@ export class SearchUtilsService {
     }
 
     return filters;
+  }
+
+  /**
+   * Matches resources in any of the Regions: a `service_area` overlapping the
+   * Region, or a `location.point` inside it (resources without a service_area
+   * still match by where they are). ES reads each shape from the `regions`
+   * index by id, so no geometry is sent — see docs/area-search.md.
+   */
+  static buildRegionFilter(regionIds: string[]): QueryDslQueryContainer {
+    return {
+      bool: {
+        should: regionIds.flatMap((id) =>
+          ['service_area', 'location.point'].map((field) => ({
+            geo_shape: {
+              [field]: {
+                indexed_shape: {
+                  index: REGIONS_INDEX,
+                  id,
+                  path: REGION_GEOMETRY_PATH,
+                },
+                relation: 'intersects' as const,
+              },
+            },
+          })),
+        ),
+        minimum_should_match: 1,
+      },
+    };
   }
 
   static getGeoDistanceSort(coords: number[]): SortCombinations {

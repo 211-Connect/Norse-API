@@ -1,12 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -16,6 +18,7 @@ import {
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
 import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
+import { REGION_ID_PATTERN, regionIdMessage } from 'src/region/internal';
 import {
   RELEVANCE_CUTOFF_VALUES,
   RelevanceCutoffValue,
@@ -94,6 +97,32 @@ export const ORGANIZATION_ID_DESCRIPTION =
   'stable organization id (the `organization_id` returned by /suggestion and ' +
   '/organization). Composes with any query_type and with filters.';
 
+/** Shared with `SearchQueryApiDto`, which documents the same params. */
+export const REGION_PARAM_DESCRIPTION =
+  'Search an area instead of a point: one or more Region ids (comma list, up ' +
+  'to 20), e.g. `county:53077` or `county:53077,county:53033` — `state:XX`, ' +
+  '`county:<5-digit FIPS>`, `place:<7-digit Census GEOID>` or `zip:<5 ' +
+  'digits>`. A resource matches when its service_area overlaps a Region or ' +
+  'its location lies inside one. Takes precedence over `coords` and ' +
+  '`location`; `distance` is ignored, and `coords`, if sent, only sets the ' +
+  'origin for `sort=distance`. Unknown ids are a 400. Ids come from ' +
+  '`resolved_location` or `GET /geocoding/forward` (`region_id`).';
+
+export const LOCATION_PARAM_DESCRIPTION =
+  'Free-text place to search, as a person would type it ("Yakima", "King ' +
+  'County, WA", "98901"). Resolved by the API: an area (state, county, city, ' +
+  'ZIP) is searched as its Region, anything finer (an address) as a point ' +
+  'with `distance`. Ignored when `region` or `coords` is sent. An ambiguous ' +
+  'name ("Springfield") takes the best geocoder match; add `state` to pick ' +
+  'one. What was searched is returned in `resolved_location`. A location ' +
+  'that cannot be resolved is a 400.';
+
+export const STATE_PARAM_DESCRIPTION =
+  'Two-letter US state code that `location` must resolve inside (e.g. ' +
+  '`WA`). Only used with `location`.';
+
+export const MAX_REGION_IDS = 20;
+
 export class SearchResourcesQueryDto {
   @ApiPropertyOptional({
     description:
@@ -163,6 +192,48 @@ export class SearchResourcesQueryDto {
     return undefined;
   })
   coords?: [number, number];
+
+  @ApiPropertyOptional({
+    description: REGION_PARAM_DESCRIPTION,
+    type: String,
+    example: 'county:53077',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    const ids = (Array.isArray(value) ? value : [value])
+      .flatMap((v) => (typeof v === 'string' ? v.split(',') : [v]))
+      .map((v) => (typeof v === 'string' ? v.trim() : v))
+      .filter((v) => v !== '');
+    return ids.length ? Array.from(new Set(ids)) : undefined;
+  })
+  @IsArray()
+  @ArrayMaxSize(MAX_REGION_IDS)
+  @IsString({ each: true })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
+  region?: string[];
+
+  @ApiPropertyOptional({
+    description: LOCATION_PARAM_DESCRIPTION,
+    example: 'Yakima',
+    maxLength: 200,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  location?: string;
+
+  @ApiPropertyOptional({
+    description: STATE_PARAM_DESCRIPTION,
+    example: 'WA',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsString()
+  @Matches(/^[A-Z]{2}$/, { message: 'state must be a two-letter state code' })
+  state?: string;
 
   @ApiPropertyOptional({
     type: 'object',

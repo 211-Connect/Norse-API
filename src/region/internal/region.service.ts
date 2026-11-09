@@ -10,7 +10,35 @@ import {
   RegionType,
 } from './dto';
 import { REGIONS_INDEX, unknownRegionsError } from './region.constants';
-import { buildRegionGet, buildRegionSearch } from './region.query';
+import {
+  REGION_SUMMARY_FIELDS,
+  buildRegionGet,
+  buildRegionSearch,
+  buildRegionsContaining,
+} from './region.query';
+
+/** A geocoder hit, as `GeocodeResponseDto` carries it. */
+export interface GeocodeHit {
+  /** `[lng, lat]`. */
+  coordinates: [number, number];
+  place_type?: string[];
+  /** US state code; the Mapbox mapper sets it. */
+  state_code?: string;
+}
+
+/**
+ * Mapbox `place_type` → the Region type the hit is an area of. Anything else
+ * (address, POI, neighborhood, locality, country) stays a point.
+ */
+const REGION_TYPE_BY_PLACE_TYPE: Record<string, RegionType> = {
+  region: 'state',
+  district: 'county',
+  place: 'place',
+  postcode: 'zip',
+};
+
+/** Smallest first: a type with no Region at the point falls back to the next. */
+const BY_SIZE: RegionType[] = ['zip', 'place', 'county', 'state'];
 
 interface RegionSource {
   id?: string;
@@ -83,6 +111,53 @@ export class RegionService {
     );
     const unknown = ids.filter((id) => !found.has(id));
     if (unknown.length > 0) throw unknownRegionsError(unknown);
+  }
+
+  /**
+   * The Regions in the order asked, or a 400 naming every id with no Region
+   * (the same answer `assertExist` gives).
+   */
+  async getSummaries(ids: readonly string[]): Promise<RegionSummaryDto[]> {
+    if (ids.length === 0) return [];
+    const result = await this.call('check', () =>
+      this.elasticsearch.mget<RegionSource>({
+        index: REGIONS_INDEX,
+        ids: [...ids],
+        _source: REGION_SUMMARY_FIELDS,
+      }),
+    );
+    const byId = new Map<string, RegionSource>();
+    for (const doc of result.docs) {
+      if ('found' in doc && doc.found && doc._source) {
+        byId.set(doc._id, doc._source);
+      }
+    }
+    const unknown = ids.filter((id) => !byId.has(id));
+    if (unknown.length > 0) throw unknownRegionsError(unknown);
+    return ids.map((id) => toSummary(byId.get(id)));
+  }
+
+  /**
+   * The Region a geocoder hit is an area of, or null for a point — see
+   * docs/area-search.md. A place with no Region of its own (e.g. a city not
+   * seeded yet) falls back to the next larger Region, its county.
+   */
+  async regionOf(hit: GeocodeHit): Promise<RegionSummaryDto | null> {
+    const type = REGION_TYPE_BY_PLACE_TYPE[hit.place_type?.[0] ?? ''];
+    // Mapbox also calls metro areas a region; only a US state has a code.
+    if (!type || (type === 'state' && !hit.state_code)) return null;
+
+    const result = await this.call('containing', () =>
+      this.elasticsearch.search<RegionSource>(
+        buildRegionsContaining(hit.coordinates),
+      ),
+    );
+    const containing = result.hits.hits.map((h) => toSummary(h._source ?? {}));
+    for (const candidate of BY_SIZE.slice(BY_SIZE.indexOf(type))) {
+      const region = containing.find((r) => r.type === candidate);
+      if (region) return region;
+    }
+    return null;
   }
 
   private call<T>(what: string, run: () => Promise<T>): Promise<T> {

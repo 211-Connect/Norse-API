@@ -405,4 +405,73 @@ describe('RegionService', () => {
       );
     });
   });
+
+  describe('regionOf (area search)', () => {
+    const summary = (id: string) => ({
+      id,
+      type: id.split(':')[0],
+      name: id,
+      state: 'WA',
+    });
+    const YAKIMA = [-120.5061, 46.6022] as [number, number];
+
+    beforeEach(() => {
+      search.mockResolvedValue(
+        hits(
+          summary('county:53077'),
+          summary('place:5380010'),
+          summary('state:WA'),
+          summary('zip:98901'),
+        ),
+      );
+    });
+
+    it.each([
+      ['region', 'state:WA'],
+      ['district', 'county:53077'],
+      ['place', 'place:5380010'],
+      ['postcode', 'zip:98901'],
+    ])('maps Mapbox %s to the Region of that type', async (placeType, id) => {
+      const region = await service.regionOf({
+        coordinates: YAKIMA,
+        place_type: [placeType],
+        state_code: 'WA',
+      });
+      expect(region?.id).toBe(id);
+      expect(
+        lastRequest().query.bool.filter[0].geo_shape.geometry.shape,
+      ).toEqual({ type: 'point', coordinates: YAKIMA });
+    });
+
+    it.each(['address', 'poi', 'neighborhood', 'locality', 'country'])(
+      'leaves a %s a point, without querying',
+      async (placeType) => {
+        expect(
+          await service.regionOf({
+            coordinates: YAKIMA,
+            place_type: [placeType],
+          }),
+        ).toBeNull();
+        expect(search).not.toHaveBeenCalled();
+      },
+    );
+
+    it('leaves a Mapbox region with no state code (a metro area) a point', async () => {
+      expect(
+        await service.regionOf({ coordinates: YAKIMA, place_type: ['region'] }),
+      ).toBeNull();
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the county when the place has no Region', async () => {
+      search.mockResolvedValue(
+        hits(summary('state:WA'), summary('county:53033')),
+      );
+      const region = await service.regionOf({
+        coordinates: [-122.33, 47.6],
+        place_type: ['place'],
+      });
+      expect(region?.id).toBe('county:53033');
+    });
+  });
 });

@@ -110,6 +110,10 @@ export class PrintableDirectoryDefaultQueryConfig {
 
   @Prop({ type: Number, default: null })
   radius?: number | null;
+
+  /** Region the directory is scoped to (docs/area-search.md); wins over radius. */
+  @Prop({ type: String, default: null })
+  regionId?: string | null;
 }
 
 @Schema({ _id: false })

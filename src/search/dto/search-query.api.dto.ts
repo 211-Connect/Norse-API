@@ -11,7 +11,12 @@ import {
   Validate,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
-import { ORGANIZATION_ID_DESCRIPTION } from './search-query.dto';
+import {
+  LOCATION_PARAM_DESCRIPTION,
+  ORGANIZATION_ID_DESCRIPTION,
+  REGION_PARAM_DESCRIPTION,
+  STATE_PARAM_DESCRIPTION,
+} from './search-query.dto';
 import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 export class SearchQueryApiDto {
@@ -57,6 +62,30 @@ export class SearchQueryApiDto {
   @IsString()
   @MaxLength(128)
   coords?: string;
+
+  @ApiPropertyOptional({
+    description: REGION_PARAM_DESCRIPTION,
+    example: 'county:53077',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  region?: string;
+
+  @ApiPropertyOptional({
+    description: LOCATION_PARAM_DESCRIPTION,
+    example: 'Yakima',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  location?: string;
+
+  @ApiPropertyOptional({ description: STATE_PARAM_DESCRIPTION, example: 'WA' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  state?: string;
 
   @ApiPropertyOptional({
     type: 'object',

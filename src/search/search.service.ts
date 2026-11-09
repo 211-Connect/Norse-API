@@ -26,6 +26,7 @@ import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import { searchFingerprint } from './internal/search-fingerprint';
+import { SearchLocationService } from './internal/location/search-location.service';
 
 export type QueryType =
   (typeof SearchService.QUERY_TYPE)[keyof typeof SearchService.QUERY_TYPE];
@@ -49,6 +50,7 @@ export class SearchService {
     private readonly orchestrationConfigService: OrchestrationConfigService,
     private readonly hybridSearchService: HybridSearchService,
     private readonly metrics: MetricsService,
+    private readonly searchLocation: SearchLocationService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -83,6 +85,22 @@ export class SearchService {
   }
 
   async searchResources(options: {
+    headers: HeadersDto;
+    query: SearchResourcesQueryDto;
+    body?: SearchResourcesBodyDto;
+  }): Promise<SearchResponse> {
+    const { query, resolved } = await this.searchLocation.resolve(
+      options.query,
+    );
+    const response = await this.searchWithSettledLocation({
+      ...options,
+      query,
+    });
+    return resolved ? { ...response, resolved_location: resolved } : response;
+  }
+
+  /** The search itself, once `region`/`coords`/`distance` are settled. */
+  private async searchWithSettledLocation(options: {
     headers: HeadersDto;
     query: SearchResourcesQueryDto;
     body?: SearchResourcesBodyDto;
@@ -157,6 +175,7 @@ export class SearchService {
       geo_type,
       geometry,
       organization_id,
+      q.region,
     );
 
     const queryType: QueryType = this.getQueryType(query, query_type);
@@ -231,6 +250,7 @@ export class SearchService {
           geoType: geo_type,
           organizationId: organization_id,
           geometry,
+          regionIds: q.region,
         }),
       ),
       ...specificQuery,
