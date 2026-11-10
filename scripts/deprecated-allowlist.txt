@@ -1,0 +1,8 @@
+# Direct dependencies whose locked version is deprecated on npm but cannot be
+# upgraded yet. Format: one package name per line, with a comment saying why and
+# what would unblock it.
+#
+# Only direct dependencies belong here: scripts/check-deprecated.sh iterates the
+# keys of package.json's `dependencies` and `devDependencies`, so an entry for a
+# transitive package can never take effect. Clear a transitive hit by bumping the
+# dependency that pulls it in, or with an `overrides` entry.

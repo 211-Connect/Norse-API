@@ -196,6 +196,21 @@ Scaffold `<module>/dto/`, `<module>.controller.ts`, `<module>.service.ts`, and
 - Small/self-explanatory changes (a new DTO field, a bug fix, a straightforward CRUD
   endpoint) don't need a doc — use judgment, don't create docs for trivial changes.
 
+## Dependency deprecation rule
+
+- No direct dependency may be locked at a version npm marks deprecated. CI runs
+  `bash scripts/check-deprecated.sh` before building the image; it fails on any hit.
+- Run it locally after touching `package.json`/`package-lock.json`. The only way past a
+  hit is to upgrade the package — or, when that is genuinely blocked, add the package to
+  [scripts/deprecated-allowlist.txt](scripts/deprecated-allowlist.txt) with a comment
+  saying why it is blocked and what would unblock it.
+- **NestJS 10 is unmaintained** (`@nestjs/core ^10.4`, no release since 2026-01-10). New
+  packages must stay NestJS 10-compatible until the framework upgrade: check peer ranges
+  against `@nestjs/* ^10.4` before adding or bumping (e.g. `nestjs-pino` 4.x, not 5.x).
+  The framework upgrade itself is a separate, out-of-scope project.
+- Telemetry conventions (sampling, resource attributes, log fields, URL privacy) are in
+  [docs/observability.md](docs/observability.md).
+
 ## Build & run
 
 - `npm install`, `npm run build`, `npm run start:dev` (watch mode), `npm run lint`.
