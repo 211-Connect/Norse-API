@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ApiLocaleQuery, ApiTenantIdQuery } from 'src/common/decorators';
-import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { SetCacheTTL } from 'src/common/decorators/cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
@@ -84,7 +84,7 @@ export class OrganizationController {
   @Get('service-at-location/:salId')
   @Version('1')
   @UseGuards(ArcjetGuard)
-  @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @SetCacheTTL(FIFTEEN_MINUTES)
   @ApiTenantIdQuery()
   @ApiLocaleQuery()
   @ApiHeader({ name: 'accept-language', required: true })
@@ -122,7 +122,7 @@ export class OrganizationController {
   @Get(':id')
   @Version('1')
   @UseGuards(ArcjetGuard)
-  @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @SetCacheTTL(FIFTEEN_MINUTES)
   @ApiTenantIdQuery()
   @ApiLocaleQuery()
   @ApiHeader({ name: 'accept-language', required: true })

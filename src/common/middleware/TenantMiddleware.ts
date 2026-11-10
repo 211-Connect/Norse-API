@@ -30,11 +30,10 @@ export class TenantMiddleware implements NestMiddleware {
 
     req.tenantId = validation.data;
 
-    // Some CDN edges (e.g. DigitalOcean) cache responses by URL only and do
-    // not honor `Vary` headers, so `Vary: x-tenant-id` alone does not
-    // partition the CDN cache per tenant. As a workaround, clients may mirror
-    // the tenant in a `tenant_id` query param so it becomes part of the cache key.
-    // When present, it must match the `x-tenant-id` header exactly.
+    // Clients may mirror the tenant in a `tenant_id` query param (added for a
+    // URL-keyed CDN, no longer in use; the param stays for compatibility).
+    // When present, it must match the `x-tenant-id` header exactly, so a URL
+    // never names one tenant while the header names another.
     const rawTenantId = req.query.tenant_id;
     if (rawTenantId !== undefined) {
       if (typeof rawTenantId !== 'string' || rawTenantId !== validation.data) {

@@ -47,7 +47,7 @@ import { GatewayIdentityGuard } from './auth/gateway/gateway-identity.guard';
 import { GatewayPermissionsGuard } from './auth/gateway/gateway-permissions.guard';
 import { PermissionsSideChannelService } from './auth/gateway/permissions-side-channel.service';
 import { TenantScopeGuard } from './auth/gateway/tenant-scope.guard';
-import { CdnCacheControlInterceptor } from './common/interceptors/cdn-cache-control.interceptor';
+import { CacheControlInterceptor } from './common/interceptors/cache-control.interceptor';
 import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
@@ -127,7 +127,7 @@ const arcjetKey = configuration().ARCJET_KEY;
   providers: [
     AppService,
     TracingShutdownService,
-    { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: CacheControlInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
     // Gateway guard registration order matters (Nest runs global guards in registration order):
     // GatewayIdentityGuard resolves req.authMode first, so GatewayPermissionsGuard and TenantScopeGuard
@@ -163,8 +163,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryDeliveryInternalController,
       BlockedTrafficInternalController,
       OrganizationController,
-      // Also enforces ?tenant_id= vs x-tenant-id consistency on a
-      // CDN-cached route (cache keys on URL, ignoring Vary).
+      // Also enforces ?tenant_id= vs x-tenant-id consistency.
       ServiceController,
     );
 

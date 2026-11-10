@@ -13,7 +13,7 @@ import {
   ReverseGeocodeQueryDto,
   ReverseGeocodeResponseDto,
 } from './dto/geocoding.dto';
-import { SetCdnCacheTTL } from '../common/decorators/cdn-cache-ttl.decorator';
+import { SetCacheTTL } from '../common/decorators/cache-ttl.decorator';
 import { ONE_MONTH } from '../common/const';
 
 @ApiTags('Geocoding')
@@ -31,7 +31,7 @@ export class GeocodingController {
 
   @Get('forward')
   @Version('1')
-  @SetCdnCacheTTL(ONE_MONTH)
+  @SetCacheTTL(ONE_MONTH)
   @ApiOperation({
     summary: 'Forward geocoding - convert address to coordinates',
     description:
@@ -59,7 +59,7 @@ export class GeocodingController {
 
   @Get('reverse')
   @Version('1')
-  @SetCdnCacheTTL(ONE_MONTH)
+  @SetCacheTTL(ONE_MONTH)
   @ApiOperation({
     summary: 'Reverse geocoding - convert coordinates to address',
     description:

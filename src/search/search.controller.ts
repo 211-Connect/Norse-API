@@ -34,7 +34,7 @@ import { SEARCH_QUERY_TYPES } from './dto/search-query-type';
 import { RELEVANCE_CUTOFF_VALUES } from './internal/relevance-cutoff/types';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
-import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { SetCacheTTL } from 'src/common/decorators/cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const';
 import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto';
 import { AiSearchService } from './ai-search.service';
@@ -184,7 +184,7 @@ export class SearchController {
   @Get()
   @Version('1')
   @UseGuards(ArcjetGuard)
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     type: SearchResponseDto,
@@ -367,7 +367,7 @@ export class SearchController {
   @Get('pins')
   @Version('1')
   @UseGuards(ArcjetGuard)
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCacheTTL(ONE_HOUR)
   @ApiOperation({
     summary: 'Map pins for a search',
     description:
@@ -398,7 +398,7 @@ export class SearchController {
 
   @Get('predict')
   @Version('1')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     description: 'Classify search intent and return UI guidance',
@@ -431,7 +431,7 @@ export class SearchController {
 
   @Get('re-rank')
   @Version('1')
-  @SetCdnCacheTTL(ONE_HOUR)
+  @SetCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
     description: 'Re-rank taxonomy hits after user-adjusted needs selection',

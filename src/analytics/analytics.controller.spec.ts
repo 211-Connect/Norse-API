@@ -8,7 +8,7 @@ import { AnalyticsApiKeyGuard } from './guards/analytics-api-key.guard';
 import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
-import { CdnCacheControlInterceptor } from '../common/interceptors/cdn-cache-control.interceptor';
+import { CacheControlInterceptor } from '../common/interceptors/cache-control.interceptor';
 
 /**
  * Analytics responses are per-tenant (selected by request headers, never by
@@ -16,7 +16,7 @@ import { CdnCacheControlInterceptor } from '../common/interceptors/cdn-cache-con
  * ignore Vary, so any cacheable analytics response leaks the cached tenant
  * body to every client hitting the same URL. These specs pin the contract
  * that keeps analytics responses uncacheable, with the app-wide
- * CdnCacheControlInterceptor present to prove it cannot re-enable shared
+ * CacheControlInterceptor present to prove it cannot re-enable shared
  * caching on these routes.
  */
 describe('AnalyticsController response caching', () => {
@@ -27,7 +27,7 @@ describe('AnalyticsController response caching', () => {
       controllers: [AnalyticsController],
       providers: [
         // Registered app-wide in AppModule via APP_INTERCEPTOR.
-        { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
+        { provide: APP_INTERCEPTOR, useClass: CacheControlInterceptor },
         {
           provide: UmamiAnalyticsService,
           useValue: {

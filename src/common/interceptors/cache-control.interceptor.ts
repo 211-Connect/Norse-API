@@ -8,21 +8,21 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Reflector } from '@nestjs/core';
 
-export const CDN_CACHE_TTL_KEY = 'cdn_cache_ttl';
+export const CACHE_TTL_KEY = 'cache_ttl';
 
 /**
- * Interceptor to set Cache-Control headers for CDN caching
- * Use @SetCdnCacheTTL(seconds) decorator to configure per-route
+ * Sets `Cache-Control` on successful responses of routes marked with
+ * `@SetCacheTTL(seconds)`. The header is `private`: there is no shared
+ * (CDN) cache in front of the API, and responses depend on the
+ * `x-tenant-id`, `accept-language` and `x-api-key` headers, so only the
+ * calling browser (e.g. the search widget) may keep a copy.
  */
 @Injectable()
-export class CdnCacheControlInterceptor implements NestInterceptor {
+export class CacheControlInterceptor implements NestInterceptor {
   constructor(private reflector: Reflector) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const ttl = this.reflector.get<number>(
-      CDN_CACHE_TTL_KEY,
-      context.getHandler(),
-    );
+    const ttl = this.reflector.get<number>(CACHE_TTL_KEY, context.getHandler());
 
     return next.handle().pipe(
       tap(() => {
@@ -36,10 +36,7 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
                 'no-store, no-cache, must-revalidate, private',
               );
             } else {
-              response.setHeader(
-                'Cache-Control',
-                `public, max-age=${ttl}, s-maxage=${ttl}`,
-              );
+              response.setHeader('Cache-Control', `private, max-age=${ttl}`);
             }
           }
         }

@@ -25,11 +25,9 @@ export class LocaleMiddleware implements NestMiddleware {
       req.locale = validation.data;
     }
 
-    // Some CDN edges (e.g. DigitalOcean) cache responses by URL only and do
-    // not honor `Vary` headers, so `Vary: accept-language` alone does not
-    // partition the CDN cache per locale. As a workaround, clients may mirror
-    // the resolved locale in a `locale` query param so it becomes part of the
-    // cache key. When present, it must match the value resolved from the
+    // Clients may mirror the resolved locale in a `locale` query param (added
+    // for a URL-keyed CDN, no longer in use; the param stays for
+    // compatibility). When present, it must match the value resolved from the
     // `accept-language` header exactly.
     const rawLocale = req.query.locale;
     if (rawLocale !== undefined) {

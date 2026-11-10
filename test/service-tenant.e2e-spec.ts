@@ -12,11 +12,10 @@ import { ServiceDetailService } from 'src/service/service-detail.service';
 import { TenantMiddleware } from 'src/common/middleware/TenantMiddleware';
 
 /**
- * ServiceController must run TenantMiddleware: it is CDN-cached
- * (@SetCdnCacheTTL) and the CDN keys its cache on the URL only, so the
- * middleware's x-tenant-id validation and tenant_id/x-tenant-id
- * consistency check (400 on mismatch) are what prevents tenant A's URL
- * from being seeded with tenant B's response. It also sets
+ * ServiceController must run TenantMiddleware: its x-tenant-id
+ * validation and tenant_id/x-tenant-id consistency check (400 on
+ * mismatch) keep a request from mixing one tenant's URL with another
+ * tenant's header. It also sets
  * request.tenantId for the metrics tenant_id label.
  *
  * Uses a focused module because AppModule can't boot under ts-jest
