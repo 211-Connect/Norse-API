@@ -66,6 +66,10 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
       }
+      // ISS-2739 word-rarity lookup: not part of the cutoff request sequence.
+      if (req.size === 0 && req.aggs?.df) {
+        return Promise.reject(new Error('rarity not under test'));
+      }
       requests.push(req);
 
       // 1. head — the top CUTOFF_TOP_DOCS_FLOOR + 1 scores and the matched
