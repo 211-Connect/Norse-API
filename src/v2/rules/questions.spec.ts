@@ -1,4 +1,4 @@
-import { decide } from './engine';
+import { decide, finalize } from './engine';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 const ids = (d: ReturnType<typeof decide>) => d.candidates.map((q) => q.id);
@@ -213,6 +213,44 @@ describe('narrow', () => {
     expect(
       opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1').slice(-1),
     ).toEqual(['N-X']);
+  });
+  describe('a Tier 2 need is already used (ISS-2697)', () => {
+    const used = { 'N-HOU-01': 0.999, 'N-HOU': 0.999 };
+    it('used inferred Tier 2 + ask need elsewhere: narrow:1 goes to step 7', () => {
+      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
+      expect(opts(d, 'narrow:1')).toEqual(['N-SAF-01']);
+      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(7);
+    });
+    it('urgency_time comes before narrow:1 after finalize', () => {
+      const scores = { ...used, 'N-SAF-01': 0.24 };
+      const d = decide(
+        req(),
+        sig(scores, {
+          needs: {
+            status: 'ok',
+            scores,
+            urgency: { level: 'U-2', score: 0.85 },
+          },
+        }),
+      );
+      const r = finalize(d, {
+        counts: { total: 100, byCode: {} },
+        strongTextMatch: false,
+      });
+      const order = r.questions.map((q) => q.id);
+      expect(order).toContain('urgency_time');
+      expect(order.indexOf('urgency_time')).toBeLessThan(
+        order.indexOf('narrow:1'),
+      );
+    });
+    it('no used Tier 2 need: narrow:1 stays at step 4', () => {
+      const d = decide(req(), sig({ 'N-FOD-01': 0.5 }));
+      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(4);
+    });
+    it('caller-confirmed Tier 2 + ask need elsewhere: narrow:1 at step 7', () => {
+      const d = decide(req({ needs: ['N-HOU-01'] }), sig({ 'N-SAF-01': 0.24 }));
+      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(7);
+    });
   });
   it('countCodes excludes N-X', () => {
     expect(decide(req(), sig({ 'N-X': 0.3 })).countCodes).toEqual([

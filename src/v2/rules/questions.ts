@@ -222,6 +222,11 @@ export function buildCandidates(
       }
 
       // 6. narrow
+      // ISS-2697 rule: when a Tier 2 need is already used (any source), the
+      // narrow questions about other unsure needs go to the bottom of the order.
+      const sureTier2 = states.needs.some(
+        (s) => s.state === 'use' && isTier2(s.code),
+      );
       const asks = states.inferredAsk
         .map((s) => s.code)
         .filter((c) => eligible(c) && !askedAreas.has(tier1Of(c)))
@@ -235,7 +240,7 @@ export function buildCandidates(
           type: 'narrow',
           level: 'low',
           reason: 'unsure_needs',
-          step: 4,
+          step: sureTier2 ? 7 : 4,
           parameter: 'needs',
           stem: STEMS.narrow,
           options: g1,
@@ -248,7 +253,7 @@ export function buildCandidates(
           type: 'narrow',
           level: 'low',
           reason: 'unsure_needs',
-          step: 6,
+          step: sureTier2 ? 8 : 6,
           parameter: 'needs',
           stem: STEMS.narrow,
           options: g2,

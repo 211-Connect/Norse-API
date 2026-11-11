@@ -31,6 +31,8 @@ A cutoff change bumps `RULES_VERSION`.
 | 4 | `narrow:1` | low | Tier 2 needs in the ask band, top 3 |
 | 5 | `urgency_time` | low | urgency ask with another level |
 | 6 | `narrow:2` | low | the next 3 ask-band needs |
+| 7 | `narrow:1` | low | as step 4, when a Tier 2 need is already used (any source) |
+| 8 | `narrow:2` | low | as step 6, when a Tier 2 need is already used |
 Inside a step, the question whose biggest option is closest to half of the results goes first. Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. The client (Norse) shows at most 3 questions before results.
 
 ## Tests
