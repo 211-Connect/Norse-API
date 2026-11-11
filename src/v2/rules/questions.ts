@@ -219,21 +219,22 @@ export function buildCandidates(
         }
         const options = picks.map(needOption);
         if (sc(NX) >= CUTOFFS.nx.label) options.push(nxOption());
-        out.push({
-          id: 'start',
-          type: 'find_need',
-          level: 'orange',
-          importance: 'high',
-          value: 0,
-          priority: 0,
-          uncertainty: 0,
-          reason: 'no_need',
-          step: 2,
-          parameter: 'needs',
-          stem: STEMS.start,
-          options,
-          ...needsFlags,
-        });
+        if (options.length > 0)
+          out.push({
+            id: 'start',
+            type: 'find_need',
+            level: 'orange',
+            importance: 'high',
+            value: 0,
+            priority: 0,
+            uncertainty: 0,
+            reason: 'no_need',
+            step: 2,
+            parameter: 'needs',
+            stem: STEMS.start,
+            options,
+            ...needsFlags,
+          });
       }
 
       // 6. narrow
@@ -246,8 +247,10 @@ export function buildCandidates(
         .map((s) => s.code)
         .filter((c) => eligible(c) && !askedAreas.has(tier1Of(c)))
         .sort(byScore);
-      const g1 = asks.slice(0, 3).map(needOption);
-      const g2 = asks.slice(3, 6).map(needOption);
+      const g1 = asks.slice(0, CUTOFFS.optionsPerQuestion).map(needOption);
+      const g2 = asks
+        .slice(CUTOFFS.optionsPerQuestion, 2 * CUTOFFS.optionsPerQuestion)
+        .map(needOption);
       if (g1.length > 0) {
         if (sc(NX) >= CUTOFFS.nx.label) g1.push(nxOption());
         out.push({

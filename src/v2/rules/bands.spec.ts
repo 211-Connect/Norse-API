@@ -17,6 +17,10 @@ describe('emergencyBand', () => {
     expect(emergencyBand({ status: 'error' })).toBe('unknown');
     expect(emergencyBand({ status: 'ok' })).toBe('unknown');
   });
+  it('non-finite score -> unknown', () => {
+    expect(emergencyBand(ok(NaN))).toBe('unknown');
+    expect(emergencyBand(ok(Infinity))).toBe('unknown');
+  });
   it('plain cutoffs', () => {
     expect(emergencyBand(ok(0.6619))).toBe('soft');
     expect(emergencyBand(ok(0.662))).toBe('popup');
@@ -44,6 +48,13 @@ describe('urgencyState', () => {
     status: 'ok' as const,
     scores: {},
     urgency: { level: 'U-2' as const, score },
+  });
+  it('non-finite urgency score -> drop', () => {
+    expect(urgencyState(req(), withU(NaN))).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'drop',
+    });
   });
   it('cutoffs', () => {
     expect(urgencyState(req(), withU(0.7999))).toEqual({

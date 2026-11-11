@@ -20,7 +20,12 @@ import {
 
 export function emergencyBand(e: EmergencySignal | null): EmergencyBand {
   if (e === null || e === undefined) return 'none';
-  if (e.status === 'error' || typeof e.score !== 'number') return 'unknown';
+  if (
+    e.status === 'error' ||
+    typeof e.score !== 'number' ||
+    !Number.isFinite(e.score)
+  )
+    return 'unknown';
   const { popup, soft } = CUTOFFS.emergency;
   if (e.floorHit) return e.score >= popup ? 'popup' : 'soft';
   if (e.calmContext) return e.score >= soft ? 'soft' : 'none';
@@ -41,6 +46,9 @@ export function urgencyState(
     return { value: 'U-X', source: 'default', state: 'drop' };
   }
   const { score, level } = needs.urgency;
+  if (!Number.isFinite(score)) {
+    return { value: 'U-X', source: 'default', state: 'drop' };
+  }
   if (score < CUTOFFS.urgency.drop) {
     return { value: 'U-X', source: 'default', state: 'drop' };
   }

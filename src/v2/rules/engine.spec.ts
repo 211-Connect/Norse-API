@@ -296,4 +296,12 @@ describe('golden fixture', () => {
   it('help -> start question', () => {
     expect(run(row('help')).candidates.map((c) => c.id)).toContain('start');
   });
+  it('NaN emergency score -> unknown band, not cacheable', () => {
+    const d = decide(
+      req(),
+      sig({}, { emergency: { status: 'ok', score: NaN, floorHit: false } }),
+    );
+    expect(d.emergency.band).toBe('unknown');
+    expect(d.cacheable).toBe(false);
+  });
 });

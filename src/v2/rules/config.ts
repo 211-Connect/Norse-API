@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-11.4';
+export const RULES_VERSION = 'rules-2026-11-11.5';
 
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },

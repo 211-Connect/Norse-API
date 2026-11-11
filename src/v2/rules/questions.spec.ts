@@ -113,6 +113,10 @@ describe('start question', () => {
     const d = decide(req({ passedNeeds: ['N-HOU'] }), sig());
     expect(opts(d, 'start')).toEqual(['N-FOD', 'N-MON']);
   });
+  it('not built when every area is passed (no zero-option question)', () => {
+    const d = decide(req({ passedNeeds: ['N-HOU', 'N-FOD', 'N-MON'] }), sig());
+    expect(ids(d)).not.toContain('start');
+  });
   it('not built when text has an inferred ask', () => {
     expect(ids(decide(req(), sig({ 'N-FOD-01': 0.5 })))).toEqual(['narrow:1']);
   });
