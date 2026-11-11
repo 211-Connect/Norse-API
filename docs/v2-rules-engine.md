@@ -10,7 +10,7 @@ Needs never filter results; a used or confirmed need only boosts (`boostNeeds`, 
 
 ## Inputs
 - Request: `hasText`, `needs` (confirmed, URL order), `passedNeeds`, `urgency`, `clarify` (`never` keeps only the emergency question).
-- Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), urgency `{level, score}`, emergency `{status, score, floorHit, calmContext, dvShelter}`; `emergency: null` when there is no typed text; `dictionaryNeeds` (term to need) for later.
+- Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), urgency `{level, score}`, emergency `{status, score, floorHit, calmContext, dvShelter}`; `emergency: null` when there is no typed text; `dictionaryNeeds`. The caller fills it with `matchDictionary(query)` (`src/v2/rules/dictionary.ts`, seed version `dict-2026-11-11.1`: WA211 program terms plus suicide/self-harm with fuzzy match). A hit is a sure need that only boosts ranking.
 - Tenant: `topAreas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
 
 ## Cutoffs (`config.ts`, `RULES_VERSION`)
