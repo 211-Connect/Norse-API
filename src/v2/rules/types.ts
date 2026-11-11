@@ -23,7 +23,6 @@ export interface EmergencySignal {
 export interface RulesSignals {
   needs: NeedsSignal; // ml-broker needs + urgency; status 'error' also covers a timeout
   emergency: EmergencySignal | null; // null = no typed text, the check did not run
-  dictionaryNeeds?: string[]; // need codes from a dictionary term hit
 }
 export interface Hotline {
   label: string;
@@ -35,7 +34,7 @@ export interface TenantContext {
 }
 
 export type EmergencyBand = 'popup' | 'soft' | 'none' | 'unknown';
-export type NeedSource = 'caller' | 'dictionary' | 'inferred';
+export type NeedSource = 'caller' | 'inferred';
 export interface NeedState {
   code: string;
   state: 'use' | 'ask';

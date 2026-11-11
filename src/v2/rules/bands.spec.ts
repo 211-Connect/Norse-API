@@ -143,15 +143,6 @@ describe('needStates', () => {
       false,
     );
   });
-  it('dictionary codes are use', () => {
-    const r = needStates(
-      req(),
-      sig({}, { dictionaryNeeds: ['N-MON-01', 'N-X', 'bogus'] }),
-    );
-    expect(r.needs).toEqual([
-      { code: 'N-MON-01', state: 'use', source: 'dictionary' },
-    ]);
-  });
   it('error status gives only caller needs', () => {
     const r = needStates(req({ needs: ['N-HOU'] }), {
       needs: { status: 'error' },

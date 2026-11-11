@@ -1,7 +1,6 @@
 import {
   areaRuleTarget,
   confirmedCodes,
-  dictionaryCodes,
   NeedStatesResult,
   passedCodes,
 } from './bands';
@@ -113,18 +112,16 @@ export function buildCandidates(
 
   // needs questions
   const confirmed = confirmedCodes(req);
-  const dictionary = dictionaryCodes(req, signals);
   const passed = passedCodes(req);
   if (signals.needs.status === 'ok' && !confirmed.includes(NX)) {
     const scores = signals.needs.scores ?? {};
     const sc = (c: string) => scores[c] ?? 0;
     const lockedAreas = new Set<string>();
-    for (const c of [...confirmed, ...dictionary]) {
+    for (const c of confirmed) {
       if (isTier2(c)) lockedAreas.add(tier1Of(c));
     }
     const eligible = (c: string) =>
       !confirmed.includes(c) &&
-      !dictionary.includes(c) &&
       !passed.has(c) &&
       !lockedAreas.has(tier1Of(c));
     const byScore = (a: string, b: string) => sc(b) - sc(a) || cmp(a, b);
@@ -188,7 +185,6 @@ export function buildCandidates(
       // 5. start
       if (
         confirmed.length === 0 &&
-        dictionary.length === 0 &&
         states.needs.length === 0 &&
         areaQuestionCount === 0
       ) {

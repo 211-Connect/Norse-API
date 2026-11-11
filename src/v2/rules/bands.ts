@@ -69,20 +69,6 @@ export function confirmedCodes(req: RulesRequest): string[] {
   return out;
 }
 
-export function dictionaryCodes(
-  req: RulesRequest,
-  signals: RulesSignals,
-): string[] {
-  const confirmed = new Set(confirmedCodes(req));
-  const out: string[] = [];
-  for (const c of signals.dictionaryNeeds ?? []) {
-    if (isKnownCode(c) && c !== NX && !confirmed.has(c) && !out.includes(c)) {
-      out.push(c);
-    }
-  }
-  return out;
-}
-
 export function passedCodes(req: RulesRequest): Set<string> {
   return new Set((req.passedNeeds ?? []).filter(isKnownCode));
 }
@@ -92,16 +78,12 @@ export function needStates(
   signals: RulesSignals,
 ): NeedStatesResult {
   const confirmed = confirmedCodes(req);
-  const dictionary = dictionaryCodes(req, signals);
   const passed = passedCodes(req);
-  const skip = new Set([...confirmed, ...dictionary, ...passed]);
+  const skip = new Set([...confirmed, ...passed]);
 
   const states: NeedState[] = [];
   for (const code of confirmed) {
     states.push({ code, state: 'use', source: 'caller' });
-  }
-  for (const code of dictionary) {
-    states.push({ code, state: 'use', source: 'dictionary' });
   }
 
   const inferredUse: NeedState[] = [];
@@ -168,10 +150,7 @@ export function areaRuleTarget(
   if (best === null || bestScore < CUTOFFS.area.tier1Min) return null;
   const maxT2 = Math.max(0, ...allTier2().map((c) => scores[c] ?? 0));
   if (maxT2 >= CUTOFFS.area.tier2Max) return null;
-  const locked = new Set([
-    ...confirmedCodes(req),
-    ...dictionaryCodes(req, signals),
-  ]);
+  const locked = new Set(confirmedCodes(req));
   for (const c of locked) {
     if (isTier2(c) && tier1Of(c) === best) return null;
   }
