@@ -38,7 +38,8 @@ import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import {
   contentWords,
   idf,
-  joinedWords,
+  adjacentJoins,
+  splitCandidates,
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
@@ -207,10 +208,18 @@ const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 const WORD_RARITY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * idf weight per query content word. `null` = unknown, keep the flat name
- * match. `{}` = no content words, the name edge tier adds nothing.
+ * `words`: idf weight per query content word. `splits`: run-together words
+ * the index itself says are usually written as two words ("foodbank" ->
+ * "food bank"), with the idf of the split phrase. `null` = unknown, keep the
+ * flat name match. `{ words: {}, splits: [] }` = no content words, the name
+ * edge tier adds nothing.
  */
-type WordRarity = Record<string, number> | null;
+type WordRarity = {
+  words: Record<string, number>;
+  splits: { word: string; phrase: string; idf: number }[];
+} | null;
+
+const MAX_SPLIT_BUCKETS = 60;
 
 interface PredictedTaxonomy {
   code: string;
@@ -542,7 +551,7 @@ export class HybridSearchService {
   ): Promise<WordRarity> {
     if (queryStr.trim().length === 0) return null;
     const words = contentWords(queryStr, lang);
-    if (words.length === 0) return {};
+    if (words.length === 0) return { words: {}, splits: [] };
 
     try {
       // The factory throws on a bad response: RequestCacheService does not
@@ -550,6 +559,37 @@ export class HybridSearchService {
       return await this.requestCacheService.getOrSet(
         wordRarityCacheKey(tenantId, lang, words),
         async () => {
+          const buckets: Record<string, QueryDslQueryContainer> = {};
+          words.forEach((w, i) => {
+            buckets[`w${i}`] = {
+              multi_match: {
+                query: w,
+                type: 'phrase_prefix',
+                fields: WORD_RARITY_FIELDS,
+              },
+            };
+          });
+          // Split candidates ("foo dbank", "food bank", ...) are counted as
+          // exact phrases, so the index's own counts pick the real split.
+          let splitBuckets = 0;
+          const candidates: string[][] = words.map((w, i) => {
+            const phrases = splitCandidates(w).slice(
+              0,
+              Math.max(0, MAX_SPLIT_BUCKETS - splitBuckets),
+            );
+            phrases.forEach((phrase, k) => {
+              buckets[`s${i}_${k}`] = {
+                multi_match: {
+                  query: phrase,
+                  type: 'phrase',
+                  fields: WORD_RARITY_FIELDS,
+                },
+              };
+            });
+            splitBuckets += phrases.length;
+            return phrases;
+          });
+
           const response = await this.metrics.observeDownstream(
             'elasticsearch',
             'hybrid_word_rarity',
@@ -561,40 +601,46 @@ export class HybridSearchService {
                 track_total_hits: true,
                 query: { term: { tenant_id: tenantId } },
                 aggs: {
-                  df: {
-                    filters: {
-                      filters: Object.fromEntries(
-                        words.map((w, i) => [
-                          `w${i}`,
-                          {
-                            multi_match: {
-                              query: w,
-                              type: 'phrase_prefix',
-                              fields: WORD_RARITY_FIELDS,
-                            },
-                          },
-                        ]),
-                      ),
-                    },
-                  },
+                  df: { filters: { filters: buckets } },
                 },
               }),
           );
 
           const total = response.hits?.total;
           const n = typeof total === 'number' ? total : total?.value;
-          const buckets = (response.aggregations as any)?.df?.buckets;
-          if (typeof n !== 'number' || !(n > 0) || !buckets) {
+          const counts = (response.aggregations as any)?.df?.buckets;
+          if (typeof n !== 'number' || !(n > 0) || !counts) {
             throw new Error('malformed word rarity response');
           }
 
-          const rarity: Record<string, number> = {};
+          const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };
           words.forEach((w, i) => {
-            const df = buckets[`w${i}`]?.doc_count;
+            const df = counts[`w${i}`]?.doc_count;
             if (typeof df !== 'number') {
               throw new Error('malformed word rarity response');
             }
-            rarity[w] = idf(n, df);
+            rarity.words[w] = idf(n, df);
+
+            // Keep the most common split, and only when it is more common
+            // than the run-together word itself.
+            let best: { phrase: string; df: number } | null = null;
+            candidates[i].forEach((phrase, k) => {
+              const phraseDf = counts[`s${i}_${k}`]?.doc_count;
+              if (
+                typeof phraseDf === 'number' &&
+                (!best || phraseDf > best.df)
+              ) {
+                best = { phrase, df: phraseDf };
+              }
+            });
+            const top = best as { phrase: string; df: number } | null;
+            if (top && top.df > df && top.df > 0) {
+              rarity.splits.push({
+                word: w,
+                phrase: top.phrase,
+                idf: idf(n, top.df),
+              });
+            }
           });
           return rarity;
         },
@@ -811,7 +857,7 @@ export class HybridSearchService {
           match: { [`${field}.edge`]: { query: queryStr, boost } },
         });
       } else {
-        for (const [word, weight] of Object.entries(opts.wordRarity)) {
+        for (const [word, weight] of Object.entries(opts.wordRarity.words)) {
           clauses.push({
             constant_score: {
               filter: { match: { [`${field}.edge`]: word } },
@@ -819,19 +865,33 @@ export class HybridSearchService {
             },
           });
         }
-        // Run-together names ("my free taxes" -> "MyFreeTaxes.com"): "my" has
-        // weight 0 and "free"/"taxes" do not match inside the single name word.
-        // The joined query covers every word, so it is worth all the words'
-        // rarity together. `.clean` is lowercase + asciifolding with the
-        // standard tokenizer, so "MyFreeTaxes.com" is the token
-        // "myfreetaxes.com".
-        const joined = joinedWords(queryStr);
-        const sum = Object.values(opts.wordRarity).reduce((a, b) => a + b, 0);
-        if (joined != null && sum > 0) {
+        // JOIN: run-together names ("food bank near me" -> "Foodbank of
+        // Central New York", "my free taxes" -> "MyFreeTaxes.com"). A join
+        // covers its words, so it is worth their rarity together. This is the
+        // shingle method (Elasticsearch `shingle` with `token_separator: ""`),
+        // done in code so no index change is needed. Function words are not in
+        // `words`, so they add 0. `.clean` is lowercase + asciifolding with the
+        // standard tokenizer, so "MyFreeTaxes.com" is the token "myfreetaxes.com".
+        for (const { join, words } of adjacentJoins(queryStr)) {
+          const sum = words.reduce(
+            (a, w) => a + (opts.wordRarity!.words[w] ?? 0),
+            0,
+          );
+          if (sum <= 0) continue;
           clauses.push({
             constant_score: {
-              filter: { prefix: { [`${field}.clean`]: joined } },
+              filter: { prefix: { [`${field}.clean`]: join } },
               boost: boost * sum,
+            },
+          });
+        }
+        // SPLIT: the WordBreakSpellChecker method (Lucene), using the index's
+        // own counts: "foodbank" -> "food bank".
+        for (const split of opts.wordRarity.splits) {
+          clauses.push({
+            constant_score: {
+              filter: { match_phrase: { [`${field}.clean`]: split.phrase } },
+              boost: boost * split.idf,
             },
           });
         }
@@ -910,6 +970,16 @@ export class HybridSearchService {
       ),
       // General stemmed recall fallback on analyzed fields (low implicit boost)
       recallClause,
+      // SPLIT recall: lets "foodbank" score documents that say "food bank".
+      // Membership is unchanged: the main query has minimum_should_match 0.
+      // Plain BM25, no boost.
+      ...(wordRarity?.splits ?? []).map((split): QueryDslQueryContainer => ({
+        multi_match: {
+          query: split.phrase,
+          type: 'phrase',
+          fields: generalFields,
+        },
+      })),
       // Typo tolerance belongs on the recall clause: the name tiers above are
       // phrase/prefix by design, and the use_references clause below is
       // curated, where an approximate match defeats the curation.

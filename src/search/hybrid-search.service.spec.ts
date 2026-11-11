@@ -743,7 +743,10 @@ describe('HybridSearchService', () => {
       expect(req.size).toBe(0);
       expect(req.query).toEqual({ term: { tenant_id: 'tenant-a' } });
       const filters = req.aggs.df.filters.filters;
-      expect(Object.keys(filters)).toEqual(['w0', 'w1']);
+      expect(Object.keys(filters).filter((k) => k.startsWith('w'))).toEqual([
+        'w0',
+        'w1',
+      ]);
       expect(filters.w0.multi_match).toMatchObject({
         query: 'boyfriend',
         type: 'phrase_prefix',
@@ -803,19 +806,47 @@ describe('HybridSearchService', () => {
     });
   });
 
-  describe('run-together name match (v2 only)', () => {
+  describe('run-together words: joins and splits (v2 only)', () => {
+    const N = 29181;
     const idf = (n: number, df: number) =>
       Math.log(1 + (n - df + 0.5) / (df + 0.5));
-    const joinedClauses = (node: any, out: any[] = []): any[] => {
-      if (Array.isArray(node)) node.forEach((n) => joinedClauses(n, out));
+    const walk = (
+      node: any,
+      pred: (n: any) => boolean,
+      out: any[] = [],
+    ): any[] => {
+      if (Array.isArray(node)) node.forEach((n) => walk(n, pred, out));
       else if (node && typeof node === 'object') {
-        if (node.constant_score?.filter?.prefix?.['name.clean'] !== undefined) {
-          out.push(node.constant_score);
-        }
-        Object.values(node).forEach((v) => joinedClauses(v, out));
+        if (pred(node)) out.push(node);
+        Object.values(node).forEach((v) => walk(v, pred, out));
       }
       return out;
     };
+    const joinedClauses = (node: any) =>
+      walk(node, (n) => n.constant_score?.filter?.prefix?.['name.clean']).map(
+        (n) => n.constant_score,
+      );
+    const splitNameClauses = (node: any) =>
+      walk(
+        node,
+        (n) => n.constant_score?.filter?.match_phrase?.['name.clean'],
+      ).map((n) => n.constant_score);
+    const splitRecallClauses = (node: any) =>
+      walk(
+        node,
+        (n) => n.multi_match?.type === 'phrase' && !n.multi_match.boost,
+      );
+    const respond = (counts: Record<string, number>) => () =>
+      Promise.resolve({
+        hits: { total: { value: N } },
+        aggregations: {
+          df: {
+            buckets: Object.fromEntries(
+              Object.entries(counts).map(([k, v]) => [k, { doc_count: v }]),
+            ),
+          },
+        },
+      });
     const run = (query: string) =>
       service.searchHybrid({
         headers,
@@ -823,38 +854,90 @@ describe('HybridSearchService', () => {
         rankingVersion: 'v2',
       });
 
-    it('adds a prefix clause on name.clean worth the sum of the word rarities', async () => {
-      rarityImpl = () =>
-        Promise.resolve({
-          hits: { total: { value: 29181 } },
-          aggregations: {
-            df: {
-              buckets: { w0: { doc_count: 10 }, w1: { doc_count: 400 } },
-            },
-          },
-        });
+    it('JOIN: "food bank near me" adds a prefix clause for "foodbank" worth both word rarities', async () => {
+      rarityImpl = respond({
+        w0: 800,
+        w1: 600,
+        w2: 2000,
+      });
+
+      await run('food bank near me');
+
+      const cs = joinedClauses(capturedMainRequest.query);
+      const byJoin = Object.fromEntries(
+        cs.map((c) => [c.filter.prefix['name.clean'], c.boost]),
+      );
+      expect(byJoin.foodbank).toBeCloseTo(15 * (idf(N, 800) + idf(N, 600)));
+      // "me" is a function word and adds 0, so "nearme" is worth "near" only.
+      expect(byJoin.nearme).toBeCloseTo(15 * idf(N, 2000));
+      expect(byJoin.foodbanknear).toBeDefined();
+    });
+
+    it('JOIN: "my free taxes" adds "myfreetaxes" worth the sum of the word rarities', async () => {
+      rarityImpl = respond({ w0: 10, w1: 400 });
 
       await run('my free taxes');
 
       const cs = joinedClauses(capturedMainRequest.query);
-      expect(cs).toHaveLength(1);
-      expect(cs[0].filter).toEqual({ prefix: { 'name.clean': 'myfreetaxes' } });
-      expect(cs[0].boost).toBeCloseTo(15 * (idf(29181, 10) + idf(29181, 400)));
+      const c = cs.find((x) => x.filter.prefix['name.clean'] === 'myfreetaxes');
+      expect(c).toBeDefined();
+      expect(c.boost).toBeCloseTo(15 * (idf(N, 10) + idf(N, 400)));
     });
 
-    it('adds no joined clause for a single-word query', async () => {
+    it('JOIN: adds no joined clause for a single-word query', async () => {
       await run('myfreetaxes');
 
       expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
     });
 
-    it('adds no name.edge and no joined clause when every word is a function word', async () => {
+    it('JOIN: adds no name.edge and no joined clause when every word is a function word', async () => {
       await run('me and you');
 
       expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
       expect(JSON.stringify(capturedMainRequest.query)).not.toContain(
         'name.edge',
       );
+    });
+
+    it('SPLIT: "foodbank" adds a name clause and a recall clause for "food bank"', async () => {
+      rarityImpl = respond({ w0: 3, s0_0: 1, s0_1: 1622, s0_2: 2 });
+
+      await run('foodbank');
+
+      const cs = splitNameClauses(capturedMainRequest.query);
+      expect(cs).toHaveLength(1);
+      expect(cs[0].filter).toEqual({
+        match_phrase: { 'name.clean': 'food bank' },
+      });
+      expect(cs[0].boost).toBeCloseTo(15 * idf(N, 1622));
+
+      const recall = splitRecallClauses(capturedMainRequest.query);
+      expect(recall).toHaveLength(1);
+      expect(recall[0].multi_match.query).toBe('food bank');
+    });
+
+    it('SPLIT: adds nothing when no split phrase is more common than the word', async () => {
+      rarityImpl = respond({ w0: 3, s0_0: 1, s0_1: 3, s0_2: 2 });
+
+      await run('foodbank');
+
+      expect(splitNameClauses(capturedMainRequest.query)).toEqual([]);
+      expect(splitRecallClauses(capturedMainRequest.query)).toEqual([]);
+    });
+
+    it('SPLIT: the rarity request carries phrase buckets for the split candidates', async () => {
+      await run('foodbank');
+
+      const filters = rarityRequests[0].aggs.df.filters.filters;
+      expect(filters.s0_1.multi_match).toMatchObject({
+        query: 'food bank',
+        type: 'phrase',
+      });
+      expect(Object.keys(filters).filter((k) => k.startsWith('s0_'))).toEqual([
+        's0_0',
+        's0_1',
+        's0_2',
+      ]);
     });
   });
 });

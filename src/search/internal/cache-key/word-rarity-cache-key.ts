@@ -4,4 +4,4 @@ export const wordRarityCacheKey = (
   tenantId: string,
   lang: string,
   words: string[],
-): string => `search:rarity:${tenantId}:${lang}:${hashCacheKey(words)}`;
+): string => `search:rarity2:${tenantId}:${lang}:${hashCacheKey(words)}`;

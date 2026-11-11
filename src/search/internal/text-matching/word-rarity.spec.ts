@@ -1,9 +1,10 @@
 import {
   contentWords,
   idf,
-  joinedWords,
+  adjacentJoins,
   MAX_RARITY_WORDS,
   queryWords,
+  splitCandidates,
 } from './word-rarity';
 
 describe('word-rarity', () => {
@@ -57,13 +58,51 @@ describe('word-rarity', () => {
     });
   });
 
-  describe('joinedWords', () => {
-    it('joins every query word, function words included', () => {
-      expect(joinedWords('My free taxes')).toBe('myfreetaxes');
+  describe('adjacentJoins', () => {
+    it('joins every span of 2 or 3 adjacent words, never single words', () => {
+      const joins = adjacentJoins('food bank near me').map((j) => j.join);
+      expect(joins).toEqual(
+        expect.arrayContaining([
+          'foodbank',
+          'foodbanknear',
+          'banknear',
+          'nearme',
+        ]),
+      );
+      expect(joins).not.toContain('food');
+      expect(joins).not.toContain('bank');
     });
 
-    it('is null for a single word', () => {
-      expect(joinedWords('taxes')).toBeNull();
+    it('keeps the words of each join', () => {
+      expect(adjacentJoins('my free taxes')).toContainEqual({
+        join: 'myfreetaxes',
+        words: ['my', 'free', 'taxes'],
+      });
+    });
+
+    it('drops joins shorter than 5 characters', () => {
+      const joins = adjacentJoins('to be').map((j) => j.join);
+      expect(joins).toEqual([]);
+    });
+
+    it('caps at 20 entries', () => {
+      const q = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
+      expect(adjacentJoins(q)).toHaveLength(20);
+    });
+  });
+
+  describe('splitCandidates', () => {
+    it('splits a word at every point leaving 3+ characters each side', () => {
+      expect(splitCandidates('foodbank')).toEqual([
+        'foo dbank',
+        'food bank',
+        'foodb ank',
+      ]);
+    });
+
+    it('returns nothing for short words and words with digits', () => {
+      expect(splitCandidates('rent')).toEqual([]);
+      expect(splitCandidates('abc123def')).toEqual([]);
     });
   });
 });
