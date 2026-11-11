@@ -58,10 +58,24 @@ const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+// Need boost (ISS-2745). Start values from the 2026-11-11 boost test: each need
+// clause adds FRACTION x the top base score x the need score (K = fraction x top
+// base score). The 0.97 gate is Lucas's pick. Tier 1 needs boost at a smaller factor.
+const NEED_BOOST_FRACTION = 0.1;
+const NEED_BOOST_GATE = 0.97;
+const NEED_BOOST_TIER1_FACTOR = 0.5;
+
+export type NeedScore = {
+  code: string;
+  tier: 'tier1' | 'tier2';
+  score: number;
+};
+
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
+  needScores?: NeedScore[];
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -200,6 +214,7 @@ export class HybridSearchService {
   private readonly embeddingBaseUrl: string;
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
+  private readonly needBoostEnabled: boolean;
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -212,6 +227,8 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
+    this.needBoostEnabled =
+      this.configService.get<string>('NEED_BOOST_ENABLED') === 'true';
   }
 
   /**
@@ -474,6 +491,34 @@ export class HybridSearchService {
 
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
+    // Need boost (ISS-2745). Runs only with the switch on, a ranked request and
+    // at least one need at or above the gate; otherwise nothing below runs and
+    // the request is unchanged.
+    const activeNeeds = (options.needScores ?? []).filter(
+      (n) =>
+        (n.tier === 'tier1' || n.tier === 'tier2') &&
+        n.code !== 'N-X' &&
+        n.score >= NEED_BOOST_GATE,
+    );
+    let needShould: QueryDslQueryContainer[] = [];
+
+    if (this.needBoostEnabled && rank && activeNeeds.length > 0) {
+      const topScore = await this.fetchNeedBoostTopScore({
+        index,
+        preference,
+        queryStr,
+        queryVector,
+        predicted: predictedTaxonomies,
+        filters: baseFilters,
+        coords,
+        distance: distance ?? 0,
+        pinnedMode,
+      });
+      if (topScore > 0) {
+        needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+      }
+    }
+
     const request = this.buildHybridQuery({
       index,
       preference,
@@ -488,6 +533,7 @@ export class HybridSearchService {
       aggs,
       pinnedMode,
       sort,
+      extraShould: needShould,
     });
 
     return { request, tenantFacets, cutoff, lang };
@@ -1088,6 +1134,66 @@ export class HybridSearchService {
     };
   }
 
+  /**
+   * Top base score for the need boost: the same query as the main request,
+   * without the need clauses, asking for one hit.
+   */
+  private async fetchNeedBoostTopScore(args: {
+    index: string;
+    preference: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    coords: number[] | undefined;
+    distance: number;
+    pinnedMode: PinnedResourcesMode;
+  }): Promise<number> {
+    const { index, preference, ...queryArgs } = args;
+    try {
+      const response = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_need_boost_top_score',
+        () =>
+          this.elasticsearchService.search({
+            index,
+            preference,
+            size: 1,
+            _source: false,
+            track_total_hits: false,
+            sort: ['_score'],
+            query: this.buildHybridScoredQuery(queryArgs),
+          }),
+      );
+      const topScore = response.hits.hits[0]?._score ?? 0;
+      if (topScore <= 0) {
+        this.logger.warn('Need boost skipped: no top base score');
+        return 0;
+      }
+      return topScore;
+    } catch (error) {
+      this.logger.warn(`Need boost skipped: ${(error as Error).message}`);
+      return 0;
+    }
+  }
+
+  private buildNeedBoostClauses(
+    needs: NeedScore[],
+    topScore: number,
+  ): QueryDslQueryContainer[] {
+    const k = NEED_BOOST_FRACTION * topScore;
+    return needs.map((need) => ({
+      rank_feature: {
+        field: `sune_need_weights.${need.code}`,
+        linear: {},
+        boost:
+          k *
+          need.score *
+          (need.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
+      },
+    }));
+  }
+
   private buildHybridQuery(args: {
     index: string;
     preference: string;
@@ -1102,6 +1208,7 @@ export class HybridSearchService {
     aggs: Aggregations;
     pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
+    extraShould?: QueryDslQueryContainer[];
   }): SearchRequest {
     const {
       index,
@@ -1117,6 +1224,54 @@ export class HybridSearchService {
       aggs,
       pinnedMode,
       sort: sortOption,
+      extraShould,
+    } = args;
+
+    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+
+    const esQuery = this.buildHybridScoredQuery({
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      coords,
+      distance,
+      pinnedMode,
+      extraShould,
+    });
+
+    return {
+      index,
+      preference,
+      from: (page - 1) * limit,
+      size: limit,
+      track_total_hits: true,
+      _source: { excludes: ['embedding', 'service_area'] },
+      aggs,
+      query: esQuery,
+      sort,
+    };
+  }
+
+  private buildHybridScoredQuery(args: {
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    coords: number[] | undefined;
+    distance: number;
+    pinnedMode: PinnedResourcesMode;
+    extraShould?: QueryDslQueryContainer[];
+  }): QueryDslQueryContainer {
+    const {
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      coords,
+      distance,
+      pinnedMode,
+      extraShould,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -1143,9 +1298,12 @@ export class HybridSearchService {
             },
           ]
         : [];
-    const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
-
-    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+    const should = [
+      ...lexicalShould,
+      ...taxonomyShould,
+      ...pinnedShould,
+      ...(extraShould ?? []),
+    ];
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
@@ -1189,17 +1347,7 @@ export class HybridSearchService {
           }
         : innerBool;
 
-    return {
-      index,
-      preference,
-      from: (page - 1) * limit,
-      size: limit,
-      track_total_hits: true,
-      _source: { excludes: ['embedding', 'service_area'] },
-      aggs,
-      query: esQuery,
-      sort,
-    };
+    return esQuery;
   }
 
   /**
