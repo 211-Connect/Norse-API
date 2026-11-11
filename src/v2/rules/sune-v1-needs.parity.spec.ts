@@ -2,8 +2,9 @@
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 import { NX } from './sune';
 
-const golden: { rows: { query: string; needs: Record<string, number> }[] } =
-  require('./__fixtures__/golden-scores.json');
+const golden: {
+  rows: { query: string; needs: Record<string, number> }[];
+} = require('./__fixtures__/golden-scores.json');
 
 describe('sune-v1-needs parity with the golden model output', () => {
   const codes = new Set([...SUNE_TIER1, ...SUNE_TIER2].map((e) => e.code));
