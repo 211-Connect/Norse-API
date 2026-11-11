@@ -50,3 +50,9 @@ export function contentWords(q: string, lang: string): string[] {
 export function idf(totalDocs: number, docFreq: number): number {
   return Math.log(1 + (totalDocs - docFreq + 0.5) / (docFreq + 0.5));
 }
+
+/** All query words (function words included) run together, or null for fewer than two. */
+export function joinedWords(q: string): string | null {
+  const w = queryWords(q);
+  return w.length >= 2 ? w.join('') : null;
+}

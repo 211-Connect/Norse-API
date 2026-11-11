@@ -1,4 +1,10 @@
-import { contentWords, idf, MAX_RARITY_WORDS, queryWords } from './word-rarity';
+import {
+  contentWords,
+  idf,
+  joinedWords,
+  MAX_RARITY_WORDS,
+  queryWords,
+} from './word-rarity';
 
 describe('word-rarity', () => {
   describe('queryWords', () => {
@@ -48,6 +54,16 @@ describe('word-rarity', () => {
       expect(idf(29181, 0)).toBeGreaterThan(idf(29181, 2));
       expect(idf(29181, 2)).toBeGreaterThan(idf(29181, 3000));
       expect(idf(29181, 3000)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('joinedWords', () => {
+    it('joins every query word, function words included', () => {
+      expect(joinedWords('My free taxes')).toBe('myfreetaxes');
+    });
+
+    it('is null for a single word', () => {
+      expect(joinedWords('taxes')).toBeNull();
     });
   });
 });

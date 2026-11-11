@@ -38,6 +38,7 @@ import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import {
   contentWords,
   idf,
+  joinedWords,
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
@@ -64,10 +65,18 @@ const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+export type RankingVersion = 'v1' | 'v2';
+
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
+  /**
+   * Internal switch, not a DTO field and not a query parameter. Set only by
+   * the future /v2/search; today's /search never sets it, so it always runs
+   * v1 (flat name edge match, approximate taxonomy knn).
+   */
+  rankingVersion?: RankingVersion;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -102,6 +111,7 @@ const BM25_ORG_NAME_BOOST = 6;
 const BM25_TAXONOMY_USE_REF_BOOST = 6;
 
 const TAXONOMY_K = 10;
+const TAXONOMY_NUM_CANDIDATES = 500;
 
 /**
  * Keep everything scoring at least this fraction of the top score.
@@ -370,6 +380,7 @@ export class HybridSearchService {
     } = q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
+    const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
     const hardScopeCodes = q.taxonomy ?? [];
@@ -411,7 +422,7 @@ export class HybridSearchService {
           : Promise.resolve(undefined),
         this.tenantConfigService.getFacets(tenantId),
         this.tenantConfigService.getSearchConfig(tenantId),
-        wantsVector
+        v2 && wantsVector
           ? this.getWordRarity(index, tenantId, lang, queryStr, preference)
           : Promise.resolve(null),
       ]);
@@ -423,7 +434,7 @@ export class HybridSearchService {
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
+      ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
       : [];
 
     this.logger.log(
@@ -460,7 +471,11 @@ export class HybridSearchService {
     let cutoff: RelevanceCutoffDto | undefined;
 
     if (cutoffRequested) {
-      const cacheKey = relevanceCutoffCacheKey({ ...identity, pinnedMode });
+      const cacheKey = relevanceCutoffCacheKey({
+        ...identity,
+        pinnedMode,
+        rankingVersion: v2 ? 'v2' : 'v1',
+      });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages.
@@ -643,6 +658,7 @@ export class HybridSearchService {
     queryVector: number[],
     tenantId: string,
     preference: string,
+    exact: boolean,
   ): Promise<PredictedTaxonomy[]> {
     try {
       const result = await this.metrics.observeDownstream(
@@ -659,20 +675,33 @@ export class HybridSearchService {
             size: TAXONOMY_K,
             track_total_hits: false,
             _source: ['code', 'name'],
-            // Exact cosine over the tenant's codes. (1 + cos) / 2 is the same
-            // scale as the knn _score for cosine similarity, so
-            // BASE_TAXONOMY_BOOST x score keeps its meaning. Approximate knn
-            // matched the exact top 10 on 73% of 300 real queries (ISS-2692).
-            query: {
-              script_score: {
-                query: { term: { tenant_id: tenantId } },
-                script: {
-                  source:
-                    "(cosineSimilarity(params.qv, 'embedding') + 1.0) / 2.0",
-                  params: { qv: queryVector },
-                },
-              },
-            },
+            ...(exact
+              ? {
+                  // Exact cosine over the tenant's codes. (1 + cos) / 2 is the
+                  // same scale as the knn _score for cosine similarity, so
+                  // BASE_TAXONOMY_BOOST x score keeps its meaning. Approximate
+                  // knn matched the exact top 10 on 73% of 300 real queries
+                  // (ISS-2692).
+                  query: {
+                    script_score: {
+                      query: { term: { tenant_id: tenantId } },
+                      script: {
+                        source:
+                          "(cosineSimilarity(params.qv, 'embedding') + 1.0) / 2.0",
+                        params: { qv: queryVector },
+                      },
+                    },
+                  },
+                }
+              : {
+                  knn: {
+                    field: 'embedding',
+                    query_vector: queryVector,
+                    k: TAXONOMY_K,
+                    num_candidates: TAXONOMY_NUM_CANDIDATES,
+                    filter: [{ term: { tenant_id: tenantId } }],
+                  },
+                }),
           }),
       );
 
@@ -787,6 +816,22 @@ export class HybridSearchService {
             constant_score: {
               filter: { match: { [`${field}.edge`]: word } },
               boost: boost * weight,
+            },
+          });
+        }
+        // Run-together names ("my free taxes" -> "MyFreeTaxes.com"): "my" has
+        // weight 0 and "free"/"taxes" do not match inside the single name word.
+        // The joined query covers every word, so it is worth all the words'
+        // rarity together. `.clean` is lowercase + asciifolding with the
+        // standard tokenizer, so "MyFreeTaxes.com" is the token
+        // "myfreetaxes.com".
+        const joined = joinedWords(queryStr);
+        const sum = Object.values(opts.wordRarity).reduce((a, b) => a + b, 0);
+        if (joined != null && sum > 0) {
+          clauses.push({
+            constant_score: {
+              filter: { prefix: { [`${field}.clean`]: joined } },
+              boost: boost * sum,
             },
           });
         }

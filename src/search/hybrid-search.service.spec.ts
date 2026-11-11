@@ -138,8 +138,8 @@ describe('HybridSearchService', () => {
   it('runs a single _search (no msearch) with the hybrid scoring shape', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
-    // One taxonomy lookup + one word-rarity lookup + one main search; never msearch.
-    expect(esSearch).toHaveBeenCalledTimes(3);
+    // v1: one taxonomy lookup + one main search; never msearch.
+    expect(esSearch).toHaveBeenCalledTimes(2);
     expect((service as any).elasticsearchService.msearch).toBeUndefined();
 
     const bool = capturedMainRequest.query.function_score.query.bool;
@@ -161,8 +161,12 @@ describe('HybridSearchService', () => {
     expect(capturedMainRequest.knn).toBeUndefined();
   });
 
-  it("taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
-    await service.searchHybrid({ headers, query: baseQuery });
+  it("v2 taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+    });
 
     const taxonomyCall = esSearch.mock.calls
       .map((c) => c[0])
@@ -486,7 +490,11 @@ describe('HybridSearchService', () => {
   describe('shard-copy preference', () => {
     const preferencesOf = async (query: any, h: any = headers) => {
       esSearch.mockClear();
-      await service.searchHybrid({ headers: h, query });
+      await service.searchHybrid({
+        headers: h,
+        query,
+        rankingVersion: 'v2',
+      });
       return esSearch.mock.calls.map(([req]) => req.preference);
     };
 
@@ -667,6 +675,7 @@ describe('HybridSearchService', () => {
       await service.searchHybrid({
         headers,
         query: q('my boyfriend hits me'),
+        rankingVersion: 'v2',
       });
 
       const clauses = nameEdgeClauses(capturedMainRequest.query);
@@ -702,6 +711,7 @@ describe('HybridSearchService', () => {
       await service.searchHybrid({
         headers,
         query: q('my boyfriend hits me'),
+        rankingVersion: 'v2',
       });
 
       const clauses = nameEdgeClauses(capturedMainRequest.query);
@@ -711,14 +721,22 @@ describe('HybridSearchService', () => {
     });
 
     it('adds no edge clause and sends no rarity request for function-word-only queries', async () => {
-      await service.searchHybrid({ headers, query: q('me') });
+      await service.searchHybrid({
+        headers,
+        query: q('me'),
+        rankingVersion: 'v2',
+      });
 
       expect(rarityRequests).toHaveLength(0);
       expect(nameEdgeClauses(capturedMainRequest.query)).toEqual([]);
     });
 
     it('sends a size-0 tenant-scoped request with a phrase_prefix filter per word', async () => {
-      await service.searchHybrid({ headers, query: q('boyfriend hits') });
+      await service.searchHybrid({
+        headers,
+        query: q('boyfriend hits'),
+        rankingVersion: 'v2',
+      });
 
       expect(rarityRequests).toHaveLength(1);
       const req = rarityRequests[0];
@@ -731,6 +749,112 @@ describe('HybridSearchService', () => {
         type: 'phrase_prefix',
       });
       expect(filters.w1.multi_match.query).toBe('hits');
+    });
+  });
+
+  describe('v1 is unchanged without rankingVersion (/search regression guard)', () => {
+    const collect = (node: any, pred: (n: any) => boolean, out: any[] = []) => {
+      if (Array.isArray(node)) node.forEach((n) => collect(n, pred, out));
+      else if (node && typeof node === 'object') {
+        if (pred(node)) out.push(node);
+        Object.values(node).forEach((v) => collect(v, pred, out));
+      }
+      return out;
+    };
+
+    it('sends no rarity request, keeps approximate knn and the flat name edge match', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query: 'my boyfriend hits me' },
+      });
+
+      expect(rarityRequests).toHaveLength(0);
+      expect(
+        esSearch.mock.calls.some(([r]) => r.size === 0 && r.aggs && r.aggs.df),
+      ).toBe(false);
+
+      const taxonomyCall = esSearch.mock.calls
+        .map((c) => c[0])
+        .find((req) => req.index === 'hybrid_taxonomies');
+      expect(taxonomyCall.knn).toMatchObject({
+        field: 'embedding',
+        query_vector: [0.1, 0.2, 0.3, 0.4],
+        k: 10,
+        num_candidates: 500,
+        filter: [{ term: { tenant_id: 'tenant-a' } }],
+      });
+      expect(taxonomyCall.query?.script_score).toBeUndefined();
+
+      const main = capturedMainRequest.query;
+      expect(
+        collect(main, (n) => 'name.edge' in n && n['name.edge'].query),
+      ).toEqual([
+        { 'name.edge': { query: 'my boyfriend hits me', boost: 15 } },
+      ]);
+      expect(
+        collect(main, (n) => n.constant_score?.filter?.match?.['name.edge']),
+      ).toEqual([]);
+      expect(collect(main, (n) => 'name.clean' in n && 'prefix' in n)).toEqual(
+        [],
+      );
+      expect(
+        collect(main, (n) => n.prefix && 'name.clean' in n.prefix),
+      ).toEqual([]);
+    });
+  });
+
+  describe('run-together name match (v2 only)', () => {
+    const idf = (n: number, df: number) =>
+      Math.log(1 + (n - df + 0.5) / (df + 0.5));
+    const joinedClauses = (node: any, out: any[] = []): any[] => {
+      if (Array.isArray(node)) node.forEach((n) => joinedClauses(n, out));
+      else if (node && typeof node === 'object') {
+        if (node.constant_score?.filter?.prefix?.['name.clean'] !== undefined) {
+          out.push(node.constant_score);
+        }
+        Object.values(node).forEach((v) => joinedClauses(v, out));
+      }
+      return out;
+    };
+    const run = (query: string) =>
+      service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query },
+        rankingVersion: 'v2',
+      });
+
+    it('adds a prefix clause on name.clean worth the sum of the word rarities', async () => {
+      rarityImpl = () =>
+        Promise.resolve({
+          hits: { total: { value: 29181 } },
+          aggregations: {
+            df: {
+              buckets: { w0: { doc_count: 10 }, w1: { doc_count: 400 } },
+            },
+          },
+        });
+
+      await run('my free taxes');
+
+      const cs = joinedClauses(capturedMainRequest.query);
+      expect(cs).toHaveLength(1);
+      expect(cs[0].filter).toEqual({ prefix: { 'name.clean': 'myfreetaxes' } });
+      expect(cs[0].boost).toBeCloseTo(15 * (idf(29181, 10) + idf(29181, 400)));
+    });
+
+    it('adds no joined clause for a single-word query', async () => {
+      await run('myfreetaxes');
+
+      expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
+    });
+
+    it('adds no name.edge and no joined clause when every word is a function word', async () => {
+      await run('me and you');
+
+      expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
+      expect(JSON.stringify(capturedMainRequest.query)).not.toContain(
+        'name.edge',
+      );
     });
   });
 });
