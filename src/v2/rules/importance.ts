@@ -65,7 +65,10 @@ export function splitQuality(q: Question, total: number): number {
     .map((o) => o.resultsCount)
     .filter((n): n is number => typeof n === 'number');
   if (counts.length === 0 || total <= 0) return 1;
-  return clamp(1 - 2 * Math.abs(Math.max(...counts) / total - 0.5), 0, 1);
+  if (counts.length === 1) {
+    return clamp(1 - 2 * Math.abs(counts[0] / total - 0.5), 0, 1);
+  }
+  return normEntropy(counts);
 }
 
 export const valueOf = (u: number, e: number, s: number): number =>

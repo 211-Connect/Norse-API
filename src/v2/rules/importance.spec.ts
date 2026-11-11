@@ -98,10 +98,23 @@ describe('splitQuality', () => {
     expect(splitQuality(q('start', 'find_need', ['a', 'b']), 100)).toBe(1);
     expect(sq([50], 0)).toBe(1);
   });
-  it('rewards a half split', () => {
+  it('one counted option: rewards a half split of the total', () => {
     expect(sq([50], 100)).toBe(1);
     expect(sq([10], 100)).toBeCloseTo(0.2);
     expect(sq([100], 100)).toBe(0);
+  });
+  it('several counted options: even counts give 1', () => {
+    // Regression: the old yes/no formula gave 0.2 for the first case.
+    expect(sq([10, 10, 10, 10], 100)).toBeCloseTo(1);
+    expect(sq([10, 10, 10], 100)).toBeCloseTo(1);
+    expect(sq([30, 30], 100)).toBeCloseTo(1);
+  });
+  it('several counted options: one dominant option scores low', () => {
+    expect(sq([90, 5, 5], 100)).toBeCloseTo(0.359, 2);
+    expect(sq([90, 5, 5], 100)).toBeLessThan(0.5);
+    const mid = sq([60, 20, 20], 100);
+    expect(mid).toBeGreaterThan(0.8);
+    expect(mid).toBeLessThan(0.9);
   });
 });
 

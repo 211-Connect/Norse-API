@@ -44,7 +44,7 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 - Uncertainty, `start` and `area:*`: normalized entropy of the model scores of the need options, without N-X.
 - Uncertainty, `narrow:*`: mean of `4p(1-p)` over the need options, without N-X; 0 when there is none.
 - Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. N-X counts as an option; "None of these" does not.
-- Split: `1 - 2 x |biggest option count / total - 0.5|`, between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
+- Split: with one counted option, `1 - 2 x |count / total - 0.5|`; with two or more, the normalized entropy of the option counts (even counts give 1, one dominant option gives near 0). Between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
 - `decide` fills `uncertainty`, `value` and `priority` with split 1. `finalize` recomputes `value` and `priority` after it drops options.
 - `emergency` is the only critical question, so it stays first.
 - `step` stays in the output for information only. It no longer sorts.
