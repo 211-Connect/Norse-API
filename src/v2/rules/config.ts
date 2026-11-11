@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-11.1';
+export const RULES_VERSION = 'rules-2026-11-11.2';
 
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },
@@ -26,6 +26,7 @@ export const STEMS = {
   start: 'What do you need help with most?',
   area: 'Which kind of help with {area}?',
   narrow: 'Which of these fits best?',
+  narrowAlso: 'Do any of these also fit?',
 };
 
 export const LABELS = {

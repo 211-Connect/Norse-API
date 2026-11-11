@@ -51,6 +51,7 @@ export interface UrgencyState {
 export type QuestionType =
   'emergency' | 'confirm_urgency' | 'find_need' | 'narrow';
 export type QuestionLevel = 'red' | 'orange' | 'low';
+export type QuestionImportance = 'critical' | 'high' | 'medium' | 'low';
 export type QuestionReason =
   | 'emergency_band'
   | 'urgency_unsure'
@@ -67,6 +68,7 @@ export interface Question {
   id: string;
   type: QuestionType;
   level: QuestionLevel;
+  importance: QuestionImportance;
   reason: QuestionReason;
   step: number;
   parameter: 'urgency' | 'needs';

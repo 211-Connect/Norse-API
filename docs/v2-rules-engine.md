@@ -22,18 +22,18 @@ Needs never filter results; a used or confirmed need only boosts (`boostNeeds`, 
 A cutoff change bumps `RULES_VERSION`.
 
 ## Questions, in order
-| Step | Id | Level | When |
-|---|---|---|---|
-| 0 | `emergency` | red | band popup or soft and no `urgency` in the URL; carries the hotlines |
-| 1 | `urgency_today` | orange | urgency ask and the model level is U-1 |
-| 2 | `start` | orange | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
-| 3 | `area:<T1>` | orange | a Tier 1 was picked (`needs=N-HOU`) or the area rule fired; top 3 Tier 2 by score |
-| 4 | `narrow:1` | low | Tier 2 needs in the ask band, top 3 |
-| 5 | `urgency_time` | low | urgency ask with another level |
-| 6 | `narrow:2` | low | the next 3 ask-band needs |
-| 7 | `narrow:1` | low | as step 4, when a Tier 2 need is already used (any source) |
-| 8 | `narrow:2` | low | as step 6, when a Tier 2 need is already used |
-Inside a step, the question whose biggest option is closest to half of the results goes first. Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. The client (Norse) shows at most 3 questions before results.
+| Step | Id | Level | Importance | When |
+|---|---|---|---|---|
+| 0 | `emergency` | red | critical | band popup or soft and no `urgency` in the URL; carries the hotlines |
+| 1 | `urgency_today` | orange | high | urgency ask and the model level is U-1 |
+| 2 | `start` | orange | high | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
+| 3 | `area:<T1>` | orange | high | a Tier 1 was picked (`needs=N-HOU`) or the area rule fired; top 3 Tier 2 by score |
+| 4 | `narrow:1` | low | medium | Tier 2 needs in the ask band, top 3 |
+| 5 | `urgency_time` | low | low | urgency ask with another level |
+| 6 | `narrow:2` | low | low | the next 3 ask-band needs |
+| 7 | `narrow:1` | low | low | as step 4, when a Tier 2 need is already used (any source); stem 'Do any of these also fit?' |
+| 8 | `narrow:2` | low | low | as step 6, when a Tier 2 need is already used; stem 'Do any of these also fit?' |
+Inside a step, the question whose biggest option is closest to half of the results goes first. Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. Importance tells the client how much a question matters; the engine still returns up to 3 in step order and never drops a question for low importance. The client (Norse) shows at most 3 questions before results.
 
 ## Tests
 `npx jest src/v2/rules`. `engine.spec.ts` runs the 40 real model outputs in `__fixtures__/golden-scores.json` (copied from ml-broker's golden file) 1,000 times each and checks the output never changes.

@@ -25,6 +25,7 @@ const mk = (
       ? ('find_need' as const)
       : ('confirm_urgency' as const),
   level: 'orange' as const,
+  importance: 'high' as const,
   reason: 'no_need' as const,
   step,
   parameter,

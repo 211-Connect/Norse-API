@@ -221,6 +221,32 @@ describe('narrow', () => {
       expect(opts(d, 'narrow:1')).toEqual(['N-SAF-01']);
       expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(7);
     });
+    it("uses the 'also' stem; without a sure need the plain stem stays", () => {
+      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
+      expect(d.candidates.find((q) => q.id === 'narrow:1').stem).toBe(
+        'Do any of these also fit?',
+      );
+      const d2 = decide(req(), sig({ 'N-FOD-01': 0.5 }));
+      expect(d2.candidates.find((q) => q.id === 'narrow:1').stem).toBe(
+        'Which of these fits best?',
+      );
+    });
+    it('a lone late narrow is still shown, importance low, also stem', () => {
+      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
+      const r = finalize(d, {
+        counts: { total: 100, byCode: {} },
+        strongTextMatch: false,
+      });
+      expect(r.questions.map((q) => q.id)).toEqual(['narrow:1']);
+      expect(r.questions[0].importance).toBe('low');
+      expect(r.questions[0].stem).toBe('Do any of these also fit?');
+    });
+    it('no sure need: narrow:1 importance medium', () => {
+      const d = decide(req(), sig({ 'N-FOD-01': 0.5 }));
+      expect(d.candidates.find((q) => q.id === 'narrow:1').importance).toBe(
+        'medium',
+      );
+    });
     it('urgency_time comes before narrow:1 after finalize', () => {
       const scores = { ...used, 'N-SAF-01': 0.24 };
       const d = decide(
@@ -269,5 +295,54 @@ describe('clarify=never', () => {
     );
     expect(ids(d)).toEqual(['emergency']);
     expect(ids(decide(req({ clarify: 'never' }), sig()))).toEqual([]);
+  });
+});
+
+describe('importance per question type', () => {
+  const imp = (d: ReturnType<typeof decide>, id: string) =>
+    d.candidates.find((c) => c.id === id)?.importance;
+  const askU = (level: 'U-1' | 'U-2') => ({
+    needs: {
+      status: 'ok' as const,
+      scores: {
+        'N-FOD-01': 0.5,
+        'N-FOD-02': 0.4,
+        'N-HOU-01': 0.3,
+        'N-MON-01': 0.2,
+      },
+      urgency: { level, score: 0.85 },
+    },
+    emergency: { status: 'ok' as const, score: 0.001 },
+  });
+  it('emergency is critical', () => {
+    const d = decide(
+      req(),
+      sig({}, { emergency: { status: 'ok', score: 0.9, floorHit: false } }),
+    );
+    expect(imp(d, 'emergency')).toBe('critical');
+  });
+  it('urgency_today and start are high', () => {
+    expect(imp(decide(req(), askU('U-1')), 'urgency_today')).toBe('high');
+    expect(imp(decide(req(), sig({})), 'start')).toBe('high');
+  });
+  it('area questions are high, both reasons', () => {
+    const withNeeds = decide(
+      req({ needs: ['N-HOU'] }),
+      sig({ 'N-HOU-01': 0.11, 'N-HOU-02': 0.1, 'N-HOU-03': 0.09 }),
+    );
+    expect(imp(withNeeds, 'area:N-HOU')).toBe('high');
+    const rule = decide(req(), sig({ 'N-MHS': 0.98, 'N-MHS-01': 0.38 }));
+    expect(imp(rule, 'area:N-MHS')).toBe('high');
+  });
+  it('urgency_time, narrow:2 and a late narrow:1 are low; narrow:1 is medium', () => {
+    expect(imp(decide(req(), askU('U-2')), 'urgency_time')).toBe('low');
+    const d = decide(req(), askU('U-2'));
+    expect(imp(d, 'narrow:1')).toBe('medium');
+    expect(imp(d, 'narrow:2')).toBe('low');
+    const late = decide(
+      req({ needs: ['N-HOU-01'] }),
+      sig({ 'N-SAF-01': 0.24 }),
+    );
+    expect(imp(late, 'narrow:1')).toBe('low');
   });
 });
