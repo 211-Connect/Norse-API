@@ -1,6 +1,6 @@
 # v2 clarification rules engine (`src/v2/rules/`)
 
-Pure, deterministic TypeScript that decides what `/v2/search` asks after the models run. No model, no I/O, no state: the URL carries every answer, so the same input always gives the same output. Not wired into a route yet (ISS-2499, v2 search). Ticket: ISS-2697.
+Pure, deterministic TypeScript that decides what `/v2/search` asks after the models run. No model, no I/O, no state: the URL carries every answer, so the same input always gives the same output. Called by `GET /v2/search` (ISS-2499, see v2-search.md). Ticket: ISS-2697.
 
 ## Two calls around the search
 - `decide(request, signals, tenant)` runs before Elasticsearch. It returns the emergency band and cache rule, the need states (`use` boosts, `ask` becomes an option, the rest is dropped), the urgency state, the candidate questions, and `countCodes`: the need codes the search must count.
