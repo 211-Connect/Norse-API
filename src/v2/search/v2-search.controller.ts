@@ -7,7 +7,13 @@ import {
   ValidationPipe,
   Version,
 } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiExcludeController,
+  ApiHeader,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Request } from 'express';
 import { CustomHeaders } from '../../common/decorators/CustomHeaders';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
@@ -29,7 +35,12 @@ import { V2SearchService } from './v2-search.service';
  * `GET /search` with `x-api-version: 2`. No CDN cache decorator: a response
  * whose emergency status is an error must not be cached, and that cache rule
  * is not written yet.
+ *
+ * Kept out of the Swagger document while the shapes are a draft: the document
+ * generates the frontend SDK, and a draft must not reach it. Remove
+ * `@ApiExcludeController()` when the v2 ADR (ISS-2493) is accepted.
  */
+@ApiExcludeController()
 @ApiTags('Search v2')
 @Controller(['v2/search', 'search'])
 @ApiTenantIdQuery()
