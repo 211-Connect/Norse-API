@@ -90,6 +90,15 @@ describe('v2 search versioning (e2e)', () => {
     return req;
   };
 
+  const post = (path: string, version?: string) => {
+    const req = request(app.getHttpServer())
+      .post(path)
+      .set('x-tenant-id', TENANT)
+      .set('accept-language', 'en');
+    if (version !== undefined) req.set('x-api-version', version);
+    return req;
+  };
+
   beforeEach(() => {
     searchMock.mockReset();
     searchMock.mockResolvedValue({
@@ -115,6 +124,21 @@ describe('v2 search versioning (e2e)', () => {
 
     it('/search with x-api-version: 2 reaches the v2 route', async () => {
       const res = await get('/search?query=rent', '2');
+      expect(res.status).toBe(200);
+      expect(res.body.route).toBe('v2');
+    });
+
+    it('POST /v2/search reaches the v2 route with the body', async () => {
+      const geometry = { type: 'Point', coordinates: [1, 2] };
+      const res = await post('/v2/search?query=rent').send({ geometry });
+      expect(res.status).toBe(200);
+      expect(res.body.route).toBe('v2');
+      expect(searchMock).toHaveBeenCalledTimes(1);
+      expect(searchMock.mock.calls[0][0].body).toEqual({ geometry });
+    });
+
+    it('POST /search with x-api-version: 2 reaches the v2 route', async () => {
+      const res = await post('/search?query=rent', '2').send({});
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
     });
@@ -154,5 +178,12 @@ describe('v2 search versioning (e2e)', () => {
         expect(searchMock).not.toHaveBeenCalled();
       },
     );
+
+    it('POST /v2/search is a 404 when the flag is off', async () => {
+      app = await boot(undefined);
+      const res = await post('/v2/search?query=rent').send({});
+      expect(res.status).toBe(404);
+      expect(searchMock).not.toHaveBeenCalled();
+    });
   });
 });

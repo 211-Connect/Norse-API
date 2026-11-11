@@ -178,6 +178,23 @@ describe('V2SearchService', () => {
     }
   });
 
+  it('passes a body through to searchHybrid', async () => {
+    const { service, searchHybrid } = build({});
+    const body = { geometry: { type: 'Point', coordinates: [1, 2] } };
+    await service.search({
+      headers,
+      query: dto({ query: 'rent' }),
+      body: body as never,
+    });
+    expect(searchHybrid.mock.calls[0][0].body).toBe(body);
+  });
+
+  it('leaves body absent when none is given', async () => {
+    const { service, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchHybrid.mock.calls[0][0].body).toBeUndefined();
+  });
+
   it('builds intent from the decision: caller and inferred needs, urgency', async () => {
     const { service } = build({
       classify: jest.fn().mockResolvedValue(okResult({ 'N-HOU-02': 0.99 })),

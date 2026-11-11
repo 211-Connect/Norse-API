@@ -61,4 +61,49 @@ describe('V2SearchController', () => {
     expect(recordSearchRequest).toHaveBeenCalledTimes(1);
     expect(recordSearchRequest.mock.calls[0][2]).toBe('error');
   });
+
+  describe('getResourcesPost', () => {
+    const postReq = {
+      tenantId: 't',
+      headers: { 'accept-language': 'en', 'content-type': 'application/json' },
+    } as unknown as Request;
+    const body = { geometry: { type: 'Point', coordinates: [1, 2] } };
+
+    it('delegates with the body and records one v2 usage metric', async () => {
+      const response = { search: { hits: { total: 3, hits: [] } } };
+      const search = jest.fn().mockResolvedValue(response);
+      const { controller, recordSearchRequest } = build(search);
+      const query = new V2SearchQueryDto();
+
+      await expect(
+        controller.getResourcesPost(headers, query, body as never, postReq),
+      ).resolves.toBe(response);
+      expect(search).toHaveBeenCalledWith({ headers, query, body });
+      expect(recordSearchRequest).toHaveBeenCalledTimes(1);
+      expect(recordSearchRequest).toHaveBeenCalledWith(
+        { tenantId: 't', acceptLanguage: 'en' },
+        'v2',
+        'results',
+      );
+    });
+
+    it('rejects a non-JSON content type with 400 and calls nothing', async () => {
+      const search = jest.fn();
+      const { controller, recordSearchRequest } = build(search);
+      const badReq = {
+        tenantId: 't',
+        headers: { 'content-type': 'text/plain' },
+      } as unknown as Request;
+      await expect(
+        controller.getResourcesPost(
+          headers,
+          new V2SearchQueryDto(),
+          body as never,
+          badReq,
+        ),
+      ).rejects.toThrow('Content-Type must be application/json');
+      expect(search).not.toHaveBeenCalled();
+      expect(recordSearchRequest).not.toHaveBeenCalled();
+    });
+  });
 });

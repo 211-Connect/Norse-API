@@ -8,6 +8,7 @@ import {
 import { decide, finalize } from '../rules';
 import { isTier1, isTier2 } from '../rules/sune';
 import { RulesRequest, RulesSignals } from '../rules/types';
+import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import {
   V2ClarificationDto,
@@ -40,9 +41,11 @@ export class V2SearchService {
   async search({
     headers,
     query: dto,
+    body,
   }: {
     headers: HeadersDto;
     query: V2SearchQueryDto;
+    body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
     // Only a string with text classifies. A string array or an AND/OR object
     // is a v1 query shape and has no text for the model.
@@ -82,6 +85,7 @@ export class V2SearchService {
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
       rankingVersion: 'v2',
       needScores,
+      body,
     });
 
     // byCode and strongTextMatch are placeholders in this slice: the stored
