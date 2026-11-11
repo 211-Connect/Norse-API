@@ -68,6 +68,9 @@ export interface Question {
   type: QuestionType;
   level: QuestionLevel;
   importance: QuestionImportance;
+  value: number; // within-band importance in [0, 0.999]: model uncertainty x answer effort x result split (rules engine)
+  priority: number; // BAND_BASE[importance] + value; questions are ranked by this, high first
+  uncertainty: number; // raw model uncertainty in [0, 1] before effort and split
   reason: QuestionReason;
   step: number;
   parameter: 'urgency' | 'needs';

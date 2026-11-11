@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { decide, finalize } from './engine';
 import { RULES_VERSION } from './config';
+import { BAND_BASE } from './importance';
 import { isTier1, isTier2, tier1Of } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 import { Decision } from './types';
@@ -18,6 +19,7 @@ const mk = (
   step: number,
   values: string[],
   parameter: 'needs' | 'urgency' = 'needs',
+  uncertainty = 0.5,
 ) => ({
   id,
   type:
@@ -34,6 +36,9 @@ const mk = (
   multiSelect: true,
   allowOther: true,
   noneOfThese: true,
+  value: 0,
+  priority: 0,
+  uncertainty,
 });
 const dec = (candidates: ReturnType<typeof mk>[]): Decision => ({
   rulesVersion: RULES_VERSION,
@@ -100,21 +105,21 @@ describe('finalize', () => {
       finalize(d, { counts: counts(0, {}), strongTextMatch: false }).questions,
     ).toEqual([]);
   });
-  it('ranks by step, caps at 3, ties by split distance then id', () => {
+  it('ranks by priority, caps at 3', () => {
     const d = dec([
-      mk('narrow:1', 4, ['N-FOD-01'], 'needs'),
-      mk('area:N-HOU', 3, ['N-HOU-01']),
-      mk('start', 2, ['N-HOU']),
-      mk('urgency_today', 1, ['U-1'], 'urgency'),
+      mk('narrow:1', 4, ['N-FOD-01'], 'needs', 0.1),
+      mk('area:N-HOU', 3, ['N-HOU-01'], 'needs', 0.6),
+      mk('start', 2, ['N-HOU'], 'needs', 0.9),
+      mk('urgency_today', 1, ['U-1'], 'urgency', 0.3),
     ]);
     const r = finalize(d, {
       counts: counts(10, { 'N-FOD-01': 5, 'N-HOU-01': 5, 'N-HOU': 5 }),
       strongTextMatch: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual([
-      'urgency_today',
       'start',
       'area:N-HOU',
+      'urgency_today',
     ]);
     const d2 = dec([
       mk('area:N-B', 3, ['N-HOU-01']),
@@ -145,6 +150,91 @@ describe('finalize', () => {
       finalize(dec([]), { counts: counts(1, {}), strongTextMatch: false })
         .rulesVersion,
     ).toBe(RULES_VERSION);
+  });
+});
+
+describe('numeric order', () => {
+  const tier1Area = {
+    'N-HOU': 0.95,
+    'N-HOU-01': 0.4,
+    'N-HOU-02': 0.4,
+    'N-HOU-03': 0.4,
+  };
+  const withUrgency = (scores: Record<string, number>, u: number) =>
+    sig(scores, {
+      needs: {
+        status: 'ok',
+        scores,
+        urgency: { level: 'U-1', score: u },
+      },
+    });
+  const run = (signals: ReturnType<typeof sig>) =>
+    finalize(decide(req(), signals), {
+      counts: { total: 100, byCode: {} },
+      strongTextMatch: false,
+    }).questions;
+
+  it('a near-equal area question ranks before urgency_today', () => {
+    const ids = run(withUrgency(tier1Area, 0.9)).map((q) => q.id);
+    expect(ids).toContain('urgency_today');
+    expect(ids.indexOf('area:N-HOU')).toBeLessThan(
+      ids.indexOf('urgency_today'),
+    );
+  });
+  it('a low-entropy area question ranks after urgency_today', () => {
+    const ids = run(
+      withUrgency(
+        {
+          'N-HOU': 0.95,
+          'N-HOU-01': 0.45,
+          'N-HOU-02': 0.01,
+          'N-HOU-03': 0.01,
+        },
+        0.85,
+      ),
+    ).map((q) => q.id);
+    expect(ids.indexOf('urgency_today')).toBeLessThan(
+      ids.indexOf('area:N-HOU'),
+    );
+  });
+  it('the result split changes the order', () => {
+    const d = dec([
+      mk('area:N-A', 3, ['N-HOU-01']),
+      mk('area:N-B', 3, ['N-FOD-01']),
+    ]);
+    const r = finalize(d, {
+      counts: { total: 100, byCode: { 'N-HOU-01': 1, 'N-FOD-01': 50 } },
+      strongTextMatch: false,
+    });
+    expect(r.questions.map((q) => q.id)).toEqual(['area:N-B', 'area:N-A']);
+  });
+  it('emergency stays first with a high-value area question present', () => {
+    const signals = withUrgency(tier1Area, 0.9);
+    signals.emergency = { status: 'ok', score: 0.9, floorHit: false };
+    const qs = run(signals);
+    expect(qs[0].id).toBe('emergency');
+    expect(qs.map((q) => q.id)).toContain('area:N-HOU');
+  });
+  it('priority is the band base plus value for every question', () => {
+    for (const row of golden.rows) {
+      const signals = sig(row.needs, {
+        needs: {
+          status: 'ok',
+          scores: row.needs,
+          urgency: { level: 'U-1', score: 0.85 },
+        },
+        emergency: {
+          status: 'ok',
+          score: row.emergency.score,
+          floorHit: row.emergency.floorHit,
+        },
+      });
+      for (const q of run(signals)) {
+        expect(q.value).toBeGreaterThanOrEqual(0);
+        expect(q.value).toBeLessThanOrEqual(0.999);
+        expect(q.priority).toBeCloseTo(BAND_BASE[q.importance] + q.value, 3);
+      }
+    }
   });
 });
 

@@ -21,8 +21,8 @@ Needs never filter results; a used or confirmed need only boosts (`boostNeeds`, 
 - N-X ("a specific place or organization") is an option at score >= 0.07.
 A cutoff change bumps `RULES_VERSION`.
 
-## Questions, in order
-| Step | Id | Level | Importance | When |
+## Questions
+| Step (info) | Id | Level | Importance | When |
 |---|---|---|---|---|
 | 0 | `emergency` | red | critical | band popup or soft and no `urgency` in the URL; carries the hotlines |
 | 1 | `urgency_today` | orange | high | urgency ask and the model level is U-1 |
@@ -31,9 +31,23 @@ A cutoff change bumps `RULES_VERSION`.
 | 4 | `narrow:1` | low | medium | Tier 2 needs in the ask band, top 3 |
 | 5 | `urgency_time` | low | low | urgency ask with another level |
 | 6 | `narrow:2` | low | low | the next 3 ask-band needs |
-| 7 | `narrow:1` | low | low | as step 4, when a Tier 2 need is already used (any source); stem 'Do any of these also fit?' |
-| 8 | `narrow:2` | low | low | as step 6, when a Tier 2 need is already used; stem 'Do any of these also fit?' |
-Inside a step, the question whose biggest option is closest to half of the results goes first. Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. Importance tells the client how much a question matters; the engine still returns up to 3 in step order and never drops a question for low importance. The client (Norse) shows at most 3 questions before results.
+| 7 | `narrow:1` | low | low | as step 4 (`narrow:1`), when a Tier 2 need is already used (any source); stem 'Do any of these also fit?' |
+| 8 | `narrow:2` | low | low | as step 6 (`narrow:2`), when a Tier 2 need is already used; stem 'Do any of these also fit?' |
+Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. Importance tells the client how much a question matters; the engine still returns up to 3, ranked by `priority` (see Order), and never drops a question for low importance. The client (Norse) shows at most 3 questions before results.
+
+## Order
+Each question has a `priority`. The engine sorts high to low, then by id, and keeps the first 3.
+- `priority = BAND_BASE[importance] + value`. Bases: critical 3, high 2, medium 1, low 0. `value` is in [0, 0.999], so a band never passes the band above it.
+- `value = uncertainty x effort x split`, rounded to 3 places and capped at 0.999.
+- Uncertainty, `emergency`: `4p(1-p)` of the emergency score (0.5 when it is missing).
+- Uncertainty, `urgency_today` and `urgency_time`: `4p(1-p)` of the urgency score (0.5 when it is missing).
+- Uncertainty, `start` and `area:*`: normalized entropy of the model scores of the need options, without N-X.
+- Uncertainty, `narrow:*`: mean of `4p(1-p)` over the need options, without N-X; 0 when there is none.
+- Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. N-X counts as an option; "None of these" does not.
+- Split: `1 - 2 x |biggest option count / total - 0.5|`, between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
+- `decide` fills `uncertainty`, `value` and `priority` with split 1. `finalize` recomputes `value` and `priority` after it drops options.
+- `emergency` is the only critical question, so it stays first.
+- `step` stays in the output for information only. It no longer sorts.
 
 ## Tests
 `npx jest src/v2/rules`. `engine.spec.ts` runs the 40 real model outputs in `__fixtures__/golden-scores.json` (copied from ml-broker's golden file) 1,000 times each and checks the output never changes.

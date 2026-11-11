@@ -11,6 +11,7 @@ import {
   LABELS,
   STEMS,
 } from './config';
+import { effort, priorityOf, uncertainty, valueOf } from './importance';
 import {
   childrenOf,
   displayOf,
@@ -68,6 +69,9 @@ export function buildCandidates(
       type: 'emergency',
       level: 'red',
       importance: 'critical',
+      value: 0,
+      priority: 0,
+      uncertainty: 0,
       reason: 'emergency_band',
       step: 0,
       parameter: 'urgency',
@@ -87,6 +91,9 @@ export function buildCandidates(
         type: 'confirm_urgency',
         level: 'orange',
         importance: 'high',
+        value: 0,
+        priority: 0,
+        uncertainty: 0,
         reason: 'urgency_unsure',
         step: 1,
         parameter: 'urgency',
@@ -100,6 +107,9 @@ export function buildCandidates(
         type: 'confirm_urgency',
         level: 'low',
         importance: 'low',
+        value: 0,
+        priority: 0,
+        uncertainty: 0,
         reason: 'urgency_unsure',
         step: 5,
         parameter: 'urgency',
@@ -121,9 +131,7 @@ export function buildCandidates(
       if (isTier2(c)) lockedAreas.add(tier1Of(c));
     }
     const eligible = (c: string) =>
-      !confirmed.includes(c) &&
-      !passed.has(c) &&
-      !lockedAreas.has(tier1Of(c));
+      !confirmed.includes(c) && !passed.has(c) && !lockedAreas.has(tier1Of(c));
     const byScore = (a: string, b: string) => sc(b) - sc(a) || cmp(a, b);
     const topChildren = (t1: string) =>
       childrenOf(t1)
@@ -142,6 +150,9 @@ export function buildCandidates(
         type: 'find_need',
         level: 'orange',
         importance: 'high',
+        value: 0,
+        priority: 0,
+        uncertainty: 0,
         reason,
         step: 3,
         parameter: 'needs',
@@ -213,6 +224,9 @@ export function buildCandidates(
           type: 'find_need',
           level: 'orange',
           importance: 'high',
+          value: 0,
+          priority: 0,
+          uncertainty: 0,
           reason: 'no_need',
           step: 2,
           parameter: 'needs',
@@ -241,6 +255,9 @@ export function buildCandidates(
           type: 'narrow',
           level: 'low',
           importance: sureTier2 ? 'low' : 'medium',
+          value: 0,
+          priority: 0,
+          uncertainty: 0,
           reason: 'unsure_needs',
           step: sureTier2 ? 7 : 4,
           parameter: 'needs',
@@ -255,6 +272,9 @@ export function buildCandidates(
           type: 'narrow',
           level: 'low',
           importance: 'low',
+          value: 0,
+          priority: 0,
+          uncertainty: 0,
           reason: 'unsure_needs',
           step: sureTier2 ? 8 : 6,
           parameter: 'needs',
@@ -264,6 +284,12 @@ export function buildCandidates(
         });
       }
     }
+  }
+
+  for (const q of out) {
+    q.uncertainty = uncertainty(q, signals);
+    q.value = valueOf(q.uncertainty, effort(q), 1);
+    q.priority = priorityOf(q.importance, q.value);
   }
 
   // 7. clarify never

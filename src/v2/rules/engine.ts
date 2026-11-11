@@ -1,6 +1,7 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
 import { buildCandidates, countCodesOf } from './questions';
+import { effort, priorityOf, splitQuality, valueOf } from './importance';
 import { NX } from './sune';
 import {
   Clarification,
@@ -46,14 +47,6 @@ export function decide(
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-function splitDistance(q: Question, total: number): number {
-  const counts = q.options
-    .filter((o) => typeof o.resultsCount === 'number')
-    .map((o) => o.resultsCount);
-  if (counts.length === 0 || total <= 0) return 0.5;
-  return Math.abs(Math.max(...counts) / total - 0.5);
-}
-
 export function finalize(
   decision: Decision,
   input: FinalizeInput,
@@ -96,12 +89,15 @@ export function finalize(
     kept.push(q);
   }
 
-  kept.sort(
-    (a, b) =>
-      a.step - b.step ||
-      splitDistance(a, total) - splitDistance(b, total) ||
-      cmp(a.id, b.id),
-  );
+  for (const q of kept) {
+    q.value = valueOf(
+      q.uncertainty,
+      effort(q),
+      q.parameter === 'needs' ? splitQuality(q, total) : 1,
+    );
+    q.priority = priorityOf(q.importance, q.value);
+  }
+  kept.sort((a, b) => b.priority - a.priority || cmp(a.id, b.id));
   return {
     rulesVersion: decision.rulesVersion,
     questions: kept.slice(0, CUTOFFS.maxQuestions),

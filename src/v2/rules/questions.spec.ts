@@ -247,7 +247,7 @@ describe('narrow', () => {
         'medium',
       );
     });
-    it('urgency_time comes before narrow:1 after finalize', () => {
+    it('urgency_time ranks below narrow:1 after finalize (higher value)', () => {
       const scores = { ...used, 'N-SAF-01': 0.24 };
       const d = decide(
         req(),
@@ -265,8 +265,8 @@ describe('narrow', () => {
       });
       const order = r.questions.map((q) => q.id);
       expect(order).toContain('urgency_time');
-      expect(order.indexOf('urgency_time')).toBeLessThan(
-        order.indexOf('narrow:1'),
+      expect(order.indexOf('narrow:1')).toBeLessThan(
+        order.indexOf('urgency_time'),
       );
     });
     it('no used Tier 2 need: narrow:1 stays at step 4', () => {
