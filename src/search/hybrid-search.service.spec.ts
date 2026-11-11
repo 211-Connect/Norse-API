@@ -161,6 +161,23 @@ describe('HybridSearchService', () => {
     expect(capturedMainRequest.knn).toBeUndefined();
   });
 
+  it("taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall).toBeDefined();
+    expect(taxonomyCall.knn).toBeUndefined();
+    const scoreQuery = taxonomyCall.query.script_score;
+    expect(scoreQuery.query).toEqual({ term: { tenant_id: 'tenant-a' } });
+    expect(scoreQuery.script.source).toContain(
+      "cosineSimilarity(params.qv, 'embedding')",
+    );
+    expect(scoreQuery.script.params.qv).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expect(taxonomyCall.size).toBe(10);
+  });
+
   it('emits one score-weighted constant_score clause per predicted code', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 

@@ -102,7 +102,6 @@ const BM25_ORG_NAME_BOOST = 6;
 const BM25_TAXONOMY_USE_REF_BOOST = 6;
 
 const TAXONOMY_K = 10;
-const TAXONOMY_NUM_CANDIDATES = 500;
 
 /**
  * Keep everything scoring at least this fraction of the top score.
@@ -648,6 +647,7 @@ export class HybridSearchService {
     try {
       const result = await this.metrics.observeDownstream(
         'elasticsearch',
+        // Label stays 'taxonomy_knn' for dashboard continuity.
         'taxonomy_knn',
         () =>
           this.elasticsearchService.search<{
@@ -659,12 +659,19 @@ export class HybridSearchService {
             size: TAXONOMY_K,
             track_total_hits: false,
             _source: ['code', 'name'],
-            knn: {
-              field: 'embedding',
-              query_vector: queryVector,
-              k: TAXONOMY_K,
-              num_candidates: TAXONOMY_NUM_CANDIDATES,
-              filter: [{ term: { tenant_id: tenantId } }],
+            // Exact cosine over the tenant's codes. (1 + cos) / 2 is the same
+            // scale as the knn _score for cosine similarity, so
+            // BASE_TAXONOMY_BOOST x score keeps its meaning. Approximate knn
+            // matched the exact top 10 on 73% of 300 real queries (ISS-2692).
+            query: {
+              script_score: {
+                query: { term: { tenant_id: tenantId } },
+                script: {
+                  source:
+                    "(cosineSimilarity(params.qv, 'embedding') + 1.0) / 2.0",
+                  params: { qv: queryVector },
+                },
+              },
             },
           }),
       );
