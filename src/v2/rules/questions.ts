@@ -12,6 +12,7 @@ import {
   STEMS,
 } from './config';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
+import { scoreOf } from './scores';
 import {
   childrenOf,
   displayOf,
@@ -129,7 +130,7 @@ export function buildCandidates(
   const passed = passedCodes(req);
   if (signals.needs.status === 'ok' && !confirmed.includes(NX)) {
     const scores = signals.needs.scores ?? {};
-    const sc = (c: string) => scores[c] ?? 0;
+    const sc = (c: string) => scoreOf(scores, c);
     const lockedAreas = new Set<string>();
     for (const c of confirmed) {
       if (isTier2(c)) lockedAreas.add(tier1Of(c));

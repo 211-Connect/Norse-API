@@ -1,6 +1,7 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
 import { buildCandidates, countCodesOf } from './questions';
+import { scoreOf } from './scores';
 import {
   effort,
   needUncertainty,
@@ -40,7 +41,7 @@ export function decide(
   return {
     rules_version: RULES_VERSION,
     option_scores: Object.fromEntries(
-      countCodes.map((c) => [c, scores[c] ?? 0]),
+      countCodes.map((c) => [c, scoreOf(scores, c)]),
     ),
     emergency: {
       band,

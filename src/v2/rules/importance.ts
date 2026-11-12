@@ -1,3 +1,4 @@
+import { finiteScore, scoreOf } from './scores';
 import { NX } from './sune';
 import { Question, QuestionImportance, RulesSignals } from './types';
 
@@ -32,7 +33,7 @@ export function normEntropy(ps: number[]): number {
 }
 
 const needScores = (q: Question, scores: Record<string, number>): number[] =>
-  q.options.filter((o) => o.value !== NX).map((o) => scores[o.value] ?? 0);
+  q.options.filter((o) => o.value !== NX).map((o) => scoreOf(scores, o.value));
 
 /** Uncertainty of a needs question over the options it has now. */
 export function needUncertainty(
@@ -50,12 +51,11 @@ export function needUncertainty(
 export function uncertainty(q: Question, signals: RulesSignals): number {
   if (q.id === 'emergency') {
     const e = signals.emergency;
-    const s =
-      e && e.status === 'ok' && typeof e.score === 'number' ? e.score : 0.5;
-    return yesNo(s);
+    const s = e && e.status === 'ok' ? finiteScore(e.score) : undefined;
+    return yesNo(s ?? 0.5);
   }
   if (q.id === 'urgency_today' || q.id === 'urgency_time') {
-    return yesNo(signals.urgency?.score ?? 0.5);
+    return yesNo(finiteScore(signals.urgency?.score) ?? 0.5);
   }
   return needUncertainty(q, signals.needs.scores ?? {});
 }

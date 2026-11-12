@@ -385,3 +385,34 @@ describe('golden fixture', () => {
     expect(d.cacheable).toBe(false);
   });
 });
+
+describe('non-finite need scores read as no score', () => {
+  it('an Infinity need score is not used, boosted or offered', () => {
+    const d = decide(req(), sig({ 'N-FOD-01': Infinity, 'N-HOU-01': 0.5 }));
+    expect(d.needs.map((n) => n.code)).not.toContain('N-FOD-01');
+    expect(d.boost_needs).not.toContain('N-FOD-01');
+    expect(d.count_codes).not.toContain('N-FOD-01');
+    for (const n of d.needs) {
+      if (n.confidence !== undefined) {
+        expect(Number.isFinite(n.confidence)).toBe(true);
+      }
+    }
+    for (const s of Object.values(d.option_scores)) {
+      expect(Number.isFinite(s)).toBe(true);
+    }
+  });
+  it('a NaN Tier 2 score does not hide a real Tier 2 from the area rule', () => {
+    // N-HOU-01 at 0.8 is above the area rule's Tier 2 cap (0.5), so the rule
+    // must not fire; a NaN elsewhere must not turn the max into NaN.
+    const d = decide(
+      req(),
+      sig({ 'N-HOU': 0.95, 'N-HOU-01': 0.8, 'N-FOD-01': NaN }),
+    );
+    expect(d.candidates.map((c) => c.reason)).not.toContain('area_only');
+  });
+  it('a NaN Tier 1 score never wins the starting areas', () => {
+    const d = decide(req(), sig({ 'N-HOU': NaN, 'N-FOD': 0.6 }));
+    const start = d.candidates.find((c) => c.id === 'start');
+    expect(start?.options[0].value).toBe('N-FOD');
+  });
+});

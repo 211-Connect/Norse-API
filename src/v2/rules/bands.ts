@@ -1,4 +1,5 @@
 import { CUTOFFS } from './config';
+import { finiteScore, scoreOf } from './scores';
 import {
   allTier1,
   allTier2,
@@ -19,18 +20,14 @@ import {
 
 export function emergencyBand(e: EmergencySignal | null): EmergencyBand {
   if (e === null || e === undefined) return 'none';
-  if (
-    e.status === 'error' ||
-    typeof e.score !== 'number' ||
-    !Number.isFinite(e.score)
-  )
-    return 'unknown';
+  const score = finiteScore(e.score);
+  if (e.status === 'error' || score === undefined) return 'unknown';
   const { popup, soft } = CUTOFFS.emergency;
-  if (e.floor_hit) return e.score >= popup ? 'popup' : 'soft';
-  if (e.calm_context) return e.score >= soft ? 'soft' : 'none';
-  if (e.dv_shelter && e.score < popup) return 'soft';
-  if (e.score >= popup) return 'popup';
-  if (e.score >= soft) return 'soft';
+  if (e.floor_hit) return score >= popup ? 'popup' : 'soft';
+  if (e.calm_context) return score >= soft ? 'soft' : 'none';
+  if (e.dv_shelter && score < popup) return 'soft';
+  if (score >= popup) return 'popup';
+  if (score >= soft) return 'soft';
   return 'none';
 }
 
@@ -44,8 +41,9 @@ export function urgencyState(
   if (signals.needs.status !== 'ok' || !signals.urgency) {
     return { value: 'U-X', source: 'default', state: 'drop' };
   }
-  const { score, level } = signals.urgency;
-  if (!Number.isFinite(score)) {
+  const { level } = signals.urgency;
+  const score = finiteScore(signals.urgency.score);
+  if (score === undefined) {
     return { value: 'U-X', source: 'default', state: 'drop' };
   }
   if (score < CUTOFFS.urgency.drop) {
@@ -99,7 +97,7 @@ export function needStates(
   if (signals.needs.status === 'ok') {
     for (const code of [...allTier1(), ...allTier2()]) {
       if (code === NX || skip.has(code)) continue;
-      const s = scores[code] ?? 0;
+      const s = scoreOf(scores, code);
       if (s >= CUTOFFS.needs.use) {
         inferredUse.push({
           code,
@@ -133,7 +131,8 @@ export function needStates(
   const nx =
     !anyUseBesidesNx &&
     (confirmed.includes(NX) ||
-      (signals.needs.status === 'ok' && (scores[NX] ?? 0) >= CUTOFFS.nx.label));
+      (signals.needs.status === 'ok' &&
+        scoreOf(scores, NX) >= CUTOFFS.nx.label));
 
   return { needs: states, boostNeeds: boost, nx, inferredAsk };
 }
@@ -148,14 +147,14 @@ export function areaRuleTarget(
   let best: string | null = null;
   let bestScore = -1;
   for (const code of allTier1()) {
-    const s = scores[code] ?? 0;
+    const s = scoreOf(scores, code);
     if (s > bestScore || (s === bestScore && code < best)) {
       best = code;
       bestScore = s;
     }
   }
   if (best === null || bestScore < CUTOFFS.area.tier1Min) return null;
-  const maxT2 = Math.max(0, ...allTier2().map((c) => scores[c] ?? 0));
+  const maxT2 = Math.max(0, ...allTier2().map((c) => scoreOf(scores, c)));
   if (maxT2 >= CUTOFFS.area.tier2Max) return null;
   const locked = new Set(confirmedCodes(req));
   for (const c of locked) {
