@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { decide, finalize } from './engine';
-import { RULES_VERSION } from './config';
+import { LABELS, RULES_VERSION } from './config';
 import { BAND_BASE } from './importance';
-import { isTier1, isTier2, tier1Of } from './sune';
+import { displayOf, isTier1, isTier2, NX, tier1Of } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 import { Decision } from './types';
 
@@ -414,5 +414,11 @@ describe('non-finite need scores read as no score', () => {
     const d = decide(req(), sig({ 'N-HOU': NaN, 'N-FOD': 0.6 }));
     const start = d.candidates.find((c) => c.id === 'start');
     expect(start?.options[0].value).toBe('N-FOD');
+  });
+});
+
+describe('N-X label', () => {
+  it('displayOf(N-X) is LABELS.nx, one source for the text', () => {
+    expect(displayOf(NX)).toBe(LABELS.nx);
   });
 });

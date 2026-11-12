@@ -1,3 +1,4 @@
+import { LABELS } from './config';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
 const sune = { tier1: SUNE_TIER1, tier2: SUNE_TIER2 };
@@ -24,6 +25,4 @@ export const tier1Of = (code: string): string | null =>
 export const childrenOf = (tier1: string): string[] =>
   TIER2.filter((c) => PARENT.get(c) === tier1);
 export const displayOf = (code: string): string =>
-  code === NX
-    ? 'A specific place or organization'
-    : (DISPLAY.get(code) ?? code);
+  code === NX ? LABELS.nx : (DISPLAY.get(code) ?? code);
