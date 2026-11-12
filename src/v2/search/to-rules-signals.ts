@@ -1,0 +1,51 @@
+import { SearchClassificationResponse } from 'src/ml-broker/ml-broker-http.service';
+import { EmergencySignal, RulesSignals } from '../rules/types';
+
+export interface ClassifyResult {
+  signals: RulesSignals;
+  scores: Record<string, number>;
+  modelVersion: string | null;
+}
+
+const orUndefined = <T>(value: T | null | undefined): T | undefined =>
+  value ?? undefined;
+
+/**
+ * Maps an ml-broker `search-classification` body (already shape-checked by
+ * MlBrokerHttpService) to rules-engine signals: need scores list to a map,
+ * snake_case to camelCase, null to undefined, urgency nested under needs.
+ * An emergency block that is missing or has an unknown status maps to
+ * `{ status: 'error' }`.
+ */
+export function toRulesSignals(
+  body: SearchClassificationResponse,
+): ClassifyResult {
+  const scores: Record<string, number> = {};
+  for (const entry of body.needs.scores) scores[entry.code] = entry.score;
+
+  const e = body.emergency;
+  const emergency: EmergencySignal =
+    e && (e.status === 'ok' || e.status === 'error')
+      ? {
+          status: e.status,
+          score: orUndefined(e.score),
+          floorHit: orUndefined(e.floor_hit),
+          calmContext: orUndefined(e.calm_context),
+          dvShelter: orUndefined(e.dv_shelter),
+        }
+      : { status: 'error' };
+
+  return {
+    signals: {
+      needs: {
+        status: 'ok',
+        scores,
+        urgency: { level: body.urgency.level, score: body.urgency.score },
+      },
+      emergency,
+    },
+    scores,
+    modelVersion:
+      typeof body.model_version === 'string' ? body.model_version : null,
+  };
+}
