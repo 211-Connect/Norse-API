@@ -53,7 +53,7 @@ describe('MetricsController', () => {
     expect(metricsMock.getMetrics).not.toHaveBeenCalled();
   });
 
-  it('responds 200 with the prometheus content type when enabled without a token', async () => {
+  it('responds 200 with the OpenMetrics content type when enabled without a token', async () => {
     instantiate({ endpointEnabled: true });
     const { res, resMock } = buildRes();
 
@@ -61,7 +61,8 @@ describe('MetricsController', () => {
 
     expect(resMock.status).toHaveBeenCalledWith(200);
     expect(resMock.set).toHaveBeenCalledWith({
-      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+      'Content-Type':
+        'application/openmetrics-text; version=1.0.0; charset=utf-8',
       'Cache-Control': 'no-store',
     });
     expect(resMock.send).toHaveBeenCalledWith('# HELP mocked\n');

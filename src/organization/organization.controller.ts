@@ -3,10 +3,16 @@ import {
   Get,
   Param,
   Query,
+  Req,
   UseGuards,
   ValidationPipe,
   Version,
 } from '@nestjs/common';
+import { Request } from 'express';
+import {
+  UsageMetricsService,
+  searchOutcomeFromTotal,
+} from 'src/metrics/usage-metrics.service';
 import {
   ApiHeader,
   ApiOperation,
@@ -35,6 +41,7 @@ export class OrganizationController {
   constructor(
     private readonly service: OrganizationService,
     private readonly detailService: OrganizationDetailService,
+    private readonly usageMetrics: UsageMetricsService,
   ) {}
 
   @Get()
@@ -69,8 +76,9 @@ export class OrganizationController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchOrganizationQueryDto,
+    @Req() req: Request,
   ) {
-    return this.service.search({ headers, query });
+    return this.trackSearch(req, this.service.search({ headers, query }));
   }
 
   @Get('service-at-location/:salId')
@@ -131,5 +139,31 @@ export class OrganizationController {
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
   ) {
     return this.detailService.findById(id, { headers });
+  }
+
+  /**
+   * Records the organization typeahead request once it settles, with
+   * `search_type="organization"` (ES operation `organization_search`).
+   */
+  private async trackSearch<T extends { total: number }>(
+    req: Request | undefined,
+    pending: Promise<T>,
+  ): Promise<T> {
+    const context = {
+      tenantId: req?.tenantId,
+      acceptLanguage: req?.headers?.['accept-language'],
+    };
+    try {
+      const response = await pending;
+      this.usageMetrics.recordSearchRequest(
+        context,
+        'organization',
+        searchOutcomeFromTotal(response.total),
+      );
+      return response;
+    } catch (error) {
+      this.usageMetrics.recordSearchRequest(context, 'organization', 'error');
+      throw error;
+    }
   }
 }

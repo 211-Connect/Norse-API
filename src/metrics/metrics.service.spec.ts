@@ -1,23 +1,33 @@
 import {
   BadGatewayException,
-  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Counter, Pushgateway, register } from 'prom-client';
+import { TraceFlags, trace, type SpanContext } from '@opentelemetry/api';
+import { Counter, Histogram, Registry, register } from '@prometheus-io/client';
 import { MetricsService } from './metrics.service';
+
+const SAMPLED_TRACE_ID = '0af7651916cd43dd8448eb211c80319c';
+const SPAN_ID = 'b7ad6b7169203331';
+
+/** Makes this span context the one returned by `trace.getActiveSpan()`. */
+const mockActiveSpanContext = (spanContext: SpanContext): void => {
+  jest
+    .spyOn(trace, 'getActiveSpan')
+    .mockReturnValue(trace.wrapSpanContext(spanContext));
+};
+
+const spanContextWith = (traceFlags: TraceFlags): SpanContext => ({
+  traceId: SAMPLED_TRACE_ID,
+  spanId: SPAN_ID,
+  traceFlags,
+});
 
 describe('MetricsService', () => {
   let service: MetricsService;
 
-  const configServiceMock = {
-    get: jest.fn((key: string) =>
-      key === 'PUSH_GATEWAY_URL' ? '' : undefined,
-    ),
-  };
-
   beforeEach(() => {
     register.clear();
-    service = new MetricsService(configServiceMock as never);
+    service = new MetricsService();
   });
 
   afterEach(() => {
@@ -78,6 +88,70 @@ describe('MetricsService', () => {
     expect(count.value).toBe(1);
   });
 
+  it('serves metrics as OpenMetrics', async () => {
+    expect(service.getContentType()).toBe(Registry.OPENMETRICS_CONTENT_TYPE);
+    expect(register.contentType).toBe(Registry.OPENMETRICS_CONTENT_TYPE);
+    expect(await service.getMetrics()).toContain('# EOF');
+  });
+
+  it('attaches a trace_id exemplar to the http duration histogram for a sampled span', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.SAMPLED));
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toMatch(
+      /norse_http_request_duration_seconds_bucket\{[^\n]*\} 1 # \{trace_id="0af7651916cd43dd8448eb211c80319c"\}/,
+    );
+  });
+
+  it('attaches no exemplar when the active span is unsampled', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.NONE));
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toContain('norse_http_request_duration_seconds_count');
+    expect(output).not.toContain('trace_id=');
+  });
+
+  it('attaches no exemplar when there is no active span', async () => {
+    service.recordHttpRequest(
+      'GET',
+      'ResourceController.getResourceById',
+      'resource',
+      '200',
+      'tenant-1',
+      0.1,
+    );
+
+    const output = await service.getMetrics();
+    expect(output).toContain('norse_http_request_duration_seconds_count');
+    expect(output).not.toContain('trace_id=');
+  });
+
+  it('attaches a trace_id exemplar to the downstream duration histogram for a sampled span', async () => {
+    mockActiveSpanContext(spanContextWith(TraceFlags.SAMPLED));
+    await service.observeDownstream('ml_broker', 'predict', async () => 'ok');
+
+    const output = await service.getMetrics();
+    expect(output).toMatch(
+      /norse_downstream_duration_seconds_bucket\{[^\n]*\} 1 # \{trace_id="0af7651916cd43dd8448eb211c80319c"\}/,
+    );
+  });
+
   it('records cache access counter series with labels and value 1', async () => {
     service.recordCacheAccess('request-redis', 'hit');
 
@@ -130,6 +204,36 @@ describe('MetricsService', () => {
     });
   });
 
+  it('observes the downstream duration histogram with the same outcome labels', async () => {
+    const metric = register.getSingleMetric(
+      'norse_downstream_duration_seconds',
+    ) as Histogram<string>;
+
+    await service.observeDownstream('ml_broker', 'predict', async () => 'ok');
+
+    await expect(
+      service.observeDownstream('ml_broker', 'predict', async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    const counts = (await metric.get()).values.filter((v) =>
+      v.metricName?.endsWith('_count'),
+    );
+    expect(counts).toHaveLength(2);
+    for (const count of counts) {
+      expect(count.labels).toMatchObject({
+        dependency: 'ml_broker',
+        operation: 'predict',
+      });
+      expect(count.value).toBe(1);
+    }
+    expect(counts.map((count) => count.labels.outcome).sort()).toEqual([
+      'error',
+      'ok',
+    ]);
+  });
+
   const expectOutcome = async (
     err: unknown,
     outcome: 'ok' | 'timeout' | 'error',
@@ -180,234 +284,5 @@ describe('MetricsService', () => {
       operation: 'predict',
       outcome: 'error',
     });
-  });
-
-  it('does not register push self-observability metrics when push is disabled', () => {
-    register.clear();
-    const disabledConfig = {
-      get: jest.fn((key: string) =>
-        key === 'PUSH_METRICS_ENABLED' ? false : undefined,
-      ),
-    };
-    const disabled = new MetricsService(disabledConfig as never);
-
-    expect(
-      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
-    ).toBeUndefined();
-    expect(
-      register.getSingleMetric('norse_metrics_push_failures_total'),
-    ).toBeUndefined();
-    // Scrape surface still exists.
-    expect(typeof disabled.getContentType()).toBe('string');
-  });
-
-  it('does not register push metrics or warn when gateway URL is empty even if push is enabled', () => {
-    register.clear();
-    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'PUSH_METRICS_ENABLED'
-          ? true
-          : key === 'METRICS_ENDPOINT_ENABLED'
-            ? true
-            : undefined,
-      ),
-    };
-    new MetricsService(config as never);
-
-    expect(
-      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
-    ).toBeUndefined();
-    expect(
-      register.getSingleMetric('norse_metrics_push_failures_total'),
-    ).toBeUndefined();
-    expect(
-      warnSpy.mock.calls.some(([msg]) =>
-        String(msg).includes('both push and scrape'),
-      ),
-    ).toBe(false);
-    warnSpy.mockRestore();
-  });
-
-  it('does not register push metrics or warn when push is disabled with a gateway URL', () => {
-    register.clear();
-    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'PUSH_GATEWAY_URL'
-          ? 'http://gw:9091'
-          : key === 'PUSH_METRICS_ENABLED'
-            ? false
-            : key === 'METRICS_ENDPOINT_ENABLED'
-              ? true
-              : undefined,
-      ),
-    };
-    new MetricsService(config as never);
-
-    expect(
-      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
-    ).toBeUndefined();
-    expect(
-      register.getSingleMetric('norse_metrics_push_failures_total'),
-    ).toBeUndefined();
-    expect(
-      warnSpy.mock.calls.some(([msg]) =>
-        String(msg).includes('both push and scrape'),
-      ),
-    ).toBe(false);
-    warnSpy.mockRestore();
-  });
-
-  it('registers push metrics and warns about double counting when push and scrape are both active', async () => {
-    register.clear();
-    jest.useFakeTimers();
-    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
-    const pushSpy = jest
-      .spyOn(Pushgateway.prototype, 'push')
-      .mockResolvedValue({});
-    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'PUSH_GATEWAY_URL'
-          ? 'http://gw:9091'
-          : key === 'PUSH_METRICS_ENABLED'
-            ? true
-            : key === 'METRICS_ENDPOINT_ENABLED'
-              ? true
-              : key === 'PUSH_INTERVAL_MS'
-                ? 15000
-                : undefined,
-      ),
-    };
-    const svc = new MetricsService(config as never);
-
-    expect(
-      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
-    ).toBeDefined();
-    expect(
-      register.getSingleMetric('norse_metrics_push_failures_total'),
-    ).toBeDefined();
-    expect(
-      warnSpy.mock.calls.some(([msg]) =>
-        String(msg).includes('both push and scrape'),
-      ),
-    ).toBe(true);
-
-    await svc.onModuleDestroy();
-    expect(pushSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
-  });
-
-  it('registers push metrics without warning when scrape endpoint is disabled', () => {
-    register.clear();
-    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
-    jest.spyOn(Pushgateway.prototype, 'push').mockResolvedValue({});
-    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
-    const config = {
-      get: jest.fn((key: string) =>
-        key === 'PUSH_GATEWAY_URL'
-          ? 'http://gw:9091'
-          : key === 'PUSH_METRICS_ENABLED'
-            ? true
-            : key === 'METRICS_ENDPOINT_ENABLED'
-              ? false
-              : key === 'PUSH_INTERVAL_MS'
-                ? 15000
-                : undefined,
-      ),
-    };
-    const svc = new MetricsService(config as never);
-
-    expect(
-      register.getSingleMetric('norse_metrics_push_success_timestamp_seconds'),
-    ).toBeDefined();
-    expect(
-      register.getSingleMetric('norse_metrics_push_failures_total'),
-    ).toBeDefined();
-    expect(
-      warnSpy.mock.calls.some(([msg]) =>
-        String(msg).includes('both push and scrape'),
-      ),
-    ).toBe(false);
-
-    void svc.onModuleDestroy();
-    warnSpy.mockRestore();
-  });
-
-  it('onModuleDestroy resolves when no pushgateway is configured', async () => {
-    await expect(service.onModuleDestroy()).resolves.toBeUndefined();
-  });
-
-  it('onModuleDestroy waits for an in-flight periodic push before deleting the group', async () => {
-    jest.useFakeTimers();
-    const gatewayConfigMock = {
-      get: jest.fn((key: string) => {
-        if (key === 'PUSH_GATEWAY_URL') return 'http://gateway:9091';
-        if (key === 'PUSH_METRICS_ENABLED') return true;
-        if (key === 'PUSH_INTERVAL_MS') return 15000;
-        return undefined;
-      }),
-    };
-
-    const callOrder: string[] = [];
-    register.clear();
-    let resolveFirstPush: (value: {
-      resp?: unknown;
-      body?: unknown;
-    }) => void = () => {};
-    const firstPush = new Promise<{ resp?: unknown; body?: unknown }>(
-      (resolve) => {
-        resolveFirstPush = resolve;
-      },
-    );
-    let pushCount = 0;
-    jest.spyOn(Pushgateway.prototype, 'push').mockImplementation(() => {
-      pushCount += 1;
-      callOrder.push('push');
-      return pushCount === 1 ? firstPush : Promise.resolve({});
-    });
-    const deleteSpy = jest
-      .spyOn(Pushgateway.prototype, 'delete')
-      .mockImplementation(() => {
-        callOrder.push('delete');
-        return Promise.resolve({});
-      });
-
-    const gatewayService = new MetricsService(gatewayConfigMock as never);
-
-    jest.advanceTimersByTime(15000);
-    const destroy = gatewayService.onModuleDestroy();
-
-    expect(deleteSpy).not.toHaveBeenCalled();
-
-    resolveFirstPush({});
-    await destroy;
-
-    expect(callOrder).toEqual(['push', 'push', 'delete']);
-  });
-
-  it('configures the pushgateway with a 5s request timeout', async () => {
-    jest.useFakeTimers();
-    const gatewayConfigMock = {
-      get: jest.fn((key: string) => {
-        if (key === 'PUSH_GATEWAY_URL') return 'http://gateway:9091';
-        if (key === 'PUSH_METRICS_ENABLED') return true;
-        if (key === 'PUSH_INTERVAL_MS') return 15000;
-        return undefined;
-      }),
-    };
-    jest.spyOn(Pushgateway.prototype, 'push').mockResolvedValue({});
-    jest.spyOn(Pushgateway.prototype, 'delete').mockResolvedValue({});
-
-    register.clear();
-    const svc = new MetricsService(gatewayConfigMock as never);
-
-    const gateway = (
-      svc as unknown as { gateway: { requestOptions: { timeout?: number } } }
-    ).gateway;
-    expect(gateway.requestOptions.timeout).toBe(5000);
-
-    await svc.onModuleDestroy();
   });
 });

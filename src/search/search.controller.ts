@@ -10,11 +10,13 @@ import {
   BadRequestException,
   ValidationPipe,
   UseGuards,
+  applyDecorators,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import {
   ApiBody,
   ApiHeader,
+  ApiOperation,
   ApiQuery,
   ApiResponse,
   ApiTags,
@@ -22,6 +24,7 @@ import {
 import { ZodValidationPipe } from '../common/pipes/zod-validation-pipe';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResponseDto } from './dto/search-response.dto';
+import { SearchPinsResponseDto } from './dto/search-pins-response.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
 import { HeadersDto, headersSchema } from '../common/dto/headers.dto';
 import { CustomHeaders } from '../common/decorators/CustomHeaders';
@@ -40,6 +43,13 @@ import { AiSearchPredictResponseDto } from './dto/ai-search-predict-response.dto
 import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { ArcjetGuard } from '../common/guards/arcjet.guard';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
+import {
+  SearchType,
+  UsageMetricsService,
+  searchOutcomeFromHits,
+  searchTypeFor,
+} from '../metrics/usage-metrics.service';
+import { Request } from 'express';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -82,6 +92,76 @@ const RELEVANCE_CUTOFF_PARAM_DESCRIPTION =
   '`relevance_cutoff.matched_before_cutoff`. A `relevance_cutoff` object is ' +
   'added to the response whenever this param is `on`.';
 
+// The params GET /search and GET /search/pins share. Both handlers document them
+// through this so the two endpoints can't drift; pagination stays on GET /search.
+const ApiSearchParams = () =>
+  applyDecorators(
+    ApiQuery({
+      name: 'distance',
+      required: false,
+      description:
+        'Radius in miles. Only takes effect when `coords` is also set.',
+      schema: { default: 0, type: 'integer', minimum: 0 },
+    }),
+    ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } }),
+    ApiQuery({
+      name: 'coords',
+      required: false,
+      description: 'Comma delimited list of longitude,latitude',
+      schema: {
+        example: '-120.740135,47.751076',
+      },
+    }),
+    ApiQuery({
+      name: 'geo_type',
+      required: false,
+      enum: ['boundary', 'proximity'],
+      description:
+        "Controls how coords/distance combine with a resource's declared service_area. " +
+        'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
+        'service_area that geographically contains the exact `coords` point — both required. ' +
+        '`proximity`: skips the service_area check; returns anything within `distance` of ' +
+        '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
+        '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
+        'shape; POST only, 400s on GET without a body.',
+    }),
+    ApiQuery({
+      name: 'age',
+      required: false,
+      description: 'Searcher age used to match minimum_age/service.maximum_age',
+      schema: { type: 'integer', minimum: 0 },
+    }),
+    ApiQuery({
+      name: 'query_type',
+      required: false,
+      enum: SEARCH_QUERY_TYPES,
+      description: QUERY_TYPE_PARAM_DESCRIPTION,
+      schema: { default: 'text' },
+    }),
+    ApiQuery({
+      name: 'taxonomy',
+      required: false,
+      description:
+        'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
+      schema: { type: 'string', example: 'BM-1400,BM-1700' },
+    }),
+    ApiQuery({
+      name: 'sort',
+      required: false,
+      enum: ['relevance', 'distance', 'name', 'organization'],
+      description: SORT_PARAM_DESCRIPTION,
+      schema: { default: 'relevance' },
+    }),
+    ApiQuery({
+      name: 'relevance_cutoff',
+      required: false,
+      enum: RELEVANCE_CUTOFF_VALUES,
+      description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
+      schema: { default: 'off' },
+    }),
+    ApiQueryForComplexSearch(),
+  );
+
 @ApiTags('Search')
 @Controller('search')
 @ApiTenantIdQuery()
@@ -98,6 +178,7 @@ export class SearchController {
   constructor(
     private readonly searchService: SearchService,
     private readonly aiSearchService: AiSearchService,
+    private readonly usageMetrics: UsageMetricsService,
   ) {}
 
   @Get()
@@ -124,81 +205,23 @@ export class SearchController {
     required: false,
     schema: { minimum: 25, maximum: 300, default: 25, type: 'integer' },
   })
-  @ApiQuery({
-    name: 'distance',
-    required: false,
-    description:
-      'Radius in miles. Only takes effect when `coords` is also set.',
-    schema: { default: 0, type: 'integer', minimum: 0 },
-  })
-  @ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } })
-  @ApiQuery({
-    name: 'coords',
-    required: false,
-    description: 'Comma delimited list of longitude,latitude',
-    schema: {
-      example: '-120.740135,47.751076',
-    },
-  })
-  @ApiQuery({
-    name: 'geo_type',
-    required: false,
-    enum: ['boundary', 'proximity'],
-    description:
-      "Controls how coords/distance combine with a resource's declared service_area. " +
-      'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
-      'service_area that geographically contains the exact `coords` point — both required. ' +
-      '`proximity`: skips the service_area check; returns anything within `distance` of ' +
-      '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
-      '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
-      'shape; POST only, 400s on GET without a body.',
-  })
   @ApiQuery({ name: 'page', required: false, schema: { default: 1 } })
-  @ApiQuery({
-    name: 'age',
-    required: false,
-    description: 'Searcher age used to match minimum_age/service.maximum_age',
-    schema: { type: 'integer', minimum: 0 },
-  })
-  @ApiQuery({
-    name: 'query_type',
-    required: false,
-    enum: SEARCH_QUERY_TYPES,
-    description: QUERY_TYPE_PARAM_DESCRIPTION,
-    schema: { default: 'text' },
-  })
-  @ApiQuery({
-    name: 'taxonomy',
-    required: false,
-    description:
-      'Comma-delimited HSIS taxonomy codes used as a hard scope for hybrid search (e.g. BM-1400,BM-1700)',
-    schema: { type: 'string', example: 'BM-1400,BM-1700' },
-  })
-  @ApiQuery({
-    name: 'sort',
-    required: false,
-    enum: ['relevance', 'distance', 'name', 'organization'],
-    description: SORT_PARAM_DESCRIPTION,
-    schema: { default: 'relevance' },
-  })
-  @ApiQuery({
-    name: 'relevance_cutoff',
-    required: false,
-    enum: RELEVANCE_CUTOFF_VALUES,
-    description: RELEVANCE_CUTOFF_PARAM_DESCRIPTION,
-    schema: { default: 'off' },
-  })
-  @ApiQueryForComplexSearch()
+  @ApiSearchParams()
   getResources(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: SearchResourcesQueryDto,
+    @Req() req: Request,
   ): Promise<SearchResponse> {
     try {
-      return this.searchService.searchResources({
-        headers,
-        query,
-      });
+      return this.trackSearch(
+        req,
+        searchTypeFor(query.query_type, query.query),
+        this.searchService.searchResources({
+          headers,
+          query,
+        }),
+      );
     } catch (error) {
       // Attach minimal context and rethrow a controlled HTTP exception
       const message = error?.message ?? 'Search failed';
@@ -322,7 +345,7 @@ export class SearchController {
     query: SearchResourcesQueryDto,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: SearchResourcesBodyDto,
-    @Req() req,
+    @Req() req: Request,
   ) {
     // Validate Content-Type
     const contentType = req.headers['content-type'];
@@ -330,11 +353,47 @@ export class SearchController {
       throw new BadRequestException('Content-Type must be application/json');
     }
 
-    return this.searchService.searchResources({
-      headers,
-      query,
-      body,
-    });
+    return this.trackSearch(
+      req,
+      searchTypeFor(query.query_type, query.query),
+      this.searchService.searchResources({
+        headers,
+        query,
+        body,
+      }),
+    );
+  }
+
+  @Get('pins')
+  @Version('1')
+  @UseGuards(ArcjetGuard)
+  @SetCdnCacheTTL(ONE_HOUR)
+  @ApiOperation({
+    summary: 'Map pins for a search',
+    description:
+      'The locations of a search independent of list pagination, up to 10,000. ' +
+      'Takes the same params as GET /search; `page` and `limit` are ignored. ' +
+      'Matches without coordinates are left out, including from `total`.',
+  })
+  @ApiResponse({ status: 200, type: SearchPinsResponseDto })
+  @ApiHeader({
+    name: 'accept-language',
+    schema: {
+      default: 'en',
+    },
+  })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
+  @ApiSearchParams()
+  getPins(
+    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: SearchResourcesQueryDto,
+  ): Promise<SearchPinsResponseDto> {
+    return this.searchService.searchPins({ headers, query });
   }
 
   @Get('predict')
@@ -410,6 +469,33 @@ export class SearchController {
       need_weights: this.parseNeedWeightsQuery(query.need_weights),
       top_k: query.top_k,
     });
+  }
+
+  /**
+   * Records the usage counter once the search settles: `results` /
+   * `zero_results` from the response, `error` when the promise rejects.
+   */
+  private async trackSearch(
+    req: Request | undefined,
+    searchType: SearchType,
+    pending: Promise<SearchResponse>,
+  ): Promise<SearchResponse> {
+    const context = {
+      tenantId: req?.tenantId,
+      acceptLanguage: req?.headers?.['accept-language'],
+    };
+    try {
+      const response = await pending;
+      this.usageMetrics.recordSearchRequest(
+        context,
+        searchType,
+        searchOutcomeFromHits(response.search?.hits),
+      );
+      return response;
+    } catch (error) {
+      this.usageMetrics.recordSearchRequest(context, searchType, 'error');
+      throw error;
+    }
   }
 
   private parseNeedWeightsQuery(

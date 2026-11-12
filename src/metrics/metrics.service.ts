@@ -1,19 +1,42 @@
-import os from 'node:os';
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
+import { TraceFlags, isSpanContextValid, trace } from '@opentelemetry/api';
 import {
   Counter,
-  Gauge,
   Histogram,
-  PrometheusContentType,
-  Pushgateway,
+  Registry,
   collectDefaultMetrics,
   register,
-} from 'prom-client';
+} from '@prometheus-io/client';
 
 const DURATION_BUCKETS_SECONDS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 ];
+
+// Histogram exemplars exist only in the OpenMetrics exposition, and the client
+// refuses to build an exemplar-enabled metric on a Prometheus registry. Switch
+// the process registry before any metric is created; MetricsController serves
+// the matching content type from `register.contentType`.
+register.setContentType(Registry.OPENMETRICS_CONTENT_TYPE);
+
+/**
+ * Trace id to attach as an exemplar label, or undefined when the active span
+ * context is invalid or unsampled. Exemplars must not claim a trace that
+ * Tempo will never store.
+ */
+function sampledTraceId(): string | undefined {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (!spanContext || !isSpanContextValid(spanContext)) return undefined;
+  if ((spanContext.traceFlags & TraceFlags.SAMPLED) !== TraceFlags.SAMPLED) {
+    return undefined;
+  }
+  return spanContext.traceId;
+}
+
+/** OpenMetrics exemplar labels for the active sampled span, if any. */
+function exemplarLabels(): { trace_id: string } | undefined {
+  const traceId = sampledTraceId();
+  return traceId ? { trace_id: traceId } : undefined;
+}
 
 export type DownstreamOutcome = 'ok' | 'timeout' | 'error';
 
@@ -27,55 +50,16 @@ export type CacheName =
 
 export type CacheResult = 'hit' | 'miss' | 'coalesced' | 'get-error';
 
-const PUSH_JOB_NAME = 'norse_api';
-
-const PUSH_REQUEST_TIMEOUT_MS = 5_000;
-
 @Injectable()
-export class MetricsService implements OnModuleDestroy {
-  private readonly logger = new Logger(MetricsService.name);
-  private readonly pushFailuresCounter: Counter | null;
-  private readonly lastPushSuccessGauge: Gauge | null;
+export class MetricsService {
   private readonly httpRequestsCounter: Counter<string>;
   private readonly httpDurationHistogram: Histogram<string>;
   private readonly downstreamRequestsCounter: Counter<string>;
   private readonly downstreamDurationHistogram: Histogram<string>;
-  private readonly cacheRequestsCounter: Counter;
-  private readonly gateway: Pushgateway<PrometheusContentType> | null;
-  private readonly pushIntervalMs: number;
-  private readonly instanceId = `${os.hostname()}:${process.pid}`;
-  private pushInterval: NodeJS.Timeout | null = null;
-  private inflightPush: Promise<void> | null = null;
+  private readonly cacheRequestsCounter: Counter<string>;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor() {
     collectDefaultMetrics({ register });
-
-    const gatewayUrl = this.configService.get<string>('PUSH_GATEWAY_URL');
-    const pushEnabled = this.configService.get<boolean>(
-      'PUSH_METRICS_ENABLED',
-      true,
-    );
-    // Push is only active when a gateway URL is configured AND pushes are
-    // enabled; a scrape-only pod must not register push status metrics.
-    const pushActive = Boolean(gatewayUrl) && pushEnabled;
-    if (pushActive) {
-      this.pushFailuresCounter = this.createOrGetCounter({
-        name: 'norse_metrics_push_failures_total',
-        help: 'Total failed Pushgateway pushes from this instance',
-        labelNames: [],
-        registers: [register],
-      });
-
-      this.lastPushSuccessGauge = this.createOrGetGauge({
-        name: 'norse_metrics_push_success_timestamp_seconds',
-        help: 'Unix timestamp of the last successful Pushgateway push',
-        labelNames: [],
-        registers: [register],
-      });
-    } else {
-      this.pushFailuresCounter = null;
-      this.lastPushSuccessGauge = null;
-    }
 
     this.httpRequestsCounter = this.createOrGetCounter({
       name: 'norse_http_requests_total',
@@ -89,6 +73,7 @@ export class MetricsService implements OnModuleDestroy {
       help: 'HTTP request duration in seconds',
       labelNames: ['method', 'handler'],
       buckets: DURATION_BUCKETS_SECONDS,
+      enableExemplars: true,
       registers: [register],
     });
 
@@ -102,8 +87,9 @@ export class MetricsService implements OnModuleDestroy {
     this.downstreamDurationHistogram = this.createOrGetHistogram({
       name: 'norse_downstream_duration_seconds',
       help: 'Downstream request duration in seconds',
-      labelNames: ['dependency', 'operation'],
+      labelNames: ['dependency', 'operation', 'outcome'],
       buckets: DURATION_BUCKETS_SECONDS,
+      enableExemplars: true,
       registers: [register],
     });
 
@@ -113,40 +99,11 @@ export class MetricsService implements OnModuleDestroy {
       labelNames: ['cache', 'result'],
       registers: [register],
     });
-
-    this.pushIntervalMs = this.configService.get<number>('PUSH_INTERVAL_MS');
-
-    if (pushActive) {
-      const username = this.configService.get<string>('PUSH_GATEWAY_USERNAME');
-      const password = this.configService.get<string>('PUSH_GATEWAY_PASSWORD');
-      const options = {
-        timeout: PUSH_REQUEST_TIMEOUT_MS,
-        ...(username && password ? { auth: `${username}:${password}` } : {}),
-      };
-      this.gateway = new Pushgateway(gatewayUrl, options);
-      this.startPeriodicPush();
-      this.logger.log(
-        `Prometheus Pushgateway configured at ${gatewayUrl}, pushing every ${this.pushIntervalMs / 1000}s`,
-      );
-    } else {
-      this.gateway = null;
-      this.logger.warn('Pushgateway push is disabled or unconfigured');
-    }
-
-    const scrapeEnabled = this.configService.get<boolean>(
-      'METRICS_ENDPOINT_ENABLED',
-      false,
-    );
-    if (pushActive && scrapeEnabled) {
-      this.logger.warn(
-        'both push and scrape enabled; series will be double-counted if Prometheus scrapes both',
-      );
-    }
   }
 
   /**
-   * Exposes the Prometheus text exposition of the global register.
-   * Used by MetricsController for GET /metrics (scrape mode).
+   * Exposes the OpenMetrics exposition of the global register (required for
+   * exemplars). Used by MetricsController for GET /metrics (scrape mode).
    */
   getMetrics(): Promise<string> {
     return register.metrics();
@@ -154,56 +111,6 @@ export class MetricsService implements OnModuleDestroy {
 
   getContentType(): string {
     return register.contentType;
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    clearInterval(this.pushInterval);
-    await this.inflightPush;
-    await this.pushMetrics();
-    await this.deleteInstanceGroup();
-  }
-
-  private startPeriodicPush(): void {
-    this.pushInterval = setInterval(() => {
-      this.pushMetrics().catch(() => {});
-    }, this.pushIntervalMs);
-  }
-
-  private pushMetrics(): Promise<void> {
-    const p = this.doPush().finally(() => {
-      if (this.inflightPush === p) this.inflightPush = null;
-    });
-    this.inflightPush = p;
-    return p;
-  }
-
-  private async doPush(): Promise<void> {
-    if (!this.gateway) return;
-    try {
-      await this.gateway.push({
-        jobName: PUSH_JOB_NAME,
-        groupings: { instance: this.instanceId },
-      });
-      this.lastPushSuccessGauge?.set(Date.now() / 1000);
-    } catch (err) {
-      this.pushFailuresCounter?.inc();
-      this.logger.error('Pushgateway push failed', err);
-    }
-  }
-
-  private async deleteInstanceGroup(): Promise<void> {
-    if (!this.gateway) return;
-    try {
-      await this.gateway.delete({
-        jobName: PUSH_JOB_NAME,
-        groupings: { instance: this.instanceId },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `Failed to delete Pushgateway group ${PUSH_JOB_NAME}/instance=${this.instanceId}`,
-        err,
-      );
-    }
   }
 
   /**
@@ -224,7 +131,11 @@ export class MetricsService implements OnModuleDestroy {
       tenant_id: tenantId,
       domain,
     });
-    this.httpDurationHistogram.observe({ method, handler }, durationSeconds);
+    this.httpDurationHistogram.observe({
+      labels: { method, handler },
+      value: durationSeconds,
+      exemplarLabels: exemplarLabels(),
+    });
   }
 
   /**
@@ -281,10 +192,11 @@ export class MetricsService implements OnModuleDestroy {
     start: number,
   ): void {
     this.downstreamRequestsCounter.inc({ dependency, operation, outcome });
-    this.downstreamDurationHistogram.observe(
-      { dependency, operation },
-      (performance.now() - start) / 1000,
-    );
+    this.downstreamDurationHistogram.observe({
+      labels: { dependency, operation, outcome },
+      value: (performance.now() - start) / 1000,
+      exemplarLabels: exemplarLabels(),
+    });
   }
 
   private createOrGetCounter(
@@ -295,16 +207,6 @@ export class MetricsService implements OnModuleDestroy {
       return existingMetric;
     }
     return new Counter(config);
-  }
-
-  private createOrGetGauge(
-    config: ConstructorParameters<typeof Gauge>[0],
-  ): Gauge {
-    const existingMetric = register.getSingleMetric(config.name);
-    if (existingMetric instanceof Gauge) {
-      return existingMetric;
-    }
-    return new Gauge(config);
   }
 
   private createOrGetHistogram(

@@ -6,27 +6,20 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { LogLevel, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 import { buildSwaggerConfig } from './common/swagger/swagger-config';
 import { configureHttp } from './common/http/configure-http';
 import { useInternalServicesBodyLimit } from './service/internal/internal-services-body';
 
-const logLevelMap: Record<string, LogLevel[]> = {
-  error: ['error'],
-  warn: ['error', 'warn'],
-  log: ['error', 'warn', 'log'],
-  debug: ['error', 'warn', 'log', 'debug'],
-  verbose: ['error', 'warn', 'log', 'debug', 'verbose'],
-};
-
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
   const config = app.get(ConfigService);
 
-  const logLevel = config.get<string>('logLevel');
-  const loggerLevels: LogLevel[] = logLevelMap[logLevel] || ['error', 'warn'];
-  app.useLogger(loggerLevels);
+  app.useLogger(app.get(Logger));
 
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalPipes(

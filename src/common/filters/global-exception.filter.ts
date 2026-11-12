@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { requestPathForLog } from 'src/common/lib/request-path';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -40,9 +41,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : 'Internal server error';
 
     const url = req?.originalUrl || '';
+    const path = req ? requestPathForLog(req) : '';
     if (this.detectSuspiciousPatterns(url)) {
       this.securityLogger.warn(
-        `Potential injection attempt detected: ${req?.method} ${req?.ip || 'unknown IP'} - Status: ${status}`,
+        `Potential injection attempt detected: ${req?.method} ${path} - Status: ${status}`,
         {
           tenant: req?.tenantId,
           method: req?.method,
@@ -54,7 +56,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     if (status >= 500) {
       this.logger.error(
-        `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,
+        `${req?.method} ${path} - ${status} - ${message}`,
         exception instanceof Error ? exception.stack : exception,
       );
     } else if (
@@ -62,13 +64,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       req?.method === 'GET' &&
       req.originalUrl.startsWith('/resource/')
     ) {
-      this.logger.debug(
-        `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,
-      );
+      this.logger.debug(`${req?.method} ${path} - ${status} - ${message}`);
     } else {
-      this.logger.warn(
-        `${req?.method} ${req?.originalUrl} - ${status} - ${message}`,
-      );
+      this.logger.warn(`${req?.method} ${path} - ${status} - ${message}`);
     }
 
     const payload = {

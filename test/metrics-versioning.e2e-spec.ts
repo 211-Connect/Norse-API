@@ -20,11 +20,7 @@ describe('MetricsController versioning (e2e)', () => {
   beforeAll(async () => {
     const configServiceMock = {
       get: jest.fn((key: string) =>
-        key === 'METRICS_ENDPOINT_ENABLED'
-          ? true
-          : key === 'PUSH_METRICS_ENABLED'
-            ? false
-            : undefined,
+        key === 'METRICS_ENDPOINT_ENABLED' ? true : undefined,
       ),
     };
 
@@ -33,7 +29,7 @@ describe('MetricsController versioning (e2e)', () => {
       providers: [
         {
           provide: MetricsService,
-          useValue: new MetricsService(configServiceMock as never),
+          useValue: new MetricsService(),
         },
         { provide: ConfigService, useValue: configServiceMock },
       ],
@@ -48,16 +44,16 @@ describe('MetricsController versioning (e2e)', () => {
     await app.close();
   });
 
-  it('GET /metrics without x-api-version header -> 200 with prometheus text', async () => {
+  it('GET /metrics without x-api-version header -> 200 with OpenMetrics', async () => {
     const res = await request(app.getHttpServer()).get('/metrics');
     expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('text/plain');
-    expect(res.text).toContain('# TYPE norse_http_requests_total counter');
-    expect(res.text).toContain('process_cpu_seconds_total');
-    // Push self-observability metrics must be absent in scrape mode.
-    expect(res.text).not.toContain(
-      'norse_metrics_push_success_timestamp_seconds',
+    // Exemplars require OpenMetrics; the Prometheus text format would drop them.
+    expect(res.headers['content-type']).toContain(
+      'application/openmetrics-text',
     );
+    expect(res.text).toContain('# TYPE norse_http_requests counter');
+    expect(res.text).toContain('process_cpu_seconds_total');
+    expect(res.text.trimEnd().endsWith('# EOF')).toBe(true);
   });
 
   it('GET /metrics with x-api-version: 1 -> 200', async () => {
