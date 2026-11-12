@@ -80,11 +80,34 @@ export type NeedScore = {
 };
 export type RankingVersion = 'v1' | 'v2';
 
+/**
+ * ADR 0039 open question 2 (Lucas has NOT confirmed this): do pinned services
+ * obey the `needs=` filter? true = yes, as they obey every v1 filter. false =
+ * a pinned service also passes when it lacks the sent need. Reverse it here.
+ */
+export const V2_NEEDS_FILTER_APPLIES_TO_PINS = true;
+
+export type HybridSearchResult = SearchResponse & {
+  /** Present only when counts were asked for and the count succeeded. */
+  needCounts?: Record<string, number>;
+};
+
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
+  /**
+   * v2 only. Caller-sent need codes: a service returns only if its
+   * `sune_needs` holds at least one. Empty or absent adds no filter.
+   */
+  needsFilter?: string[];
+  /**
+   * v2 only. Need codes to count: results per code, from a terms aggregation
+   * on `sune_needs`, over the same filters as the results but without the
+   * `needs=` filter. Every code is returned, 0 when the aggregation omits it.
+   */
+  countCodes?: string[];
   /**
    * Internal switch, not a DTO field and not a query parameter. Set only by
    * the future /v2/search; today's /search never sets it, so it always runs
@@ -310,9 +333,15 @@ export class HybridSearchService {
     });
   }
 
-  async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
-    const { request, tenantFacets, cutoff, lang } =
+  async searchHybrid(
+    options: HybridSearchOptions,
+  ): Promise<HybridSearchResult> {
+    const { request, countRequest, tenantFacets, cutoff, lang } =
       await this.prepareHybridSearch(options, { rank: true });
+
+    const needCountsPromise = countRequest
+      ? this.runNeedCounts(countRequest, options.countCodes ?? [])
+      : Promise.resolve(undefined);
 
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
@@ -349,6 +378,8 @@ export class HybridSearchService {
         ? data.hits.total
         : (data.hits.total?.value ?? 0);
 
+    const needCounts = await needCountsPromise;
+
     return {
       search: {
         took: data.took,
@@ -369,7 +400,43 @@ export class HybridSearchService {
       // Omitted entirely when the caller did not opt in, so the response
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
+      ...(needCounts ? { needCounts } : {}),
     };
+  }
+
+  /**
+   * Counts per need code. A terms aggregation leaves out zero-count buckets,
+   * so every requested code is written with 0 first. A failure returns
+   * undefined, which the caller reads as "not counted" (never as all 0).
+   */
+  private async runNeedCounts(
+    request: SearchRequest,
+    codes: string[],
+  ): Promise<Record<string, number> | undefined> {
+    try {
+      const data = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_need_counts',
+        () =>
+          this.elasticsearchService.search<
+            unknown,
+            Record<string, AggregationsStringTermsAggregate>
+          >(request),
+      );
+      const buckets =
+        (data.aggregations?.need_counts?.buckets as
+          { key: string; doc_count: number }[] | undefined) ?? [];
+      const counts: Record<string, number> = Object.fromEntries(
+        codes.map((c) => [c, 0]),
+      );
+      for (const b of buckets) {
+        if (b.key in counts) counts[b.key] = b.doc_count;
+      }
+      return counts;
+    } catch (error) {
+      this.logger.warn(`Need counts skipped: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -489,6 +556,17 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
+    // Counts describe the options a person can pick, so they run over the
+    // filters above and not over the `needs=` filter below (ADR 0039 is silent;
+    // see the PR body). A snapshot here keeps later pushes out of it.
+    const countFilters = [...baseFilters];
+
+    // v2 `needs=` hard filter (ISS-2499). Absent or empty: nothing is added
+    // and the request is the v1 request.
+    if (options.needsFilter && options.needsFilter.length > 0) {
+      baseFilters.push(this.buildNeedsFilter(options.needsFilter));
+    }
+
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
@@ -580,7 +658,41 @@ export class HybridSearchService {
       wordRarity,
     });
 
-    return { request, tenantFacets, cutoff, lang };
+    const countCodes = options.countCodes ?? [];
+    const countRequest: SearchRequest | undefined =
+      countCodes.length > 0
+        ? {
+            index,
+            preference,
+            size: 0,
+            track_total_hits: false,
+            // Filters alone define the matched population (should clauses only
+            // rank), so a plain filter query counts the same set.
+            query: { bool: { filter: countFilters } },
+            aggs: {
+              need_counts: {
+                terms: {
+                  field: 'sune_needs',
+                  include: countCodes,
+                  size: countCodes.length,
+                },
+              },
+            },
+          }
+        : undefined;
+
+    return { request, countRequest, tenantFacets, cutoff, lang };
+  }
+
+  private buildNeedsFilter(codes: string[]): QueryDslQueryContainer {
+    const terms: QueryDslQueryContainer = { terms: { sune_needs: codes } };
+    if (V2_NEEDS_FILTER_APPLIES_TO_PINS) return terms;
+    return {
+      bool: {
+        should: [terms, { term: { pinned: true } }],
+        minimum_should_match: 1,
+      },
+    };
   }
 
   /**
