@@ -188,7 +188,7 @@ export class SearchUtilsService {
         // the point-less branch carries it itself; otherwise a point-less
         // listing from anywhere in the tenant matched every proximity search
         // (ISS-2755).
-        const pointless: QueryDslQueryContainer = {
+        const lackingCoordinates: QueryDslQueryContainer = {
           bool: {
             must_not: { exists: { field: 'location.point' } },
             ...(geoType === 'proximity' && {
@@ -220,7 +220,7 @@ export class SearchUtilsService {
                   ],
                 },
               },
-              pointless,
+              lackingCoordinates,
             ],
           },
         });
