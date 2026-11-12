@@ -9,7 +9,7 @@ import {
   splitQuality,
   valueOf,
 } from './importance';
-import { needOptions, NX } from './sune';
+import { needOptions } from './sune';
 import {
   Clarification,
   Decision,
@@ -22,10 +22,13 @@ import {
 import { cmp } from './util';
 
 export function decide(
-  req: RulesRequest,
+  request: RulesRequest,
   signals: RulesSignals,
   tenant: TenantContext = {},
 ): Decision {
+  // U-X means "urgency not yet known": same as no urgency sent (ISS-2499).
+  const req: RulesRequest =
+    request.urgency === 'U-X' ? { ...request, urgency: undefined } : request;
   const band = emergencyBand(signals.emergency);
   const urgency = urgencyState(req, signals);
   const states = needStates(req, signals);
@@ -79,10 +82,6 @@ export function finalize(
     if (total === 0) continue;
     const options = [];
     for (const o of q.options) {
-      if (o.value === NX) {
-        options.push(o);
-        continue;
-      }
       if (counts.by_code !== null) {
         const n = counts.by_code[o.value] ?? 0;
         if (n === 0) continue;
