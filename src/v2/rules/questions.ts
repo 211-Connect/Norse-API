@@ -82,7 +82,7 @@ export function buildCandidates(
       stem: STEMS.emergency,
       options: ['U-0', 'U-1', 'U-3'].map(urgencyOption),
       ...urgencyFlags,
-      hotlines: tenant.hotlines ?? DEFAULT_HOTLINES,
+      hotlines: tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES,
     });
   }
 

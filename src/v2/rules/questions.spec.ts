@@ -25,6 +25,13 @@ describe('emergency question', () => {
     });
     expect(d.candidates[0].hotlines).toEqual([{ label: 'X', number: '1' }]);
   });
+  it('an empty tenant hotline list falls back to the defaults', () => {
+    const d = decide(req(), sig({}, { emergency: popup }), { hotlines: [] });
+    expect(d.candidates[0].hotlines).toEqual([
+      { label: 'Crisis line', number: '988' },
+      { label: 'Emergency', number: '911' },
+    ]);
+  });
   it('absent when urgency=U-3 in URL; show_hotline true for popup', () => {
     const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: popup }));
     expect(ids(d)).not.toContain('emergency');
