@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { MlBrokerHttpService } from 'src/ml-broker/ml-broker-http.service';
 import { SearchClassificationClient } from './search-classification.client';
 
 const ERROR_RESULT = {
@@ -51,8 +52,10 @@ describe('SearchClassificationClient', () => {
       get: jest.fn((key: string) => config[key]),
     } as unknown as ConfigService;
     return new SearchClassificationClient(
-      configService,
-      metrics as unknown as MetricsService,
+      new MlBrokerHttpService(
+        configService,
+        metrics as unknown as MetricsService,
+      ),
     );
   };
   const fullConfig = {
@@ -209,5 +212,53 @@ describe('SearchClassificationClient', () => {
     const logged = warn.mock.calls.map((c) => String(c[0])).join(' ');
     expect(logged).not.toContain('ssn');
     expect(logged).not.toContain('secret-key');
+    expect(logged).toContain('kind=network');
+  });
+
+  it.each([
+    ['unconfigured', () => undefined, {}],
+    [
+      'http',
+      () => fetchMock.mockResolvedValue(jsonResponse({ detail: 'q' }, 503)),
+      fullConfig,
+    ],
+    [
+      'malformed',
+      () => fetchMock.mockResolvedValue(jsonResponse({ needs: {} })),
+      fullConfig,
+    ],
+  ])(
+    'names the failure kind %s in the warning, never the query',
+    async (kind, arrange, config) => {
+      arrange();
+      const client = build(config);
+      const warn = jest
+        .spyOn(
+          (client as unknown as { logger: { warn: (m: string) => void } })
+            .logger,
+          'warn',
+        )
+        .mockImplementation(() => undefined);
+      expect(await client.classify('my secret ssn 123', 't1')).toEqual(
+        ERROR_RESULT,
+      );
+      const logged = warn.mock.calls.map((c) => String(c[0])).join(' ');
+      expect(logged).toContain(`kind=${kind}`);
+      expect(logged).not.toContain('ssn');
+    },
+  );
+
+  it('returns the error result when the transport throws something unexpected', async () => {
+    const client = new SearchClassificationClient({
+      classifySearch: jest.fn().mockRejectedValue('not an Error'),
+    } as unknown as MlBrokerHttpService);
+    expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
+  });
+
+  it('returns the error result when the mapping throws', async () => {
+    const client = new SearchClassificationClient({
+      classifySearch: jest.fn().mockResolvedValue(null),
+    } as unknown as MlBrokerHttpService);
+    expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
   });
 });
