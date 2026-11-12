@@ -9,7 +9,7 @@ import {
   splitQuality,
   valueOf,
 } from './importance';
-import { NX } from './sune';
+import { needOptions, NX } from './sune';
 import {
   Clarification,
   Decision,
@@ -19,6 +19,7 @@ import {
   RulesSignals,
   TenantContext,
 } from './types';
+import { cmp } from './util';
 
 export function decide(
   req: RulesRequest,
@@ -57,8 +58,6 @@ export function decide(
   };
 }
 
-const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
 export function finalize(
   decision: Decision,
   input: FinalizeInput,
@@ -93,7 +92,7 @@ export function finalize(
     }
     const dropped = options.length < q.options.length;
     q.options = options;
-    const needOpts = options.filter((o) => o.value !== NX);
+    const needOpts = needOptions(options);
     if (needOpts.length === 0) continue;
     // decide() measured uncertainty over every option; once 0-count options
     // are gone, measure it again over the ones the person will see.

@@ -1,5 +1,5 @@
 import { finiteScore, scoreOf } from './scores';
-import { NX } from './sune';
+import { needOptions } from './sune';
 import { Question, QuestionImportance, RulesSignals } from './types';
 
 export const BAND_BASE: Record<QuestionImportance, number> = {
@@ -33,7 +33,7 @@ export function normEntropy(ps: number[]): number {
 }
 
 const needScores = (q: Question, scores: Record<string, number>): number[] =>
-  q.options.filter((o) => o.value !== NX).map((o) => scoreOf(scores, o.value));
+  needOptions(q.options).map((o) => scoreOf(scores, o.value));
 
 /** Uncertainty of a needs question over the options it has now. */
 export function needUncertainty(

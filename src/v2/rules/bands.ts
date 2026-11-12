@@ -1,12 +1,12 @@
 import { CUTOFFS } from './config';
 import { finiteScore, scoreOf } from './scores';
 import {
-  allTier1,
-  allTier2,
   isKnownCode,
   isTier1,
   isTier2,
   NX,
+  TIER1_CODES,
+  TIER2_CODES,
   tier1Of,
 } from './sune';
 import {
@@ -17,6 +17,13 @@ import {
   RulesSignals,
   UrgencyState,
 } from './types';
+import { cmp } from './util';
+
+const URGENCY_DROP: UrgencyState = {
+  value: 'U-X',
+  source: 'default',
+  state: 'drop',
+};
 
 export function emergencyBand(e: EmergencySignal | null): EmergencyBand {
   if (e === null || e === undefined) return 'none';
@@ -39,15 +46,15 @@ export function urgencyState(
     return { value: req.urgency, source: 'caller', state: 'use' };
   }
   if (signals.needs.status !== 'ok' || !signals.urgency) {
-    return { value: 'U-X', source: 'default', state: 'drop' };
+    return { ...URGENCY_DROP };
   }
   const { level } = signals.urgency;
   const score = finiteScore(signals.urgency.score);
   if (score === undefined) {
-    return { value: 'U-X', source: 'default', state: 'drop' };
+    return { ...URGENCY_DROP };
   }
   if (score < CUTOFFS.urgency.drop) {
-    return { value: 'U-X', source: 'default', state: 'drop' };
+    return { ...URGENCY_DROP };
   }
   if (score < CUTOFFS.urgency.use) {
     return { value: 'U-X', source: 'default', state: 'ask' };
@@ -63,8 +70,7 @@ export interface NeedStatesResult {
 }
 
 const byScoreDesc = (a: NeedState, b: NeedState) =>
-  b.confidence - a.confidence ||
-  (a.code < b.code ? -1 : a.code > b.code ? 1 : 0);
+  b.confidence - a.confidence || cmp(a.code, b.code);
 
 export function confirmedCodes(req: RulesRequest): string[] {
   const out: string[] = [];
@@ -95,7 +101,7 @@ export function needStates(
   const inferredAsk: NeedState[] = [];
   const scores = signals.needs.scores ?? {};
   if (signals.needs.status === 'ok') {
-    for (const code of [...allTier1(), ...allTier2()]) {
+    for (const code of [...TIER1_CODES, ...TIER2_CODES]) {
       if (code === NX || skip.has(code)) continue;
       const s = scoreOf(scores, code);
       if (s >= CUTOFFS.needs.use) {
@@ -119,17 +125,14 @@ export function needStates(
   }
   states.push(...inferredUse, ...inferredAsk);
 
-  let boost = states
+  const used = states
     .filter((s) => s.state === 'use' && s.code !== NX)
     .map((s) => s.code);
-  const withChild = new Set(boost.filter(isTier2).map((c) => tier1Of(c)));
-  boost = boost.filter((c) => !(isTier1(c) && withChild.has(c)));
+  const withChild = new Set(used.filter(isTier2).map((c) => tier1Of(c)));
+  const boost = used.filter((c) => !(isTier1(c) && withChild.has(c)));
 
-  const anyUseBesidesNx = states.some(
-    (s) => s.state === 'use' && s.code !== NX,
-  );
   const nx =
-    !anyUseBesidesNx &&
+    used.length === 0 &&
     (confirmed.includes(NX) ||
       (signals.needs.status === 'ok' &&
         scoreOf(scores, NX) >= CUTOFFS.nx.label));
@@ -146,7 +149,7 @@ export function areaRuleTarget(
   const scores = signals.needs.scores ?? {};
   let best: string | null = null;
   let bestScore = -1;
-  for (const code of allTier1()) {
+  for (const code of TIER1_CODES) {
     const s = scoreOf(scores, code);
     if (s > bestScore || (s === bestScore && code < best)) {
       best = code;
@@ -154,7 +157,7 @@ export function areaRuleTarget(
     }
   }
   if (best === null || bestScore < CUTOFFS.area.tier1Min) return null;
-  const maxT2 = Math.max(0, ...allTier2().map((c) => scoreOf(scores, c)));
+  const maxT2 = Math.max(0, ...TIER2_CODES.map((c) => scoreOf(scores, c)));
   if (maxT2 >= CUTOFFS.area.tier2Max) return null;
   const locked = new Set(confirmedCodes(req));
   for (const c of locked) {
