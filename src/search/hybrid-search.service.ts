@@ -21,6 +21,7 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
+import { CUTOFFS } from 'src/v2/rules/config';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
@@ -68,9 +69,9 @@ const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
 // Need boost (ISS-2745). Start values from the 2026-11-11 boost test: each need
 // clause adds FRACTION x the top base score x the need score (K = fraction x top
-// base score). The 0.97 gate is Lucas's pick. Tier 1 needs boost at a smaller factor.
+// base score). The gate (0.97, Lucas's pick) is owned by the v2 rules config. Tier 1 needs boost at a smaller factor.
 const NEED_BOOST_FRACTION = 0.1;
-const NEED_BOOST_GATE = 0.97;
+const NEED_BOOST_GATE = CUTOFFS.needs.use;
 const NEED_BOOST_TIER1_FACTOR = 0.5;
 
 export type NeedScore = {
