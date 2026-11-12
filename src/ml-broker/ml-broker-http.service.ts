@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { MlBrokerError } from './ml-broker.errors';
 
-const DEFAULT_TIMEOUT_MS = 1000;
+const DEFAULT_TIMEOUT_MS = 300;
 const SEARCH_CLASSIFICATION = 'search-classification';
 const URGENCY_LEVELS: readonly string[] = ['U-1', 'U-2', 'U-3', 'U-4'];
 

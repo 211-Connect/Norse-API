@@ -28,7 +28,7 @@ export default () => ({
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
-  // Timeout of the /v2/search classify call, in ms (integer; default 1000).
+  // Timeout of the /v2/search classify call, in ms (integer; default 300).
   V2_CLASSIFY_TIMEOUT_MS: process.env.V2_CLASSIFY_TIMEOUT_MS,
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
   ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
