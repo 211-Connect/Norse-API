@@ -2,26 +2,26 @@ export type UrgencyCode = 'U-0' | 'U-1' | 'U-2' | 'U-3' | 'U-4' | 'U-X';
 export type ModelUrgencyLevel = 'U-1' | 'U-2' | 'U-3' | 'U-4';
 
 export interface RulesRequest {
-  hasText: boolean; // query non-empty after trim
+  has_text: boolean; // query non-empty after trim
   needs: string[]; // confirmed, URL order
-  passedNeeds: string[];
+  passed_needs: string[];
   urgency?: UrgencyCode; // from the URL
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
   status: 'ok' | 'error';
   scores?: Record<string, number>;
-  urgency?: { level: ModelUrgencyLevel; score: number };
 }
 export interface EmergencySignal {
   status: 'ok' | 'error';
   score?: number;
-  floorHit?: boolean;
-  calmContext?: boolean;
-  dvShelter?: boolean;
+  floor_hit?: boolean;
+  calm_context?: boolean;
+  dv_shelter?: boolean;
 }
 export interface RulesSignals {
-  needs: NeedsSignal; // ml-broker needs + urgency; status 'error' also covers a timeout
+  needs: NeedsSignal; // ml-broker needs; status 'error' also covers a timeout
+  urgency?: { level: ModelUrgencyLevel; score: number }; // ml-broker urgency, top level as ml-broker sends it; read only when needs.status is 'ok'
   emergency: EmergencySignal | null; // null = no typed text, the check did not run
 }
 export interface Hotline {
@@ -29,7 +29,7 @@ export interface Hotline {
   number: string;
 }
 export interface TenantContext {
-  topAreas?: string[]; // Tier 1 codes by service count, desc
+  top_areas?: string[]; // Tier 1 codes by service count, desc
   hotlines?: Hotline[];
 }
 
@@ -61,7 +61,7 @@ export type QuestionReason =
 export interface QuestionOption {
   value: string;
   label: string;
-  resultsCount?: number;
+  results_count?: number;
 }
 export interface Question {
   id: string;
@@ -76,31 +76,44 @@ export interface Question {
   parameter: 'urgency' | 'needs';
   stem: string;
   options: QuestionOption[];
-  multiSelect: boolean;
-  allowOther: boolean;
-  noneOfThese: boolean;
+  multi_select: boolean;
+  allow_other: boolean;
+  none_of_these: boolean;
   hotlines?: Hotline[]; // emergency question only
 }
 export interface Decision {
-  rulesVersion: string;
-  emergency: { band: EmergencyBand; showHotline: boolean };
+  rules_version: string;
+  /**
+   * Model score of every need code offered as an option (never N-X), kept so
+   * finalize can recompute a question's uncertainty after it drops 0-count
+   * options. Internal: not part of the response.
+   */
+  option_scores: Record<string, number>;
+  emergency: { band: EmergencyBand; show_hotline: boolean };
   cacheable: boolean;
   needs: NeedState[]; // use + ask only; drops omitted
-  boostNeeds: string[];
+  boost_needs: string[];
   nx: boolean;
   urgency: UrgencyState;
   candidates: Question[]; // unranked, before counts
-  countCodes: string[]; // every need code that is an option in a needs candidate; sorted, unique; never N-X
+  count_codes: string[]; // every need code that is an option in a needs candidate; sorted, unique; never N-X
 }
 export interface SearchCounts {
   total: number;
-  byCode: Record<string, number>;
+  /**
+   * Results per need code, from the search's count over `sune_needs`.
+   * - An object: the codes were counted. A code missing from it has 0 results
+   *   (an Elasticsearch terms aggregation leaves out zero-count buckets).
+   * - `null`: the codes were not counted (not built yet, `clarify=never`, or
+   *   the count failed). Every option is kept, without a count.
+   */
+  by_code: Record<string, number> | null;
 }
 export interface FinalizeInput {
   counts: SearchCounts;
-  strongTextMatch: boolean;
+  strong_text_match: boolean;
 }
 export interface Clarification {
-  rulesVersion: string;
+  rules_version: string;
   questions: Question[];
 }

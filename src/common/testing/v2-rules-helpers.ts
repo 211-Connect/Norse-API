@@ -1,9 +1,9 @@
 import { RulesRequest, RulesSignals } from '../../v2/rules/types';
 
 export const req = (o: Partial<RulesRequest> = {}): RulesRequest => ({
-  hasText: true,
+  has_text: true,
   needs: [],
-  passedNeeds: [],
+  passed_needs: [],
   clarify: 'auto',
   ...o,
 });
@@ -13,6 +13,6 @@ export const sig = (
   o: Partial<RulesSignals> = {},
 ): RulesSignals => ({
   needs: { status: 'ok', scores },
-  emergency: { status: 'ok', score: 0.001, floorHit: false },
+  emergency: { status: 'ok', score: 0.001, floor_hit: false },
   ...o,
 });

@@ -27,28 +27,25 @@ describe('emergencyBand', () => {
     expect(emergencyBand(ok(0.2209))).toBe('none');
     expect(emergencyBand(ok(0.221))).toBe('soft');
   });
-  it('floorHit', () => {
-    expect(emergencyBand(ok(0.1, { floorHit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.6619, { floorHit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.662, { floorHit: true }))).toBe('popup');
+  it('floor_hit', () => {
+    expect(emergencyBand(ok(0.1, { floor_hit: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.6619, { floor_hit: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.662, { floor_hit: true }))).toBe('popup');
   });
-  it('calmContext never popup', () => {
-    expect(emergencyBand(ok(0.9, { calmContext: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.2209, { calmContext: true }))).toBe('none');
-    expect(emergencyBand(ok(0.221, { calmContext: true }))).toBe('soft');
+  it('calm_context never popup', () => {
+    expect(emergencyBand(ok(0.9, { calm_context: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.2209, { calm_context: true }))).toBe('none');
+    expect(emergencyBand(ok(0.221, { calm_context: true }))).toBe('soft');
   });
-  it('dvShelter', () => {
-    expect(emergencyBand(ok(0.1, { dvShelter: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.7, { dvShelter: true }))).toBe('popup');
+  it('dv_shelter', () => {
+    expect(emergencyBand(ok(0.1, { dv_shelter: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.7, { dv_shelter: true }))).toBe('popup');
   });
 });
 
 describe('urgencyState', () => {
-  const withU = (score: number) => ({
-    status: 'ok' as const,
-    scores: {},
-    urgency: { level: 'U-2' as const, score },
-  });
+  const withU = (score: number) =>
+    sig({}, { urgency: { level: 'U-2' as const, score } });
   it('non-finite urgency score -> drop', () => {
     expect(urgencyState(req(), withU(NaN))).toEqual({
       value: 'U-X',
@@ -82,7 +79,9 @@ describe('urgencyState', () => {
     });
   });
   it('error -> default drop', () => {
-    expect(urgencyState(req(), { status: 'error' })).toEqual({
+    expect(
+      urgencyState(req(), sig({}, { needs: { status: 'error' } })),
+    ).toEqual({
       value: 'U-X',
       source: 'default',
       state: 'drop',
@@ -113,7 +112,7 @@ describe('needStates', () => {
   });
   it('passed code skipped', () => {
     const r = needStates(
-      req({ passedNeeds: ['N-FOD-01'] }),
+      req({ passed_needs: ['N-FOD-01'] }),
       sig({ 'N-FOD-01': 0.99 }),
     );
     expect(r.needs).toEqual([]);
@@ -129,7 +128,7 @@ describe('needStates', () => {
   });
   it('confirmed wins over passed', () => {
     const r = needStates(
-      req({ needs: ['N-FOD-01'], passedNeeds: ['N-FOD-01'] }),
+      req({ needs: ['N-FOD-01'], passed_needs: ['N-FOD-01'] }),
       sig(),
     );
     expect(r.needs[0].source).toBe('caller');

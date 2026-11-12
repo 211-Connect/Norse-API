@@ -1,8 +1,15 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
 import { buildCandidates, countCodesOf } from './questions';
-import { effort, priorityOf, splitQuality, valueOf } from './importance';
-import { NX } from './sune';
+import { scoreOf } from './scores';
+import {
+  effort,
+  needUncertainty,
+  priorityOf,
+  splitQuality,
+  valueOf,
+} from './importance';
+import { needOptions, NX } from './sune';
 import {
   Clarification,
   Decision,
@@ -12,6 +19,7 @@ import {
   RulesSignals,
   TenantContext,
 } from './types';
+import { cmp } from './util';
 
 export function decide(
   req: RulesRequest,
@@ -19,7 +27,7 @@ export function decide(
   tenant: TenantContext = {},
 ): Decision {
   const band = emergencyBand(signals.emergency);
-  const urgency = urgencyState(req, signals.needs);
+  const urgency = urgencyState(req, signals);
   const states = needStates(req, signals);
   const candidates = buildCandidates(
     req,
@@ -29,29 +37,32 @@ export function decide(
     urgency,
     states,
   );
+  const countCodes = countCodesOf(candidates);
+  const scores = signals.needs.scores ?? {};
   return {
-    rulesVersion: RULES_VERSION,
+    rules_version: RULES_VERSION,
+    option_scores: Object.fromEntries(
+      countCodes.map((c) => [c, scoreOf(scores, c)]),
+    ),
     emergency: {
       band,
-      showHotline: band === 'popup' || req.urgency === 'U-0',
+      show_hotline: band === 'popup' || req.urgency === 'U-0',
     },
     cacheable: band === 'none' && signals.needs.status === 'ok',
     needs: states.needs,
-    boostNeeds: states.boostNeeds,
+    boost_needs: states.boostNeeds,
     nx: states.nx,
     urgency,
     candidates,
-    countCodes: countCodesOf(candidates),
+    count_codes: countCodes,
   };
 }
-
-const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function finalize(
   decision: Decision,
   input: FinalizeInput,
 ): Clarification {
-  const { counts, strongTextMatch } = input;
+  const { counts, strong_text_match: strongTextMatch } = input;
   const total = counts.total;
   let questions: Question[] = JSON.parse(JSON.stringify(decision.candidates));
 
@@ -72,18 +83,24 @@ export function finalize(
         options.push(o);
         continue;
       }
-      const n = counts.byCode[o.value];
-      if (typeof n === 'number') {
+      if (counts.by_code !== null) {
+        const n = counts.by_code[o.value] ?? 0;
         if (n === 0) continue;
-        o.resultsCount = n;
+        o.results_count = n;
       }
       options.push(o);
     }
+    const dropped = options.length < q.options.length;
     q.options = options;
-    const needOpts = options.filter((o) => o.value !== NX);
+    const needOpts = needOptions(options);
     if (needOpts.length === 0) continue;
-    const counted = needOpts.filter((o) => typeof o.resultsCount === 'number');
-    if (counted.length > 0 && counted.every((o) => o.resultsCount === total)) {
+    // decide() measured uncertainty over every option; once 0-count options
+    // are gone, measure it again over the ones the person will see.
+    if (dropped) {
+      q.uncertainty = needUncertainty(q, decision.option_scores);
+    }
+    const counted = needOpts.filter((o) => typeof o.results_count === 'number');
+    if (counted.length > 0 && counted.every((o) => o.results_count === total)) {
       continue;
     }
     kept.push(q);
@@ -99,7 +116,7 @@ export function finalize(
   }
   kept.sort((a, b) => b.priority - a.priority || cmp(a.id, b.id));
   return {
-    rulesVersion: decision.rulesVersion,
+    rules_version: decision.rules_version,
     questions: kept.slice(0, CUTOFFS.maxQuestions),
   };
 }

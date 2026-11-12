@@ -28,11 +28,11 @@ const q = (
   options: values.map((v, i) => ({
     value: v,
     label: v,
-    ...(counts[i] === undefined ? {} : { resultsCount: counts[i] }),
+    ...(counts[i] === undefined ? {} : { results_count: counts[i] }),
   })),
-  multiSelect: true,
-  allowOther: true,
-  noneOfThese: true,
+  multi_select: true,
+  allow_other: true,
+  none_of_these: true,
   value: 0,
   priority: 0,
   uncertainty: 0,
@@ -140,7 +140,7 @@ describe('uncertainty', () => {
   });
   it('urgency questions use the urgency score', () => {
     const s = sig({});
-    s.needs.urgency = { level: 'U-1', score: 0.9 };
+    s.urgency = { level: 'U-1', score: 0.9 };
     expect(
       uncertainty(q('urgency_today', 'confirm_urgency', ['U-1']), s),
     ).toBeCloseTo(0.36);

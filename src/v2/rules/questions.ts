@@ -12,25 +12,29 @@ import {
   STEMS,
 } from './config';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
+import { scoreOf } from './scores';
 import {
   childrenOf,
   displayOf,
   isTier1,
   isTier2,
   isKnownCode,
-  allTier1,
+  needOptions,
   NX,
+  TIER1_CODES,
   tier1Of,
 } from './sune';
 import {
   EmergencyBand,
   Question,
+  QuestionImportance,
   QuestionOption,
   RulesRequest,
   RulesSignals,
   TenantContext,
   UrgencyState,
 } from './types';
+import { cmp } from './util';
 
 const urgencyOption = (v: string): QuestionOption => ({
   value: v,
@@ -42,14 +46,34 @@ const needOption = (code: string): QuestionOption => ({
 });
 const nxOption = (): QuestionOption => ({ value: NX, label: LABELS.nx });
 
-const needsFlags = { multiSelect: true, allowOther: true, noneOfThese: true };
+const needsFlags = {
+  multi_select: true,
+  allow_other: true,
+  none_of_these: true,
+};
 const urgencyFlags = {
-  multiSelect: false,
-  allowOther: false,
-  noneOfThese: false,
+  multi_select: false,
+  allow_other: false,
+  none_of_these: false,
 };
 
-const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** A candidate question; the scoring loop in buildCandidates sets value, priority and uncertainty. */
+const question = ({
+  id,
+  type,
+  level,
+  importance,
+  ...rest
+}: Omit<Question, 'value' | 'priority' | 'uncertainty'>): Question => ({
+  id,
+  type,
+  level,
+  importance,
+  value: 0,
+  priority: 0,
+  uncertainty: 0,
+  ...rest,
+});
 
 export function buildCandidates(
   req: RulesRequest,
@@ -64,59 +88,56 @@ export function buildCandidates(
   // 1. emergency
   const hasEmergency = (band === 'popup' || band === 'soft') && !req.urgency;
   if (hasEmergency) {
-    out.push({
-      id: 'emergency',
-      type: 'emergency',
-      level: 'red',
-      importance: 'critical',
-      value: 0,
-      priority: 0,
-      uncertainty: 0,
-      reason: 'emergency_band',
-      step: 0,
-      parameter: 'urgency',
-      stem: STEMS.emergency,
-      options: ['U-0', 'U-1', 'U-3'].map(urgencyOption),
-      ...urgencyFlags,
-      hotlines: tenant.hotlines ?? DEFAULT_HOTLINES,
-    });
+    out.push(
+      question({
+        id: 'emergency',
+        type: 'emergency',
+        level: 'red',
+        importance: 'critical',
+        reason: 'emergency_band',
+        step: 0,
+        parameter: 'urgency',
+        stem: STEMS.emergency,
+        options: ['U-0', 'U-1', 'U-3'].map(urgencyOption),
+        ...urgencyFlags,
+        hotlines: tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES,
+      }),
+    );
   }
 
   // 2. time questions
   if (urgency.state === 'ask' && !hasEmergency) {
-    const level = signals.needs.urgency?.level;
+    const level = signals.urgency?.level;
     if (level === 'U-1') {
-      out.push({
-        id: 'urgency_today',
-        type: 'confirm_urgency',
-        level: 'orange',
-        importance: 'high',
-        value: 0,
-        priority: 0,
-        uncertainty: 0,
-        reason: 'urgency_unsure',
-        step: 1,
-        parameter: 'urgency',
-        stem: STEMS.today,
-        options: ['U-1', 'U-2', 'U-3'].map(urgencyOption),
-        ...urgencyFlags,
-      });
+      out.push(
+        question({
+          id: 'urgency_today',
+          type: 'confirm_urgency',
+          level: 'orange',
+          importance: 'high',
+          reason: 'urgency_unsure',
+          step: 1,
+          parameter: 'urgency',
+          stem: STEMS.today,
+          options: ['U-1', 'U-2', 'U-3'].map(urgencyOption),
+          ...urgencyFlags,
+        }),
+      );
     } else {
-      out.push({
-        id: 'urgency_time',
-        type: 'confirm_urgency',
-        level: 'low',
-        importance: 'low',
-        value: 0,
-        priority: 0,
-        uncertainty: 0,
-        reason: 'urgency_unsure',
-        step: 5,
-        parameter: 'urgency',
-        stem: STEMS.time,
-        options: ['U-1', 'U-2', 'U-4', 'U-3'].map(urgencyOption),
-        ...urgencyFlags,
-      });
+      out.push(
+        question({
+          id: 'urgency_time',
+          type: 'confirm_urgency',
+          level: 'low',
+          importance: 'low',
+          reason: 'urgency_unsure',
+          step: 5,
+          parameter: 'urgency',
+          stem: STEMS.time,
+          options: ['U-1', 'U-2', 'U-4', 'U-3'].map(urgencyOption),
+          ...urgencyFlags,
+        }),
+      );
     }
   }
 
@@ -125,7 +146,7 @@ export function buildCandidates(
   const passed = passedCodes(req);
   if (signals.needs.status === 'ok' && !confirmed.includes(NX)) {
     const scores = signals.needs.scores ?? {};
-    const sc = (c: string) => scores[c] ?? 0;
+    const sc = (c: string) => scoreOf(scores, c);
     const lockedAreas = new Set<string>();
     for (const c of confirmed) {
       if (isTier2(c)) lockedAreas.add(tier1Of(c));
@@ -145,21 +166,18 @@ export function buildCandidates(
     ): Question | null => {
       const options = topChildren(t1).map(needOption);
       if (options.length === 0) return null;
-      return {
+      return question({
         id: `area:${t1}`,
         type: 'find_need',
         level: 'orange',
         importance: 'high',
-        value: 0,
-        priority: 0,
-        uncertainty: 0,
         reason,
         step: 3,
         parameter: 'needs',
         stem: STEMS.area.replace('{area}', displayOf(t1)),
         options,
         ...needsFlags,
-      };
+      });
     };
 
     // 3. area confirmed
@@ -199,7 +217,7 @@ export function buildCandidates(
         states.needs.length === 0 &&
         areaQuestionCount === 0
       ) {
-        const eligibleT1 = allTier1().filter(eligible).sort(byScore);
+        const eligibleT1 = TIER1_CODES.filter(eligible).sort(byScore);
         let picks: string[];
         if (
           eligibleT1.length > 0 &&
@@ -208,7 +226,7 @@ export function buildCandidates(
           picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
         } else {
           const pool = [
-            ...(tenant.topAreas ?? []).filter((c) => isTier1(c)),
+            ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
             ...DEFAULT_TOP_AREAS,
           ];
           picks = [];
@@ -220,21 +238,20 @@ export function buildCandidates(
         const options = picks.map(needOption);
         if (sc(NX) >= CUTOFFS.nx.label) options.push(nxOption());
         if (options.length > 0)
-          out.push({
-            id: 'start',
-            type: 'find_need',
-            level: 'orange',
-            importance: 'high',
-            value: 0,
-            priority: 0,
-            uncertainty: 0,
-            reason: 'no_need',
-            step: 2,
-            parameter: 'needs',
-            stem: STEMS.start,
-            options,
-            ...needsFlags,
-          });
+          out.push(
+            question({
+              id: 'start',
+              type: 'find_need',
+              level: 'orange',
+              importance: 'high',
+              reason: 'no_need',
+              step: 2,
+              parameter: 'needs',
+              stem: STEMS.start,
+              options,
+              ...needsFlags,
+            }),
+          );
       }
 
       // 6. narrow
@@ -251,40 +268,37 @@ export function buildCandidates(
       const g2 = asks
         .slice(CUTOFFS.optionsPerQuestion, 2 * CUTOFFS.optionsPerQuestion)
         .map(needOption);
+      const narrow = (
+        id: 'narrow:1' | 'narrow:2',
+        importance: QuestionImportance,
+        step: number,
+        options: QuestionOption[],
+      ): Question =>
+        question({
+          id,
+          type: 'narrow',
+          level: 'low',
+          importance,
+          reason: 'unsure_needs',
+          step,
+          parameter: 'needs',
+          stem: sureTier2 ? STEMS.narrowAlso : STEMS.narrow,
+          options,
+          ...needsFlags,
+        });
       if (g1.length > 0) {
         if (sc(NX) >= CUTOFFS.nx.label) g1.push(nxOption());
-        out.push({
-          id: 'narrow:1',
-          type: 'narrow',
-          level: 'low',
-          importance: sureTier2 ? 'low' : 'medium',
-          value: 0,
-          priority: 0,
-          uncertainty: 0,
-          reason: 'unsure_needs',
-          step: sureTier2 ? 7 : 4,
-          parameter: 'needs',
-          stem: sureTier2 ? STEMS.narrowAlso : STEMS.narrow,
-          options: g1,
-          ...needsFlags,
-        });
+        out.push(
+          narrow(
+            'narrow:1',
+            sureTier2 ? 'low' : 'medium',
+            sureTier2 ? 7 : 4,
+            g1,
+          ),
+        );
       }
       if (g2.length > 0) {
-        out.push({
-          id: 'narrow:2',
-          type: 'narrow',
-          level: 'low',
-          importance: 'low',
-          value: 0,
-          priority: 0,
-          uncertainty: 0,
-          reason: 'unsure_needs',
-          step: sureTier2 ? 8 : 6,
-          parameter: 'needs',
-          stem: sureTier2 ? STEMS.narrowAlso : STEMS.narrow,
-          options: g2,
-          ...needsFlags,
-        });
+        out.push(narrow('narrow:2', 'low', sureTier2 ? 8 : 6, g2));
       }
     }
   }
@@ -304,8 +318,8 @@ export function countCodesOf(candidates: Question[]): string[] {
   const set = new Set<string>();
   for (const q of candidates) {
     if (q.parameter !== 'needs') continue;
-    for (const o of q.options) {
-      if (o.value !== NX && isKnownCode(o.value)) set.add(o.value);
+    for (const o of needOptions(q.options)) {
+      if (isKnownCode(o.value)) set.add(o.value);
     }
   }
   return [...set].sort(cmp);
