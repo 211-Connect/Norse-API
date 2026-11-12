@@ -138,6 +138,23 @@ describe('HybridSearchService', () => {
     expect(capturedMainRequest.knn).toBeUndefined();
   });
 
+  // ISS-2755: a decay function scores a document missing the field as 1, so
+  // without the filter a listing with no map point got the full distance bonus,
+  // as if it sat exactly at the search point.
+  it('gives the distance bonus only to documents that have a map point', async () => {
+    await service.searchHybrid({
+      headers,
+      query: { ...baseQuery, coords: [-74.89, 44.93], distance: 25 },
+    });
+
+    const functions = capturedMainRequest.query.function_score.functions;
+    const geo = functions.filter((fn: any) => fn.gauss);
+
+    expect(geo).toHaveLength(1);
+    expect(geo[0].filter).toEqual({ exists: { field: 'location.point' } });
+    expect(geo[0].weight).toBe(25);
+  });
+
   it('emits one score-weighted constant_score clause per predicted code', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 

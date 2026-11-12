@@ -417,7 +417,9 @@ export class HybridSearchService {
     );
 
     // buildFilters keeps the existing geo semantics: service_area "contains" AND
-    // (within `distance` of location.point OR no location.point). A true
+    // (within `distance` of location.point OR no location.point). In proximity
+    // mode there is no top-level "contains", and a listing with no point needs
+    // its service_area to contain the search point instead (ISS-2755). A true
     // "service_area OR location-close" would require combining those into a
     // `should` with minimum_should_match: 1 — intentionally NOT changed here.
     const baseFilters = SearchUtilsService.buildFilters(
@@ -804,6 +806,11 @@ export class HybridSearchService {
       const scale =
         distance > 0 ? `${distance}mi` : `${GEO_DEFAULT_SCALE_MI}mi`;
       functions.push({
+        // A decay function scores a document that lacks the field as 1, the
+        // same as one at the origin. Without this filter a listing with no map
+        // point got the full distance bonus (ISS-2755); with it, it gets 0 and
+        // is ranked on text and semantic score alone.
+        filter: { exists: { field: 'location.point' } },
         gauss: {
           'location.point': {
             origin: { lat, lon },

@@ -182,6 +182,28 @@ export class SearchUtilsService {
       }
 
       if (distance > 0) {
+        // A listing with no map point can't be measured against the radius.
+        // Default mode already requires its service area to contain the search
+        // point (above), so it passes here. Proximity mode skips that test, so
+        // the point-less branch carries it itself; otherwise a point-less
+        // listing from anywhere in the tenant matched every proximity search
+        // (ISS-2755).
+        const pointless: QueryDslQueryContainer = {
+          bool: {
+            must_not: { exists: { field: 'location.point' } },
+            ...(geoType === 'proximity' && {
+              filter: {
+                geo_shape: {
+                  service_area: {
+                    shape: { type: 'point', coordinates: [lon, lat] },
+                    relation: 'contains',
+                  },
+                },
+              },
+            }),
+          },
+        };
+
         filters.push({
           bool: {
             should: [
@@ -198,11 +220,7 @@ export class SearchUtilsService {
                   ],
                 },
               },
-              {
-                bool: {
-                  must_not: { exists: { field: 'location.point' } },
-                },
-              },
+              pointless,
             ],
           },
         });
