@@ -53,7 +53,7 @@ const dec = (candidates: ReturnType<typeof mk>[]): Decision => ({
 });
 
 describe('finalize', () => {
-  const counts = (total: number, byCode: Record<string, number>) => ({
+  const counts = (total: number, byCode: Record<string, number> | null) => ({
     total,
     byCode,
   });
@@ -72,7 +72,9 @@ describe('finalize', () => {
       'urgency_today',
     ]);
   });
-  it('sets counts, drops 0-count options, keeps missing-count options', () => {
+  it('sets counts and drops 0-count options; a code missing from counted byCode is 0', () => {
+    // An Elasticsearch aggregation can leave out a code with no matches, so a
+    // missing key in a counted byCode means 0 results, not "unknown".
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON', 'N-X'])]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
@@ -80,9 +82,30 @@ describe('finalize', () => {
     });
     expect(r.questions[0].options).toEqual([
       { value: 'N-HOU', label: 'N-HOU', resultsCount: 4 },
-      { value: 'N-MON', label: 'N-MON' },
       { value: 'N-X', label: 'N-X' },
     ]);
+  });
+  it('byCode null (not counted) keeps every option, without counts', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-X'])]);
+    const r = finalize(d, {
+      counts: counts(10, null),
+      strongTextMatch: false,
+    });
+    expect(r.questions[0].options).toEqual([
+      { value: 'N-HOU', label: 'N-HOU' },
+      { value: 'N-FOD', label: 'N-FOD' },
+      { value: 'N-X', label: 'N-X' },
+    ]);
+  });
+  it('an empty counted byCode drops every need option (all 0), unlike null', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
+    expect(
+      finalize(d, { counts: counts(10, {}), strongTextMatch: false }).questions,
+    ).toEqual([]);
+    expect(
+      finalize(d, { counts: counts(10, null), strongTextMatch: false })
+        .questions,
+    ).toHaveLength(1);
   });
   it('drops a question whose options are all equal to total', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
@@ -170,7 +193,7 @@ describe('numeric order', () => {
     });
   const run = (signals: ReturnType<typeof sig>) =>
     finalize(decide(req(), signals), {
-      counts: { total: 100, byCode: {} },
+      counts: { total: 100, byCode: null },
       strongTextMatch: false,
     }).questions;
 

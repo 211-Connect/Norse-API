@@ -238,7 +238,7 @@ describe('narrow', () => {
     it('a lone late narrow is still shown, importance low, also stem', () => {
       const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
       const r = finalize(d, {
-        counts: { total: 100, byCode: {} },
+        counts: { total: 100, byCode: null },
         strongTextMatch: false,
       });
       expect(r.questions.map((q) => q.id)).toEqual(['narrow:1']);
@@ -264,7 +264,7 @@ describe('narrow', () => {
         }),
       );
       const r = finalize(d, {
-        counts: { total: 100, byCode: {} },
+        counts: { total: 100, byCode: null },
         strongTextMatch: false,
       });
       const order = r.questions.map((q) => q.id);

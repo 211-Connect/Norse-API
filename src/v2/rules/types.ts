@@ -94,7 +94,14 @@ export interface Decision {
 }
 export interface SearchCounts {
   total: number;
-  byCode: Record<string, number>;
+  /**
+   * Results per need code, from the search's count over `sune_needs`.
+   * - An object: the codes were counted. A code missing from it has 0 results
+   *   (an Elasticsearch terms aggregation leaves out zero-count buckets).
+   * - `null`: the codes were not counted (not built yet, `clarify=never`, or
+   *   the count failed). Every option is kept, without a count.
+   */
+  byCode: Record<string, number> | null;
 }
 export interface FinalizeInput {
   counts: SearchCounts;

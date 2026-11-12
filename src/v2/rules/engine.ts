@@ -72,8 +72,8 @@ export function finalize(
         options.push(o);
         continue;
       }
-      const n = counts.byCode[o.value];
-      if (typeof n === 'number') {
+      if (counts.byCode !== null) {
+        const n = counts.byCode[o.value] ?? 0;
         if (n === 0) continue;
         o.resultsCount = n;
       }

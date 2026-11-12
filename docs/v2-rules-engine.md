@@ -4,7 +4,7 @@ Pure, deterministic TypeScript that decides what `/v2/search` asks after the mod
 
 ## Two calls around the search
 - `decide(request, signals, tenant)` runs before Elasticsearch. It returns the emergency band and cache rule, the need states (`use` boosts, `ask` becomes an option, the rest is dropped), the urgency state, the candidate questions, and `countCodes`: the need codes the search must count.
-- `finalize(decision, { counts, strongTextMatch })` runs after the search. It drops options with 0 results and questions whose answer changes nothing, ranks, and returns at most 3 questions. `strongTextMatch` (the query names a service or place well, e.g. "alcoholics anonymous") drops every needs question; the emergency and time questions stay.
+- `finalize(decision, { counts, strongTextMatch })` runs after the search. It drops options with 0 results and questions whose answer changes nothing, ranks, and returns at most 3 questions. `counts.byCode` is either an object (the codes were counted: a code missing from it has 0 results, since an Elasticsearch terms aggregation leaves out zero-count buckets) or `null` (not counted: not built yet, `clarify=never`, or the count failed; every option is kept, without a count). `strongTextMatch` (the query names a service or place well, e.g. "alcoholics anonymous") drops every needs question; the emergency and time questions stay.
 
 Needs never filter results; a used or confirmed need only boosts (`boostNeeds`, never a Tier 1 together with its Tier 2).
 
