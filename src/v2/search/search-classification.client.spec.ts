@@ -103,14 +103,14 @@ describe('SearchClassificationClient', () => {
         needs: {
           status: 'ok',
           scores: { 'N-HOU-02': 0.98, 'N-HOU': 0.9, 'N-X': 0.01 },
-          urgency: { level: 'U-2', score: 0.95 },
         },
+        urgency: { level: 'U-2', score: 0.95 },
         emergency: {
           status: 'ok',
           score: 0.1,
-          floorHit: false,
-          calmContext: undefined,
-          dvShelter: true,
+          floor_hit: false,
+          calm_context: undefined,
+          dv_shelter: true,
         },
       },
     });
@@ -135,9 +135,9 @@ describe('SearchClassificationClient', () => {
     expect(result.signals.emergency).toEqual({
       status: 'error',
       score: undefined,
-      floorHit: undefined,
-      calmContext: undefined,
-      dvShelter: undefined,
+      floor_hit: undefined,
+      calm_context: undefined,
+      dv_shelter: undefined,
     });
     expect(result.modelVersion).toBe('mv-1');
   });

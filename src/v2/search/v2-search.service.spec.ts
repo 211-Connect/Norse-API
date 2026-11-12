@@ -14,7 +14,7 @@ const golden: {
   rows: {
     query: string;
     needs: Record<string, number>;
-    emergency: { score: number; floorHit: boolean };
+    emergency: { score: number; floor_hit: boolean };
   }[];
 } = require('../rules/__fixtures__/golden-scores.json');
 
@@ -43,7 +43,7 @@ const okResult = (
 ): ClassifyResult => ({
   signals: {
     needs: { status: 'ok', scores },
-    emergency: { status: 'ok', score: 0.001, floorHit: false },
+    emergency: { status: 'ok', score: 0.001, floor_hit: false },
   },
   scores,
   modelVersion: 'mv-1',
@@ -257,7 +257,7 @@ describe('V2SearchService', () => {
               emergency: {
                 status: 'ok',
                 score: r.emergency.score,
-                floorHit: r.emergency.floorHit,
+                floor_hit: r.emergency.floor_hit,
               },
             },
           }),

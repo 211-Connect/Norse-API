@@ -24,7 +24,7 @@ const body = (
 });
 
 describe('toRulesSignals', () => {
-  it('maps the score list to a map, snake to camel, null to undefined, urgency under needs', () => {
+  it('maps the score list to a map, null to undefined, urgency at the top level', () => {
     expect(toRulesSignals(body())).toEqual({
       modelVersion: 'mv-1',
       scores: { 'N-HOU-02': 0.98, 'N-HOU': 0.9, 'N-X': 0.01 },
@@ -32,20 +32,20 @@ describe('toRulesSignals', () => {
         needs: {
           status: 'ok',
           scores: { 'N-HOU-02': 0.98, 'N-HOU': 0.9, 'N-X': 0.01 },
-          urgency: { level: 'U-2', score: 0.95 },
         },
+        urgency: { level: 'U-2', score: 0.95 },
         emergency: {
           status: 'ok',
           score: 0.1,
-          floorHit: false,
-          calmContext: undefined,
-          dvShelter: true,
+          floor_hit: false,
+          calm_context: undefined,
+          dv_shelter: true,
         },
       },
     });
   });
 
-  it('carries true booleans across the snake to camel rename', () => {
+  it('carries true booleans through unchanged', () => {
     const { signals } = toRulesSignals(
       body({
         emergency: {
@@ -60,9 +60,9 @@ describe('toRulesSignals', () => {
     expect(signals.emergency).toEqual({
       status: 'ok',
       score: 0.99,
-      floorHit: true,
-      calmContext: true,
-      dvShelter: false,
+      floor_hit: true,
+      calm_context: true,
+      dv_shelter: false,
     });
   });
 
@@ -82,9 +82,9 @@ describe('toRulesSignals', () => {
     expect(result.signals.emergency).toEqual({
       status: 'error',
       score: undefined,
-      floorHit: undefined,
-      calmContext: undefined,
-      dvShelter: undefined,
+      floor_hit: undefined,
+      calm_context: undefined,
+      dv_shelter: undefined,
     });
     expect(result.modelVersion).toBe('mv-1');
   });

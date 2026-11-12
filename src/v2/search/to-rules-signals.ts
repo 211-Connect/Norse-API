@@ -13,7 +13,7 @@ const orUndefined = <T>(value: T | null | undefined): T | undefined =>
 /**
  * Maps an ml-broker `search-classification` body (already shape-checked by
  * MlBrokerHttpService) to rules-engine signals: need scores list to a map,
- * snake_case to camelCase, null to undefined, urgency nested under needs.
+ * null to undefined. Field names and the top-level urgency already match the engine.
  * An emergency block that is missing or has an unknown status maps to
  * `{ status: 'error' }`.
  */
@@ -29,19 +29,16 @@ export function toRulesSignals(
       ? {
           status: e.status,
           score: orUndefined(e.score),
-          floorHit: orUndefined(e.floor_hit),
-          calmContext: orUndefined(e.calm_context),
-          dvShelter: orUndefined(e.dv_shelter),
+          floor_hit: orUndefined(e.floor_hit),
+          calm_context: orUndefined(e.calm_context),
+          dv_shelter: orUndefined(e.dv_shelter),
         }
       : { status: 'error' };
 
   return {
     signals: {
-      needs: {
-        status: 'ok',
-        scores,
-        urgency: { level: body.urgency.level, score: body.urgency.score },
-      },
+      needs: { status: 'ok', scores },
+      urgency: { level: body.urgency.level, score: body.urgency.score },
       emergency,
     },
     scores,

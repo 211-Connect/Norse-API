@@ -10,12 +10,8 @@ import { isTier1, isTier2 } from '../rules/sune';
 import { RulesRequest, RulesSignals } from '../rules/types';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import {
-  V2ClarificationDto,
-  V2SearchResponseDto,
-} from './dto/v2-search-response.dto';
+import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { SearchClassificationClient } from './search-classification.client';
-import { toSnakeCaseKeys } from './snake-case';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
 // means the check did not run (same as the rules engine's own specs).
@@ -61,16 +57,16 @@ export class V2SearchService {
 
     const callerNeeds = dto.needs ?? [];
     const rulesRequest: RulesRequest = {
-      hasText,
+      has_text: hasText,
       needs: callerNeeds,
-      passedNeeds: dto.passed_needs ?? [],
+      passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
     const decision = decide(rulesRequest, signals, {}); // tenant context: later slice
 
     const needScores: NeedScore[] = [];
-    for (const code of decision.boostNeeds) {
+    for (const code of decision.boost_needs) {
       const tier = isTier1(code) ? 'tier1' : isTier2(code) ? 'tier2' : null;
       if (!tier) continue;
       const score = callerNeeds.includes(code) ? 1 : scores[code];
@@ -88,11 +84,13 @@ export class V2SearchService {
       body,
     });
 
-    // byCode and strongTextMatch are placeholders in this slice: the stored
+    // by_code and strong_text_match are placeholders in this slice: the stored
     // need tags (dagster PR #780) and a retrieval signal are not available yet.
+    // by_code null means "not counted", so every option is kept; an empty
+    // object would mean "counted, all 0" and drop every need option.
     const clarification = finalize(decision, {
-      counts: { total: hitsTotal(response), byCode: {} },
-      strongTextMatch: false,
+      counts: { total: hitsTotal(response), by_code: null },
+      strong_text_match: false,
     });
 
     return {
@@ -111,13 +109,13 @@ export class V2SearchService {
           state: decision.urgency.state,
         },
       },
-      clarification: toSnakeCaseKeys<V2ClarificationDto>(clarification),
+      clarification,
       emergency: {
         band: decision.emergency.band,
-        show_hotline: decision.emergency.showHotline,
+        show_hotline: decision.emergency.show_hotline,
       },
       model_version: classified?.modelVersion ?? null,
-      rules_version: decision.rulesVersion,
+      rules_version: decision.rules_version,
     };
   }
 }
