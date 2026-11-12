@@ -1,7 +1,13 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
 import { buildCandidates, countCodesOf } from './questions';
-import { effort, priorityOf, splitQuality, valueOf } from './importance';
+import {
+  effort,
+  needUncertainty,
+  priorityOf,
+  splitQuality,
+  valueOf,
+} from './importance';
 import { NX } from './sune';
 import {
   Clarification,
@@ -29,8 +35,13 @@ export function decide(
     urgency,
     states,
   );
+  const countCodes = countCodesOf(candidates);
+  const scores = signals.needs.scores ?? {};
   return {
     rulesVersion: RULES_VERSION,
+    optionScores: Object.fromEntries(
+      countCodes.map((c) => [c, scores[c] ?? 0]),
+    ),
     emergency: {
       band,
       showHotline: band === 'popup' || req.urgency === 'U-0',
@@ -41,7 +52,7 @@ export function decide(
     nx: states.nx,
     urgency,
     candidates,
-    countCodes: countCodesOf(candidates),
+    countCodes,
   };
 }
 
@@ -79,9 +90,15 @@ export function finalize(
       }
       options.push(o);
     }
+    const dropped = options.length < q.options.length;
     q.options = options;
     const needOpts = options.filter((o) => o.value !== NX);
     if (needOpts.length === 0) continue;
+    // decide() measured uncertainty over every option; once 0-count options
+    // are gone, measure it again over the ones the person will see.
+    if (dropped) {
+      q.uncertainty = needUncertainty(q, decision.optionScores);
+    }
     const counted = needOpts.filter((o) => typeof o.resultsCount === 'number');
     if (counted.length > 0 && counted.every((o) => o.resultsCount === total)) {
       continue;

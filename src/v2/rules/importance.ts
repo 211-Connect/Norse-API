@@ -31,12 +31,21 @@ export function normEntropy(ps: number[]): number {
   return clamp(h / Math.log(v.length), 0, 1);
 }
 
-const needScores = (q: Question, signals: RulesSignals): number[] => {
-  const scores = signals.needs.scores ?? {};
-  return q.options
-    .filter((o) => o.value !== NX)
-    .map((o) => scores[o.value] ?? 0);
-};
+const needScores = (q: Question, scores: Record<string, number>): number[] =>
+  q.options.filter((o) => o.value !== NX).map((o) => scores[o.value] ?? 0);
+
+/** Uncertainty of a needs question over the options it has now. */
+export function needUncertainty(
+  q: Question,
+  scores: Record<string, number>,
+): number {
+  if (q.type === 'find_need') return normEntropy(needScores(q, scores));
+  if (q.type === 'narrow') {
+    const ys = needScores(q, scores).map(yesNo);
+    return ys.length === 0 ? 0 : ys.reduce((a, b) => a + b, 0) / ys.length;
+  }
+  return 0;
+}
 
 export function uncertainty(q: Question, signals: RulesSignals): number {
   if (q.id === 'emergency') {
@@ -48,12 +57,7 @@ export function uncertainty(q: Question, signals: RulesSignals): number {
   if (q.id === 'urgency_today' || q.id === 'urgency_time') {
     return yesNo(signals.needs.urgency?.score ?? 0.5);
   }
-  if (q.type === 'find_need') return normEntropy(needScores(q, signals));
-  if (q.type === 'narrow') {
-    const ys = needScores(q, signals).map(yesNo);
-    return ys.length === 0 ? 0 : ys.reduce((a, b) => a + b, 0) / ys.length;
-  }
-  return 0;
+  return needUncertainty(q, signals.needs.scores ?? {});
 }
 
 export function effort(q: Question): number {

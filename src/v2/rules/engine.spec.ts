@@ -40,8 +40,12 @@ const mk = (
   priority: 0,
   uncertainty,
 });
-const dec = (candidates: ReturnType<typeof mk>[]): Decision => ({
+const dec = (
+  candidates: ReturnType<typeof mk>[],
+  optionScores: Record<string, number> = {},
+): Decision => ({
   rulesVersion: RULES_VERSION,
+  optionScores,
   emergency: { band: 'none', showHotline: false },
   cacheable: true,
   needs: [],
@@ -84,6 +88,57 @@ describe('finalize', () => {
       { value: 'N-HOU', label: 'N-HOU', resultsCount: 4 },
       { value: 'N-X', label: 'N-X' },
     ]);
+  });
+  it('recomputes uncertainty over the options left after 0-count drops', () => {
+    // Housing and Food are a toss-up (uncertainty ~0.80). With Food at 0
+    // results the question is Housing vs Money, which the model favours
+    // clearly: normEntropy([0.4, 0.05]) ~0.503.
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8)], {
+      'N-HOU': 0.4,
+      'N-FOD': 0.4,
+      'N-MON': 0.05,
+    });
+    const [q] = finalize(d, {
+      counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
+      strongTextMatch: false,
+    }).questions;
+    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON']);
+    expect(q.uncertainty).toBeCloseTo(0.503, 2);
+  });
+  it('a start question cut to one option ranks below a real area question', () => {
+    const d = dec(
+      [
+        mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8),
+        mk('area:N-HOU', 3, ['N-HOU-01', 'N-HOU-02'], 'needs', 0.6),
+      ],
+      {
+        'N-HOU': 0.4,
+        'N-FOD': 0.4,
+        'N-MON': 0.05,
+        'N-HOU-01': 0.5,
+        'N-HOU-02': 0.5,
+      },
+    );
+    const qs = finalize(d, {
+      counts: counts(10, {
+        'N-HOU': 5,
+        'N-FOD': 0,
+        'N-MON': 0,
+        'N-HOU-01': 5,
+        'N-HOU-02': 5,
+      }),
+      strongTextMatch: false,
+    }).questions;
+    expect(qs.map((q) => q.id)).toEqual(['area:N-HOU', 'start']);
+    expect(qs[1].uncertainty).toBe(0);
+  });
+  it('keeps the decide-time uncertainty when no option was dropped', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.42)]);
+    const [q] = finalize(d, {
+      counts: counts(10, { 'N-HOU': 5, 'N-FOD': 5 }),
+      strongTextMatch: false,
+    }).questions;
+    expect(q.uncertainty).toBe(0.42);
   });
   it('byCode null (not counted) keeps every option, without counts', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-X'])]);

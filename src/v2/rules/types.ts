@@ -83,6 +83,12 @@ export interface Question {
 }
 export interface Decision {
   rulesVersion: string;
+  /**
+   * Model score of every need code offered as an option (never N-X), kept so
+   * finalize can recompute a question's uncertainty after it drops 0-count
+   * options. Internal: not part of the response.
+   */
+  optionScores: Record<string, number>;
   emergency: { band: EmergencyBand; showHotline: boolean };
   cacheable: boolean;
   needs: NeedState[]; // use + ask only; drops omitted
