@@ -55,7 +55,7 @@ export function uncertainty(q: Question, signals: RulesSignals): number {
     return yesNo(s);
   }
   if (q.id === 'urgency_today' || q.id === 'urgency_time') {
-    return yesNo(signals.needs.urgency?.score ?? 0.5);
+    return yesNo(signals.urgency?.score ?? 0.5);
   }
   return needUncertainty(q, signals.needs.scores ?? {});
 }
@@ -66,7 +66,7 @@ export function effort(q: Question): number {
 
 export function splitQuality(q: Question, total: number): number {
   const counts = q.options
-    .map((o) => o.resultsCount)
+    .map((o) => o.results_count)
     .filter((n): n is number => typeof n === 'number');
   if (counts.length === 0 || total <= 0) return 1;
   if (counts.length === 1) {

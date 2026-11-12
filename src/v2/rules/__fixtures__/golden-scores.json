@@ -98,7 +98,7 @@
    },
    "emergency": {
     "score": 0.001183,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -198,7 +198,7 @@
    },
    "emergency": {
     "score": 0.002516,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -298,7 +298,7 @@
    },
    "emergency": {
     "score": 0.015683,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -398,7 +398,7 @@
    },
    "emergency": {
     "score": 0.002236,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -498,7 +498,7 @@
    },
    "emergency": {
     "score": 0.022995,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -598,7 +598,7 @@
    },
    "emergency": {
     "score": 0.002602,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -698,7 +698,7 @@
    },
    "emergency": {
     "score": 0.998546,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -798,7 +798,7 @@
    },
    "emergency": {
     "score": 0.999988,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -898,7 +898,7 @@
    },
    "emergency": {
     "score": 0.998994,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -998,7 +998,7 @@
    },
    "emergency": {
     "score": 0.316133,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1098,7 +1098,7 @@
    },
    "emergency": {
     "score": 0.99472,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -1198,7 +1198,7 @@
    },
    "emergency": {
     "score": 0.022274,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1298,7 +1298,7 @@
    },
    "emergency": {
     "score": 0.106006,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1398,7 +1398,7 @@
    },
    "emergency": {
     "score": 0.995287,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -1498,7 +1498,7 @@
    },
    "emergency": {
     "score": 0.006805,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1598,7 +1598,7 @@
    },
    "emergency": {
     "score": 0.550234,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1698,7 +1698,7 @@
    },
    "emergency": {
     "score": 0.036601,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1798,7 +1798,7 @@
    },
    "emergency": {
     "score": 0.022106,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1898,7 +1898,7 @@
    },
    "emergency": {
     "score": 0.006987,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -1998,7 +1998,7 @@
    },
    "emergency": {
     "score": 0.09788,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2098,7 +2098,7 @@
    },
    "emergency": {
     "score": 0.069918,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2198,7 +2198,7 @@
    },
    "emergency": {
     "score": 0.00015,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2298,7 +2298,7 @@
    },
    "emergency": {
     "score": 0.849165,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2398,7 +2398,7 @@
    },
    "emergency": {
     "score": 0.999637,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -2498,7 +2498,7 @@
    },
    "emergency": {
     "score": 0.999729,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -2598,7 +2598,7 @@
    },
    "emergency": {
     "score": 0.013839,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2698,7 +2698,7 @@
    },
    "emergency": {
     "score": 0.002092,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2798,7 +2798,7 @@
    },
    "emergency": {
     "score": 0.022463,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2898,7 +2898,7 @@
    },
    "emergency": {
     "score": 0.004172,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -2998,7 +2998,7 @@
    },
    "emergency": {
     "score": 0.016494,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3098,7 +3098,7 @@
    },
    "emergency": {
     "score": 0.003859,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3198,7 +3198,7 @@
    },
    "emergency": {
     "score": 0.009846,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3298,7 +3298,7 @@
    },
    "emergency": {
     "score": 0.997099,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -3398,7 +3398,7 @@
    },
    "emergency": {
     "score": 0.047102,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3498,7 +3498,7 @@
    },
    "emergency": {
     "score": 0.934973,
-    "floorHit": true
+    "floor_hit": true
    }
   },
   {
@@ -3598,7 +3598,7 @@
    },
    "emergency": {
     "score": 0.98426,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3698,7 +3698,7 @@
    },
    "emergency": {
     "score": 0.03454,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3798,7 +3798,7 @@
    },
    "emergency": {
     "score": 0.090046,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3898,7 +3898,7 @@
    },
    "emergency": {
     "score": 0.022825,
-    "floorHit": false
+    "floor_hit": false
    }
   },
   {
@@ -3998,7 +3998,7 @@
    },
    "emergency": {
     "score": 0.000542,
-    "floorHit": false
+    "floor_hit": false
    }
   }
  ]

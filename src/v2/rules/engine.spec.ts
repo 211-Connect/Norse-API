@@ -10,7 +10,7 @@ const golden: {
   rows: {
     query: string;
     needs: Record<string, number>;
-    emergency: { score: number; floorHit: boolean };
+    emergency: { score: number; floor_hit: boolean };
   }[];
 } = require('./__fixtures__/golden-scores.json');
 
@@ -33,35 +33,35 @@ const mk = (
   parameter,
   stem: 's',
   options: values.map((v) => ({ value: v, label: v })),
-  multiSelect: true,
-  allowOther: true,
-  noneOfThese: true,
+  multi_select: true,
+  allow_other: true,
+  none_of_these: true,
   value: 0,
   priority: 0,
   uncertainty,
 });
 const dec = (
   candidates: ReturnType<typeof mk>[],
-  optionScores: Record<string, number> = {},
+  option_scores: Record<string, number> = {},
 ): Decision => ({
-  rulesVersion: RULES_VERSION,
-  optionScores,
-  emergency: { band: 'none', showHotline: false },
+  rules_version: RULES_VERSION,
+  option_scores,
+  emergency: { band: 'none', show_hotline: false },
   cacheable: true,
   needs: [],
-  boostNeeds: [],
+  boost_needs: [],
   nx: false,
   urgency: { value: 'U-X', source: 'default', state: 'drop' },
   candidates,
-  countCodes: [],
+  count_codes: [],
 });
 
 describe('finalize', () => {
-  const counts = (total: number, byCode: Record<string, number> | null) => ({
+  const counts = (total: number, by_code: Record<string, number> | null) => ({
     total,
-    byCode,
+    by_code,
   });
-  it('strongTextMatch keeps emergency + time, drops needs', () => {
+  it('strong_text_match keeps emergency + time, drops needs', () => {
     const d = dec([
       mk('emergency', 0, ['U-0'], 'urgency'),
       mk('urgency_today', 1, ['U-1'], 'urgency'),
@@ -69,23 +69,23 @@ describe('finalize', () => {
     ]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 5 }),
-      strongTextMatch: true,
+      strong_text_match: true,
     });
     expect(r.questions.map((q) => q.id)).toEqual([
       'emergency',
       'urgency_today',
     ]);
   });
-  it('sets counts and drops 0-count options; a code missing from counted byCode is 0', () => {
+  it('sets counts and drops 0-count options; a code missing from counted by_code is 0', () => {
     // An Elasticsearch aggregation can leave out a code with no matches, so a
-    // missing key in a counted byCode means 0 results, not "unknown".
+    // missing key in a counted by_code means 0 results, not "unknown".
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON', 'N-X'])]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
-      { value: 'N-HOU', label: 'N-HOU', resultsCount: 4 },
+      { value: 'N-HOU', label: 'N-HOU', results_count: 4 },
       { value: 'N-X', label: 'N-X' },
     ]);
   });
@@ -100,7 +100,7 @@ describe('finalize', () => {
     });
     const [q] = finalize(d, {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     }).questions;
     expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON']);
     expect(q.uncertainty).toBeCloseTo(0.503, 2);
@@ -127,7 +127,7 @@ describe('finalize', () => {
         'N-HOU-01': 5,
         'N-HOU-02': 5,
       }),
-      strongTextMatch: false,
+      strong_text_match: false,
     }).questions;
     expect(qs.map((q) => q.id)).toEqual(['area:N-HOU', 'start']);
     expect(qs[1].uncertainty).toBe(0);
@@ -136,15 +136,15 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.42)]);
     const [q] = finalize(d, {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 5 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     }).questions;
     expect(q.uncertainty).toBe(0.42);
   });
-  it('byCode null (not counted) keeps every option, without counts', () => {
+  it('by_code null (not counted) keeps every option, without counts', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-X'])]);
     const r = finalize(d, {
       counts: counts(10, null),
-      strongTextMatch: false,
+      strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
       { value: 'N-HOU', label: 'N-HOU' },
@@ -152,13 +152,14 @@ describe('finalize', () => {
       { value: 'N-X', label: 'N-X' },
     ]);
   });
-  it('an empty counted byCode drops every need option (all 0), unlike null', () => {
+  it('an empty counted by_code drops every need option (all 0), unlike null', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     expect(
-      finalize(d, { counts: counts(10, {}), strongTextMatch: false }).questions,
+      finalize(d, { counts: counts(10, {}), strong_text_match: false })
+        .questions,
     ).toEqual([]);
     expect(
-      finalize(d, { counts: counts(10, null), strongTextMatch: false })
+      finalize(d, { counts: counts(10, null), strong_text_match: false })
         .questions,
     ).toHaveLength(1);
   });
@@ -167,7 +168,7 @@ describe('finalize', () => {
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 10, 'N-FOD': 10 }),
-        strongTextMatch: false,
+        strong_text_match: false,
       }).questions,
     ).toEqual([]);
   });
@@ -176,11 +177,12 @@ describe('finalize', () => {
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
-        strongTextMatch: false,
+        strong_text_match: false,
       }).questions,
     ).toEqual([]);
     expect(
-      finalize(d, { counts: counts(0, {}), strongTextMatch: false }).questions,
+      finalize(d, { counts: counts(0, {}), strong_text_match: false })
+        .questions,
     ).toEqual([]);
   });
   it('ranks by priority, caps at 3', () => {
@@ -192,7 +194,7 @@ describe('finalize', () => {
     ]);
     const r = finalize(d, {
       counts: counts(10, { 'N-FOD-01': 5, 'N-HOU-01': 5, 'N-HOU': 5 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual([
       'start',
@@ -206,7 +208,7 @@ describe('finalize', () => {
     ]);
     const r2 = finalize(d2, {
       counts: counts(10, { 'N-HOU-01': 9, 'N-FOD-01': 6, 'N-MON-01': 5 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     });
     expect(r2.questions.map((q) => q.id)).toEqual([
       'area:N-C',
@@ -219,14 +221,14 @@ describe('finalize', () => {
     const before = JSON.stringify(d);
     finalize(d, {
       counts: counts(10, { 'N-HOU': 3, 'N-FOD': 0 }),
-      strongTextMatch: false,
+      strong_text_match: false,
     });
     expect(JSON.stringify(d)).toBe(before);
   });
-  it('carries rulesVersion', () => {
+  it('carries rules_version', () => {
     expect(
-      finalize(dec([]), { counts: counts(1, {}), strongTextMatch: false })
-        .rulesVersion,
+      finalize(dec([]), { counts: counts(1, {}), strong_text_match: false })
+        .rules_version,
     ).toBe(RULES_VERSION);
   });
 });
@@ -243,13 +245,13 @@ describe('numeric order', () => {
       needs: {
         status: 'ok',
         scores,
-        urgency: { level: 'U-1', score: u },
       },
+      urgency: { level: 'U-1', score: u },
     });
   const run = (signals: ReturnType<typeof sig>) =>
     finalize(decide(req(), signals), {
-      counts: { total: 100, byCode: null },
-      strongTextMatch: false,
+      counts: { total: 100, by_code: null },
+      strong_text_match: false,
     }).questions;
 
   it('a near-equal area question ranks before urgency_today', () => {
@@ -281,14 +283,14 @@ describe('numeric order', () => {
       mk('area:N-B', 3, ['N-FOD-01']),
     ]);
     const r = finalize(d, {
-      counts: { total: 100, byCode: { 'N-HOU-01': 1, 'N-FOD-01': 50 } },
-      strongTextMatch: false,
+      counts: { total: 100, by_code: { 'N-HOU-01': 1, 'N-FOD-01': 50 } },
+      strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual(['area:N-B', 'area:N-A']);
   });
   it('emergency stays first with a high-value area question present', () => {
     const signals = withUrgency(tier1Area, 0.9);
-    signals.emergency = { status: 'ok', score: 0.9, floorHit: false };
+    signals.emergency = { status: 'ok', score: 0.9, floor_hit: false };
     const qs = run(signals);
     expect(qs[0].id).toBe('emergency');
     expect(qs.map((q) => q.id)).toContain('area:N-HOU');
@@ -299,12 +301,12 @@ describe('numeric order', () => {
         needs: {
           status: 'ok',
           scores: row.needs,
-          urgency: { level: 'U-1', score: 0.85 },
         },
+        urgency: { level: 'U-1', score: 0.85 },
         emergency: {
           status: 'ok',
           score: row.emergency.score,
-          floorHit: row.emergency.floorHit,
+          floor_hit: row.emergency.floor_hit,
         },
       });
       for (const q of run(signals)) {
@@ -324,7 +326,7 @@ describe('golden fixture', () => {
         emergency: {
           status: 'ok',
           score: row.emergency.score,
-          floorHit: row.emergency.floorHit,
+          floor_hit: row.emergency.floor_hit,
         },
       }),
     );
@@ -340,18 +342,18 @@ describe('golden fixture', () => {
       const d = run(r);
       for (const q of d.candidates.filter((c) => c.parameter === 'needs')) {
         for (const o of q.options) {
-          expect(d.boostNeeds).not.toContain(o.value);
+          expect(d.boost_needs).not.toContain(o.value);
           if (q.type === 'narrow' && o.value !== 'N-X') {
             expect(r.needs[o.value]).toBeGreaterThanOrEqual(0.12);
             expect(r.needs[o.value]).toBeLessThan(0.97);
           }
         }
       }
-      for (const c of d.boostNeeds) {
+      for (const c of d.boost_needs) {
         if (isTier1(c))
-          expect(d.boostNeeds.some((x) => isTier2(x) && tier1Of(x) === c)).toBe(
-            false,
-          );
+          expect(
+            d.boost_needs.some((x) => isTier2(x) && tier1Of(x) === c),
+          ).toBe(false);
       }
     },
   );
@@ -377,7 +379,7 @@ describe('golden fixture', () => {
   it('NaN emergency score -> unknown band, not cacheable', () => {
     const d = decide(
       req(),
-      sig({}, { emergency: { status: 'ok', score: NaN, floorHit: false } }),
+      sig({}, { emergency: { status: 'ok', score: NaN, floor_hit: false } }),
     );
     expect(d.emergency.band).toBe('unknown');
     expect(d.cacheable).toBe(false);

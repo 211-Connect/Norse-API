@@ -12,7 +12,6 @@ import {
   EmergencyBand,
   EmergencySignal,
   NeedState,
-  NeedsSignal,
   RulesRequest,
   RulesSignals,
   UrgencyState,
@@ -27,9 +26,9 @@ export function emergencyBand(e: EmergencySignal | null): EmergencyBand {
   )
     return 'unknown';
   const { popup, soft } = CUTOFFS.emergency;
-  if (e.floorHit) return e.score >= popup ? 'popup' : 'soft';
-  if (e.calmContext) return e.score >= soft ? 'soft' : 'none';
-  if (e.dvShelter && e.score < popup) return 'soft';
+  if (e.floor_hit) return e.score >= popup ? 'popup' : 'soft';
+  if (e.calm_context) return e.score >= soft ? 'soft' : 'none';
+  if (e.dv_shelter && e.score < popup) return 'soft';
   if (e.score >= popup) return 'popup';
   if (e.score >= soft) return 'soft';
   return 'none';
@@ -37,15 +36,15 @@ export function emergencyBand(e: EmergencySignal | null): EmergencyBand {
 
 export function urgencyState(
   req: RulesRequest,
-  needs: NeedsSignal,
+  signals: RulesSignals,
 ): UrgencyState {
   if (req.urgency) {
     return { value: req.urgency, source: 'caller', state: 'use' };
   }
-  if (needs.status !== 'ok' || !needs.urgency) {
+  if (signals.needs.status !== 'ok' || !signals.urgency) {
     return { value: 'U-X', source: 'default', state: 'drop' };
   }
-  const { score, level } = needs.urgency;
+  const { score, level } = signals.urgency;
   if (!Number.isFinite(score)) {
     return { value: 'U-X', source: 'default', state: 'drop' };
   }
@@ -78,7 +77,7 @@ export function confirmedCodes(req: RulesRequest): string[] {
 }
 
 export function passedCodes(req: RulesRequest): Set<string> {
-  return new Set((req.passedNeeds ?? []).filter(isKnownCode));
+  return new Set((req.passed_needs ?? []).filter(isKnownCode));
 }
 
 export function needStates(

@@ -42,11 +42,15 @@ const needOption = (code: string): QuestionOption => ({
 });
 const nxOption = (): QuestionOption => ({ value: NX, label: LABELS.nx });
 
-const needsFlags = { multiSelect: true, allowOther: true, noneOfThese: true };
+const needsFlags = {
+  multi_select: true,
+  allow_other: true,
+  none_of_these: true,
+};
 const urgencyFlags = {
-  multiSelect: false,
-  allowOther: false,
-  noneOfThese: false,
+  multi_select: false,
+  allow_other: false,
+  none_of_these: false,
 };
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -84,7 +88,7 @@ export function buildCandidates(
 
   // 2. time questions
   if (urgency.state === 'ask' && !hasEmergency) {
-    const level = signals.needs.urgency?.level;
+    const level = signals.urgency?.level;
     if (level === 'U-1') {
       out.push({
         id: 'urgency_today',
@@ -208,7 +212,7 @@ export function buildCandidates(
           picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
         } else {
           const pool = [
-            ...(tenant.topAreas ?? []).filter((c) => isTier1(c)),
+            ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
             ...DEFAULT_TOP_AREAS,
           ];
           picks = [];
