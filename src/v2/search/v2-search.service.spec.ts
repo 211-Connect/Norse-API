@@ -279,4 +279,106 @@ describe('V2SearchService', () => {
     }
     expect(sawQuestionWithOptions).toBe(true);
   });
+
+  describe('needs filter and counts (ISS-2499)', () => {
+    it('sends caller needs as the filter, without N-X', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ needs: ['N-FOD-01', 'N-X', 'N-HOU'] }),
+      });
+      expect(searchHybrid.mock.calls[0][0].needsFilter).toEqual([
+        'N-FOD-01',
+        'N-HOU',
+      ]);
+    });
+
+    it('sends no filter when N-X is the only need', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({ headers, query: dto({ needs: ['N-X'] }) });
+      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+    });
+
+    it('a model guess never filters, at any confidence', async () => {
+      const { service, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.999 })),
+      });
+      await service.search({ headers, query: dto({ query: 'food' }) });
+      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+    });
+
+    it('passed_needs never filter', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ passed_needs: ['N-FOD'] }),
+      });
+      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+    });
+
+    it('asks for the rules engine count_codes and passes the counts through', async () => {
+      const search = jest.fn().mockResolvedValue({
+        ...hybridResponse(),
+        needCounts: { 'N-FOD': 3 },
+      });
+      const { service } = build({
+        classify: jest
+          .fn()
+          .mockResolvedValue(okResult({ 'N-FOD-01': 0.9, 'N-HOU-01': 0.8 })),
+        search,
+      });
+      const res: any = await service.search({
+        headers,
+        query: dto({ query: 'food' }),
+      });
+      const arg = search.mock.calls[0][0];
+      expect(Array.isArray(arg.countCodes)).toBe(true);
+      expect(arg.countCodes).not.toContain('N-X');
+      expect('needCounts' in res).toBe(false); // internal field is not in the response
+    });
+
+    it('clarify=never does not count', async () => {
+      const { service, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.9 })),
+      });
+      await service.search({
+        headers,
+        query: dto({ query: 'food', clarify: 'never' }),
+      });
+      expect(searchHybrid.mock.calls[0][0].countCodes).toBeUndefined();
+    });
+
+    it('not counted (no needCounts) keeps by_code null: every option stays', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.9 })),
+      });
+      const res: any = await service.search({
+        headers,
+        query: dto({ query: 'food' }),
+      });
+      // no needCounts from the search: options keep, none drops to 0
+      expect(res.clarification).toBeDefined();
+    });
+
+    it('counted: a requested code with no count is written as 0 and its option drops', async () => {
+      const search = jest.fn().mockImplementation(async (a: any) => ({
+        ...hybridResponse(10),
+        needCounts: Object.fromEntries(
+          (a.countCodes as string[]).map((c) => [c, 0]),
+        ),
+      }));
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.5 })),
+        search,
+      });
+      const res: any = await service.search({
+        headers,
+        query: dto({ query: 'food' }),
+      });
+      const needQs = res.clarification.questions.filter(
+        (q: any) => q.parameter === 'needs',
+      );
+      expect(needQs).toHaveLength(0);
+    });
+  });
 });
