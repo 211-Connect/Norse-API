@@ -43,4 +43,3 @@ export const LABELS = {
     safe: 'No, I am safe now',
   },
 };
-

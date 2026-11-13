@@ -123,7 +123,11 @@ describe('V2SearchService', () => {
       headers,
       query: dto({ query: ' rent help ' }),
     });
-    expect(classify).toHaveBeenCalledWith('rent help', headers['x-tenant-id']);
+    expect(classify).toHaveBeenCalledWith(
+      'rent help',
+      headers['x-tenant-id'],
+      'on',
+    );
     expect(res.model_version).toBe('mv-1');
     expect(res.intent.query).toBe(' rent help ');
   });
@@ -519,7 +523,10 @@ describe('V2SearchService', () => {
         query: dto({ query: 'x', urgency: 'U-0' }),
       });
       expect(emergencyQ(res).options).toEqual([]);
-      expect(emergencyQ(res).hotlines.map((h) => h.number)).toEqual(['988', '911']);
+      expect(emergencyQ(res).hotlines.map((h) => h.number)).toEqual([
+        '988',
+        '911',
+      ]);
       expect(res.search).toBeDefined();
     });
 

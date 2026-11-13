@@ -75,6 +75,7 @@ export class V2SearchService {
       ? await this.classifier.classify(
           text.trim().slice(0, CLASSIFY_MAX_TEXT_LENGTH),
           headers['x-tenant-id'],
+          aiClassification,
         )
       : null;
     const signals = classified?.signals ?? NO_TEXT_SIGNALS;

@@ -66,7 +66,7 @@ describe('emergency question', () => {
       expect(withU0.map((q) => q.id)).toEqual(['emergency']);
     }
   });
-  it('beside the emergency question: needs questions yes, urgency question no (today\'s rule)', () => {
+  it("beside the emergency question: needs questions yes, urgency question no (today's rule)", () => {
     // Reported to Lucas, not changed: the time questions need !hasEmergency,
     // so after a "No" tap the page has the needs questions, never an urgency one.
     const d = decide(req(), {
@@ -88,8 +88,14 @@ describe('emergency question', () => {
     const next = decide(req({ urgency: 'U-0' }), sig({}, { emergency: popup }));
     expect(next.candidates[0].options).toEqual([]);
     expect(next.candidates[0].hotlines).toHaveLength(2);
-    expect(next.urgency).toEqual({ value: 'U-0', source: 'caller', state: 'use' });
-    expect(next.candidates.some((q) => q.type === 'confirm_urgency')).toBe(false);
+    expect(next.urgency).toEqual({
+      value: 'U-0',
+      source: 'caller',
+      state: 'use',
+    });
+    expect(next.candidates.some((q) => q.type === 'confirm_urgency')).toBe(
+      false,
+    );
   });
   it('the question has no parameter field; each option carries one (Decision 55)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
