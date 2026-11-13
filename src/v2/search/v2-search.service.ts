@@ -114,6 +114,13 @@ export class V2SearchService {
       ...response,
       intent: {
         query: hasText ? text : null,
+        ...(dto.taxonomy &&
+          dto.taxonomy.length > 0 && {
+            taxonomy: dto.taxonomy.map((value) => ({
+              value,
+              source: 'caller' as const,
+            })),
+          }),
         needs: decision.needs.map((n) => ({
           value: n.code,
           source: n.source,

@@ -540,6 +540,24 @@ describe('V2SearchService', () => {
       ]);
     });
 
+    it('intent echoes taxonomy as sent, source caller, not expanded', async () => {
+      const { service } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800', 'BD-1800.2000'] }),
+      });
+      expect(res.intent.taxonomy).toEqual([
+        { value: 'BD-1800', source: 'caller' },
+        { value: 'BD-1800.2000', source: 'caller' },
+      ]);
+    });
+
+    it('intent has no taxonomy key when the request sent none', async () => {
+      const { service } = build({});
+      const res = await service.search({ headers, query: dto({}) });
+      expect('taxonomy' in res.intent).toBe(false);
+    });
+
     it('taxonomy with text: classify runs and the scope still holds', async () => {
       const { service, classify, searchHybrid } = build({});
       await service.search({
