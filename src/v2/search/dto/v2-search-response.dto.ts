@@ -63,11 +63,14 @@ export class V2QuestionOptionDto {
   })
   value: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
+    type: Number,
+    nullable: true,
     description:
-      'Services that match this need; need options only, absent when not counted.',
+      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number. An option with count 0 is never offered.',
   })
-  results_count?: number;
+  // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
+  results_count?: number | null;
 }
 
 export class V2HotlineDto {
@@ -84,12 +87,6 @@ export class V2QuestionDto {
     enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
   })
   type: string;
-  @ApiProperty({
-    enum: ['red', 'orange', 'low'],
-    description:
-      'Emergency question: `red` shows the popup, `orange` the soft card (ADR 0039 Decision 54). Other questions: `orange` or `low`.',
-  })
-  level: string;
   @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
   importance: string;
   @ApiProperty() value: number;

@@ -57,7 +57,6 @@ export interface UrgencyState {
 
 export type QuestionType =
   'emergency' | 'confirm_urgency' | 'find_need' | 'narrow';
-export type QuestionLevel = 'red' | 'orange' | 'low';
 export type QuestionImportance = 'critical' | 'high' | 'medium' | 'low';
 export type QuestionReason =
   | 'emergency_band'
@@ -72,12 +71,12 @@ export interface QuestionOption {
   label: string;
   parameter: OptionParameter;
   value: string;
-  results_count?: number;
+  /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
+  results_count?: number | null;
 }
 export interface Question {
   id: string;
   type: QuestionType;
-  level: QuestionLevel;
   importance: QuestionImportance;
   value: number; // within-band importance in [0, 0.999]: model uncertainty x answer effort x result split (rules engine)
   priority: number; // BAND_BASE[importance] + value; questions are ranked by this, high first
