@@ -49,6 +49,21 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ passed_needs: ['N-NOPE'] }).props).toContain('passed_needs');
   });
 
+  it('names each unknown need code in the reason (Lucas 2026-11-12, answer 7)', () => {
+    const r = parse({ needs: 'N-HOU,N-NOPE,N-ZZZ-99' });
+    const reason = JSON.stringify(r.errors[0].constraints);
+    expect(reason).toContain('unknown need code(s): N-NOPE, N-ZZZ-99');
+    expect(reason).not.toContain('N-HOU,');
+    expect(reason).not.toContain('N-X');
+  });
+
+  it('names an unknown passed_needs code in the reason', () => {
+    const r = parse({ passed_needs: ['N-NOPE'] });
+    expect(JSON.stringify(r.errors[0].constraints)).toContain(
+      'unknown need code(s): N-NOPE',
+    );
+  });
+
   it('rejects N-X in needs with a message naming Tier 1 and Tier 2 (ISS-2499)', () => {
     const r = parse({ needs: 'N-X' });
     expect(r.props).toContain('needs');
