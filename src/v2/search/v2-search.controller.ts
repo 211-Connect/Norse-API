@@ -39,9 +39,10 @@ import { V2SearchService } from './v2-search.service';
 
 /**
  * Reached by `GET /v2/search` (the `/v2/` path selects version 2) and by
- * `GET /search` with `x-api-version: 2`. No CDN cache decorator: a response
- * whose emergency status is an error must not be cached, and that cache rule
- * is not written yet.
+ * `GET /search` with `x-api-version: 2`. No CDN cache decorator: the rules
+ * engine's `decision.cacheable` (internal emergency band none and no emergency
+ * question, ADR 0039 Decision 28) is the cache rule, but no `Cache-Control`
+ * header is written from it yet (exact numbers: ADR 0039 Question 11).
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
  * generates the frontend SDK, and a draft must not reach it. Remove
@@ -63,7 +64,7 @@ export class V2SearchController {
   @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
   @ApiOperation({
     summary:
-      'Search with intent, clarification questions and an emergency band (draft)',
+      'Search with intent and clarification questions, the emergency question first (draft)',
     description:
       'Hybrid search plus classification and a rules engine. Behind the ' +
       '`V2_SEARCH_ENABLED` flag; the request and response shapes are a draft ' +

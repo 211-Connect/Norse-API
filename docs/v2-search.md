@@ -17,7 +17,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 4. `boostNeeds` become `NeedScore[]` (tier from the SUNE code; score 1 for a caller need, else the classify score).
 5. `HybridSearchService.searchHybrid` with `query_type: 'hybrid'` and `rankingVersion: 'v2'`.
 6. `finalize(...)` with the hits total. Per-code counts (`byCode: {}`) and `strongTextMatch: false` are placeholders.
-7. Response: the v1 hybrid response plus `intent`, `clarification` (snake_case keys), `emergency`, `model_version`, `rules_version`.
+7. Response: the v1 hybrid response plus `intent`, `clarification` (snake_case keys), `model_version`, `rules_version`. No top-level `emergency` block (ADR 0039 Decision 54): the emergency is only the emergency question in `clarification` (`level` red = popup, orange = soft card; caller `urgency=U-0` gives a red one with hotlines and no options). Each option is `{label, parameter, value, results_count?}`.
 
 Usage metric: one `norse_search_requests_total` count per request with `search_type="v2"`.
 
@@ -28,7 +28,7 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 - `strongTextMatch`: no retrieval signal yet.
 - Tenant context (`topAreas`, `hotlines`).
 - The `taxonomy`, `region` and `model_version` params.
-- Response caching: no CDN cache decorator, because a response with emergency status error must not be cached and that rule is not written yet.
+- Response caching: no CDN cache decorator. The rule is the rules engine's internal `decision.cacheable` (band none and no emergency question, ADR 0039 Decision 28); no `Cache-Control` header is written from it yet (numbers open, ADR 0039 Question 11).
 
 ## Tests
 

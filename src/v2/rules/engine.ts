@@ -1,6 +1,6 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
-import { buildCandidates, countCodesOf } from './questions';
+import { asksNeeds, buildCandidates, countCodesOf } from './questions';
 import { scoreOf } from './scores';
 import {
   effort,
@@ -42,18 +42,17 @@ export function decide(
   );
   const countCodes = countCodesOf(candidates);
   const scores = signals.needs.scores ?? {};
-  const answered =
-    req.urgency !== undefined && req.urgency !== null && req.urgency !== 'U-X';
+  // Decision 28: storable only when the check found nothing and the response
+  // holds no emergency question (a caller U-0 adds one with band none).
+  const hasEmergencyQuestion = candidates.some((q) => q.type === 'emergency');
   return {
     rules_version: RULES_VERSION,
     option_scores: Object.fromEntries(
       countCodes.map((c) => [c, scoreOf(scores, c)]),
     ),
-    emergency: {
-      band,
-      show_hotline: answered ? req.urgency === 'U-0' : band === 'popup',
-    },
-    cacheable: band === 'none' && signals.needs.status === 'ok',
+    emergency_band: band,
+    cacheable:
+      band === 'none' && !hasEmergencyQuestion && signals.needs.status === 'ok',
     needs: states.needs,
     boost_needs: states.boostNeeds,
     nx: states.nx,
@@ -72,12 +71,12 @@ export function finalize(
   let questions: Question[] = JSON.parse(JSON.stringify(decision.candidates));
 
   if (strongTextMatch) {
-    questions = questions.filter((q) => q.parameter !== 'needs');
+    questions = questions.filter((q) => !asksNeeds(q));
   }
 
   const kept: Question[] = [];
   for (const q of questions) {
-    if (q.parameter !== 'needs') {
+    if (!asksNeeds(q)) {
       kept.push(q);
       continue;
     }
@@ -111,7 +110,7 @@ export function finalize(
     q.value = valueOf(
       q.uncertainty,
       effort(q),
-      q.parameter === 'needs' ? splitQuality(q, total) : 1,
+      asksNeeds(q) ? splitQuality(q, total) : 1,
     );
     q.priority = priorityOf(q.importance, q.value);
   }

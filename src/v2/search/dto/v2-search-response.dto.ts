@@ -44,14 +44,29 @@ export class V2IntentDto {
   urgency: V2IntentUrgencyDto;
 }
 
+/** One answer. A pick adds `value` to the URL parameter `parameter` (ADR 0039 Decision 55). */
 export class V2QuestionOptionDto {
-  @ApiProperty()
-  value: string;
-
-  @ApiProperty()
+  @ApiProperty({ example: 'Help paying rent' })
   label: string;
 
-  @ApiPropertyOptional()
+  @ApiProperty({
+    enum: ['needs', 'passed_needs', 'urgency'],
+    description:
+      'The URL parameter that a pick of this option adds. One question can mix kinds.',
+  })
+  parameter: 'needs' | 'passed_needs' | 'urgency';
+
+  @ApiProperty({
+    example: 'N-HOU-02',
+    description:
+      'The value added to that parameter, for example N-HOU-02 or U-3.',
+  })
+  value: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Services that match this need; need options only, absent when not counted.',
+  })
   results_count?: number;
 }
 
@@ -69,7 +84,12 @@ export class V2QuestionDto {
     enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
   })
   type: string;
-  @ApiProperty({ enum: ['red', 'orange', 'low'] }) level: string;
+  @ApiProperty({
+    enum: ['red', 'orange', 'low'],
+    description:
+      'Emergency question: `red` shows the popup, `orange` the soft card (ADR 0039 Decision 54). Other questions: `orange` or `low`.',
+  })
+  level: string;
   @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
   importance: string;
   @ApiProperty() value: number;
@@ -77,14 +97,20 @@ export class V2QuestionDto {
   @ApiProperty() uncertainty: number;
   @ApiProperty() reason: string;
   @ApiProperty() step: number;
-  @ApiProperty({ enum: ['urgency', 'needs'] }) parameter: string;
   @ApiProperty() stem: string;
-  @ApiProperty({ type: [V2QuestionOptionDto] })
+  @ApiProperty({
+    type: [V2QuestionOptionDto],
+    description:
+      'Emergency question: urgency answers only, never U-0; empty for a caller `urgency=U-0`.',
+  })
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;
   @ApiProperty() allow_other: boolean;
   @ApiProperty() none_of_these: boolean;
-  @ApiPropertyOptional({ type: [V2HotlineDto] })
+  @ApiPropertyOptional({
+    type: [V2HotlineDto],
+    description: 'Emergency question only. One tap calls a number.',
+  })
   hotlines?: V2HotlineDto[];
 }
 
@@ -95,18 +121,14 @@ export class V2ClarificationDto {
   questions: V2QuestionDto[];
 }
 
-export class V2EmergencyDto {
-  @ApiProperty({ enum: ['popup', 'soft', 'none', 'unknown'] })
-  band: 'popup' | 'soft' | 'none' | 'unknown';
-
-  @ApiProperty() show_hotline: boolean;
-}
-
-/** Draft until the v2 ADR (ISS-2493). */
+/**
+ * Draft until the v2 ADR (ISS-2493). No top-level emergency block: the
+ * emergency is only the emergency question in `clarification` (ADR 0039
+ * Decision 54).
+ */
 export class V2SearchResponseDto extends SearchResponseDto {
   @ApiProperty({ type: V2IntentDto }) intent: V2IntentDto;
   @ApiProperty({ type: V2ClarificationDto }) clarification: V2ClarificationDto;
-  @ApiProperty({ type: V2EmergencyDto }) emergency: V2EmergencyDto;
   @ApiProperty({
     type: String,
     nullable: true,

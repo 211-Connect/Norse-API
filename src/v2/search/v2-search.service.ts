@@ -126,11 +126,9 @@ export class V2SearchService {
           state: decision.urgency.state,
         },
       },
+      // No top-level emergency block (ADR 0039 Decision 54): the emergency
+      // lives only in the emergency question inside `clarification`.
       clarification,
-      emergency: {
-        band: decision.emergency.band,
-        show_hotline: decision.emergency.show_hotline,
-      },
       model_version: classified?.modelVersion ?? null,
       rules_version: decision.rules_version,
     };
