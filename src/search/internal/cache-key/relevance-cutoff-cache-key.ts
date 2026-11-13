@@ -20,12 +20,19 @@ import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
  * why `CUTOFF_PROBE_TTL_MS` is minutes rather than the cache default's hour.
  */
 export const relevanceCutoffCacheKey = (
-  args: SearchIdentity & { pinnedMode: string },
+  args: SearchIdentity & {
+    pinnedMode: string;
+    rankingVersion?: 'v1' | 'v2';
+  },
 ): string => {
   const fingerprint = hashCacheKey({
     search: searchFingerprint(args),
     pinnedMode: args.pinnedMode,
   });
 
-  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}`;
+  // v1 keeps the key string it always had; v2 scores differently, so it must
+  // never be served a v1 probe.
+  const version = args.rankingVersion === 'v2' ? ':v2' : '';
+
+  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}${version}`;
 };
