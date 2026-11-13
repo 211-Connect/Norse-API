@@ -605,7 +605,11 @@ export class HybridSearchService {
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
     if (hardScopeCodes.length > 0) {
-      baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
+      baseFilters.push(
+        this.buildHardTaxonomyScopeFilter(hardScopeCodes, {
+          includeChildren: v2,
+        }),
+      );
     }
 
     // Counts run over the filters above, before the relevance cut adds an ids filter.
@@ -959,16 +963,41 @@ export class HybridSearchService {
   }
 
   /**
-   * Nested terms filter constraining results to a set of taxonomy codes.
-   * Shared by the hybrid search hard scope and getDocumentsCount.
+   * Nested filter constraining results to a set of taxonomy codes. Shared by
+   * the hybrid search hard scope and getDocumentsCount.
+   *
+   * Default (v1 hybrid): exact `terms` on the keyword field.
+   * `includeChildren` (v2 only, ISS-2612): each code matches itself and its
+   * child codes on the code boundary. HSIS children start with "." (BD-1800.2000)
+   * or "-" (BD-1800.8200-250), so the clauses are the exact term plus
+   * `<code>.` and `<code>-` prefixes. BD-1800 never matches BD-18000. Several
+   * codes stay an OR (one `bool.should`, minimum_should_match 1).
    */
   private buildHardTaxonomyScopeFilter(
     codes: string[],
+    options: { includeChildren?: boolean } = {},
   ): QueryDslQueryContainer {
+    if (!options.includeChildren) {
+      return {
+        nested: {
+          path: 'taxonomies',
+          query: { terms: { 'taxonomies.code': codes } },
+        },
+      };
+    }
     return {
       nested: {
         path: 'taxonomies',
-        query: { terms: { 'taxonomies.code': codes } },
+        query: {
+          bool: {
+            should: codes.flatMap((code) => [
+              { term: { 'taxonomies.code': code } },
+              { prefix: { 'taxonomies.code': `${code}.` } },
+              { prefix: { 'taxonomies.code': `${code}-` } },
+            ]),
+            minimum_should_match: 1,
+          },
+        },
       },
     };
   }

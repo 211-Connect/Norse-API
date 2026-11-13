@@ -294,25 +294,76 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     });
   });
 
-  // ISS-2612: a v2 taxonomy page with no text. The hard scope is in the
-  // results filter and in the count filter; needs only sort; no embedding.
-  it('browse with taxonomy and needs: scope filters results and counts, needs only sort', async () => {
+  // ISS-2612: a v2 taxonomy page with no text. The hard scope matches each code
+  // and its child codes, in the results filter and in the count filter; needs
+  // only sort; no embedding.
+  const childScope = (code: string) => ({
+    nested: {
+      path: 'taxonomies',
+      query: {
+        bool: {
+          should: [
+            { term: { 'taxonomies.code': code } },
+            { prefix: { 'taxonomies.code': `${code}.` } },
+            { prefix: { 'taxonomies.code': `${code}-` } },
+          ],
+          minimum_should_match: 1,
+        },
+      },
+    },
+  });
+
+  it('v2 browse with taxonomy and needs: child-code scope filters results and counts, needs only sort', async () => {
     const embed = jest.spyOn(service, 'embedQuery');
     await run({
-      query: { ...baseQuery, query: '', taxonomy: ['BD-1800.2000'] },
+      query: { ...baseQuery, query: '', taxonomy: ['BD-1800'] },
+      rankingVersion: 'v2',
       selectedNeeds: ['N-FOD-01'],
       countCodes: ['N-FOD-01'],
     });
-    const scope = {
-      nested: {
-        path: 'taxonomies',
-        query: { terms: { 'taxonomies.code': ['BD-1800.2000'] } },
-      },
-    };
+    const scope = childScope('BD-1800');
     expect(embed).not.toHaveBeenCalled();
     expect(filtersOf(mainRequest())).toContainEqual(scope);
     expect(filtersOf(countRequest())).toContainEqual(scope);
     expect(mainRequest().sort[0]).toEqual(buildNeedBlockSort(['N-FOD-01']));
     expect(needsClause(mainRequest())).toBe(false);
+  });
+
+  it('v2 several codes: one nested clause, the code clauses are OR-ed, boundary is "." or "-" (never BD-18000)', async () => {
+    await run({
+      query: { ...baseQuery, query: '', taxonomy: ['BD-1800', 'LR-8000.0500'] },
+      rankingVersion: 'v2',
+    });
+    const scope = filtersOf(mainRequest()).find(
+      (f: any) => f.nested?.query?.bool?.should,
+    );
+    const should = scope.nested.query.bool.should;
+    expect(should).toHaveLength(6);
+    expect(scope.nested.query.bool.minimum_should_match).toBe(1);
+    const prefixes = should
+      .filter((c: any) => c.prefix)
+      .map((c: any) => c.prefix['taxonomies.code']);
+    expect(prefixes).toEqual([
+      'BD-1800.',
+      'BD-1800-',
+      'LR-8000.0500.',
+      'LR-8000.0500-',
+    ]);
+    // "BD-18000" starts with neither "BD-1800." nor "BD-1800-".
+    expect(prefixes.some((p: string) => 'BD-18000'.startsWith(p))).toBe(false);
+  });
+
+  it('v1 hybrid (no rankingVersion) keeps the exact terms scope', async () => {
+    await run({
+      query: { ...baseQuery, query: '', taxonomy: ['BD-1800.2000'] },
+    });
+    const exact = {
+      nested: {
+        path: 'taxonomies',
+        query: { terms: { 'taxonomies.code': ['BD-1800.2000'] } },
+      },
+    };
+    expect(filtersOf(mainRequest())).toContainEqual(exact);
+    expect(filtersOf(countRequest() ?? mainRequest())).toContainEqual(exact);
   });
 });
