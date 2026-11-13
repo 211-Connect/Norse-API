@@ -183,6 +183,14 @@ export class SearchHit {
 
   @ApiProperty({ type: [Number], nullable: true })
   sort?: number[] | null;
+
+  @ApiProperty({
+    type: [String],
+    required: false,
+    description:
+      'v2 only. Sent need codes this service matches, in sent order. Present only when the call sent needs.',
+  })
+  matched_needs?: string[];
 }
 
 export class SearchHitsContainer {

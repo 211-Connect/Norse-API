@@ -81,12 +81,31 @@ export type NeedScore = {
 };
 export type RankingVersion = 'v1' | 'v2';
 
-/** Painless: 2 = carries every sent need, 1 = some, 0 = none. Missing field (index not tagged yet) = 0. */
+/**
+ * The one match rule: a service carries a sent need when `sune_needs` holds
+ * that exact code. Builds `m`, the sent codes the service carries, in sent
+ * order. Missing field (index not tagged yet) = none. The block sort and the
+ * `matched_needs` script field both start with this text.
+ */
+const NEED_MATCH_PAINLESS =
+  'def m = new ArrayList(); ' +
+  "if (doc.containsKey('sune_needs')) { def have = doc['sune_needs']; " +
+  'for (def c : params.codes) { if (have.contains(c)) { m.add(c); } } }';
+
+/** Painless: 2 = carries every sent need, 1 = some, 0 = none. */
 export const NEED_BLOCK_SCRIPT =
-  "if (!doc.containsKey('sune_needs')) { return 0; } " +
-  "def have = doc['sune_needs']; int k = 0; " +
-  'for (def c : params.codes) { if (have.contains(c)) { k++; } } ' +
-  'return k == params.codes.size() ? 2 : (k > 0 ? 1 : 0);';
+  NEED_MATCH_PAINLESS +
+  ' return m.size() == params.codes.size() ? 2 : (m.size() > 0 ? 1 : 0);';
+
+/** Painless: the sent codes this service carries, in sent order. */
+export const MATCHED_NEEDS_SCRIPT = NEED_MATCH_PAINLESS + ' return m;';
+
+/** Script field: reads doc values, so no `_source` tag is returned and scores do not change. */
+export function buildMatchedNeedsField(codes: string[]) {
+  return {
+    script: { source: MATCHED_NEEDS_SCRIPT, params: { codes } },
+  };
+}
 
 export function buildNeedBlockSort(codes: string[]): SortCombinations {
   return {
@@ -365,6 +384,7 @@ export class HybridSearchService {
         >(request),
     );
 
+    const needsSent = (options.selectedNeeds ?? []).length > 0;
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
       const normalizedFacets = SearchUtilsService.normalizeDocFacets(
         hit._source,
@@ -375,7 +395,12 @@ export class HybridSearchService {
         _id: hit._id,
         _score: hit._score ?? null,
         _source: { ...hit._source, facets: normalizedFacets },
-        sort: hit.sort as number[] | undefined,
+        // With needs sent, sort[0] is the internal block number. It stays server side.
+        sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+          number[] | undefined,
+        ...(needsSent
+          ? { matched_needs: this.readMatchedNeeds(hit.fields) }
+          : {}),
       };
     });
 
@@ -414,6 +439,11 @@ export class HybridSearchService {
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
     };
+  }
+
+  private readMatchedNeeds(fields: unknown): string[] {
+    const v = (fields as Record<string, unknown> | undefined)?.matched_needs;
+    return Array.isArray(v) ? (v as string[]) : [];
   }
 
   /**
@@ -1618,6 +1648,13 @@ export class HybridSearchService {
       size: limit,
       track_total_hits: true,
       _source: { excludes: ['embedding', 'service_area'] },
+      ...(selectedNeeds && selectedNeeds.length > 0
+        ? {
+            script_fields: {
+              matched_needs: buildMatchedNeedsField(selectedNeeds),
+            },
+          }
+        : {}),
       aggs,
       query: esQuery,
       sort,

@@ -4,6 +4,9 @@ import { ElasticsearchService } from '@nestjs/elasticsearch';
 import {
   HybridSearchService,
   buildNeedBlockSort,
+  buildMatchedNeedsField,
+  NEED_BLOCK_SCRIPT,
+  MATCHED_NEEDS_SCRIPT,
 } from './hybrid-search.service';
 import { SearchUtilsService } from './search-utils.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
@@ -29,11 +32,13 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let requests: any[];
   let countMode: 'ok' | 'throw';
   let searchConfig: Record<string, unknown>;
+  let mainHits: any[];
 
   beforeEach(async () => {
     requests = [];
     countMode = 'ok';
     searchConfig = {};
+    mainHits = [];
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve({ hits: { hits: [] } });
@@ -53,7 +58,10 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
           },
         });
       }
-      return Promise.resolve(mainResponse);
+      return Promise.resolve({
+        ...mainResponse,
+        hits: { ...mainResponse.hits, hits: mainHits },
+      });
     });
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -207,5 +215,70 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     const res: any = await run({ countCodes: ['N-FOD'] });
     expect('needCounts' in res).toBe(false);
     expect(res.search.hits.total.value).toBe(7);
+  });
+
+  describe('matched_needs per hit', () => {
+    const hit = (id: string, fields?: any, sort?: number[]) => ({
+      _index: 'i',
+      _id: id,
+      _score: 1,
+      _source: { name: id, sune_needs: ['SECRET'] },
+      ...(fields ? { fields } : {}),
+      ...(sort ? { sort } : {}),
+    });
+
+    it('requests a script field built from the same match rule as the sort', async () => {
+      await run({ selectedNeeds: ['A', 'B'] });
+      const sf = mainRequest().script_fields.matched_needs;
+      expect(sf).toEqual(buildMatchedNeedsField(['A', 'B']));
+      expect(sf.script.params.codes).toEqual(['A', 'B']);
+      // one rule, one place: both scripts start with the same match fragment
+      const matchPart = NEED_BLOCK_SCRIPT.split(' return ')[0];
+      expect(MATCHED_NEEDS_SCRIPT.startsWith(matchPart)).toBe(true);
+      expect(mainRequest()._source).toEqual({
+        excludes: ['embedding', 'service_area'],
+      });
+    });
+
+    it('no script field when no needs are sent', async () => {
+      await run();
+      expect(mainRequest().script_fields).toBeUndefined();
+      await run({ selectedNeeds: [] });
+      expect(mainRequest().script_fields).toBeUndefined();
+    });
+
+    it('hits carry matched_needs: both, one, none, in sent order', async () => {
+      mainHits = [
+        hit('a', { matched_needs: ['A', 'B'] }, [2, 5]),
+        hit('b', { matched_needs: ['B'] }, [1, 4]),
+        hit('c', { matched_needs: [] }, [0, 3]),
+        hit('d', undefined, [0, 2]),
+      ];
+      const res: any = await run({ selectedNeeds: ['A', 'B'] });
+      const hs = res.search.hits.hits;
+      expect(hs.map((h: any) => h.matched_needs)).toEqual([
+        ['A', 'B'],
+        ['B'],
+        [],
+        [],
+      ]);
+    });
+
+    it('does not return the block number or tag fields', async () => {
+      mainHits = [hit('a', { matched_needs: ['A'] }, [2, 5])];
+      const res: any = await run({ selectedNeeds: ['A'] });
+      const h = res.search.hits.hits[0];
+      expect(h.sort).toEqual([5]);
+      expect(h.fields).toBeUndefined();
+      expect('needs_block' in h).toBe(false);
+    });
+
+    it('matched_needs is absent when no needs were sent (v1 shape)', async () => {
+      mainHits = [hit('a', undefined, [5])];
+      const res: any = await run();
+      const h = res.search.hits.hits[0];
+      expect('matched_needs' in h).toBe(false);
+      expect(h.sort).toEqual([5]);
+    });
   });
 });
