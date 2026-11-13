@@ -161,6 +161,146 @@ describe('HybridSearchService', () => {
     expect(capturedMainRequest.knn).toBeUndefined();
   });
 
+  // ISS-2755: a decay function scores a document missing the field as 1, so
+  // without the filter a listing with no map point got the full distance bonus,
+  // as if it sat exactly at the search point.
+  it('gives the distance bonus only to documents that have a map point', async () => {
+    await service.searchHybrid({
+      headers,
+      query: { ...baseQuery, coords: [-74.89, 44.93], distance: 25 },
+    });
+
+    const functions = capturedMainRequest.query.function_score.functions;
+    const geo = functions.filter((fn: any) => fn.gauss);
+
+    expect(geo).toHaveLength(1);
+    expect(geo[0].filter).toEqual({ exists: { field: 'location.point' } });
+    expect(geo[0].weight).toBe(25);
+  });
+
+  // ISS-2755 on every hybrid path: query text (semantic function present),
+  // browse and lexical fallback (distance is the only function), and pins.
+  describe('results with no map point, every hybrid path (ISS-2755)', () => {
+    const COORDS = [-74.89, 44.93];
+    const proximity = {
+      ...baseQuery,
+      coords: COORDS,
+      distance: 25,
+      geo_type: 'proximity',
+    };
+
+    const findLackingCoordinatesBranch = (node: unknown): any => {
+      if (node === null || typeof node !== 'object') return undefined;
+      const bool = (node as any).bool;
+      if (bool?.must_not?.exists?.field === 'location.point') return node;
+      for (const child of Object.values(node as object)) {
+        const found = findLackingCoordinatesBranch(child);
+        if (found) return found;
+      }
+      return undefined;
+    };
+
+    const expectProximityRuleAndGatedGauss = (request: any) => {
+      expect(findLackingCoordinatesBranch(request.query)?.bool.filter).toEqual({
+        geo_shape: {
+          service_area: {
+            shape: { type: 'point', coordinates: COORDS },
+            relation: 'contains',
+          },
+        },
+      });
+      const gauss = request.query.function_score.functions.filter(
+        (fn: any) => fn.gauss,
+      );
+      expect(gauss).toHaveLength(1);
+      expect(gauss[0].filter).toEqual({ exists: { field: 'location.point' } });
+    };
+
+    // A document that matches no score function scores 1 under boost_mode sum.
+    // The semantic and priority functions have no filter, so they match every
+    // document; only when neither is present does a no-point result get that 1.
+    const functionKinds = () =>
+      capturedMainRequest.query.function_score.functions.map((fn: any) =>
+        fn.gauss
+          ? 'gauss'
+          : fn.script_score
+            ? 'semantic'
+            : fn.field_value_factor?.field === 'priority'
+              ? 'priority'
+              : 'other',
+      );
+
+    const withPinnedMode = (mode: string) => {
+      (service as any).tenantConfigService.getSearchConfig = jest
+        .fn()
+        .mockResolvedValue({ pinned_resources_mode: mode });
+    };
+
+    it('query text: semantic function present alongside the gated gauss', async () => {
+      await service.searchHybrid({ headers, query: proximity });
+
+      expectProximityRuleAndGatedGauss(capturedMainRequest);
+      expect(functionKinds()).toEqual(['semantic', 'gauss', 'priority']);
+    });
+
+    it('browse (no query text), default boost mode: priority function still present', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...proximity, query: '' },
+      });
+
+      expectProximityRuleAndGatedGauss(capturedMainRequest);
+      expect(functionKinds()).toEqual(['gauss', 'priority']);
+    });
+
+    it('lexical fallback (embedding failed), default boost mode: priority function still present', async () => {
+      jest
+        .spyOn(service, 'embedQuery')
+        .mockRejectedValue(new Error('embedding down'));
+
+      await service.searchHybrid({ headers, query: proximity });
+
+      expectProximityRuleAndGatedGauss(capturedMainRequest);
+      expect(functionKinds()).toEqual(['gauss', 'priority']);
+    });
+
+    it.each(['top', 'ignore'])(
+      'browse in %s mode: the gated gauss is the only function (the +1 case)',
+      async (mode) => {
+        withPinnedMode(mode);
+
+        await service.searchHybrid({
+          headers,
+          query: { ...proximity, query: '' },
+        });
+
+        expectProximityRuleAndGatedGauss(capturedMainRequest);
+        expect(functionKinds()).toEqual(['gauss']);
+      },
+    );
+
+    it('lexical fallback in top mode: the gated gauss is the only function (the +1 case)', async () => {
+      withPinnedMode('top');
+      jest
+        .spyOn(service, 'embedQuery')
+        .mockRejectedValue(new Error('embedding down'));
+
+      await service.searchHybrid({ headers, query: proximity });
+
+      expectProximityRuleAndGatedGauss(capturedMainRequest);
+      expect(functionKinds()).toEqual(['gauss']);
+    });
+
+    it('pins request', async () => {
+      const request: any = await service.buildPinsRequest({
+        headers,
+        query: { ...proximity, limit: 10000 },
+      });
+
+      expectProximityRuleAndGatedGauss(request);
+    });
+  });
+
   it("v2 taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
     await service.searchHybrid({
       headers,
@@ -588,6 +728,56 @@ describe('HybridSearchService', () => {
       'BM-1400',
       'BM-1700',
     ]);
+  });
+
+  it('excludes SUNE enrichment fields from _source in the request (ISS-2754)', async () => {
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const excludes = capturedMainRequest._source.excludes;
+    expect(excludes).toEqual(
+      expect.arrayContaining([
+        'sune_needs',
+        'sune_need_weights',
+        'sune_scorecard_version',
+      ]),
+    );
+  });
+
+  it('never returns SUNE enrichment fields even if ES sends them (ISS-2754)', async () => {
+    esSearch.mockImplementation((req: any) => {
+      if (req.index === 'hybrid_taxonomies') {
+        return Promise.resolve(taxonomyResponse);
+      }
+      return Promise.resolve({
+        ...mainResponse,
+        hits: {
+          ...mainResponse.hits,
+          hits: [
+            {
+              _index: 'hybrid_search_resources_en',
+              _id: 'doc-1',
+              _score: 42,
+              _source: {
+                name: 'Shelter',
+                facets: {},
+                facets_en: {},
+                sune_needs: ['N-HOU'],
+                sune_need_weights: { 'N-HOU': 0.8 },
+                sune_scorecard_version: 'v1',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    const result = await service.searchHybrid({ headers, query: baseQuery });
+    const source = result.search.hits.hits[0]._source as any;
+
+    expect(source.name).toBe('Shelter');
+    expect(source).not.toHaveProperty('sune_needs');
+    expect(source).not.toHaveProperty('sune_need_weights');
+    expect(source).not.toHaveProperty('sune_scorecard_version');
   });
 
   describe('getDocumentsCount', () => {

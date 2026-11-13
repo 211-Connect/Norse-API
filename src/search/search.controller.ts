@@ -118,10 +118,14 @@ const ApiSearchParams = () =>
       enum: ['boundary', 'proximity'],
       description:
         "Controls how coords/distance combine with a resource's declared service_area. " +
+        '`distance` 0 (the default) means no radius filter. ' +
         'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
-        'service_area that geographically contains the exact `coords` point — both required. ' +
-        '`proximity`: skips the service_area check; returns anything within `distance` of ' +
-        '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
+        'service_area that geographically contains the exact `coords` point — both required ' +
+        '(a result with no map point skips the distance check). ' +
+        '`proximity`: a result with a map point must be within `distance` of `coords`, with ' +
+        'no service_area check; a result with no map point is returned only if its ' +
+        'service_area contains `coords`. With `distance` 0, `proximity` applies no geo ' +
+        'filter. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
         '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
         'shape; POST only, 400s on GET without a body.',
     }),
@@ -285,10 +289,14 @@ export class SearchController {
     enum: ['boundary', 'proximity'],
     description:
       "Controls how coords/distance combine with a resource's declared service_area. " +
+      '`distance` 0 (the default) means no radius filter. ' +
       'Omitted (default): a result must be within `distance` of `coords` AND have a ' +
-      'service_area that geographically contains the exact `coords` point — both required. ' +
-      '`proximity`: skips the service_area check; returns anything within `distance` of ' +
-      '`coords`. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
+      'service_area that geographically contains the exact `coords` point — both required ' +
+      '(a result with no map point skips the distance check). ' +
+      '`proximity`: a result with a map point must be within `distance` of `coords`, with ' +
+      'no service_area check; a result with no map point is returned only if its ' +
+      'service_area contains `coords`. With `distance` 0, `proximity` applies no geo ' +
+      'filter. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
       '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
       'shape.',
   })

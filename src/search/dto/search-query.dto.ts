@@ -241,8 +241,11 @@ export class SearchResourcesQueryDto {
   @ApiPropertyOptional({
     enum: ['boundary', 'proximity'],
     description:
-      'Omitted (default): service_area containment AND distance both required. ' +
-      "'proximity': distance only, skips service_area containment. " +
+      'distance 0 (the default) means no radius filter. ' +
+      'Omitted (default): service_area containment AND distance both required ' +
+      '(a result with no map point skips the distance check). ' +
+      "'proximity': a result with a map point needs distance only; a result with no map " +
+      'point needs a service_area containing coords. ' +
       "'boundary': ignores coords/distance, matches service_area against a POST body geometry.",
   })
   @IsOptional()
