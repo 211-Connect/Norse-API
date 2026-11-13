@@ -44,7 +44,6 @@ const needOption = (code: string): QuestionOption => ({
   value: code,
   label: displayOf(code),
 });
-const nxOption = (): QuestionOption => ({ value: NX, label: LABELS.nx });
 
 const needsFlags = {
   multi_select: true,
@@ -236,7 +235,6 @@ export function buildCandidates(
           }
         }
         const options = picks.map(needOption);
-        if (sc(NX) >= CUTOFFS.nx.label) options.push(nxOption());
         if (options.length > 0)
           out.push(
             question({
@@ -287,7 +285,6 @@ export function buildCandidates(
           ...needsFlags,
         });
       if (g1.length > 0) {
-        if (sc(NX) >= CUTOFFS.nx.label) g1.push(nxOption());
         out.push(
           narrow(
             'narrow:1',

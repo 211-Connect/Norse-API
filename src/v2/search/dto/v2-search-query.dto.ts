@@ -9,7 +9,7 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SearchResourcesQueryDto } from '../../../search/dto/search-query.dto';
-import { isKnownCode } from '../../rules/sune';
+import { isKnownCode, isTier1, isTier2 } from '../../rules/sune';
 
 export const V2_URGENCY_CODES = [
   'U-0',
@@ -20,6 +20,19 @@ export const V2_URGENCY_CODES = [
   'U-X',
 ] as const;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
+
+@ValidatorConstraint({ name: 'isSelectableNeedCode', async: false })
+class IsSelectableNeedCodeConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return (
+      Array.isArray(value) &&
+      value.every((v) => typeof v === 'string' && (isTier1(v) || isTier2(v)))
+    );
+  }
+  defaultMessage(): string {
+    return '$property must hold only SUNE Tier 1 or Tier 2 need codes; N-X ("need not yet known") is internal and not accepted';
+  }
+}
 
 /**
  * `needs=A&needs=B` and `needs=A,B` (and a mix) become one ordered, de-duplicated
@@ -67,7 +80,7 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsOptional()
   @Transform(({ value }) => toCodeList(value))
   @IsArray()
-  @Validate(IsKnownNeedCodeConstraint)
+  @Validate(IsSelectableNeedCodeConstraint)
   needs?: string[];
 
   @ApiPropertyOptional({
@@ -84,7 +97,8 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
 
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,
-    description: 'Urgency the caller confirmed. `U-X` means unknown.',
+    description:
+      'Urgency the caller confirmed. `U-X` means not yet known and counts as absent.',
   })
   @IsOptional()
   @IsIn(V2_URGENCY_CODES)

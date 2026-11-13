@@ -9,17 +9,17 @@ Pure, deterministic TypeScript that decides what `/v2/search` asks after the mod
 Needs never filter results; a used or confirmed need only boosts (`boost_needs`, never a Tier 1 together with its Tier 2).
 
 ## Inputs
-- Request: `has_text`, `needs` (confirmed, URL order), `passed_needs`, `urgency`, `clarify` (`never` keeps only the emergency question).
+- Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (still accepts `N-X`), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
 - Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), top-level `urgency` `{level, score}` (beside `needs`, as ml-broker sends it; read only when the needs call succeeded), emergency `{status, score, floor_hit, calm_context, dv_shelter}`; `emergency: null` when there is no typed text.
 - Tenant: `top_areas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
 
 ## Cutoffs (`config.ts`, `RULES_VERSION`)
 - Emergency, in order: floor hit -> popup at score >= 0.662, else soft; calm context -> soft at >= 0.221, else none; DV shelter below 0.662 -> soft; >= 0.662 popup; >= 0.221 soft; else none. Error -> `unknown`, not cacheable.
-- Urgency: < 0.8 drop (U-X); 0.8 to 0.93 ask; >= 0.93 use the model level.
+- Urgency: a caller level other than `U-X` is confirmed (`use`); `U-X` from the caller is ignored. From the model: < 0.8 drop (U-X); 0.8 to 0.93 ask; >= 0.93 use the model level.
 - Needs: >= 0.97 use; Tier 2 from 0.12 to 0.97 ask; below 0.12 drop.
 - Area rule: best Tier 1 >= 0.9 and every Tier 2 < 0.5 -> one area question.
-- N-X ("a specific place or organization") is an option at score >= 0.07.
-A cutoff change bumps `RULES_VERSION`.
+- N-X means "need not yet known". It is internal: it is never an option and has no label. `nx` in the decision is true when no need is used and N-X scores >= 0.07, or the engine is given `N-X` as a confirmed need.
+A cutoff or rule change bumps `RULES_VERSION`.
 
 ## Questions
 | Step (info) | Id | Level | Importance | When |
@@ -43,7 +43,7 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 - Uncertainty, `urgency_today` and `urgency_time`: `4p(1-p)` of the urgency score (0.5 when it is missing).
 - Uncertainty, `start` and `area:*`: normalized entropy of the model scores of the need options, without N-X.
 - Uncertainty, `narrow:*`: mean of `4p(1-p)` over the need options, without N-X; 0 when there is none.
-- Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. N-X counts as an option; "None of these" does not.
+- Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. "None of these" does not count as an option.
 - Split: with one counted option, `1 - 2 x |count / total - 0.5|`; with two or more, the normalized entropy of the option counts (even counts give 1, one dominant option gives near 0). Between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
 - `decide` fills `uncertainty`, `value` and `priority` with split 1, and keeps each option's model score in `option_scores` (internal, not in the response). `finalize` recomputes `value` and `priority` after it drops options; when a question lost options, it first recomputes `uncertainty` over the options left, so a question cut to one option has uncertainty 0.
 - `emergency` is the only critical question, so it stays first.
