@@ -32,9 +32,26 @@ describe('emergency question', () => {
       { label: 'Emergency', number: '911' },
     ]);
   });
-  it('absent when urgency=U-3 in URL; show_hotline true for popup', () => {
+  it('absent when urgency=U-3 in URL; caller answer wins, no hotline on popup', () => {
     const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: popup }));
     expect(ids(d)).not.toContain('emergency');
+    expect(d.emergency.show_hotline).toBe(false);
+  });
+  it('popup + urgency U-1 -> no hotline, no emergency question', () => {
+    const d = decide(req({ urgency: 'U-1' }), sig({}, { emergency: popup }));
+    expect(ids(d)).not.toContain('emergency');
+    expect(d.emergency.show_hotline).toBe(false);
+  });
+  it('popup + urgency U-0 -> hotline', () => {
+    const d = decide(req({ urgency: 'U-0' }), sig({}, { emergency: popup }));
+    expect(d.emergency.show_hotline).toBe(true);
+  });
+  it('popup + urgency U-X counts as no answer -> hotline', () => {
+    const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
+    expect(d.emergency.show_hotline).toBe(true);
+  });
+  it('popup + no urgency -> hotline', () => {
+    const d = decide(req(), sig({}, { emergency: popup }));
     expect(d.emergency.show_hotline).toBe(true);
   });
   it('soft + urgency=U-0 -> show_hotline', () => {
