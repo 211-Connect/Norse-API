@@ -99,4 +99,14 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ clarify: 'always' }).props).toContain('clarify');
     expect(parse({ clarify: 'never' }).errors).toEqual([]);
   });
+
+  // ISS-2612: `taxonomy` comes from the v1 DTO unchanged (comma list or array).
+  it('keeps the v1 taxonomy parameter: comma list and repeated values', () => {
+    const comma = parse({ taxonomy: 'BD-1800.2000, BD-1800.1500' });
+    expect(comma.errors).toEqual([]);
+    expect(comma.dto.taxonomy).toEqual(['BD-1800.2000', 'BD-1800.1500']);
+    const repeated = parse({ taxonomy: ['BD-1800.2000', 'BD-1800.2000'] });
+    expect(repeated.dto.taxonomy).toEqual(['BD-1800.2000']);
+    expect(parse({}).dto.taxonomy).toEqual([]);
+  });
 });
