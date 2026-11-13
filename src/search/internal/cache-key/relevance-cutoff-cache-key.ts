@@ -1,5 +1,6 @@
 import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
+import type { RankingVersion } from '../../hybrid-search.service';
 
 /**
  * Keyed on the search's identity, so pages 2..n of the same search reuse one
@@ -22,7 +23,7 @@ import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
 export const relevanceCutoffCacheKey = (
   args: SearchIdentity & {
     pinnedMode: string;
-    rankingVersion?: 'v1' | 'v2';
+    rankingVersion?: RankingVersion;
   },
 ): string => {
   const fingerprint = hashCacheKey({

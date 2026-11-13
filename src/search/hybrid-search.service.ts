@@ -508,7 +508,7 @@ export class HybridSearchService {
       const cacheKey = relevanceCutoffCacheKey({
         ...identity,
         pinnedMode,
-        rankingVersion: v2 ? 'v2' : 'v1',
+        rankingVersion: options.rankingVersion,
       });
 
       const runProbe = () =>
