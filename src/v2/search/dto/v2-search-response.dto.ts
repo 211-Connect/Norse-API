@@ -50,16 +50,16 @@ export class V2QuestionOptionDto {
   label: string;
 
   @ApiProperty({
-    enum: ['needs', 'passed_needs', 'urgency'],
+    enum: ['needs', 'passed_needs', 'urgency', 'asked'],
     description:
       'The URL parameter that a pick of this option adds. One question can mix kinds.',
   })
-  parameter: 'needs' | 'passed_needs' | 'urgency';
+  parameter: 'needs' | 'passed_needs' | 'urgency' | 'asked';
 
   @ApiProperty({
     example: 'N-HOU-02',
     description:
-      'The value added to that parameter, for example N-HOU-02 or U-3.',
+      'The value added to that parameter, for example N-HOU-02, U-0 or emergency (`asked=emergency`).',
   })
   value: string;
 
@@ -98,7 +98,7 @@ export class V2QuestionDto {
   @ApiProperty({
     type: [V2QuestionOptionDto],
     description:
-      'Emergency question: urgency answers only, never U-0; empty for a caller `urgency=U-0`.',
+      'Emergency question: "Yes" adds `urgency=U-0`, "No, I am safe now" adds `asked=emergency`; empty for a caller `urgency=U-0`.',
   })
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;

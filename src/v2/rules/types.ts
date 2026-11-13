@@ -6,6 +6,7 @@ export interface RulesRequest {
   needs: string[]; // confirmed, URL order
   passed_needs: string[];
   urgency?: UrgencyCode; // from the URL
+  asked?: string[]; // `asked=`: question ids answered without a value (EMERGENCY_SAFE_MARK)
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
@@ -64,9 +65,10 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs';
+  | 'unsure_needs'
+  | 'emergency_safe';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
-export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
+export type OptionParameter = 'needs' | 'passed_needs' | 'urgency' | 'asked';
 export interface QuestionOption {
   label: string;
   parameter: OptionParameter;

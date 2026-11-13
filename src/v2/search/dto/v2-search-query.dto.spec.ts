@@ -95,6 +95,16 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ needs: 'N-HOU,,N-HOU,' }).dto.needs).toEqual(['N-HOU']);
   });
 
+  it('accepts asked=emergency (comma list) and names an unknown id in the 400 reason', () => {
+    expect(parse({ asked: 'emergency' }).dto.asked).toEqual(['emergency']);
+    expect(parse({ asked: 'emergency,emergency' }).errors).toEqual([]);
+    const r = parse({ asked: 'emergency,start' });
+    expect(r.props).toContain('asked');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain(
+      'unknown question id(s): start',
+    );
+  });
+
   it('rejects an unknown clarify value', () => {
     expect(parse({ clarify: 'always' }).props).toContain('clarify');
     expect(parse({ clarify: 'never' }).errors).toEqual([]);

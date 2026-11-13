@@ -8,6 +8,7 @@ import {
   CUTOFFS,
   DEFAULT_HOTLINES,
   DEFAULT_TOP_AREAS,
+  EMERGENCY_SAFE_MARK,
   LABELS,
   STEMS,
 } from './config';
@@ -42,11 +43,19 @@ const urgencyOption = (v: string): QuestionOption => ({
   parameter: 'urgency',
   value: v,
 });
-const emergencyOption = (v: string): QuestionOption => ({
-  label: LABELS.emergency[v],
-  parameter: 'urgency',
-  value: v,
-});
+// Lucas 2026-11-13: "in danger -> u0"; "safe" sets no urgency, only the mark.
+const EMERGENCY_OPTIONS: QuestionOption[] = [
+  { label: LABELS.emergency.yes, parameter: 'urgency', value: 'U-0' },
+  {
+    label: LABELS.emergency.safe,
+    parameter: EMERGENCY_SAFE_MARK.parameter,
+    value: EMERGENCY_SAFE_MARK.value,
+  },
+];
+
+/** The caller answered the emergency question "safe" (`asked=emergency`). */
+export const answeredSafe = (req: RulesRequest): boolean =>
+  (req.asked ?? []).includes(EMERGENCY_SAFE_MARK.value);
 const needOption = (code: string): QuestionOption => ({
   label: displayOf(code),
   parameter: 'needs',
@@ -62,8 +71,8 @@ const hotlinesOf = (tenant: TenantContext) =>
 
 /**
  * Emergency question from the emergency band (ADR 0039 Decision 54). Both bands use the same stem and
- * labels. Options are urgency answers only (U-1, U-3); a person in danger taps
- * a hotline number.
+ * labels. "Yes" sends `urgency=U-0` (the next call shows only the hotlines,
+ * callerU0EmergencyQuestion); "safe" sends the mark `asked=emergency`.
  */
 const bandEmergencyQuestion = (tenant: TenantContext): Question =>
   question({
@@ -73,19 +82,15 @@ const bandEmergencyQuestion = (tenant: TenantContext): Question =>
     reason: 'emergency_band',
     step: 0,
     stem: STEMS.emergency,
-    options: ['U-1', 'U-3'].map(emergencyOption),
+    options: EMERGENCY_OPTIONS.map((o) => ({ ...o })),
     ...urgencyFlags,
     hotlines: hotlinesOf(tenant),
   });
 
 /**
- * Caller sent `urgency=U-0` ("in an emergency right now").
- *
- * Built on an UNCONFIRMED reading of ADR 0039 Decision 50 (Claude's reading,
- * not yet confirmed by Lucas): the response holds the emergency question as a
- * popup with the hotline numbers and no options, whatever the
- * band, and the results stay. Change only this function if Lucas decides
- * otherwise.
+ * Caller sent `urgency=U-0` (also the "Yes, I am in danger" answer). ADR 0039
+ * Decision 50, confirmed by Lucas 2026-11-12: the emergency question first,
+ * with the hotline numbers and no options, whatever the band; the results stay.
  */
 export const callerU0EmergencyQuestion = (tenant: TenantContext): Question =>
   question({
@@ -138,18 +143,35 @@ export function buildCandidates(
   const out: Question[] = [];
 
   // 1. emergency. `req.urgency` is never U-X here: decide() strips it.
-  // A caller U-1 to U-4 wins over the band (Decision 51).
+  // A caller U-1 to U-4 wins over the band (Decision 51). The "safe" mark
+  // removes the question in every band (Decision 54; strong band: open point).
+  const safe = answeredSafe(req);
   const hasEmergency =
     req.urgency === 'U-0' ||
-    ((band === 'popup' || band === 'soft') && !req.urgency);
+    ((band === 'popup' || band === 'soft') && !req.urgency && !safe);
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {
     out.push(bandEmergencyQuestion(tenant));
   }
 
-  // 2. time questions
-  if (urgency.state === 'ask' && !hasEmergency) {
+  // 2. time questions. After "safe", an urgency question comes next whenever
+  // the urgency is not known (Lucas 2026-11-13), at importance high.
+  const afterSafe = safe && !hasEmergency && urgency.state !== 'use';
+  if (afterSafe) {
+    out.push(
+      question({
+        id: 'urgency_today',
+        type: 'confirm_urgency',
+        importance: 'high',
+        reason: 'emergency_safe',
+        step: 1,
+        stem: STEMS.today,
+        options: ['U-1', 'U-2', 'U-3'].map(urgencyOption),
+        ...urgencyFlags,
+      }),
+    );
+  } else if (urgency.state === 'ask' && !hasEmergency) {
     const level = signals.urgency?.level;
     if (level === 'U-1') {
       out.push(

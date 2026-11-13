@@ -25,9 +25,9 @@ A cutoff or rule change bumps `RULES_VERSION`.
 ## Questions
 | Step (info) | Id | Importance | When |
 |---|---|---|---|
-| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options `U-1` "Yes, I am in danger" and `U-3` "No, I am safe now" (same labels in both bands); carries the hotlines |
-| 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, built on an unconfirmed reading of ADR 0039 Decision 50) |
-| 1 | `urgency_today` | high | urgency ask and the model level is U-1 |
+| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`asked=emergency`, sets no urgency; draft mark `EMERGENCY_SAFE_MARK` in `config.ts`); not asked when `asked=emergency` is in the URL, in any band; carries the hotlines |
+| 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, ADR 0039 Decision 50; also the next call after "Yes") |
+| 1 | `urgency_today` | high | after `asked=emergency` when the urgency is not `use` (reason `emergency_safe`, value 0.999, first on a tie); else urgency ask and the model level is U-1 |
 | 2 | `start` | high | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
 | 3 | `area:<T1>` | high | a Tier 1 was picked (`needs=N-HOU`) or the area rule fired; top 3 Tier 2 by score |
 | 4 | `narrow:1` | medium | Tier 2 needs in the ask band, top 3 |
@@ -37,7 +37,7 @@ A cutoff or rule change bumps `RULES_VERSION`.
 | 8 | `narrow:2` | low | as step 6 (`narrow:2`), when a Tier 2 need is already used; stem 'Do any of these also fit?' |
 Tenant AI classification off (`TenantContext.ai_classification: 'off'`, Lucas 2026-11-13): the engine drops the model's need and urgency guesses and keeps only the `emergency` question. Caller `needs` and `urgency` still count. The emergency check always runs. The route sends `on` until Norse-API can read the tenant setting.
 
-No option offers `U-0`: a person in danger taps a hotline number (ADR 0039 Decision 54). A caller `U-1` to `U-4` removes the emergency question; `U-X` counts as no answer (Decision 51). `clarify=never` never removes it (Decision 26). The response has no top-level `emergency` block.
+Only the emergency "Yes" option offers `U-0` (Lucas 2026-11-13). A caller `U-1` to `U-4` removes the emergency question; `U-X` counts as no answer (Decision 51). `clarify=never` never removes it (Decision 26). The response has no top-level `emergency` block.
 
 Each option is `{label, parameter, value, results_count}` (ADR 0039 Decision 55). `results_count` is the number of matching services, or `null` when the server did not count (all urgency options; need options when no count ran). Null means not counted; a counted code that is missing means 0, and a 0-count option is never offered. `parameter` is the URL parameter a pick adds: `needs` (start, area and narrow options) or `urgency` (emergency and time options). The question has no `parameter`. `passed_needs` is in the enum, but no option emits it today: "None of these" stays the `none_of_these` flag, and the client sends the shown codes in `passed_needs`.
 

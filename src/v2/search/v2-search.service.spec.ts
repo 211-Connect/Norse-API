@@ -197,7 +197,7 @@ describe('V2SearchService', () => {
     expect(arg.query.query_type).toBe('hybrid');
     expect(arg.query.page).toBe(2);
     expect(arg.query.limit).toBe(50);
-    for (const key of ['needs', 'passed_needs', 'urgency', 'clarify']) {
+    for (const key of ['needs', 'passed_needs', 'urgency', 'asked', 'clarify']) {
       expect(arg.query).not.toHaveProperty(key);
     }
   });
@@ -447,13 +447,13 @@ describe('V2SearchService', () => {
         {
           label: 'Yes, I am in danger',
           parameter: 'urgency',
-          value: 'U-1',
+          value: 'U-0',
           results_count: null,
         },
         {
           label: 'No, I am safe now',
-          parameter: 'urgency',
-          value: 'U-3',
+          parameter: 'asked',
+          value: 'emergency',
           results_count: null,
         },
       ]);
@@ -510,6 +510,33 @@ describe('V2SearchService', () => {
         'emergency',
       ]);
     });
+    it('asked=emergency (safe) -> no emergency question, results kept, urgency question first', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', asked: ['emergency'] }),
+      });
+      expect(emergencyQ(res)).toBeUndefined();
+      expect(res.clarification.questions[0].type).toBe('confirm_urgency');
+      expect(res.intent.urgency.source).not.toBe('caller');
+      expect(res.search).toBeDefined();
+    });
+
+    it('urgency=U-0 (the "Yes" answer) -> hotlines, no options, results kept', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', urgency: 'U-0' }),
+      });
+      expect(emergencyQ(res).options).toEqual([]);
+      expect(emergencyQ(res).hotlines.map((h) => h.number)).toEqual(['988', '911']);
+      expect(res.search).toBeDefined();
+    });
+
     it('popup band + caller U-3 -> no emergency question', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),

@@ -10,6 +10,7 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SearchResourcesQueryDto } from '../../../search/dto/search-query.dto';
+import { ASKED_QUESTION_IDS } from '../../rules/config';
 import { NX, isKnownCode, isTier1, isTier2 } from '../../rules/sune';
 
 export const V2_URGENCY_CODES = [
@@ -89,6 +90,29 @@ class IsKnownNeedCodeConstraint implements ValidatorConstraintInterface {
   }
 }
 
+@ValidatorConstraint({ name: 'isAskedQuestionId', async: false })
+class IsAskedQuestionIdConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return (
+      Array.isArray(value) &&
+      value.every(
+        (v) => typeof v === 'string' && ASKED_QUESTION_IDS.includes(v),
+      )
+    );
+  }
+  defaultMessage(args: ValidationArguments): string {
+    const unknown = Array.isArray(args.value)
+      ? args.value.filter((v) => !ASKED_QUESTION_IDS.includes(v as string))
+      : [];
+    return [
+      `$property must hold only known question ids (${ASKED_QUESTION_IDS.join(', ')})`,
+      ...(unknown.length > 0
+        ? [`unknown question id(s): ${unknown.join(', ')}`]
+        : []),
+    ].join('; ');
+  }
+}
+
 /**
  * Query of `GET /v2/search`: the v1 search parameters (location, paging, sort,
  * cutoff, filters) minus `query_type` (v2 always runs hybrid), plus the v2-only
@@ -121,6 +145,21 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsArray()
   @Validate(IsKnownNeedCodeConstraint)
   passed_needs?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Question ids answered without a value. `asked=emergency` means the emergency ' +
+      'question was answered "No, I am safe now": it is not asked again, and an ' +
+      'urgency question comes next. Same list formats as `needs`. Draft mark, not ' +
+      'confirmed (ISS-2499).',
+    example: ['emergency'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => toCodeList(value))
+  @IsArray()
+  @Validate(IsAskedQuestionIdConstraint)
+  asked?: string[];
 
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,

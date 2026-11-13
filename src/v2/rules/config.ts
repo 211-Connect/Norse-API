@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-13.2';
+export const RULES_VERSION = 'rules-2026-11-13.3';
 
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },
@@ -39,7 +39,20 @@ export const LABELS = {
   // Answers to STEMS.emergency, for the red popup and the orange soft card
   // alike (Lucas 2026-11-13, question 24, option B2). Same urgency codes.
   emergency: {
-    'U-1': 'Yes, I am in danger',
-    'U-3': 'No, I am safe now',
-  } as Record<string, string>,
+    yes: 'Yes, I am in danger',
+    safe: 'No, I am safe now',
+  },
 };
+
+/**
+ * The URL mark for "the emergency question was answered safe" (Lucas
+ * 2026-11-13: "safe" sets no urgency). The server keeps no memory, so the next
+ * call carries `asked=emergency`. NOT confirmed by Lucas: to swap the mark,
+ * change only this object and `ASKED_QUESTION_IDS`.
+ */
+export const EMERGENCY_SAFE_MARK = {
+  parameter: 'asked',
+  value: 'emergency',
+} as const;
+/** Question ids that `asked=` accepts; any other id is a 400. */
+export const ASKED_QUESTION_IDS: readonly string[] = [EMERGENCY_SAFE_MARK.value];
