@@ -145,7 +145,7 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
     const q = req.query;
     const should = (q.function_score ? q.function_score.query : q).bool.should;
     return should.filter((c: any) => c.rank_feature) as {
-      rank_feature: { field: string; boost: number };
+      rank_feature: { field: string; boost: number; linear?: object };
     }[];
   };
 
@@ -176,9 +176,25 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
   it(`at most ${ALLOWED_FAILS} guard cases leave their band`, async () => {
     const failed: string[] = [];
     let boostedSearches = 0;
+    let weightedSearches = 0;
+    const notLinear = new Set<string>();
     for (const s of searches) {
       const clauses = await clausesFor(s);
       if (clauses.length > 0) boostedSearches++;
+      // The model below (boost x weight) is what `linear` adds; without it
+      // Elasticsearch falls back to `saturation` and the model no longer holds.
+      for (const c of clauses) {
+        if (!c.rank_feature.linear) notLinear.add(c.rank_feature.field);
+      }
+      // A renamed field matches no fixture weights, so every bonus is 0 and
+      // nothing moves. Every fixture search has a weighted hit for a boosted need.
+      const weighted = clauses.some((c) =>
+        Object.values(
+          s.weights[c.rank_feature.field.replace('sune_need_weights.', '')] ??
+            {},
+        ).some((w) => w > 0),
+      );
+      if (weighted) weightedSearches++;
       const pos = rankAfter(s, clauses);
       for (const [kind, idx, keepTop] of s.cases) {
         if (pos[idx] > keepTop) {
@@ -192,6 +208,8 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
     // real service must send a boost for each one. Zero would mean the gate
     // or the switch changed and this test no longer guards anything.
     expect(boostedSearches).toBe(SEARCHES_IN_FIXTURE);
+    expect([...notLinear]).toEqual([]);
+    expect(weightedSearches).toBe(SEARCHES_IN_FIXTURE);
     if (failed.length > ALLOWED_FAILS) {
       throw new Error(
         `${failed.length} guard cases fail, ${ALLOWED_FAILS} allowed:\n${failed.join('\n')}`,
