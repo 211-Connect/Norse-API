@@ -83,22 +83,30 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
+    // Only caller-sent needs make blocks; a model guess never does. N-X never
+    // makes a block. They never filter (Lucas 2026-11-12).
+    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
+    // clarify=never removes the counting cost (ADR 0039 decision 26).
+    const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
+
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
-    const response = await this.hybridSearch.searchHybrid({
+    const { needCounts, ...response } = await this.hybridSearch.searchHybrid({
       headers,
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
       rankingVersion: 'v2',
       needScores,
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
+      ...(countCodes.length > 0 && { countCodes }),
       body,
     });
 
-    // by_code and strong_text_match are placeholders in this slice: the stored
-    // need tags (dagster PR #780) and a retrieval signal are not available yet.
-    // by_code null means "not counted", so every option is kept; an empty
-    // object would mean "counted, all 0" and drop every need option.
+    // by_code null means "not counted" (clarify=never, no codes asked, or the
+    // count failed): every option is kept. An object means "counted"; the
+    // search fills 0 for each requested code the aggregation omits.
+    // strong_text_match is still a placeholder: no retrieval signal yet.
     const clarification = finalize(decision, {
-      counts: { total: hitsTotal(response), by_code: null },
+      counts: { total: hitsTotal(response), by_code: needCounts ?? null },
       strong_text_match: false,
     });
 

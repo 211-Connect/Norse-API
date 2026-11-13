@@ -74,7 +74,7 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
     type: [String],
     description:
       'Confirmed need codes. Repeat the parameter (`needs=A&needs=B`) or send a ' +
-      'comma-separated list (`needs=A,B`). They boost results; they never filter.',
+      'comma-separated list (`needs=A,B`). They never filter. They boost results and order them in blocks: services with every sent need first, then services with some, then the rest.',
     example: ['N-HOU-02'],
   })
   @IsOptional()

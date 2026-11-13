@@ -11,6 +11,7 @@ import {
   QueryDslFunctionScoreContainer,
   SearchRequest,
   Sort,
+  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
@@ -85,11 +86,64 @@ export type NeedScore = {
 };
 export type RankingVersion = 'v1' | 'v2';
 
+/**
+ * The one match rule: a service carries a sent need when `sune_needs` holds
+ * that exact code. Builds `m`, the sent codes the service carries, in sent
+ * order. Missing field (index not tagged yet) = none. The block sort and the
+ * `matched_needs` script field both start with this text.
+ */
+const NEED_MATCH_PAINLESS =
+  'def m = new ArrayList(); ' +
+  "if (doc.containsKey('sune_needs')) { def have = doc['sune_needs']; " +
+  'for (def c : params.codes) { if (have.contains(c)) { m.add(c); } } }';
+
+/** Painless: 2 = carries every sent need, 1 = some, 0 = none. */
+export const NEED_BLOCK_SCRIPT =
+  NEED_MATCH_PAINLESS +
+  ' return m.size() == params.codes.size() ? 2 : (m.size() > 0 ? 1 : 0);';
+
+/** Painless: the sent codes this service carries, in sent order. */
+export const MATCHED_NEEDS_SCRIPT = NEED_MATCH_PAINLESS + ' return m;';
+
+/** Script field: reads doc values, so no `_source` tag is returned and scores do not change. */
+export function buildMatchedNeedsField(codes: string[]) {
+  return {
+    script: { source: MATCHED_NEEDS_SCRIPT, params: { codes } },
+  };
+}
+
+export function buildNeedBlockSort(codes: string[]): SortCombinations {
+  return {
+    _script: {
+      type: 'number',
+      order: 'desc',
+      script: { source: NEED_BLOCK_SCRIPT, params: { codes } },
+    },
+  };
+}
+
+export type HybridSearchResult = SearchResponse & {
+  /** Present only when counts were asked for and the count succeeded. */
+  needCounts?: Record<string, number>;
+};
+
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
+  /**
+   * v2 only. Caller-sent need codes. They never filter. They order results in
+   * blocks: every code first, then some, then none (Lucas 2026-11-12). Empty or
+   * absent changes nothing.
+   */
+  selectedNeeds?: string[];
+  /**
+   * v2 only. Need codes to count: results per code, from a terms aggregation
+   * on `sune_needs`, over the same filters as the results but without the
+   * `needs=` filter. Every code is returned, 0 when the aggregation omits it.
+   */
+  countCodes?: string[];
   /**
    * Internal switch, not a DTO field and not a query parameter. Set only by
    * the future /v2/search; today's /search never sets it, so it always runs
@@ -315,9 +369,15 @@ export class HybridSearchService {
     });
   }
 
-  async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
-    const { request, tenantFacets, cutoff, lang } =
+  async searchHybrid(
+    options: HybridSearchOptions,
+  ): Promise<HybridSearchResult> {
+    const { request, countRequest, tenantFacets, cutoff, lang } =
       await this.prepareHybridSearch(options, { rank: true });
+
+    const needCountsPromise = countRequest
+      ? this.runNeedCounts(countRequest, options.countCodes ?? [])
+      : Promise.resolve(undefined);
 
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
@@ -329,6 +389,7 @@ export class HybridSearchService {
         >(request),
     );
 
+    const needsSent = (options.selectedNeeds ?? []).length > 0;
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
       const normalizedFacets = SearchUtilsService.normalizeDocFacets(
         hit._source,
@@ -342,7 +403,12 @@ export class HybridSearchService {
           ...hit._source,
           facets: normalizedFacets,
         }),
-        sort: hit.sort as number[] | undefined,
+        // With needs sent, sort[0] is the internal block number. It stays server side.
+        sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+          number[] | undefined,
+        ...(needsSent
+          ? { matched_needs: this.readMatchedNeeds(hit.fields) }
+          : {}),
       };
     });
 
@@ -356,6 +422,8 @@ export class HybridSearchService {
       typeof data.hits.total === 'number'
         ? data.hits.total
         : (data.hits.total?.value ?? 0);
+
+    const needCounts = await needCountsPromise;
 
     return {
       search: {
@@ -377,7 +445,48 @@ export class HybridSearchService {
       // Omitted entirely when the caller did not opt in, so the response
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
+      ...(needCounts ? { needCounts } : {}),
     };
+  }
+
+  private readMatchedNeeds(fields: unknown): string[] {
+    const v = (fields as Record<string, unknown> | undefined)?.matched_needs;
+    return Array.isArray(v) ? (v as string[]) : [];
+  }
+
+  /**
+   * Counts per need code. A terms aggregation leaves out zero-count buckets,
+   * so every requested code is written with 0 first. A failure returns
+   * undefined, which the caller reads as "not counted" (never as all 0).
+   */
+  private async runNeedCounts(
+    request: SearchRequest,
+    codes: string[],
+  ): Promise<Record<string, number> | undefined> {
+    try {
+      const data = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_need_counts',
+        () =>
+          this.elasticsearchService.search<
+            unknown,
+            Record<string, AggregationsStringTermsAggregate>
+          >(request),
+      );
+      const buckets =
+        (data.aggregations?.need_counts?.buckets as
+          { key: string; doc_count: number }[] | undefined) ?? [];
+      const counts: Record<string, number> = Object.fromEntries(
+        codes.map((c) => [c, 0]),
+      );
+      for (const b of buckets) {
+        if (b.key in counts) counts[b.key] = b.doc_count;
+      }
+      return counts;
+    } catch (error) {
+      this.logger.warn(`Need counts skipped: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -499,6 +608,9 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
+    // Counts run over the filters above, before the relevance cut adds an ids filter.
+    const countFilters = [...baseFilters];
+
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
@@ -588,9 +700,33 @@ export class HybridSearchService {
       sort,
       extraShould: needShould,
       wordRarity,
+      selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
     });
 
-    return { request, tenantFacets, cutoff, lang };
+    const countCodes = options.countCodes ?? [];
+    const countRequest: SearchRequest | undefined =
+      countCodes.length > 0
+        ? {
+            index,
+            preference,
+            size: 0,
+            track_total_hits: false,
+            // Filters alone define the matched population (should clauses only
+            // rank), so a plain filter query counts the same set.
+            query: { bool: { filter: countFilters } },
+            aggs: {
+              need_counts: {
+                terms: {
+                  field: 'sune_needs',
+                  include: countCodes,
+                  size: countCodes.length,
+                },
+              },
+            },
+          }
+        : undefined;
+
+    return { request, countRequest, tenantFacets, cutoff, lang };
   }
 
   /**
@@ -1133,13 +1269,23 @@ export class HybridSearchService {
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
     pinnedMode: PinnedResourcesMode,
+    selectedNeeds: string[] = [],
   ): Sort {
     return SearchUtilsService.buildSortClause({
       fields: HYBRID_SORT_FIELDS,
       sortOption,
       coords,
-      leadingTiers:
-        pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [],
+      leadingTiers: [
+        ...(selectedNeeds.length > 0
+          ? [buildNeedBlockSort(selectedNeeds)]
+          : []),
+        ...(pinnedMode === 'top'
+          ? [
+              { pinned: 'desc' } as SortCombinations,
+              { priority: 'desc' } as SortCombinations,
+            ]
+          : []),
+      ],
     });
   }
 
@@ -1473,6 +1619,7 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    selectedNeeds?: string[];
   }): SearchRequest {
     const {
       index,
@@ -1490,9 +1637,15 @@ export class HybridSearchService {
       sort: sortOption,
       extraShould,
       wordRarity,
+      selectedNeeds,
     } = args;
 
-    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+    const sort = this.buildHybridSort(
+      sortOption,
+      coords,
+      pinnedMode,
+      selectedNeeds,
+    );
 
     const esQuery = this.buildHybridScoredQuery({
       queryStr,
@@ -1515,6 +1668,13 @@ export class HybridSearchService {
       _source: {
         excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
       },
+      ...(selectedNeeds && selectedNeeds.length > 0
+        ? {
+            script_fields: {
+              matched_needs: buildMatchedNeedsField(selectedNeeds),
+            },
+          }
+        : {}),
       aggs,
       query: esQuery,
       sort,
