@@ -35,6 +35,10 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
+import {
+  SUNE_ENRICHMENT_FIELDS,
+  stripEnrichment,
+} from './internal/enrichment-fields';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -301,7 +305,10 @@ export class HybridSearchService {
         _index: hit._index,
         _id: hit._id,
         _score: hit._score ?? null,
-        _source: { ...hit._source, facets: normalizedFacets },
+        _source: stripEnrichment({
+          ...hit._source,
+          facets: normalizedFacets,
+        }),
         sort: hit.sort as number[] | undefined,
       };
     });
@@ -434,7 +441,9 @@ export class HybridSearchService {
     );
 
     // buildFilters keeps the existing geo semantics: service_area "contains" AND
-    // (within `distance` of location.point OR no location.point). A true
+    // (within `distance` of location.point OR no location.point). In proximity
+    // mode there is no top-level "contains", and a listing with no point needs
+    // its service_area to contain the search point instead (ISS-2755). A true
     // "service_area OR location-close" would require combining those into a
     // `should` with minimum_should_match: 1 — intentionally NOT changed here.
     const baseFilters = SearchUtilsService.buildFilters(
@@ -850,6 +859,14 @@ export class HybridSearchService {
       const scale =
         distance > 0 ? `${distance}mi` : `${GEO_DEFAULT_SCALE_MI}mi`;
       functions.push({
+        // A decay function scores a document that lacks the field as 1, the
+        // same as one at the origin. Without this filter a listing with no map
+        // point got the full distance bonus (ISS-2755). With it, the listing
+        // gets 0 from distance, except that a document matching no function
+        // at all scores 1: with no embedding (browse, or the text-only
+        // fallback) and no priority function (pinned mode top/ignore), a
+        // listing with no point gets +1. See docs/location-search.md.
+        filter: { exists: { field: 'location.point' } },
         gauss: {
           'location.point': {
             origin: { lat, lon },
@@ -1246,7 +1263,9 @@ export class HybridSearchService {
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,
-      _source: { excludes: ['embedding', 'service_area'] },
+      _source: {
+        excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
+      },
       aggs,
       query: esQuery,
       sort,

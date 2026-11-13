@@ -96,6 +96,80 @@ describe('SearchService Logic', () => {
     sort: 'relevance',
   };
 
+  // ISS-2755: proximity mode must require a result with no map point to have a
+  // service area containing the search point, on every keyword search path.
+  // The branch is found anywhere in the request, so the test doesn't depend on
+  // how each query type nests its filters.
+  describe('proximity rule for results with no map point (ISS-2755)', () => {
+    const COORDS = [-74.89, 44.93];
+
+    const findLackingCoordinatesBranch = (node: unknown): any => {
+      if (node === null || typeof node !== 'object') return undefined;
+      const bool = (node as any).bool;
+      if (bool?.must_not?.exists?.field === 'location.point') return node;
+      for (const child of Object.values(node as object)) {
+        const found = findLackingCoordinatesBranch(child);
+        if (found) return found;
+      }
+      return undefined;
+    };
+
+    const expectServiceAreaRequired = (request: unknown) => {
+      expect(findLackingCoordinatesBranch(request)).toEqual({
+        bool: {
+          must_not: { exists: { field: 'location.point' } },
+          filter: {
+            geo_shape: {
+              service_area: {
+                shape: { type: 'point', coordinates: COORDS },
+                relation: 'contains',
+              },
+            },
+          },
+        },
+      });
+    };
+
+    const proximity = (overrides: Partial<SearchResourcesQueryDto>) =>
+      ({
+        ...baseQuery,
+        coords: COORDS,
+        distance: 25,
+        geo_type: 'proximity',
+        ...overrides,
+      }) as SearchResourcesQueryDto;
+
+    it.each<[string, Partial<SearchResourcesQueryDto>]>([
+      ['text (keyword)', { query: 'counseling', query_type: 'text' }],
+      ['text, empty (match_all)', { query: '', query_type: 'text' }],
+      ['taxonomy', { query: 'BM-1400', query_type: 'taxonomy' }],
+      [
+        'taxonomy, complex query',
+        {
+          query: { OR: ['BM-1400', { AND: ['BH-1800', 'BV-8900'] }] } as any,
+          query_type: 'taxonomy',
+        },
+      ],
+      ['more_like_this', { query: 'counseling', query_type: 'more_like_this' }],
+    ])('GET/POST /search, query_type %s', async (_label, overrides) => {
+      await service.searchResources({
+        headers: { 'x-tenant-id': 'test-tenant' } as any,
+        query: proximity(overrides),
+      });
+
+      expectServiceAreaRequired(mockEsService.search.mock.calls[0][0]);
+    });
+
+    it('GET /search/pins', async () => {
+      await service.searchPins({
+        headers: { 'x-tenant-id': 'test-tenant' } as any,
+        query: proximity({ query: 'counseling', query_type: 'text' }),
+      });
+
+      expectServiceAreaRequired(mockEsService.search.mock.calls[0][0]);
+    });
+  });
+
   it('should apply boundary search filter', async () => {
     const query: SearchResourcesQueryDto = {
       ...baseQuery,
