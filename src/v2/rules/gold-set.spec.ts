@@ -22,6 +22,22 @@ import { Question, RulesSignals } from './types';
  */
 const MIN_PASS = 378;
 
+/**
+ * Row ids (`i`) that fail on development when MIN_PASS was measured. Only
+ * MIN_PASS blocks a merge. When a row's result differs from this list, the
+ * test prints which rows changed, so a swap (some rows break, others get
+ * fixed, the count holds) shows up in the run output instead of passing
+ * silently. Update the list together with MIN_PASS.
+ */
+const KNOWN_FAILING = new Set([
+  3, 6, 17, 21, 24, 31, 34, 35, 43, 46, 48, 52, 60, 62, 65, 74, 80, 97, 101,
+  110, 120, 121, 123, 126, 132, 135, 142, 147, 152, 153, 159, 172, 174, 179,
+  180, 186, 191, 194, 196, 201, 205, 216, 217, 219, 221, 228, 234, 236, 243,
+  256, 257, 258, 259, 263, 264, 266, 273, 275, 278, 281, 291, 294, 304, 306,
+  307, 311, 327, 329, 338, 339, 341, 344, 351, 356, 364, 369, 372, 376, 384,
+  388, 417,
+]);
+
 interface Want {
   t: string;
   offer?: string[];
@@ -122,15 +138,36 @@ describe('question-order gold set (459 real queries, saved scores)', () => {
 
   it(`passes at least ${MIN_PASS} of 459`, () => {
     console.log(`gold set: ${pass} of ${results.length} pass`);
+    expect(KNOWN_FAILING.size).toBe(459 - MIN_PASS);
+    const regressed = results.filter(
+      (r) => !r.ok && !KNOWN_FAILING.has(r.row.i),
+    );
+    const fixed = results.filter((r) => r.ok && KNOWN_FAILING.has(r.row.i));
+    if (regressed.length || fixed.length) {
+      const list = (rs: typeof results) =>
+        rs.map((r) => `  #${r.row.i} ${r.row.query}`).join('\n');
+      console.warn(
+        `gold set rows changed against KNOWN_FAILING (not a failure):\n` +
+          `now failing (${regressed.length}):\n${list(regressed)}\n` +
+          `now passing (${fixed.length}):\n${list(fixed)}`,
+      );
+    }
     expect(pass).toBeGreaterThanOrEqual(MIN_PASS);
   });
 
+  // Selected from the fixture, not from the engine's own band: if the engine
+  // stops flagging a real emergency, the row still has to ask the question.
   it('emergency rows always get the emergency question first', () => {
-    const bad = results.filter(
-      (r) =>
-        r.out.decision.emergency.band === 'popup' &&
-        r.out.questions[0]?.id !== 'emergency',
+    const emergencyRows = results.filter(
+      (r) => r.row.stratum === 'A_emergency',
     );
+    expect(emergencyRows).toHaveLength(26);
+    const bad = results.filter((r) => {
+      const band = r.out.decision.emergency.band;
+      const expected =
+        r.row.stratum === 'A_emergency' || band === 'popup' || band === 'soft';
+      return expected && r.out.questions[0]?.id !== 'emergency';
+    });
     expect(bad.map((r) => r.row.query)).toEqual([]);
   });
 
