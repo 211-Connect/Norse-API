@@ -42,6 +42,11 @@ const urgencyOption = (v: string): QuestionOption => ({
   parameter: 'urgency',
   value: v,
 });
+const emergencyOption = (v: string): QuestionOption => ({
+  label: LABELS.emergency[v],
+  parameter: 'urgency',
+  value: v,
+});
 const needOption = (code: string): QuestionOption => ({
   label: displayOf(code),
   parameter: 'needs',
@@ -57,8 +62,9 @@ const hotlinesOf = (tenant: TenantContext) =>
 
 /**
  * Emergency question from the emergency band (ADR 0039 Decision 54): `red`
- * for the popup, `orange` for the soft card. Options are urgency answers only;
- * a person in danger taps a hotline number.
+ * for the popup, `orange` for the soft card. Both bands use the same stem and
+ * labels. Options are urgency answers only (U-1, U-3); a person in danger taps
+ * a hotline number.
  */
 const bandEmergencyQuestion = (
   band: 'popup' | 'soft',
@@ -72,7 +78,7 @@ const bandEmergencyQuestion = (
     reason: 'emergency_band',
     step: 0,
     stem: STEMS.emergency,
-    options: ['U-1', 'U-3'].map(urgencyOption),
+    options: ['U-1', 'U-3'].map(emergencyOption),
     ...urgencyFlags,
     hotlines: hotlinesOf(tenant),
   });

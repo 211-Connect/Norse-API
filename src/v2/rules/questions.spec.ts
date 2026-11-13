@@ -16,10 +16,12 @@ describe('emergency question', () => {
     expect(q.id).toBe('emergency');
     expect(q.level).toBe('red');
     expect(q.step).toBe(0);
+    // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
-      { label: 'Today', parameter: 'urgency', value: 'U-1' },
-      { label: 'Not urgent', parameter: 'urgency', value: 'U-3' },
+      { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-1' },
+      { label: 'No, I am safe now', parameter: 'urgency', value: 'U-3' },
     ]);
+    expect(q.stem).toBe('Are you in danger right now?');
     expect(q.hotlines).toEqual([
       { label: 'Crisis line', number: '988' },
       { label: 'Emergency', number: '911' },
@@ -33,6 +35,29 @@ describe('emergency question', () => {
     expect(q.level).toBe('orange');
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-3']);
     expect(q.hotlines).toHaveLength(2);
+  });
+  it('soft band uses the same danger labels and stem as the popup (question 24, B2)', () => {
+    const red = emergencyOf(decide(req(), sig({}, { emergency: popup })));
+    const orange = emergencyOf(decide(req(), sig({}, { emergency: soft })));
+    expect(orange.stem).toBe(red.stem);
+    expect(orange.options).toEqual(red.options);
+    expect(orange.options.map((o) => o.label)).toEqual([
+      'Yes, I am in danger',
+      'No, I am safe now',
+    ]);
+  });
+  it('time questions keep the time labels (only the emergency question changes)', () => {
+    const d = decide(req(), {
+      needs: { status: 'ok', scores: {} },
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: { status: 'ok', score: 0.001 },
+    });
+    const q = d.candidates.find((c) => c.id === 'urgency_today');
+    expect(q.options.map((o) => o.label)).toEqual([
+      'Today',
+      'A deadline is coming',
+      'Not urgent',
+    ]);
   });
   it('no option anywhere offers U-0 (Decision 54)', () => {
     for (const e of [popup, soft]) {

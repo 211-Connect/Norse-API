@@ -445,8 +445,8 @@ describe('V2SearchService', () => {
       expect(q.level).toBe('red');
       expect(q).not.toHaveProperty('parameter');
       expect(q.options).toEqual([
-        { label: 'Today', parameter: 'urgency', value: 'U-1' },
-        { label: 'Not urgent', parameter: 'urgency', value: 'U-3' },
+        { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-1' },
+        { label: 'No, I am safe now', parameter: 'urgency', value: 'U-3' },
       ]);
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
     });
@@ -503,5 +503,78 @@ describe('V2SearchService', () => {
         'emergency',
       ]);
     });
+  });
+});
+
+// Lucas 2026-11-13 (question 14): AI classification off for a tenant.
+describe('V2SearchService with AI classification off', () => {
+  const strong = { 'N-HOU': 0.95, 'N-HOU-01': 0.99, 'N-FOD-01': 0.5 };
+  const result = (emergencyScore: number) =>
+    okResult(strong, {
+      signals: {
+        needs: { status: 'ok', scores: strong },
+        urgency: { level: 'U-1', score: 0.85 },
+        emergency: { status: 'ok', score: emergencyScore, floor_hit: false },
+      },
+    });
+
+  it('the default is on: the model guess is used', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+    });
+    const res = await service.search({ headers, query: dto({ query: 'x' }) });
+    expect(res.intent.needs.some((n) => n.source === 'inferred')).toBe(true);
+  });
+  it('off: classify runs once, no need guess, no boost, no question', async () => {
+    const { service, classify, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'x' }),
+      aiClassification: 'off',
+    });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(res.intent.needs).toEqual([]);
+    expect(res.intent.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'drop',
+    });
+    expect(res.clarification.questions).toEqual([]);
+    const arg = searchHybrid.mock.calls[0][0];
+    expect(arg.needScores).toEqual([]);
+    expect(arg).not.toHaveProperty('countCodes');
+    expect(res.model_version).toBe('mv-1');
+  });
+  it('off: the emergency question and hotlines still appear', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(result(0.9)),
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'x' }),
+      aiClassification: 'off',
+    });
+    expect(res.clarification.questions.map((q) => q.id)).toEqual(['emergency']);
+    expect(res.clarification.questions[0].level).toBe('red');
+    expect(
+      res.clarification.questions[0].hotlines.map((h) => h.number),
+    ).toEqual(['988', '911']);
+  });
+  it('off: caller needs still boost and make blocks', async () => {
+    const { service, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'x', needs: ['N-FOD-01'] }),
+      aiClassification: 'off',
+    });
+    const arg = searchHybrid.mock.calls[0][0];
+    expect(arg.needScores).toEqual([
+      { code: 'N-FOD-01', tier: 'tier2', score: 1 },
+    ]);
+    expect(arg.selectedNeeds).toEqual(['N-FOD-01']);
   });
 });

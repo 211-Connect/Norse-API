@@ -433,3 +433,103 @@ describe('N-X is internal (ISS-2499)', () => {
     expect(all).not.toContain('N-X');
   });
 });
+
+// Lucas 2026-11-13 (question 14): a tenant with AI classification off gets no
+// need guess and no optional question, but the emergency check always runs.
+describe('tenant AI classification off', () => {
+  const off = { ai_classification: 'off' as const };
+  const strong = {
+    'N-HOU': 0.95,
+    'N-HOU-01': 0.99,
+    'N-FOD-01': 0.5,
+    'N-FOD-02': 0.3,
+  };
+  const withAskUrgency = (emergencyScore = 0.001) =>
+    sig(strong, {
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: { status: 'ok', score: emergencyScore, floor_hit: false },
+    });
+
+  it('the default (no setting) still guesses needs and asks', () => {
+    const d = decide(req(), withAskUrgency());
+    expect(d.needs.some((n) => n.source === 'inferred')).toBe(true);
+    expect(d.candidates.length).toBeGreaterThan(0);
+  });
+  it('setting on behaves like the default', () => {
+    expect(
+      decide(req(), withAskUrgency(), { ai_classification: 'on' }),
+    ).toEqual(decide(req(), withAskUrgency()));
+  });
+  it('off: no inferred need, no boost from the model, no question', () => {
+    const d = decide(req(), withAskUrgency(), off);
+    expect(d.needs).toEqual([]);
+    expect(d.boost_needs).toEqual([]);
+    expect(d.candidates).toEqual([]);
+    expect(d.count_codes).toEqual([]);
+    expect(d.option_scores).toEqual({});
+    expect(d.nx).toBe(false);
+  });
+  it('off: the model urgency is not used or asked', () => {
+    const sure = sig(strong, { urgency: { level: 'U-1', score: 0.99 } });
+    const d = decide(req(), sure, off);
+    expect(d.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'drop',
+    });
+  });
+  it('off: caller needs and caller urgency still count; no area question', () => {
+    const d = decide(
+      req({ needs: ['N-HOU'], urgency: 'U-2' }),
+      withAskUrgency(),
+      off,
+    );
+    expect(d.needs).toEqual([
+      { code: 'N-HOU', state: 'use', source: 'caller' },
+    ]);
+    expect(d.boost_needs).toEqual(['N-HOU']);
+    expect(d.urgency).toEqual({ value: 'U-2', source: 'caller', state: 'use' });
+    expect(d.candidates).toEqual([]);
+  });
+  it.each([
+    ['popup', 0.9, 'red'],
+    ['soft', 0.3, 'orange'],
+  ])(
+    'off: the %s emergency question and hotlines still appear',
+    (band, score, level) => {
+      const d = decide(req(), withAskUrgency(score), off);
+      expect(d.emergency_band).toBe(band);
+      expect(d.candidates.map((q) => q.id)).toEqual(['emergency']);
+      expect(d.candidates[0].level).toBe(level);
+      expect(d.candidates[0].hotlines).toHaveLength(2);
+      expect(d.cacheable).toBe(false);
+    },
+  );
+  it('off: a failed emergency check still reads as band unknown', () => {
+    const d = decide(
+      req(),
+      { needs: { status: 'error' }, emergency: { status: 'error' } },
+      off,
+    );
+    expect(d.emergency_band).toBe('unknown');
+    expect(d.cacheable).toBe(false);
+  });
+  it('off: caller U-0 still gets the hotline popup', () => {
+    const d = decide(req({ urgency: 'U-0' }), withAskUrgency(), off);
+    expect(d.candidates.map((q) => q.id)).toEqual(['emergency']);
+    expect(d.candidates[0].options).toEqual([]);
+  });
+  it('off: a calm query is cacheable', () => {
+    const d = decide(req(), withAskUrgency(), off);
+    expect(d.emergency_band).toBe('none');
+    expect(d.cacheable).toBe(true);
+  });
+  it('off: finalize keeps only the emergency question', () => {
+    const d = decide(req(), withAskUrgency(0.9), off);
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    expect(c.questions.map((q) => q.id)).toEqual(['emergency']);
+  });
+});
