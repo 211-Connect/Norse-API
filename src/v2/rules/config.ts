@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-12.1';
+export const RULES_VERSION = 'rules-2026-11-12.2';
 
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },
@@ -31,7 +31,6 @@ export const STEMS = {
 
 export const LABELS = {
   urgency: {
-    'U-0': "I'm in an emergency right now",
     'U-1': 'Today',
     'U-2': 'A deadline is coming',
     'U-3': 'Not urgent',

@@ -76,7 +76,7 @@ describe('V2SearchService', () => {
     expect(res.model_version).toBeNull();
     expect(res.intent.query).toBeNull();
     expect(res.rules_version).toBe(RULES_VERSION);
-    expect(res.emergency).toEqual({ band: 'none', show_hotline: false });
+    expect(res).not.toHaveProperty('emergency');
   });
 
   it.each([
@@ -123,10 +123,7 @@ describe('V2SearchService', () => {
       headers,
       query: dto({ query: ' rent help ' }),
     });
-    expect(classify).toHaveBeenCalledWith(
-      'rent help',
-      headers['x-tenant-id'],
-    );
+    expect(classify).toHaveBeenCalledWith('rent help', headers['x-tenant-id']);
     expect(res.model_version).toBe('mv-1');
     expect(res.intent.query).toBe(' rent help ');
   });
@@ -141,7 +138,11 @@ describe('V2SearchService', () => {
     });
     expect(res.search.hits.total).toEqual(12);
     expect(res.model_version).toBeNull();
-    expect(res.emergency.band).toBe('unknown');
+    // Band unknown has no field (Decision 54): no emergency question, no block.
+    expect(res).not.toHaveProperty('emergency');
+    expect(
+      res.clarification.questions.find((q) => q.id === 'emergency'),
+    ).toBeUndefined();
     expect(searchHybrid).toHaveBeenCalledTimes(1);
   });
 
@@ -265,7 +266,9 @@ describe('V2SearchService', () => {
     });
     expect(a.clarification).toEqual(b.clarification);
     expect(
-      a.clarification.questions.filter((q) => q.parameter === 'needs'),
+      a.clarification.questions.filter((q) =>
+        ['find_need', 'narrow'].includes(q.type),
+      ),
     ).toEqual([]);
   });
 
@@ -398,10 +401,107 @@ describe('V2SearchService', () => {
         headers,
         query: dto({ query: 'food' }),
       });
-      const needQs = res.clarification.questions.filter(
-        (q: any) => q.parameter === 'needs',
+      const needQs = res.clarification.questions.filter((q: any) =>
+        ['find_need', 'narrow'].includes(q.type),
       );
       expect(needQs).toHaveLength(0);
+    });
+  });
+
+  describe('emergency in the response (ADR 0039 Decisions 50, 51, 54, 55)', () => {
+    const withEmergency = (score: number) =>
+      okResult(
+        {},
+        {
+          signals: {
+            needs: { status: 'ok', scores: {} },
+            emergency: { status: 'ok', score, floor_hit: false },
+          },
+        },
+      );
+    const emergencyQ = (res: { clarification: { questions: any[] } }) =>
+      res.clarification.questions.find((q) => q.id === 'emergency');
+
+    it('top-level keys hold no emergency block', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(Object.keys(res).sort()).toEqual([
+        'clarification',
+        'facets',
+        'intent',
+        'model_version',
+        'rules_version',
+        'search',
+      ]);
+    });
+    it('popup band -> emergency question level red, urgency options only', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      const q = emergencyQ(res);
+      expect(q.level).toBe('red');
+      expect(q).not.toHaveProperty('parameter');
+      expect(q.options).toEqual([
+        { label: 'Today', parameter: 'urgency', value: 'U-1' },
+        { label: 'Not urgent', parameter: 'urgency', value: 'U-3' },
+      ]);
+      expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
+    });
+    it('soft band -> emergency question level orange', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(emergencyQ(res).level).toBe('orange');
+    });
+    it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
+      const { service, searchHybrid } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ urgency: 'U-0' }),
+      });
+      expect(searchHybrid).toHaveBeenCalledTimes(1);
+      expect(res.search.hits.total).toEqual(12);
+      const q = emergencyQ(res);
+      expect(q.level).toBe('red');
+      expect(q.options).toEqual([]);
+      expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
+      expect(res.clarification.questions[0].id).toBe('emergency');
+    });
+    it('caller U-0 + clarify=never -> the popup stays', async () => {
+      const { service } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', urgency: 'U-0', clarify: 'never' }),
+      });
+      expect(res.clarification.questions.map((q) => q.id)).toEqual([
+        'emergency',
+      ]);
+    });
+    it('popup band + caller U-3 -> no emergency question', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', urgency: 'U-3' }),
+      });
+      expect(emergencyQ(res)).toBeUndefined();
+    });
+    it('popup band + clarify=never -> only the emergency question', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', clarify: 'never' }),
+      });
+      expect(res.clarification.questions.map((q) => q.id)).toEqual([
+        'emergency',
+      ]);
     });
   });
 });

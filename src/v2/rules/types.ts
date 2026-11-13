@@ -58,9 +58,12 @@ export type QuestionReason =
   | 'area_only'
   | 'area_confirmed'
   | 'unsure_needs';
+/** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
+export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
-  value: string;
   label: string;
+  parameter: OptionParameter;
+  value: string;
   results_count?: number;
 }
 export interface Question {
@@ -73,7 +76,6 @@ export interface Question {
   uncertainty: number; // raw model uncertainty in [0, 1] before effort and split
   reason: QuestionReason;
   step: number;
-  parameter: 'urgency' | 'needs';
   stem: string;
   options: QuestionOption[];
   multi_select: boolean;
@@ -89,7 +91,13 @@ export interface Decision {
    * options. Internal: not part of the response.
    */
   option_scores: Record<string, number>;
-  emergency: { band: EmergencyBand; show_hotline: boolean };
+  /**
+   * Band of the emergency check. Internal: not part of the response. The
+   * response shows the emergency only as the emergency question (ADR 0039
+   * Decision 54).
+   */
+  emergency_band: EmergencyBand;
+  /** A shared cache may store the response (ADR 0039 Decision 28). */
   cacheable: boolean;
   needs: NeedState[]; // use + ask only; drops omitted
   boost_needs: string[];
