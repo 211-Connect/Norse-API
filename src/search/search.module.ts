@@ -10,7 +10,7 @@ import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.mo
 @Module({
   controllers: [SearchController],
   providers: [SearchService, HybridSearchService, AiSearchService],
-  exports: [SearchService],
+  exports: [SearchService, HybridSearchService],
   imports: [CmsConfigModule, RequestCacheModule, SharedElasticsearchModule],
 })
 export class SearchModule {}

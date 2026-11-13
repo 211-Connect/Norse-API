@@ -10,7 +10,7 @@ export const DEFAULT_API_VERSION = '1';
  * Every version some route is declared under. A route added under a version
  * missing here answers 400 to its own requests, so the omission is loud.
  */
-export const SUPPORTED_API_VERSIONS: readonly string[] = ['1'];
+export const SUPPORTED_API_VERSIONS: readonly string[] = ['1', '2'];
 
 /**
  * The header's value, or `undefined` when it was not sent. An empty header
@@ -23,16 +23,32 @@ export function requestedApiVersion(req: Request): string | undefined {
 }
 
 /**
+ * True for `/v2` and anything under `/v2/`, ignoring the query string. The app
+ * sets no global prefix (main.ts), so the request path starts at `/v2`.
+ */
+export function isV2Path(path: string): boolean {
+  const pathname = path.split('?')[0];
+  return pathname === '/v2' || pathname.startsWith('/v2/');
+}
+
+/**
  * ISS-2481. `VersioningType.HEADER` with `defaultVersion: '1'` does not do
  * what it reads as: `defaultVersion` sets the version a route is declared
  * under, and a request without the header matches only VERSION_NEUTRAL
  * routes (@nestjs/platform-express `applyVersionFilter`). Every
  * `@Version('1')` route 404'd without the header. A custom extractor applies
  * the default to the request instead.
+ *
+ * A path under `/v2/` is version 2 whatever the header says, so `GET
+ * /v2/search` needs no header. Every other request keeps the header, else the
+ * default.
  */
 export const apiVersioningOptions: VersioningOptions = {
   type: VersioningType.CUSTOM,
-  extractor: (req: unknown) =>
-    requestedApiVersion(req as Request) ?? DEFAULT_API_VERSION,
+  extractor: (req: unknown) => {
+    const request = req as Request;
+    if (isV2Path(request.originalUrl ?? request.url ?? '')) return '2';
+    return requestedApiVersion(request) ?? DEFAULT_API_VERSION;
+  },
   defaultVersion: DEFAULT_API_VERSION,
 };
