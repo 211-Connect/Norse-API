@@ -73,8 +73,10 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ needs: 'N-HOU,N-X' }).props).toContain('needs');
   });
 
-  it('still accepts N-X in passed_needs (internal state, not an option)', () => {
-    expect(parse({ passed_needs: 'N-X' }).errors).toEqual([]);
+  it('rejects N-X in passed_needs and names it (ADR 0039 Decision 57)', () => {
+    const r = parse({ passed_needs: 'N-HOU,N-X' });
+    expect(r.props).toContain('passed_needs');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain('N-X');
   });
 
   it('still accepts urgency=U-X (counts as absent in the engine)', () => {

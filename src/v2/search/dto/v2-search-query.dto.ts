@@ -70,25 +70,6 @@ export function toCodeList(value: unknown): unknown {
   return Array.from(new Set(codes));
 }
 
-@ValidatorConstraint({ name: 'isKnownNeedCode', async: false })
-class IsKnownNeedCodeConstraint implements ValidatorConstraintInterface {
-  validate(value: unknown): boolean {
-    return (
-      Array.isArray(value) &&
-      value.every((v) => typeof v === 'string' && isKnownCode(v))
-    );
-  }
-  defaultMessage(args: ValidationArguments): string {
-    const unknown = unknownCodes(args.value);
-    return [
-      '$property must hold only known need codes (a SUNE Tier 1 or Tier 2 code, or N-X)',
-      ...(unknown.length > 0
-        ? [`unknown need code(s): ${unknown.join(', ')}`]
-        : []),
-    ].join('; ');
-  }
-}
-
 /**
  * Query of `GET /v2/search`: the v1 search parameters (location, paging, sort,
  * cutoff, filters) minus `query_type` (v2 always runs hybrid), plus the v2-only
@@ -114,12 +95,12 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
     type: [String],
     description:
       'Need codes the caller already declined. They are never offered again. ' +
-      'Same formats as `needs`.',
+      'Same formats and codes as `needs`: an unknown code or N-X is a 400 that names it.',
   })
   @IsOptional()
   @Transform(({ value }) => toCodeList(value))
   @IsArray()
-  @Validate(IsKnownNeedCodeConstraint)
+  @Validate(IsSelectableNeedCodeConstraint)
   passed_needs?: string[];
 
   @ApiPropertyOptional({

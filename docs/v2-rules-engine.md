@@ -9,7 +9,7 @@ Pure, deterministic TypeScript that decides what `/v2/search` asks after the mod
 Needs never filter results; a used or confirmed need only boosts (`boost_needs`, never a Tier 1 together with its Tier 2).
 
 ## Inputs
-- Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (still accepts `N-X`), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
+- Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (same rule: an unknown code or `N-X` is a 400 that names it), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
 - Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), top-level `urgency` `{level, score}` (beside `needs`, as ml-broker sends it; read only when the needs call succeeded), emergency `{status, score, floor_hit, calm_context, dv_shelter}`; `emergency: null` when there is no typed text.
 - Tenant: `top_areas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
 
