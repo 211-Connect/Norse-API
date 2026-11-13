@@ -3,8 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import {
   HybridSearchService,
-  V2_NEEDS_FILTER_APPLIES_TO_PINS,
+  buildNeedBlockSort,
 } from './hybrid-search.service';
+import { SearchUtilsService } from './search-utils.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
@@ -23,14 +24,16 @@ const mainResponse = {
   aggregations: {},
 };
 
-describe('HybridSearchService - needs filter and counts (ISS-2499)', () => {
+describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let service: HybridSearchService;
   let requests: any[];
   let countMode: 'ok' | 'throw';
+  let searchConfig: Record<string, unknown>;
 
   beforeEach(async () => {
     requests = [];
     countMode = 'ok';
+    searchConfig = {};
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve({ hits: { hits: [] } });
@@ -64,7 +67,9 @@ describe('HybridSearchService - needs filter and counts (ISS-2499)', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
-            getSearchConfig: jest.fn().mockResolvedValue({}),
+            getSearchConfig: jest
+              .fn()
+              .mockImplementation(async () => searchConfig),
           },
         },
         {
@@ -97,40 +102,79 @@ describe('HybridSearchService - needs filter and counts (ISS-2499)', () => {
   const needsClause = (req: any) =>
     JSON.stringify(filtersOf(req)).includes('sune_needs');
 
-  it('adds a terms filter on sune_needs for the sent needs', async () => {
-    await run({ needsFilter: ['N-FOD-01', 'N-HOU'] });
-    expect(filtersOf(mainRequest())).toContainEqual(
-      V2_NEEDS_FILTER_APPLIES_TO_PINS
-        ? { terms: { sune_needs: ['N-FOD-01', 'N-HOU'] } }
-        : expect.anything(),
-    );
+  it('selectedNeeds never filter: no clause mentions sune_needs', async () => {
+    await run({ selectedNeeds: ['N-FOD-01', 'N-HOU'] });
+    expect(JSON.stringify(mainRequest().query)).not.toContain('sune_needs');
   });
 
-  it('a Tier 1 code filters on its own tag alone (no expansion)', async () => {
-    await run({ needsFilter: ['N-FOD'] });
-    expect(JSON.stringify(filtersOf(mainRequest()))).toContain('["N-FOD"]');
+  it('sort[0] is the need block sort', async () => {
+    await run({ selectedNeeds: ['A', 'B'] });
+    const first = mainRequest().sort[0];
+    expect(first).toEqual(buildNeedBlockSort(['A', 'B']));
+    expect(first._script.type).toBe('number');
+    expect(first._script.order).toBe('desc');
+    expect(first._script.script.params.codes).toEqual(['A', 'B']);
   });
 
-  it('adds no filter without needsFilter or with an empty list', async () => {
+  it('removes duplicate codes', async () => {
+    await run({ selectedNeeds: ['A', 'A', 'B'] });
+    expect(mainRequest().sort[0]._script.script.params.codes).toEqual([
+      'A',
+      'B',
+    ]);
+  });
+
+  it('blocks lead the pinned and priority tiers in top mode', async () => {
+    searchConfig = { pinned_resources_mode: 'top' };
+    await run({ selectedNeeds: ['A', 'B'] });
+    const sort = mainRequest().sort;
+    expect(sort[0]).toEqual(buildNeedBlockSort(['A', 'B']));
+    expect(sort[1]).toEqual({ pinned: 'desc' });
+    expect(sort[2]).toEqual({ priority: 'desc' });
+  });
+
+  it('blocks lead the geo distance sort', async () => {
+    const coords = [-76.6122, 39.2904];
+    await run({
+      query: { ...baseQuery, sort: 'distance', coords },
+      selectedNeeds: ['A'],
+    });
+    const sort = mainRequest().sort;
+    expect(sort[0]).toEqual(buildNeedBlockSort(['A']));
+    expect(sort[1]).toEqual(SearchUtilsService.getGeoDistanceSort(coords));
+  });
+
+  it('no selectedNeeds or an empty list: query and sort equal the no-option request', async () => {
+    searchConfig = { pinned_resources_mode: 'top' };
     await run();
-    expect(needsClause(mainRequest())).toBe(false);
+    const a = mainRequest();
     requests = [];
-    await run({ needsFilter: [] });
-    expect(needsClause(mainRequest())).toBe(false);
+    await run({ selectedNeeds: [] });
+    expect(mainRequest().query).toEqual(a.query);
+    expect(mainRequest().sort).toEqual(a.sort);
+    expect(JSON.stringify(a.sort)).not.toContain('_script');
+  });
+
+  it('the count request has no script sort and no needs clause', async () => {
+    await run({ selectedNeeds: ['A'], countCodes: ['A'] });
+    const c = countRequest();
+    expect(c.sort).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain('_script');
+    expect(needsClause(c)).toBe(false);
   });
 
   it('the request is identical to v1 when no v2 option is set', async () => {
     await run();
     const a = mainRequest();
     requests = [];
-    await run({ needsFilter: [], countCodes: [] });
+    await run({ selectedNeeds: [], countCodes: [] });
     expect(mainRequest()).toEqual(a);
     expect(requests).toHaveLength(1);
   });
 
-  it('counts: terms aggregation limited to the codes, same filters, no needs filter', async () => {
+  it('counts: terms aggregation limited to the codes, same filters, no needs clause', async () => {
     const res: any = await run({
-      needsFilter: ['N-HOU'],
+      selectedNeeds: ['N-HOU'],
       countCodes: ['N-FOD', 'N-FOD-01', 'N-HOU'],
     });
     const c = countRequest();
@@ -142,7 +186,6 @@ describe('HybridSearchService - needs filter and counts (ISS-2499)', () => {
       'N-HOU',
     ]);
     expect(needsClause(c)).toBe(false);
-    expect(needsClause(mainRequest())).toBe(true);
     // the same tenant filter as the results
     expect(JSON.stringify(filtersOf(c))).toContain('tenant-a');
     expect(res.needCounts['N-FOD-01']).toBe(4);

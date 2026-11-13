@@ -11,6 +11,7 @@ import {
   QueryDslFunctionScoreContainer,
   SearchRequest,
   Sort,
+  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
@@ -80,12 +81,22 @@ export type NeedScore = {
 };
 export type RankingVersion = 'v1' | 'v2';
 
-/**
- * ADR 0039 open question 2 (Lucas has NOT confirmed this): do pinned services
- * obey the `needs=` filter? true = yes, as they obey every v1 filter. false =
- * a pinned service also passes when it lacks the sent need. Reverse it here.
- */
-export const V2_NEEDS_FILTER_APPLIES_TO_PINS = true;
+/** Painless: 2 = carries every sent need, 1 = some, 0 = none. Missing field (index not tagged yet) = 0. */
+export const NEED_BLOCK_SCRIPT =
+  "if (!doc.containsKey('sune_needs')) { return 0; } " +
+  "def have = doc['sune_needs']; int k = 0; " +
+  'for (def c : params.codes) { if (have.contains(c)) { k++; } } ' +
+  'return k == params.codes.size() ? 2 : (k > 0 ? 1 : 0);';
+
+export function buildNeedBlockSort(codes: string[]): SortCombinations {
+  return {
+    _script: {
+      type: 'number',
+      order: 'desc',
+      script: { source: NEED_BLOCK_SCRIPT, params: { codes } },
+    },
+  };
+}
 
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
@@ -98,10 +109,11 @@ type HybridSearchOptions = {
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
   /**
-   * v2 only. Caller-sent need codes: a service returns only if its
-   * `sune_needs` holds at least one. Empty or absent adds no filter.
+   * v2 only. Caller-sent need codes. They never filter. They order results in
+   * blocks: every code first, then some, then none (Lucas 2026-11-12). Empty or
+   * absent changes nothing.
    */
-  needsFilter?: string[];
+  selectedNeeds?: string[];
   /**
    * v2 only. Need codes to count: results per code, from a terms aggregation
    * on `sune_needs`, over the same filters as the results but without the
@@ -556,16 +568,8 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
-    // Counts describe the options a person can pick, so they run over the
-    // filters above and not over the `needs=` filter below (ADR 0039 is silent;
-    // see the PR body). A snapshot here keeps later pushes out of it.
+    // Counts run over the filters above, before the relevance cut adds an ids filter.
     const countFilters = [...baseFilters];
-
-    // v2 `needs=` hard filter (ISS-2499). Absent or empty: nothing is added
-    // and the request is the v1 request.
-    if (options.needsFilter && options.needsFilter.length > 0) {
-      baseFilters.push(this.buildNeedsFilter(options.needsFilter));
-    }
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -656,6 +660,7 @@ export class HybridSearchService {
       sort,
       extraShould: needShould,
       wordRarity,
+      selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
     });
 
     const countCodes = options.countCodes ?? [];
@@ -682,17 +687,6 @@ export class HybridSearchService {
         : undefined;
 
     return { request, countRequest, tenantFacets, cutoff, lang };
-  }
-
-  private buildNeedsFilter(codes: string[]): QueryDslQueryContainer {
-    const terms: QueryDslQueryContainer = { terms: { sune_needs: codes } };
-    if (V2_NEEDS_FILTER_APPLIES_TO_PINS) return terms;
-    return {
-      bool: {
-        should: [terms, { term: { pinned: true } }],
-        minimum_should_match: 1,
-      },
-    };
   }
 
   /**
@@ -1227,13 +1221,23 @@ export class HybridSearchService {
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
     pinnedMode: PinnedResourcesMode,
+    selectedNeeds: string[] = [],
   ): Sort {
     return SearchUtilsService.buildSortClause({
       fields: HYBRID_SORT_FIELDS,
       sortOption,
       coords,
-      leadingTiers:
-        pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [],
+      leadingTiers: [
+        ...(selectedNeeds.length > 0
+          ? [buildNeedBlockSort(selectedNeeds)]
+          : []),
+        ...(pinnedMode === 'top'
+          ? [
+              { pinned: 'desc' } as SortCombinations,
+              { priority: 'desc' } as SortCombinations,
+            ]
+          : []),
+      ],
     });
   }
 
@@ -1567,6 +1571,7 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    selectedNeeds?: string[];
   }): SearchRequest {
     const {
       index,
@@ -1584,9 +1589,15 @@ export class HybridSearchService {
       sort: sortOption,
       extraShould,
       wordRarity,
+      selectedNeeds,
     } = args;
 
-    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+    const sort = this.buildHybridSort(
+      sortOption,
+      coords,
+      pinnedMode,
+      selectedNeeds,
+    );
 
     const esQuery = this.buildHybridScoredQuery({
       queryStr,

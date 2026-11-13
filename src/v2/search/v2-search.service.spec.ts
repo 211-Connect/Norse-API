@@ -280,40 +280,40 @@ describe('V2SearchService', () => {
     expect(sawQuestionWithOptions).toBe(true);
   });
 
-  describe('needs filter and counts (ISS-2499)', () => {
-    it('sends caller needs as the filter, without N-X', async () => {
+  describe('need blocks and counts (ISS-2499)', () => {
+    it('sends caller needs as selectedNeeds, without N-X', async () => {
       const { service, searchHybrid } = build({});
       await service.search({
         headers,
         query: dto({ needs: ['N-FOD-01', 'N-X', 'N-HOU'] }),
       });
-      expect(searchHybrid.mock.calls[0][0].needsFilter).toEqual([
+      expect(searchHybrid.mock.calls[0][0].selectedNeeds).toEqual([
         'N-FOD-01',
         'N-HOU',
       ]);
     });
 
-    it('sends no filter when N-X is the only need', async () => {
+    it('sends no selectedNeeds when N-X is the only need', async () => {
       const { service, searchHybrid } = build({});
       await service.search({ headers, query: dto({ needs: ['N-X'] }) });
-      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+      expect(searchHybrid.mock.calls[0][0].selectedNeeds).toBeUndefined();
     });
 
-    it('a model guess never filters, at any confidence', async () => {
+    it('a model guess never makes a block, at any confidence', async () => {
       const { service, searchHybrid } = build({
         classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.999 })),
       });
       await service.search({ headers, query: dto({ query: 'food' }) });
-      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+      expect(searchHybrid.mock.calls[0][0].selectedNeeds).toBeUndefined();
     });
 
-    it('passed_needs never filter', async () => {
+    it('passed_needs never make a block', async () => {
       const { service, searchHybrid } = build({});
       await service.search({
         headers,
         query: dto({ passed_needs: ['N-FOD'] }),
       });
-      expect(searchHybrid.mock.calls[0][0].needsFilter).toBeUndefined();
+      expect(searchHybrid.mock.calls[0][0].selectedNeeds).toBeUndefined();
     });
 
     it('asks for the rules engine count_codes and passes the counts through', async () => {

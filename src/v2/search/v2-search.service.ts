@@ -74,10 +74,9 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
-    // Only caller-sent needs filter; a model guess never does. N-X neither
-    // filters nor boosts, so it is dropped. A Tier 1 code filters on its own
-    // tag (every Tier 2 tag carries its Tier 1).
-    const filterCodes = callerNeeds.filter((c) => c !== 'N-X');
+    // Only caller-sent needs make blocks; a model guess never does. N-X never
+    // makes a block. They never filter (Lucas 2026-11-12).
+    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
@@ -88,7 +87,7 @@ export class V2SearchService {
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
       rankingVersion: 'v2',
       needScores,
-      ...(filterCodes.length > 0 && { needsFilter: filterCodes }),
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
       ...(countCodes.length > 0 && { countCodes }),
       body,
     });
