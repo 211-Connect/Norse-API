@@ -9,6 +9,22 @@ The code is `SearchUtilsService.buildFilters` and `buildSortClause`
 (`src/search/search-utils.service.ts`), shared by keyword and hybrid search, and
 `HybridSearchService`'s scoring functions (`src/search/hybrid-search.service.ts`).
 
+## Where it applies
+
+Every resource search path builds its geo filters with the same
+`buildFilters`, so the filter table below holds for all of them. Each row is
+pinned by a test (`search.service.filter.spec.ts`, `hybrid-search.service.spec.ts`,
+"ISS-2755").
+
+| Route (`x-api-version: 1`) | `query_type` | Builder | Distance score |
+| --- | --- | --- | --- |
+| `GET` / `POST /search` | `text` (keyword; empty text = match-all) | `SearchService.buildClassicRequest` | none |
+| `GET` / `POST /search` | `taxonomy` (code list or complex `AND`/`OR` object) | same | none |
+| `GET` / `POST /search` | `more_like_this` | same | none |
+| `GET` / `POST /search` | `hybrid` (with text, browse, or text-only fallback) | `HybridSearchService.searchHybrid` | yes |
+| `GET /search/pins` | any of the above | the same builder as `/search` | same as `/search` |
+| `GET /search/predict`, `/search/re-rank` | — | ML broker only, no Elasticsearch search | n/a |
+
 ## Inputs
 
 | Param | Meaning |
@@ -70,11 +86,21 @@ the text and semantic scores (`boost_mode: sum`):
   Elasticsearch decay function scores a document that lacks the field as 1,
   the same as one at the origin, so before ISS-2755 a result without a point
   got the full +25.
-- A result without a point gets nothing from distance when the query has text,
-  so the semantic function scores every document. In a **browse search** (no
-  query text, with `coords`), distance is the only function. A document that
-  matches no function scores 1, so a result without a point gets +1 there.
-  Measured on the CNY211 index on 2026-11-12: 1 with the filter, 25 without.
+- A result without a point usually gets **0** from distance. The exception
+  follows from one Elasticsearch rule: a document that matches **no** score
+  function scores 1. Two functions have no filter and match every document:
+  - the semantic function, present whenever the query is embedded;
+  - the priority function, present in the default `boost` pinned mode.
+
+  So a result without a point gets **+1** only when both are absent:
+  - no embedding: a **browse search** (no query text), or the **text-only
+    fallback** when the embedding call fails;
+  - **and** the tenant's `pinned_resources_mode` is `top` or `ignore`.
+
+  Measured on the live index on 2026-11-12, for results without a point:
+  - distance function alone, without the new filter: 25 (the bug);
+  - distance function alone, with the filter: 1;
+  - with the filter plus the priority function, on results with priority 0: 0.
 - The weight (25) and default scale (5 mi) are constants, `GEO_GAUSS_WEIGHT`
   and `GEO_DEFAULT_SCALE_MI`. Payload's hybrid-search config shows geo-boost
   weight and scale fields, but Norse-API doesn't read them: `SearchConfigCache`

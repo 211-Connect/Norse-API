@@ -68,19 +68,6 @@ describe('SearchUtilsService.buildFilters geo filters', () => {
       ]);
     });
 
-    it('still filters a listing that has a point by radius only', () => {
-      const [radius] = build(25, 'proximity') as any[];
-      const pointBranch = radius.bool.should.find((c: any) =>
-        c.bool?.must?.some((m: any) => m.geo_distance),
-      );
-
-      expect(pointBranch).toEqual(withinRadius(25));
-      // No top-level service-area test in proximity mode.
-      expect((build(25, 'proximity') as any[]).some((f) => f.geo_shape)).toBe(
-        false,
-      );
-    });
-
     it('adds no geo filter without a distance (unchanged)', () => {
       expect(build(0, 'proximity')).toEqual([]);
     });

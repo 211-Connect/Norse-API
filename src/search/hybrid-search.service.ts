@@ -809,10 +809,10 @@ export class HybridSearchService {
         // A decay function scores a document that lacks the field as 1, the
         // same as one at the origin. Without this filter a listing with no map
         // point got the full distance bonus (ISS-2755). With it, the listing
-        // gets nothing from distance when the semantic function is present.
-        // In a browse search this is the only function, and a document that
-        // matches no function scores 1, so it gets +1 there.
-        // See docs/location-search.md.
+        // gets 0 from distance, except that a document matching no function
+        // at all scores 1: with no embedding (browse, or the text-only
+        // fallback) and no priority function (pinned mode top/ignore), a
+        // listing with no point gets +1. See docs/location-search.md.
         filter: { exists: { field: 'location.point' } },
         gauss: {
           'location.point': {
