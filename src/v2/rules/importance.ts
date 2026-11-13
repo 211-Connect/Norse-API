@@ -54,9 +54,6 @@ export function uncertainty(q: Question, signals: RulesSignals): number {
     const s = e && e.status === 'ok' ? finiteScore(e.score) : undefined;
     return yesNo(s ?? 0.5);
   }
-  // After "safe" nothing is known about the time: full uncertainty, with effort 1
-  // its value is the band maximum (0.999), so it ranks first in the high band.
-  if (q.reason === 'emergency_safe') return 1;
   if (q.id === 'urgency_today' || q.id === 'urgency_time') {
     return yesNo(finiteScore(signals.urgency?.score) ?? 0.5);
   }
@@ -64,8 +61,6 @@ export function uncertainty(q: Question, signals: RulesSignals): number {
 }
 
 export function effort(q: Question): number {
-  // The urgency question after "safe" must come next (Lucas 2026-11-13).
-  if (q.reason === 'emergency_safe') return 1;
   return clamp(1 - 0.05 * (q.options.length - 2), 0.8, 1);
 }
 

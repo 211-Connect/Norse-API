@@ -25,9 +25,9 @@ A cutoff or rule change bumps `RULES_VERSION`.
 ## Questions
 | Step (info) | Id | Importance | When |
 |---|---|---|---|
-| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`asked=emergency`, sets no urgency; draft mark `EMERGENCY_SAFE_MARK` in `config.ts`); not asked when `asked=emergency` is in the URL, in any band; carries the hotlines |
+| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`parameter: null`, `value: null`: writes nothing to the URL, the client dismisses the question for this visit; a later call asks again while the model still finds danger); carries the hotlines |
 | 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, ADR 0039 Decision 50; also the next call after "Yes") |
-| 1 | `urgency_today` | high | after `asked=emergency` when the urgency is not `use` (reason `emergency_safe`, value 0.999, first on a tie); else urgency ask and the model level is U-1 |
+| 1 | `urgency_today` | high | urgency ask and the model level is U-1; never beside an emergency question |
 | 2 | `start` | high | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
 | 3 | `area:<T1>` | high | a Tier 1 was picked (`needs=N-HOU`) or the area rule fired; top 3 Tier 2 by score |
 | 4 | `narrow:1` | medium | Tier 2 needs in the ask band, top 3 |

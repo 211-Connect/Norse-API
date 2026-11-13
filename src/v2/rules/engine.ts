@@ -118,12 +118,7 @@ export function finalize(
     );
     q.priority = priorityOf(q.importance, q.value);
   }
-  // On a tie, the urgency question after "safe" goes first.
-  const safeFirst = (q: Question) => (q.reason === 'emergency_safe' ? 0 : 1);
-  kept.sort(
-    (a, b) =>
-      b.priority - a.priority || safeFirst(a) - safeFirst(b) || cmp(a.id, b.id),
-  );
+  kept.sort((a, b) => b.priority - a.priority || cmp(a.id, b.id));
   return {
     rules_version: decision.rules_version,
     questions: kept.slice(0, CUTOFFS.maxQuestions),

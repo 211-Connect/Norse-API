@@ -86,7 +86,6 @@ export class V2SearchService {
       needs: callerNeeds,
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,
-      asked: dto.asked ?? [],
       clarify: dto.clarify ?? 'auto',
     };
     // Tenant top areas and hotlines: later slice.
@@ -110,7 +109,7 @@ export class V2SearchService {
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, asked, clarify, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const { needCounts, ...response } = await this.hybridSearch.searchHybrid({
       headers,
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,

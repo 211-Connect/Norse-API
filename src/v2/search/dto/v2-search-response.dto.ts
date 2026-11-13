@@ -50,18 +50,20 @@ export class V2QuestionOptionDto {
   label: string;
 
   @ApiProperty({
-    enum: ['needs', 'passed_needs', 'urgency', 'asked'],
+    enum: ['needs', 'passed_needs', 'urgency'],
+    nullable: true,
     description:
-      'The URL parameter that a pick of this option adds. One question can mix kinds.',
+      'The URL parameter that a pick of this option adds. One question can mix kinds. null (with value null): the pick writes nothing to the URL; the client dismisses the question for this visit (emergency "No, I am safe now").',
   })
-  parameter: 'needs' | 'passed_needs' | 'urgency' | 'asked';
+  parameter: 'needs' | 'passed_needs' | 'urgency' | null;
 
   @ApiProperty({
+    nullable: true,
     example: 'N-HOU-02',
     description:
-      'The value added to that parameter, for example N-HOU-02, U-0 or emergency (`asked=emergency`).',
+      'The value added to that parameter, for example N-HOU-02 or U-0; null when parameter is null.',
   })
-  value: string;
+  value: string | null;
 
   @ApiProperty({
     type: Number,
@@ -98,7 +100,7 @@ export class V2QuestionDto {
   @ApiProperty({
     type: [V2QuestionOptionDto],
     description:
-      'Emergency question: "Yes" adds `urgency=U-0`, "No, I am safe now" adds `asked=emergency`; empty for a caller `urgency=U-0`.',
+      'Emergency question: "Yes" adds `urgency=U-0`; "No, I am safe now" has parameter and value null (writes nothing); empty for a caller `urgency=U-0`.',
   })
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;

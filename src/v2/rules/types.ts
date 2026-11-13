@@ -6,7 +6,6 @@ export interface RulesRequest {
   needs: string[]; // confirmed, URL order
   passed_needs: string[];
   urgency?: UrgencyCode; // from the URL
-  asked?: string[]; // `asked=`: question ids answered without a value (EMERGENCY_SAFE_MARK)
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
@@ -65,14 +64,14 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs'
-  | 'emergency_safe';
+  | 'unsure_needs';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
-export type OptionParameter = 'needs' | 'passed_needs' | 'urgency' | 'asked';
+export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
   label: string;
-  parameter: OptionParameter;
-  value: string;
+  /** null with value null: the option writes nothing to the URL (emergency "safe"; the client dismisses the question for this visit). */
+  parameter: OptionParameter | null;
+  value: string | null;
   /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
   results_count?: number | null;
 }

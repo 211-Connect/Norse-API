@@ -10,7 +10,7 @@ describe('emergency question', () => {
   const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
   const emergencyOf = (d: ReturnType<typeof decide>) =>
     d.candidates.find((q) => q.id === 'emergency');
-  it('popup: first, Yes = U-0 and safe = asked mark, carries hotlines (Lucas 2026-11-13)', () => {
+  it('popup: first, Yes = U-0 and safe writes nothing, carries hotlines (Lucas 2026-11-13)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
@@ -18,7 +18,7 @@ describe('emergency question', () => {
     // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
       { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-0' },
-      { label: 'No, I am safe now', parameter: 'asked', value: 'emergency' },
+      { label: 'No, I am safe now', parameter: null, value: null },
     ]);
     expect(q.stem).toBe('Are you in danger right now?');
     expect(q.hotlines).toEqual([
@@ -31,7 +31,7 @@ describe('emergency question', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');
     const q = emergencyOf(d);
-    expect(q.options.map((o) => o.value)).toEqual(['U-0', 'emergency']);
+    expect(q.options.map((o) => o.value)).toEqual(['U-0', null]);
     expect(q.hotlines).toHaveLength(2);
   });
   it('soft band uses the same danger labels and stem as the popup (question 24, B2)', () => {
@@ -66,51 +66,20 @@ describe('emergency question', () => {
       expect(withU0.map((q) => q.id)).toEqual(['emergency']);
     }
   });
-  describe('answer "safe" (asked=emergency; draft mark, Lucas 2026-11-13)', () => {
-    it.each([
-      ['popup', popup],
-      ['soft', soft],
-    ])('%s band: no emergency question, no urgency set', (_b, e) => {
-      const d = decide(req({ asked: ['emergency'] }), sig({}, { emergency: e }));
-      expect(ids(d)).not.toContain('emergency');
-      expect(d.urgency.state).not.toBe('use');
-      expect(d.urgency.source).not.toBe('caller');
+  it('beside the emergency question: needs questions yes, urgency question no (today\'s rule)', () => {
+    // Reported to Lucas, not changed: the time questions need !hasEmergency,
+    // so after a "No" tap the page has the needs questions, never an urgency one.
+    const d = decide(req(), {
+      needs: { status: 'ok', scores: {} },
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: popup,
     });
-    it('the urgency question comes next and ranks first', () => {
-      const d = decide(
-        req({ asked: ['emergency'] }),
-        sig({ 'N-HOU': 0.5, 'N-FOD': 0.4 }, { emergency: popup }),
-      );
-      const q = d.candidates.find((c) => c.reason === 'emergency_safe');
-      expect(q.type).toBe('confirm_urgency');
-      expect(q.importance).toBe('high');
-      expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-2', 'U-3']);
-      const c = finalize(d, {
-        counts: { total: 10, by_code: null },
-        strong_text_match: false,
-      });
-      expect(c.questions[0].reason).toBe('emergency_safe');
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
     });
-    it('no urgency question when the urgency is known', () => {
-      const d = decide(
-        req({ asked: ['emergency'], urgency: 'U-2' }),
-        sig({}, { emergency: popup }),
-      );
-      expect(d.candidates.some((q) => q.type === 'confirm_urgency')).toBe(false);
-    });
-    it('a caller U-0 still wins: hotlines, no options', () => {
-      const d = decide(
-        req({ asked: ['emergency'], urgency: 'U-0' }),
-        sig({}, { emergency: popup }),
-      );
-      expect(d.candidates[0].id).toBe('emergency');
-      expect(d.candidates[0].options).toEqual([]);
-    });
-    it('without the mark the question returns', () => {
-      expect(ids(decide(req(), sig({}, { emergency: popup })))).toContain(
-        'emergency',
-      );
-    });
+    expect(c.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
+    expect(d.urgency.state).toBe('ask');
   });
   it('"Yes" then: the next call with urgency=U-0 ends the flow (hotlines, no options, Decision 50)', () => {
     const first = decide(req(), sig({}, { emergency: popup }));
@@ -127,7 +96,7 @@ describe('emergency question', () => {
     for (const q of d.candidates) {
       expect(q).not.toHaveProperty('parameter');
       for (const o of q.options) {
-        expect(['needs', 'passed_needs', 'urgency', 'asked']).toContain(
+        expect(['needs', 'passed_needs', 'urgency', null]).toContain(
           o.parameter,
         );
       }

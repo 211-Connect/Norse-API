@@ -44,15 +44,3 @@ export const LABELS = {
   },
 };
 
-/**
- * The URL mark for "the emergency question was answered safe" (Lucas
- * 2026-11-13: "safe" sets no urgency). The server keeps no memory, so the next
- * call carries `asked=emergency`. NOT confirmed by Lucas: to swap the mark,
- * change only this object and `ASKED_QUESTION_IDS`.
- */
-export const EMERGENCY_SAFE_MARK = {
-  parameter: 'asked',
-  value: 'emergency',
-} as const;
-/** Question ids that `asked=` accepts; any other id is a 400. */
-export const ASKED_QUESTION_IDS: readonly string[] = [EMERGENCY_SAFE_MARK.value];

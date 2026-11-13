@@ -197,7 +197,7 @@ describe('V2SearchService', () => {
     expect(arg.query.query_type).toBe('hybrid');
     expect(arg.query.page).toBe(2);
     expect(arg.query.limit).toBe(50);
-    for (const key of ['needs', 'passed_needs', 'urgency', 'asked', 'clarify']) {
+    for (const key of ['needs', 'passed_needs', 'urgency', 'clarify']) {
       expect(arg.query).not.toHaveProperty(key);
     }
   });
@@ -452,8 +452,8 @@ describe('V2SearchService', () => {
         },
         {
           label: 'No, I am safe now',
-          parameter: 'asked',
-          value: 'emergency',
+          parameter: null,
+          value: null,
           results_count: null,
         },
       ]);
@@ -510,20 +510,6 @@ describe('V2SearchService', () => {
         'emergency',
       ]);
     });
-    it('asked=emergency (safe) -> no emergency question, results kept, urgency question first', async () => {
-      const { service } = build({
-        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
-      });
-      const res = await service.search({
-        headers,
-        query: dto({ query: 'x', asked: ['emergency'] }),
-      });
-      expect(emergencyQ(res)).toBeUndefined();
-      expect(res.clarification.questions[0].type).toBe('confirm_urgency');
-      expect(res.intent.urgency.source).not.toBe('caller');
-      expect(res.search).toBeDefined();
-    });
-
     it('urgency=U-0 (the "Yes" answer) -> hotlines, no options, results kept', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
