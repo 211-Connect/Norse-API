@@ -7,7 +7,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 - `GET /v2/search` (the `/v2/` path selects API version 2, no header needed) and `GET /search` with `x-api-version: 2` both reach `V2SearchController`. `GET /search` without the header stays v1, unchanged.
 - `POST /v2/search` and `POST /search` with `x-api-version: 2` take the v1 POST body (`geometry`) and the same `Content-Type: application/json` check; the body goes to hybrid search unchanged.
 - `V2_SEARCH_ENABLED` must be exactly `true`. Anything else answers `404` before validation (`V2SearchEnabledGuard`).
-- `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 300. The value is a start value; Lucas decides 150 or 300 ms after a measurement on dev (ADR 0039 open question 8).
+- `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 1000 (Lucas 2026-11-13: ml-broker is slow; was 300).
 
 ## Pipeline (`V2SearchService.search`)
 

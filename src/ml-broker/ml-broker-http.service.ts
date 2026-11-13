@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { MlBrokerError } from './ml-broker.errors';
 
-const DEFAULT_TIMEOUT_MS = 300;
+// Lucas 2026-11-13: "at least 300 ms, or even longer, ml broker is slow".
+const DEFAULT_TIMEOUT_MS = 1000;
 const SEARCH_CLASSIFICATION = 'search-classification';
 const URGENCY_LEVELS: readonly string[] = ['U-1', 'U-2', 'U-3', 'U-4'];
 
