@@ -1,6 +1,6 @@
-import { LABELS } from './config';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
+/** Internal code: "need not yet known". Never an option, never accepted in `needs` (ISS-2499). */
 export const NX = 'N-X';
 
 export const TIER1_CODES: readonly string[] = SUNE_TIER1.map((e) => e.code);
@@ -20,8 +20,7 @@ export const tier1Of = (code: string): string | null =>
   isTier1(code) ? code : (PARENT.get(code) ?? null);
 export const childrenOf = (tier1: string): string[] =>
   TIER2_CODES.filter((c) => PARENT.get(c) === tier1);
-export const displayOf = (code: string): string =>
-  code === NX ? LABELS.nx : (DISPLAY.get(code) ?? code);
+export const displayOf = (code: string): string => DISPLAY.get(code) ?? code;
 /** A question's need options, without N-X. */
 export const needOptions = <T extends { value: string }>(
   options: readonly T[],

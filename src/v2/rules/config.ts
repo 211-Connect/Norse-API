@@ -37,5 +37,4 @@ export const LABELS = {
     'U-3': 'Not urgent',
     'U-4': "I'm planning ahead",
   } as Record<string, string>,
-  nx: 'A specific place or organization',
 };

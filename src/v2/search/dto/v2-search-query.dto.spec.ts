@@ -49,8 +49,21 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ passed_needs: ['N-NOPE'] }).props).toContain('passed_needs');
   });
 
-  it('accepts N-X, as the rules engine accepts it in needs', () => {
-    expect(parse({ needs: 'N-X' }).errors).toEqual([]);
+  it('rejects N-X in needs with a message naming Tier 1 and Tier 2 (ISS-2499)', () => {
+    const r = parse({ needs: 'N-X' });
+    expect(r.props).toContain('needs');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain(
+      'Tier 1 or Tier 2',
+    );
+    expect(parse({ needs: 'N-HOU,N-X' }).props).toContain('needs');
+  });
+
+  it('still accepts N-X in passed_needs (internal state, not an option)', () => {
+    expect(parse({ passed_needs: 'N-X' }).errors).toEqual([]);
+  });
+
+  it('still accepts urgency=U-X (counts as absent in the engine)', () => {
+    expect(parse({ urgency: 'U-X' }).errors).toEqual([]);
   });
 
   it('parses comma-separated and repeated forms to the same array', () => {

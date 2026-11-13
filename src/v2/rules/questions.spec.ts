@@ -101,6 +101,29 @@ describe('time questions', () => {
     expect(q.step).toBe(5);
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-2', 'U-4', 'U-3']);
   });
+  it('caller urgency=U-X counts as absent: question still shows (ISS-2499)', () => {
+    const d = decide(req({ urgency: 'U-X' }), askU('U-1'));
+    expect(d.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'ask',
+    });
+    expect(ids(d)).toContain('urgency_today');
+  });
+  it('caller urgency=U-X counts as absent: model guess is used (ISS-2499)', () => {
+    const s = askU('U-2');
+    s.urgency.score = 0.95;
+    expect(decide(req({ urgency: 'U-X' }), s).urgency).toEqual({
+      value: 'U-2',
+      source: 'inferred',
+      state: 'use',
+    });
+  });
+  it('caller urgency=U-X does not hide the emergency question (ISS-2499)', () => {
+    const s = askU('U-1');
+    s.emergency = { status: 'ok', score: 0.9 };
+    expect(ids(decide(req({ urgency: 'U-X' }), s))).toContain('emergency');
+  });
   it('suppressed when emergency question exists', () => {
     const s = askU('U-1');
     s.emergency = { status: 'ok', score: 0.9 };
@@ -126,12 +149,12 @@ describe('start question', () => {
     );
     expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
   });
-  it('N-X option last when >= 0.07', () => {
-    const d = decide(req(), sig({ 'N-X': 0.07 }));
-    expect(opts(d, 'start').slice(-1)).toEqual(['N-X']);
-    expect(opts(decide(req(), sig({ 'N-X': 0.06 })), 'start')).not.toContain(
-      'N-X',
-    );
+  it('N-X is never an option on start, at any score (ISS-2499)', () => {
+    for (const x of [0.06, 0.07, 0.9]) {
+      expect(opts(decide(req(), sig({ 'N-X': x })), 'start')).not.toContain(
+        'N-X',
+      );
+    }
   });
   it('passed Tier 1 never offered', () => {
     const d = decide(req({ passed_needs: ['N-HOU'] }), sig());
@@ -237,10 +260,10 @@ describe('narrow', () => {
     const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
     expect(all).not.toContain('N-FOD-01');
   });
-  it('N-X option on narrow:1', () => {
+  it('N-X is never an option on narrow:1 (ISS-2499)', () => {
     expect(
-      opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1').slice(-1),
-    ).toEqual(['N-X']);
+      opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1'),
+    ).not.toContain('N-X');
   });
   describe('a Tier 2 need is already used (ISS-2697)', () => {
     const used = { 'N-HOU-01': 0.999, 'N-HOU': 0.999 };
