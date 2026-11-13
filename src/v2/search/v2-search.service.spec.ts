@@ -436,26 +436,56 @@ describe('V2SearchService', () => {
         'search',
       ]);
     });
-    it('popup band -> emergency question level red, urgency options only', async () => {
+    it('popup band -> emergency question, urgency options only', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
       });
       const res = await service.search({ headers, query: dto({ query: 'x' }) });
       const q = emergencyQ(res);
-      expect(q.level).toBe('red');
       expect(q).not.toHaveProperty('parameter');
       expect(q.options).toEqual([
-        { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-1' },
-        { label: 'No, I am safe now', parameter: 'urgency', value: 'U-3' },
+        {
+          label: 'Yes, I am in danger',
+          parameter: 'urgency',
+          value: 'U-1',
+          results_count: null,
+        },
+        {
+          label: 'No, I am safe now',
+          parameter: 'urgency',
+          value: 'U-3',
+          results_count: null,
+        },
       ]);
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
     });
-    it('soft band -> emergency question level orange', async () => {
+    it('popup and soft bands give the same emergency question; no question has level; options carry results_count null', async () => {
+      const pop = await build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      }).service.search({ headers, query: dto({ query: 'x' }) });
+      const soft = await build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
+      }).service.search({ headers, query: dto({ query: 'x' }) });
+      // Only the score-derived numbers differ; importance, reason, stem,
+      // options and hotlines match. A client cannot read the band from them
+      // as a label: uncertainty is a parabola of the score, so the ranges overlap (Lucas to decide, see PR body).
+      const strip = (q: ReturnType<typeof emergencyQ>) => {
+        const { value, priority, uncertainty, ...rest } = q;
+        return rest;
+      };
+      expect(strip(emergencyQ(pop))).toEqual(strip(emergencyQ(soft)));
+      expect(emergencyQ(pop).importance).toBe('critical');
+      expect(emergencyQ(pop).reason).toBe('emergency_band');
+      expect(emergencyQ(pop)).not.toHaveProperty('level');
+      for (const o of emergencyQ(pop).options) {
+        expect(o).toHaveProperty('results_count', null);
+      }
+    });
+    it('soft band -> emergency question, same shape as popup', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
       });
       const res = await service.search({ headers, query: dto({ query: 'x' }) });
-      expect(emergencyQ(res).level).toBe('orange');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -466,7 +496,6 @@ describe('V2SearchService', () => {
       expect(searchHybrid).toHaveBeenCalledTimes(1);
       expect(res.search.hits.total).toEqual(12);
       const q = emergencyQ(res);
-      expect(q.level).toBe('red');
       expect(q.options).toEqual([]);
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
       expect(res.clarification.questions[0].id).toBe('emergency');
@@ -557,7 +586,6 @@ describe('V2SearchService with AI classification off', () => {
       aiClassification: 'off',
     });
     expect(res.clarification.questions.map((q) => q.id)).toEqual(['emergency']);
-    expect(res.clarification.questions[0].level).toBe('red');
     expect(
       res.clarification.questions[0].hotlines.map((h) => h.number),
     ).toEqual(['988', '911']);

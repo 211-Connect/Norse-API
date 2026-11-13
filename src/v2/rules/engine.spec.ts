@@ -27,7 +27,6 @@ const mk = (
     parameter === 'needs'
       ? ('find_need' as const)
       : ('confirm_urgency' as const),
-  level: 'orange' as const,
   importance: 'high' as const,
   reason: 'no_need' as const,
   step,
@@ -88,6 +87,29 @@ describe('finalize', () => {
       { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
     ]);
   });
+  it('an option the server did not count carries results_count null (Lucas 2026-11-13, question 7)', () => {
+    const d = dec([
+      mk('emergency', 0, ['U-3'], 'urgency'),
+      mk('start', 2, ['N-HOU', 'N-FOD']),
+    ]);
+    const r = finalize(d, {
+      counts: counts(10, null),
+      strong_text_match: false,
+    });
+    expect(r.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
+    for (const q of r.questions) {
+      for (const o of q.options) expect(o.results_count).toBeNull();
+    }
+  });
+  it('a counted option keeps its number; no question carries level', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
+    const [q] = finalize(d, {
+      counts: counts(10, { 'N-HOU': 4, 'N-FOD': 6 }),
+      strong_text_match: false,
+    }).questions;
+    expect(q.options.map((o) => o.results_count)).toEqual([4, 6]);
+    expect(q).not.toHaveProperty('level');
+  });
   it('recomputes uncertainty over the options left after 0-count drops', () => {
     // Housing and Food are a toss-up (uncertainty ~0.80). With Food at 0
     // results the question is Housing vs Money, which the model favours
@@ -139,15 +161,25 @@ describe('finalize', () => {
     }).questions;
     expect(q.uncertainty).toBe(0.42);
   });
-  it('by_code null (not counted) keeps every option, without counts', () => {
+  it('by_code null (not counted) keeps every option, results_count null', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const r = finalize(d, {
       counts: counts(10, null),
       strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
-      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU' },
-      { label: 'N-FOD', parameter: 'needs', value: 'N-FOD' },
+      {
+        label: 'N-HOU',
+        parameter: 'needs',
+        value: 'N-HOU',
+        results_count: null,
+      },
+      {
+        label: 'N-FOD',
+        parameter: 'needs',
+        value: 'N-FOD',
+        results_count: null,
+      },
     ]);
   });
   it('an empty counted by_code drops every need option (all 0), unlike null', () => {
@@ -492,15 +524,14 @@ describe('tenant AI classification off', () => {
     expect(d.candidates).toEqual([]);
   });
   it.each([
-    ['popup', 0.9, 'red'],
-    ['soft', 0.3, 'orange'],
+    ['popup', 0.9],
+    ['soft', 0.3],
   ])(
     'off: the %s emergency question and hotlines still appear',
-    (band, score, level) => {
+    (band, score) => {
       const d = decide(req(), withAskUrgency(score), off);
       expect(d.emergency_band).toBe(band);
       expect(d.candidates.map((q) => q.id)).toEqual(['emergency']);
-      expect(d.candidates[0].level).toBe(level);
       expect(d.candidates[0].hotlines).toHaveLength(2);
       expect(d.cacheable).toBe(false);
     },

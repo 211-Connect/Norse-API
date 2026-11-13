@@ -61,19 +61,14 @@ const hotlinesOf = (tenant: TenantContext) =>
   tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES;
 
 /**
- * Emergency question from the emergency band (ADR 0039 Decision 54): `red`
- * for the popup, `orange` for the soft card. Both bands use the same stem and
+ * Emergency question from the emergency band (ADR 0039 Decision 54). Both bands use the same stem and
  * labels. Options are urgency answers only (U-1, U-3); a person in danger taps
  * a hotline number.
  */
-const bandEmergencyQuestion = (
-  band: 'popup' | 'soft',
-  tenant: TenantContext,
-): Question =>
+const bandEmergencyQuestion = (tenant: TenantContext): Question =>
   question({
     id: 'emergency',
     type: 'emergency',
-    level: band === 'popup' ? 'red' : 'orange',
     importance: 'critical',
     reason: 'emergency_band',
     step: 0,
@@ -88,7 +83,7 @@ const bandEmergencyQuestion = (
  *
  * Built on an UNCONFIRMED reading of ADR 0039 Decision 50 (Claude's reading,
  * not yet confirmed by Lucas): the response holds the emergency question as a
- * popup (`level: red`) with the hotline numbers and no options, whatever the
+ * popup with the hotline numbers and no options, whatever the
  * band, and the results stay. Change only this function if Lucas decides
  * otherwise.
  */
@@ -96,7 +91,6 @@ export const callerU0EmergencyQuestion = (tenant: TenantContext): Question =>
   question({
     id: 'emergency',
     type: 'emergency',
-    level: 'red',
     importance: 'critical',
     reason: 'emergency_band',
     step: 0,
@@ -121,13 +115,11 @@ const urgencyFlags = {
 const question = ({
   id,
   type,
-  level,
   importance,
   ...rest
 }: Omit<Question, 'value' | 'priority' | 'uncertainty'>): Question => ({
   id,
   type,
-  level,
   importance,
   value: 0,
   priority: 0,
@@ -153,7 +145,7 @@ export function buildCandidates(
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {
-    out.push(bandEmergencyQuestion(band as 'popup' | 'soft', tenant));
+    out.push(bandEmergencyQuestion(tenant));
   }
 
   // 2. time questions
@@ -164,7 +156,6 @@ export function buildCandidates(
         question({
           id: 'urgency_today',
           type: 'confirm_urgency',
-          level: 'orange',
           importance: 'high',
           reason: 'urgency_unsure',
           step: 1,
@@ -178,7 +169,6 @@ export function buildCandidates(
         question({
           id: 'urgency_time',
           type: 'confirm_urgency',
-          level: 'low',
           importance: 'low',
           reason: 'urgency_unsure',
           step: 5,
@@ -218,7 +208,6 @@ export function buildCandidates(
       return question({
         id: `area:${t1}`,
         type: 'find_need',
-        level: 'orange',
         importance: 'high',
         reason,
         step: 3,
@@ -289,7 +278,6 @@ export function buildCandidates(
             question({
               id: 'start',
               type: 'find_need',
-              level: 'orange',
               importance: 'high',
               reason: 'no_need',
               step: 2,
@@ -323,7 +311,6 @@ export function buildCandidates(
         question({
           id,
           type: 'narrow',
-          level: 'low',
           importance,
           reason: 'unsure_needs',
           step,

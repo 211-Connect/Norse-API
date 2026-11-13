@@ -110,6 +110,7 @@ export function finalize(
   }
 
   for (const q of kept) {
+    for (const o of q.options) o.results_count ??= null;
     q.value = valueOf(
       q.uncertainty,
       effort(q),

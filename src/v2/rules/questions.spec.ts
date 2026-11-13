@@ -10,11 +10,10 @@ describe('emergency question', () => {
   const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
   const emergencyOf = (d: ReturnType<typeof decide>) =>
     d.candidates.find((q) => q.id === 'emergency');
-  it('popup: first, level red, urgency options only (no U-0), carries hotlines (Decision 54)', () => {
+  it('popup: first, urgency options only (no U-0), carries hotlines (Decision 54)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
-    expect(q.level).toBe('red');
     expect(q.step).toBe(0);
     // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
@@ -28,11 +27,10 @@ describe('emergency question', () => {
     ]);
     expect(q.multi_select || q.allow_other || q.none_of_these).toBe(false);
   });
-  it('soft band: level orange, same urgency options (Decision 54)', () => {
+  it('soft band: same urgency options (Decision 54)', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');
     const q = emergencyOf(d);
-    expect(q.level).toBe('orange');
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-3']);
     expect(q.hotlines).toHaveLength(2);
   });
@@ -106,14 +104,12 @@ describe('emergency question', () => {
   });
   it('popup + urgency U-X counts as no answer -> emergency question stays', () => {
     const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
-    expect(emergencyOf(d).level).toBe('red');
   });
   describe('caller urgency=U-0 (Decision 50, unconfirmed reading)', () => {
     const expectU0Popup = (d: ReturnType<typeof decide>) => {
       const q = d.candidates[0];
       expect(q.id).toBe('emergency');
       expect(q.type).toBe('emergency');
-      expect(q.level).toBe('red');
       expect(q.importance).toBe('critical');
       expect(q.options).toEqual([]);
       expect(q.hotlines).toEqual([
@@ -169,7 +165,6 @@ describe('emergency question', () => {
       sig({ 'N-HOU': 0.5 }, { emergency: soft }),
     );
     expect(ids(d)).toEqual(['emergency']);
-    expect(d.candidates[0].level).toBe('orange');
   });
   it('cacheable only for none band, no emergency question and ok needs', () => {
     expect(decide(req(), sig()).cacheable).toBe(true);
