@@ -293,4 +293,26 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
       expect(h.sort).toEqual([5]);
     });
   });
+
+  // ISS-2612: a v2 taxonomy page with no text. The hard scope is in the
+  // results filter and in the count filter; needs only sort; no embedding.
+  it('browse with taxonomy and needs: scope filters results and counts, needs only sort', async () => {
+    const embed = jest.spyOn(service, 'embedQuery');
+    await run({
+      query: { ...baseQuery, query: '', taxonomy: ['BD-1800.2000'] },
+      selectedNeeds: ['N-FOD-01'],
+      countCodes: ['N-FOD-01'],
+    });
+    const scope = {
+      nested: {
+        path: 'taxonomies',
+        query: { terms: { 'taxonomies.code': ['BD-1800.2000'] } },
+      },
+    };
+    expect(embed).not.toHaveBeenCalled();
+    expect(filtersOf(mainRequest())).toContainEqual(scope);
+    expect(filtersOf(countRequest())).toContainEqual(scope);
+    expect(mainRequest().sort[0]).toEqual(buildNeedBlockSort(['N-FOD-01']));
+    expect(needsClause(mainRequest())).toBe(false);
+  });
 });

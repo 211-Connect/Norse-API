@@ -504,4 +504,52 @@ describe('V2SearchService', () => {
       ]);
     });
   });
+
+  // ISS-2612: `taxonomy` is a hard filter (ADR 0039 Decision 5). A topic or
+  // canonical page sends codes and no text: no classify call (Decision 14);
+  // needs order and boost, never filter (Decision 18).
+  describe('taxonomy (ISS-2612)', () => {
+    it('taxonomy alone: no classify, codes reach the hybrid search as the hard scope', async () => {
+      const { service, classify, searchHybrid } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800.2000', 'BD-1800.1500'] }),
+      });
+      expect(classify).not.toHaveBeenCalled();
+      const call = searchHybrid.mock.calls[0][0];
+      expect(call.query.taxonomy).toEqual(['BD-1800.2000', 'BD-1800.1500']);
+      expect(call.query.query_type).toBe('hybrid');
+      expect(call.selectedNeeds).toBeUndefined();
+      expect(res.intent.query).toBeNull();
+      expect(res.model_version).toBeNull();
+    });
+
+    it('taxonomy plus needs: no classify, the scope stays and the needs order and boost', async () => {
+      const { service, classify, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800.2000'], needs: ['N-FOD-01'] }),
+      });
+      expect(classify).not.toHaveBeenCalled();
+      const call = searchHybrid.mock.calls[0][0];
+      expect(call.query.taxonomy).toEqual(['BD-1800.2000']);
+      expect(call.query).not.toHaveProperty('needs');
+      expect(call.selectedNeeds).toEqual(['N-FOD-01']);
+      expect(call.needScores).toEqual([
+        { code: 'N-FOD-01', tier: 'tier2', score: 1 },
+      ]);
+    });
+
+    it('taxonomy with text: classify runs and the scope still holds', async () => {
+      const { service, classify, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'food pantry', taxonomy: ['BD-1800.2000'] }),
+      });
+      expect(classify).toHaveBeenCalledTimes(1);
+      expect(searchHybrid.mock.calls[0][0].query.taxonomy).toEqual([
+        'BD-1800.2000',
+      ]);
+    });
+  });
 });

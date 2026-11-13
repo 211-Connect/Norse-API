@@ -27,7 +27,11 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 - Per-code result counts: the stored need tags (dagster PR #780) are not available yet.
 - `strongTextMatch`: no retrieval signal yet.
 - Tenant context (`topAreas`, `hotlines`).
-- The `taxonomy`, `region` and `model_version` params.
+- The `region` and `model_version` params.
+
+## `taxonomy` (ISS-2612, ADR 0039 Decision 5)
+
+`taxonomy` is the v1 param, unchanged (comma list or array, de-duplicated). It reaches `searchHybrid` with the other v1 fields and becomes the hybrid hard scope: `nested` `terms` on `taxonomies.code` (a `keyword` field in `hybrid_search_resources_*`). The scope filters the results and the per-need counts. With no `query` text, classify does not run (Decision 14), no embedding runs, and `needs=` still order (blocks) and boost; they never filter (Decision 18). The match is **exact**: `BD-1800` does not match `BD-1800.2000`. v1 `query_type=taxonomy` (classic `resources_*` index, `match_phrase_prefix` on a `text` field) matches descendants and prefixes; v2 does not. `intent` does not echo `taxonomy` yet.
 - Response caching: no CDN cache decorator. The rule is the rules engine's internal `decision.cacheable` (band none and no emergency question, ADR 0039 Decision 28); no `Cache-Control` header is written from it yet (numbers open, ADR 0039 Question 11).
 
 ## Tests
