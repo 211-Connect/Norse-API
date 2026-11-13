@@ -1,0 +1,41 @@
+name: PR tests
+
+# Runs the search and v2 unit tests on every pull request.
+# These tests mock fetch and need no Elasticsearch, Redis, network or secrets.
+# Path patterns, not file lists: new tests under these folders run automatically.
+
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+
+concurrency:
+  group: pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  search-and-v2-tests:
+    name: Jest (src/search, src/v2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        # actions/checkout v5.1.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Set up Node
+        # actions/setup-node v5.0.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run search and v2 tests
+        run: npx jest --ci --testPathPatterns 'src/(search|v2)/'
