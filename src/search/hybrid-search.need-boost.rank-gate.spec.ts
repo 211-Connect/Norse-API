@@ -36,6 +36,18 @@ import { join } from 'path';
  * the boost improves; raise it only with a new measurement and a reason.
  */
 const ALLOWED_FAILS = 15;
+
+/**
+ * The fixture freezes 100 hits per search, so a hit below #100 that the
+ * boost lifts into a guard band is invisible here. Worst case for such a hit:
+ * the 100th hit's base score plus every boost at the top need weight (0.99).
+ * At gate 0.97, a 0.1, tier 1 factor 0.5, only 2 in-band cases are within
+ * reach of it (2026-11-13). More than that means the boost grew enough that
+ * 100 hits no longer cover it: re-evaluate the change, then deepen the window
+ * or re-measure before raising this.
+ */
+const TAIL_REACHABLE_LIMIT = 2;
+const MAX_NEED_WEIGHT = 0.99;
 const TOTAL_CASES_ALL_SEARCHES = 1817;
 const SEARCHES_IN_FIXTURE = 500;
 const CASES_IN_FIXTURE = 1384;
@@ -162,8 +174,14 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
       .sort((a, b) => s.scores[b] + bonus[b] - (s.scores[a] + bonus[a]));
     const pos: number[] = [];
     order.forEach((j, p) => (pos[j] = p + 1));
-    return pos;
+    const boosted = s.scores.map((score, j) => score + bonus[j]);
+    return { pos, boosted };
   };
+
+  /** Best score a hit below the frozen 100 could reach with these clauses. */
+  const tailCeiling = (s: FixtureSearch, clauses: any[]) =>
+    Math.min(...s.scores) +
+    clauses.reduce((sum, c) => sum + c.rank_feature.boost, 0) * MAX_NEED_WEIGHT;
 
   it('the fixture holds the agreed number of searches and cases', () => {
     expect(searches).toHaveLength(SEARCHES_IN_FIXTURE);
@@ -175,6 +193,7 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
 
   it(`at most ${ALLOWED_FAILS} guard cases leave their band`, async () => {
     const failed: string[] = [];
+    const tailReachable: string[] = [];
     let boostedSearches = 0;
     let weightedSearches = 0;
     const notLinear = new Set<string>();
@@ -195,12 +214,14 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
         ).some((w) => w > 0),
       );
       if (weighted) weightedSearches++;
-      const pos = rankAfter(s, clauses);
+      const { pos, boosted } = rankAfter(s, clauses);
+      const ceiling = tailCeiling(s, clauses);
       for (const [kind, idx, keepTop] of s.cases) {
+        const label = `${s.id}/${s.tenant} ${kind} base#${idx + 1}`;
         if (pos[idx] > keepTop) {
-          failed.push(
-            `${s.id}/${s.tenant} ${kind} base#${idx + 1} -> #${pos[idx]} (keep top ${keepTop})`,
-          );
+          failed.push(`${label} -> #${pos[idx]} (keep top ${keepTop})`);
+        } else if (boosted[idx] < ceiling) {
+          tailReachable.push(`${label} at #${pos[idx]} (keep top ${keepTop})`);
         }
       }
     }
@@ -213,6 +234,14 @@ describe('HybridSearchService need boost — rank gate (ISS-2745)', () => {
     if (failed.length > ALLOWED_FAILS) {
       throw new Error(
         `${failed.length} guard cases fail, ${ALLOWED_FAILS} allowed:\n${failed.join('\n')}`,
+      );
+    }
+    if (tailReachable.length > TAIL_REACHABLE_LIMIT) {
+      throw new Error(
+        `${tailReachable.length} in-band cases are within reach of a hit below ` +
+          `the frozen 100 (${TAIL_REACHABLE_LIMIT} allowed). The boost grew: ` +
+          `re-evaluate it, then deepen the fixture window or re-measure.\n` +
+          tailReachable.join('\n'),
       );
     }
   });
