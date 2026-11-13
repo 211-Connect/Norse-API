@@ -39,6 +39,8 @@ export function decide(
   );
   const countCodes = countCodesOf(candidates);
   const scores = signals.needs.scores ?? {};
+  const answered =
+    req.urgency !== undefined && req.urgency !== null && req.urgency !== 'U-X';
   return {
     rules_version: RULES_VERSION,
     option_scores: Object.fromEntries(
@@ -46,7 +48,7 @@ export function decide(
     ),
     emergency: {
       band,
-      show_hotline: band === 'popup' || req.urgency === 'U-0',
+      show_hotline: answered ? req.urgency === 'U-0' : band === 'popup',
     },
     cacheable: band === 'none' && signals.needs.status === 'ok',
     needs: states.needs,
