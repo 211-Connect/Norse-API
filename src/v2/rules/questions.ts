@@ -68,11 +68,16 @@ const hotlinesOf = (tenant: TenantContext) =>
  * labels. "Yes" sends `urgency=U-0` (the next call shows only the hotlines,
  * callerU0EmergencyQuestion); "safe" writes nothing to the URL.
  */
-const bandEmergencyQuestion = (tenant: TenantContext): Question =>
+// Lucas 2026-11-13: "bring back the popup if the model is very sure". The
+// strong band is critical (popup), the soft band high (in-page card).
+const bandEmergencyQuestion = (
+  tenant: TenantContext,
+  band: EmergencyBand,
+): Question =>
   question({
     id: 'emergency',
     type: 'emergency',
-    importance: 'critical',
+    importance: band === 'popup' ? 'critical' : 'high',
     reason: 'emergency_band',
     step: 0,
     stem: STEMS.emergency,
@@ -144,7 +149,7 @@ export function buildCandidates(
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {
-    out.push(bandEmergencyQuestion(tenant));
+    out.push(bandEmergencyQuestion(tenant, band));
   }
 
   // 2. time questions

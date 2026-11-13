@@ -27,6 +27,44 @@ describe('emergency question', () => {
     ]);
     expect(q.multi_select || q.allow_other || q.none_of_these).toBe(false);
   });
+  it('strong band importance critical (popup), soft band high (card) (Lucas 2026-11-13)', () => {
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: popup }))).importance,
+    ).toBe('critical');
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: soft }))).importance,
+    ).toBe('high');
+    // A keyword-floor hit below the strong cutoff is the soft band.
+    const floor = { status: 'ok' as const, score: 0.1, floor_hit: true };
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: floor }))).importance,
+    ).toBe('high');
+  });
+  it('caller U-0 hotline question stays critical in the soft band', () => {
+    const d = decide(req({ urgency: 'U-0' }), sig({}, { emergency: soft }));
+    expect(d.candidates[0].importance).toBe('critical');
+  });
+  it('soft band: the emergency question stays first even when a high question has a larger priority', () => {
+    // Soft score 0.5 gives uncertainty 1 -> value 1 is capped; use 0.25 so the
+    // emergency value is low and needs questions (high, value near 0.95) outrank it by number.
+    const d = decide(
+      req(),
+      sig(
+        { 'N-HOU': 0.34, 'N-FOD': 0.33, 'N-MON': 0.33 },
+        { emergency: { status: 'ok', score: 0.222, floor_hit: false } },
+      ),
+    );
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    const em = c.questions.find((q) => q.id === 'emergency');
+    expect(em.importance).toBe('high');
+    expect(
+      c.questions.some((q) => q.id !== 'emergency' && q.priority > em.priority),
+    ).toBe(true);
+    expect(c.questions[0].id).toBe('emergency');
+  });
   it('soft band: same options', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');

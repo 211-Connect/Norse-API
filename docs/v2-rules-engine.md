@@ -25,7 +25,7 @@ A cutoff or rule change bumps `RULES_VERSION`.
 ## Questions
 | Step (info) | Id | Importance | When |
 |---|---|---|---|
-| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`parameter: null`, `value: null`: writes nothing to the URL, the client dismisses the question for this visit; a later call asks again while the model still finds danger); carries the hotlines |
+| 0 | `emergency` | critical (strong band, popup) or high (soft band, in-page card) | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`parameter: null`, `value: null`: writes nothing to the URL, the client dismisses the question for this visit; a later call asks again while the model still finds danger); carries the hotlines |
 | 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, ADR 0039 Decision 50; also the next call after "Yes") |
 | 1 | `urgency_today` | high | urgency ask and the model level is U-1; never beside an emergency question |
 | 2 | `start` | high | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
@@ -54,10 +54,10 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 - Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. "None of these" does not count as an option.
 - Split: with one counted option, `1 - 2 x |count / total - 0.5|`; with two or more, the normalized entropy of the option counts (even counts give 1, one dominant option gives near 0). Between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
 - `decide` fills `uncertainty`, `value` and `priority` with split 1, and keeps each option's model score in `option_scores` (internal, not in the response). `finalize` recomputes `value` and `priority` after it drops options; when a question lost options, it first recomputes `uncertainty` over the options left, so a question cut to one option has uncertainty 0.
-- `emergency` is the only critical question, so it stays first.
+- The emergency question is always first, in both bands: `finalize` sorts it ahead of every other question before priority. Strong band: importance `critical` (the client shows a popup). Soft band: importance `high` (in-page card). A caller `urgency=U-0` hotline question stays `critical` (Lucas, 2026-11-13).
 - `step` stays in the output for information only. It no longer sorts.
 
 ## Tests
 `npx jest src/v2/rules`. `engine.spec.ts` runs the 40 real model outputs in `__fixtures__/golden-scores.json` (copied from ml-broker's golden file) 1,000 times each and checks the output never changes.
 
-The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `importance`, `reason`, stem, options and hotlines; only the score-derived `uncertainty`, `value` and `priority` differ, and those are not a band label.
+The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `reason`, stem, options and hotlines; `importance` tells them apart (`critical` = strong band, `high` = soft band).

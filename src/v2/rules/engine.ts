@@ -118,7 +118,15 @@ export function finalize(
     );
     q.priority = priorityOf(q.importance, q.value);
   }
-  kept.sort((a, b) => b.priority - a.priority || cmp(a.id, b.id));
+  // The emergency question is always first, in both bands (a soft-band one is
+  // only `high`, so priority alone could rank another question above it).
+  const emergencyFirst = (q: Question) => (q.type === 'emergency' ? 0 : 1);
+  kept.sort(
+    (a, b) =>
+      emergencyFirst(a) - emergencyFirst(b) ||
+      b.priority - a.priority ||
+      cmp(a.id, b.id),
+  );
   return {
     rules_version: decision.rules_version,
     questions: kept.slice(0, CUTOFFS.maxQuestions),
