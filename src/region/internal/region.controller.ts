@@ -20,6 +20,12 @@ import {
 import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
 import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 import { RegionService } from './region.service';
+import {
+  PlaceDetailDto,
+  PlaceListDto,
+  PlaceListQueryDto,
+  PlaceSlugParamDto,
+} from './dto/place.dto';
 
 /**
  * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024).
@@ -48,6 +54,23 @@ export class RegionController {
     @Query() query: RegionSearchQueryDto,
   ): Promise<RegionSearchResponseDto> {
     return this.regionService.search(query);
+  }
+
+  @Get('places')
+  @Version('1')
+  @ApiOperation({ summary: 'List published Place Regions.' })
+  @ApiResponse({ status: 200, type: PlaceListDto })
+  listPlaces(@Query() query: PlaceListQueryDto): Promise<PlaceListDto> {
+    return this.regionService.listPlaces(query);
+  }
+
+  @Get('places/:slug')
+  @Version('1')
+  @ApiOperation({ summary: 'Resolve a published Place by its canonical slug.' })
+  @ApiResponse({ status: 200, type: PlaceDetailDto })
+  @ApiResponse({ status: 404, description: 'No such published Place' })
+  getPlace(@Param() params: PlaceSlugParamDto): Promise<PlaceDetailDto> {
+    return this.regionService.getPlace(params.slug);
   }
 
   @Get(':id')

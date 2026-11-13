@@ -220,7 +220,9 @@ export function buildRegionSearch(
     query: {
       bool: {
         must: [must],
-        filter: input.types ? [{ terms: { type: input.types } }] : [],
+        filter: [
+          { terms: { type: input.types ?? ['state', 'county', 'zip'] } },
+        ],
         should: [
           ...typeBoosts,
           ...(input.states?.length

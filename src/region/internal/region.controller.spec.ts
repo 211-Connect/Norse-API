@@ -137,6 +137,61 @@ describe('RegionController (internal/regions)', () => {
     });
   });
 
+  describe('Place Regions', () => {
+    const place = {
+      id: 'place:5367000', name: 'Spokane', state: 'WA',
+      slug: 'spokane-wa', place_type: 'city', fips: '5367000', lsad: '25',
+      centroid: [-117.4, 47.6],
+      geometry: { type: 'MultiPolygon', coordinates: [
+        [[[-117.6, 47.5], [-117.3, 47.5], [-117.3, 47.7], [-117.6, 47.5]]],
+        [[[-117.2, 47.8], [-117.1, 47.8], [-117.1, 47.9], [-117.2, 47.8]]],
+      ] },
+    };
+
+    it('lists summaries, filters by state and pages after the last returned Place', async () => {
+      search.mockResolvedValueOnce({ hits: { hits: [
+        { _source: place },
+        { _source: { ...place, id: 'place:5367001', slug: 'spokane-wa-5367001' } },
+      ] } });
+      const first = await get('/internal/regions/places?state=WA&limit=1').expect(200);
+      expect(first.body.items).toEqual([{
+        id: place.id, name: place.name, state: 'WA', slug: place.slug, place_type: 'city',
+      }]);
+      expect(first.body.next_cursor).toEqual(expect.any(String));
+      expect(lastRequest().query.bool.filter).toEqual([
+        { term: { type: 'place' } }, { term: { state: 'WA' } },
+      ]);
+      const next = await get(`/internal/regions/places?state=WA&limit=1&cursor=${first.body.next_cursor}`).expect(200);
+      expect(next.body).toEqual({ items: [], next_cursor: null });
+      expect(lastRequest().search_after).toEqual(['spokane-wa', 'place:5367000']);
+      await get(`/internal/regions/places?state=OR&cursor=${first.body.next_cursor}`).expect(400);
+    });
+
+    it('resolves a slug exactly and derives a bbox from all geometry parts', async () => {
+      search.mockResolvedValueOnce({ hits: { hits: [{ _source: place }] } });
+      const response = await get('/internal/regions/places/spokane-wa').expect(200);
+      expect(response.body).toEqual({
+        id: place.id, type: 'place', name: 'Spokane', state: 'WA',
+        slug: 'spokane-wa', place_type: 'city', fips: '5367000', lsad: '25',
+        centroid: { lng: -117.4, lat: 47.6 },
+        bbox: [-117.6, 47.5, -117.1, 47.9], geometry: place.geometry,
+      });
+      expect(lastRequest().query.bool.filter).toEqual([
+        { term: { type: 'place' } }, { term: { slug: 'spokane-wa' } },
+      ]);
+      await get('/internal/regions/places/missing-wa').expect(404);
+      await get('/internal/regions/places/Bad_slug').expect(400);
+    });
+
+    it('requires the internal key and excludes Places from existing typeahead', async () => {
+      await request(app.getHttpServer()).get('/internal/regions/places').set('x-api-version', '1').expect(401);
+      await get('/internal/regions?q=spokane').expect(200);
+      expect(lastRequest().query.bool.filter).toEqual([
+        { terms: { type: ['state', 'county', 'zip'] } },
+      ]);
+    });
+  });
+
   describe('GET /internal/regions/:id', () => {
     it.each(['state:MO', 'county:29095', 'zip:64130', 'county%3A29095'])(
       'accepts well-formed id %s and 404s when ES has no such Region',
