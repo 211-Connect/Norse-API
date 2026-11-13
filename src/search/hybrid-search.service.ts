@@ -511,23 +511,30 @@ export class HybridSearchService {
         rankingVersion: v2 ? 'v2' : 'v1',
       });
 
+      const runProbe = () =>
+        this.probeRelevanceCutoff({
+          index,
+          preference,
+          queryStr,
+          queryVector,
+          predicted: predictedTaxonomies,
+          filters: baseFilters,
+          pinnedMode,
+          wordRarity,
+        });
+
       // Cached so pages 2..n of one search reuse a single probe rather than
-      // re-running it — and so the kept set cannot drift between pages.
-      const probed = await this.requestCacheService.getOrSet(
-        cacheKey,
-        () =>
-          this.probeRelevanceCutoff({
-            index,
-            preference,
-            queryStr,
-            queryVector,
-            predicted: predictedTaxonomies,
-            filters: baseFilters,
-            pinnedMode,
-            wordRarity,
-          }),
-        CUTOFF_PROBE_TTL_MS,
-      );
+      // re-running it — and so the kept set cannot drift between pages. A v2
+      // probe scored after a failed rarity lookup (null) is flat; caching it
+      // would cut later pages, whose lookup succeeds, with that flat probe.
+      const rarityFailed = v2 && wantsVector && wordRarity === null;
+      const probed = rarityFailed
+        ? await runProbe()
+        : await this.requestCacheService.getOrSet(
+            cacheKey,
+            runProbe,
+            CUTOFF_PROBE_TTL_MS,
+          );
 
       cutoff = probed.cutoff;
 

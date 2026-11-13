@@ -53,6 +53,8 @@ type Plan = {
   headHits?: number;
   keptServices?: string[];
   widenedServices?: string[];
+  /** ISS-2739 word-rarity lookup answers instead of failing. */
+  rarityOk?: boolean;
 };
 
 describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
@@ -68,7 +70,19 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       }
       // ISS-2739 word-rarity lookup: not part of the cutoff request sequence.
       if (req.size === 0 && req.aggs?.df) {
-        return Promise.reject(new Error('rarity not under test'));
+        if (!plan.rarityOk) {
+          return Promise.reject(new Error('rarity not under test'));
+        }
+        const buckets = Object.fromEntries(
+          Object.keys(req.aggs.df.filters.filters).map((k) => [
+            k,
+            { doc_count: 5 },
+          ]),
+        );
+        return Promise.resolve({
+          hits: { total: { value: 1000, relation: 'eq' }, hits: [] },
+          aggregations: { df: { buckets } },
+        });
       }
       requests.push(req);
 
@@ -561,6 +575,47 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         reason: 'cut_too_large',
         candidates_examined: 1500,
       });
+    });
+  });
+
+  // v2 scores names by word rarity. A failed rarity lookup scores flat, so a
+  // probe cached from it would cut later pages (whose lookup succeeds) with a
+  // flat probe: the kept set would drift between pages.
+  describe('v2 probe caching follows the word-rarity lookup', () => {
+    let getOrSet: jest.Mock;
+    const cachedKeys = () =>
+      (getOrSet.mock.calls as [string][])
+        .map(([k]) => k)
+        .filter((k) => k.startsWith('search:cutoff:'));
+
+    const runWith = async (overrides: Record<string, unknown>) => {
+      await build();
+      getOrSet = (service as any).requestCacheService.getOrSet;
+      return service.searchHybrid({
+        headers,
+        query: { ...baseQuery, relevance_cutoff: 'on' },
+        ...overrides,
+      } as any);
+    };
+
+    it('does not cache the v2 probe when the rarity lookup fails', async () => {
+      const res: any = await runWith({ rankingVersion: 'v2' });
+      expect(cachedKeys()).toEqual([]);
+      // the probe still runs, uncached
+      expect(res.relevance_cutoff).toMatchObject({ applied: true });
+    });
+
+    it('caches the v2 probe when the rarity lookup succeeds', async () => {
+      plan.rarityOk = true;
+      await runWith({ rankingVersion: 'v2' });
+      expect(cachedKeys()).toHaveLength(1);
+      expect(cachedKeys()[0]).toMatch(/:v2$/);
+    });
+
+    it('still caches the v1 probe, which never looks up rarity', async () => {
+      await runWith({});
+      expect(cachedKeys()).toHaveLength(1);
+      expect(cachedKeys()[0]).not.toMatch(/:v2$/);
     });
   });
 });
