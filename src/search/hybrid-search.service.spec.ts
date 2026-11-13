@@ -682,6 +682,56 @@ describe('HybridSearchService', () => {
     ]);
   });
 
+  it('excludes SUNE enrichment fields from _source in the request (ISS-2754)', async () => {
+    await service.searchHybrid({ headers, query: baseQuery });
+
+    const excludes = capturedMainRequest._source.excludes;
+    expect(excludes).toEqual(
+      expect.arrayContaining([
+        'sune_needs',
+        'sune_need_weights',
+        'sune_scorecard_version',
+      ]),
+    );
+  });
+
+  it('never returns SUNE enrichment fields even if ES sends them (ISS-2754)', async () => {
+    esSearch.mockImplementation((req: any) => {
+      if (req.index === 'hybrid_taxonomies') {
+        return Promise.resolve(taxonomyResponse);
+      }
+      return Promise.resolve({
+        ...mainResponse,
+        hits: {
+          ...mainResponse.hits,
+          hits: [
+            {
+              _index: 'hybrid_search_resources_en',
+              _id: 'doc-1',
+              _score: 42,
+              _source: {
+                name: 'Shelter',
+                facets: {},
+                facets_en: {},
+                sune_needs: ['N-HOU'],
+                sune_need_weights: { 'N-HOU': 0.8 },
+                sune_scorecard_version: 'v1',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    const result = await service.searchHybrid({ headers, query: baseQuery });
+    const source = result.search.hits.hits[0]._source as any;
+
+    expect(source.name).toBe('Shelter');
+    expect(source).not.toHaveProperty('sune_needs');
+    expect(source).not.toHaveProperty('sune_need_weights');
+    expect(source).not.toHaveProperty('sune_scorecard_version');
+  });
+
   describe('getDocumentsCount', () => {
     it('counts by tenant + taxonomy scope only (no query text, no geo)', async () => {
       const count = await service.getDocumentsCount(headers, 'ignored query', [
