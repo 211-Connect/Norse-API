@@ -235,8 +235,15 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
       // one rule, one place: both scripts start with the same match fragment
       const matchPart = NEED_BLOCK_SCRIPT.split(' return ')[0];
       expect(MATCHED_NEEDS_SCRIPT.startsWith(matchPart)).toBe(true);
+      // PR #285 (ISS-2754): SUNE fields stay out of _source; the script reads doc values.
       expect(mainRequest()._source).toEqual({
-        excludes: ['embedding', 'service_area'],
+        excludes: [
+          'embedding',
+          'service_area',
+          'sune_needs',
+          'sune_need_weights',
+          'sune_scorecard_version',
+        ],
       });
     });
 
@@ -271,6 +278,11 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
       expect(h.sort).toEqual([5]);
       expect(h.fields).toBeUndefined();
       expect('needs_block' in h).toBe(false);
+      // PR #285 strip and matched_needs on the same hit (ISS-2754)
+      expect(h.matched_needs).toEqual(['A']);
+      expect(Object.keys(h._source).some((k) => k.startsWith('sune_'))).toBe(
+        false,
+      );
     });
 
     it('matched_needs is absent when no needs were sent (v1 shape)', async () => {
