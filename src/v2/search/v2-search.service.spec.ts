@@ -92,6 +92,29 @@ describe('V2SearchService', () => {
     expect(res.intent.query).toBeNull();
   });
 
+  it('sends exactly 512 characters to classify for a 600-character query and searches with the full query', async () => {
+    const { service, classify, searchHybrid } = build({});
+    const long = 'a'.repeat(600);
+    await service.search({ headers, query: dto({ query: long }) });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(classify.mock.calls[0][0]).toHaveLength(512);
+    expect(classify.mock.calls[0][0]).toBe(long.slice(0, 512));
+    expect(searchHybrid.mock.calls[0][0].query.query).toBe(long);
+  });
+
+  it('leaves a 512-character query unchanged', async () => {
+    const { service, classify } = build({});
+    const text = 'b'.repeat(512);
+    await service.search({ headers, query: dto({ query: text }) });
+    expect(classify.mock.calls[0][0]).toBe(text);
+  });
+
+  it('does not classify a whitespace-only query', async () => {
+    const { service, classify } = build({});
+    await service.search({ headers, query: dto({ query: '   \n\t ' }) });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
   it('classifies a string query with the tenant id and reports the model version', async () => {
     const { service, classify } = build({
       classify: jest.fn().mockResolvedValue(okResult({ 'N-HOU-02': 0.99 })),
@@ -101,7 +124,7 @@ describe('V2SearchService', () => {
       query: dto({ query: ' rent help ' }),
     });
     expect(classify).toHaveBeenCalledWith(
-      ' rent help ',
+      'rent help',
       headers['x-tenant-id'],
     );
     expect(res.model_version).toBe('mv-1');

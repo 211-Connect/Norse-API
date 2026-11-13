@@ -27,6 +27,12 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
   return typeof value === 'number' ? value : 0;
 };
 
+// ml-broker rejects classify text longer than 512 characters after stripping
+// (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer
+// text would turn into error signals and hide the emergency band, so the text
+// sent to classify is cut to this length. The search itself uses the full query.
+export const CLASSIFY_MAX_TEXT_LENGTH = 512;
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -50,7 +56,10 @@ export class V2SearchService {
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
-      ? await this.classifier.classify(text, headers['x-tenant-id'])
+      ? await this.classifier.classify(
+          text.trim().slice(0, CLASSIFY_MAX_TEXT_LENGTH),
+          headers['x-tenant-id'],
+        )
       : null;
     const signals = classified?.signals ?? NO_TEXT_SIGNALS;
     const scores = classified?.scores ?? {};
