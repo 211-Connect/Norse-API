@@ -28,9 +28,17 @@ export interface Hotline {
   label: string;
   number: string;
 }
+/**
+ * A tenant's "AI classification" setting (ADR 0039 Decision 52; Lucas
+ * 2026-11-13, question 14). `off`: no need guess, no model urgency and no
+ * optional question; the emergency check always runs. Absent means `on`.
+ */
+export type AiClassificationSetting = 'on' | 'off';
+
 export interface TenantContext {
   top_areas?: string[]; // Tier 1 codes by service count, desc
   hotlines?: Hotline[];
+  ai_classification?: AiClassificationSetting;
 }
 
 export type EmergencyBand = 'popup' | 'soft' | 'none' | 'unknown';

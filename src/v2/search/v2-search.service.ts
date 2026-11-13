@@ -7,7 +7,11 @@ import {
 } from 'src/search/hybrid-search.service';
 import { decide, finalize } from '../rules';
 import { isTier1, isTier2 } from '../rules/sune';
-import { RulesRequest, RulesSignals } from '../rules/types';
+import {
+  AiClassificationSetting,
+  RulesRequest,
+  RulesSignals,
+} from '../rules/types';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
@@ -33,6 +37,14 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 // sent to classify is cut to this length. The search itself uses the full query.
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
 
+/**
+ * The tenant "AI classification" setting the route uses until Norse-API can
+ * read a real per-tenant value (ADR 0039 Decision 52). No server-readable
+ * source exists today: Payload keeps `searchEngine` on the resource directory
+ * but does not push it to the Redis `search_config:<tenant>` key.
+ */
+export const DEFAULT_AI_CLASSIFICATION: AiClassificationSetting = 'on';
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -44,10 +56,14 @@ export class V2SearchService {
     headers,
     query: dto,
     body,
+    aiClassification = DEFAULT_AI_CLASSIFICATION,
   }: {
     headers: HeadersDto;
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
+    // `off`: one classify call still runs for the emergency check; the rules
+    // engine drops its need and urgency guesses (question 14).
+    aiClassification?: AiClassificationSetting;
   }): Promise<V2SearchResponseDto> {
     // Only a string with text classifies. A string array or an AND/OR object
     // is a v1 query shape and has no text for the model.
@@ -72,7 +88,10 @@ export class V2SearchService {
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
-    const decision = decide(rulesRequest, signals, {}); // tenant context: later slice
+    // Tenant top areas and hotlines: later slice.
+    const decision = decide(rulesRequest, signals, {
+      ai_classification: aiClassification,
+    });
 
     const needScores: NeedScore[] = [];
     for (const code of decision.boost_needs) {

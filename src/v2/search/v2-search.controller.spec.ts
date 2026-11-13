@@ -33,7 +33,12 @@ describe('V2SearchController', () => {
     await expect(controller.getResources(headers, query, req)).resolves.toBe(
       response,
     );
-    expect(search).toHaveBeenCalledWith({ headers, query });
+    // No server-readable tenant setting yet: the route sends the default "on".
+    expect(search).toHaveBeenCalledWith({
+      headers,
+      query,
+      aiClassification: 'on',
+    });
     expect(recordSearchRequest).toHaveBeenCalledTimes(1);
     expect(recordSearchRequest).toHaveBeenCalledWith(
       { tenantId: 't', acceptLanguage: 'en' },
@@ -78,7 +83,12 @@ describe('V2SearchController', () => {
       await expect(
         controller.getResourcesPost(headers, query, body as never, postReq),
       ).resolves.toBe(response);
-      expect(search).toHaveBeenCalledWith({ headers, query, body });
+      expect(search).toHaveBeenCalledWith({
+        headers,
+        query,
+        body,
+        aiClassification: 'on',
+      });
       expect(recordSearchRequest).toHaveBeenCalledTimes(1);
       expect(recordSearchRequest).toHaveBeenCalledWith(
         { tenantId: 't', acceptLanguage: 'en' },

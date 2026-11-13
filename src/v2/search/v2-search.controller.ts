@@ -35,7 +35,10 @@ import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
-import { V2SearchService } from './v2-search.service';
+import {
+  DEFAULT_AI_CLASSIFICATION,
+  V2SearchService,
+} from './v2-search.service';
 
 /**
  * Reached by `GET /v2/search` (the `/v2/` path selects version 2) and by
@@ -84,7 +87,11 @@ export class V2SearchController {
     @Req() req: Request,
   ): Promise<V2SearchResponseDto> {
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query }),
+      this.v2SearchService.search({
+        headers,
+        query,
+        aiClassification: DEFAULT_AI_CLASSIFICATION,
+      }),
     );
   }
 
@@ -127,7 +134,12 @@ export class V2SearchController {
       throw new BadRequestException('Content-Type must be application/json');
     }
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query, body }),
+      this.v2SearchService.search({
+        headers,
+        query,
+        body,
+        aiClassification: DEFAULT_AI_CLASSIFICATION,
+      }),
     );
   }
 
