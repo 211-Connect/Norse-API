@@ -5,7 +5,7 @@ export const RULES_VERSION = 'rules-2026-11-12.1';
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },
   urgency: { drop: 0.8, use: 0.93 }, // score < drop -> drop; drop <= s < use -> ask; s >= use -> use
-  needs: { use: 0.97, ask: 0.12 }, // s >= use -> use; ask <= s < use -> ask; else drop
+  needs: { use: 0.97, ask: 0.12 }, // `use` is also the v1 hybrid need boost gate; s >= use -> use; ask <= s < use -> ask; else drop
   area: { tier1Min: 0.9, tier2Max: 0.5 },
   nx: { label: 0.07 },
   start: { modelAreasMin: 0.3 },
