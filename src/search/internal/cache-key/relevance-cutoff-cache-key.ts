@@ -1,5 +1,6 @@
 import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
+import type { RankingVersion } from '../../hybrid-search.service';
 
 /**
  * Keyed on the search's identity, so pages 2..n of the same search reuse one
@@ -20,12 +21,19 @@ import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
  * why `CUTOFF_PROBE_TTL_MS` is minutes rather than the cache default's hour.
  */
 export const relevanceCutoffCacheKey = (
-  args: SearchIdentity & { pinnedMode: string },
+  args: SearchIdentity & {
+    pinnedMode: string;
+    rankingVersion?: RankingVersion;
+  },
 ): string => {
   const fingerprint = hashCacheKey({
     search: searchFingerprint(args),
     pinnedMode: args.pinnedMode,
   });
 
-  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}`;
+  // v1 keeps the key string it always had; v2 scores differently, so it must
+  // never be served a v1 probe.
+  const version = args.rankingVersion === 'v2' ? ':v2' : '';
+
+  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}${version}`;
 };
