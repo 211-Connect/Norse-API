@@ -47,6 +47,26 @@ function isIndexNotFound(error: unknown): boolean {
 }
 
 /**
+ * Elasticsearch refused to build the query because the text is too large: a
+ * prefix longer than index.max_regex_length (1000), or a prefix automaton with
+ * more than 1000 states (non-ASCII text reaches it under 1000 characters).
+ */
+function isQueryTooLarge(error: unknown): boolean {
+  const causes = (
+    error as {
+      meta?: { body?: { error?: { root_cause?: { reason?: unknown }[] } } };
+    }
+  )?.meta?.body?.error?.root_cause;
+  if (!Array.isArray(causes)) return false;
+  return causes.some(
+    (c) =>
+      typeof c?.reason === 'string' &&
+      (c.reason.includes('automaton is too large') ||
+        c.reason.includes('has exceeded the allowed maximum')),
+  );
+}
+
+/**
  * Tenant setting "AI classification off" (ADR 0039 Decisions 52, 60), read from
  * the `search_config:<tenant>` Redis value that Payload writes. Off when the
  * tenant's `search_engine` is a known value other than `ai_classification`.
@@ -162,6 +182,9 @@ export class V2SearchService {
           throw new BadRequestException(
             `no search index for accept-language ${headers['accept-language']}`,
           );
+        }
+        if (isQueryTooLarge(error)) {
+          throw new BadRequestException('query is too long for search');
         }
         throw error;
       });

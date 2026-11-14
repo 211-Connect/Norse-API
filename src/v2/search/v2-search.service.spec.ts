@@ -102,6 +102,38 @@ describe('V2SearchService', () => {
     );
   });
 
+  // Break run 2026-11-14: 500 emoji (1000 UTF-16 units, under the cap) made
+  // Elasticsearch fail with "input automaton is too large", a 500.
+  it.each([
+    'failed to create query: input automaton is too large: 1001',
+    'failed to create query: The length of prefix [1200] used in the Prefix Query request has exceeded the allowed maximum of [1000].',
+  ])('turns a query-too-large search error into a 400 (%s)', async (reason) => {
+    const tooLarge = Object.assign(
+      new Error('search_phase_execution_exception'),
+      {
+        meta: {
+          statusCode: 400,
+          body: {
+            error: {
+              type: 'search_phase_execution_exception',
+              root_cause: [{ type: 'query_shard_exception', reason }],
+            },
+          },
+        },
+      },
+    );
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(tooLarge),
+    });
+    const err = await service
+      .search({ headers, query: dto({ query: '😀'.repeat(500) }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'query is too long for search',
+    );
+  });
+
   it('rethrows other search errors unchanged', async () => {
     const boom = new Error('boom');
     const { service } = build({ search: jest.fn().mockRejectedValue(boom) });
