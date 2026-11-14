@@ -47,6 +47,7 @@ import {
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
 import { assertV2QueryLength, describeQueryForLog } from './internal/query-log';
+import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
@@ -225,6 +226,9 @@ const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 // Word rarity moves slowly (corpus-wide document counts), so a day is fresh enough.
 const WORD_RARITY_TTL_MS = 24 * 60 * 60 * 1000;
 
+// At most this many per-word rarity entries per process; the oldest go first.
+export const MAX_WORD_RARITY_CACHE_ENTRIES = 20000;
+
 /**
  * `words`: idf weight per query content word. `splits`: run-together words
  * the index itself says are usually written as two words ("foodbank" ->
@@ -258,6 +262,9 @@ export class HybridSearchService {
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
   private readonly needBoostEnabled: boolean;
+  private wordRarityKeys = new BoundedKeyRegistry(
+    MAX_WORD_RARITY_CACHE_ENTRIES,
+  );
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -442,7 +449,7 @@ export class HybridSearchService {
     const preference = shardPreference('hybrid', searchFingerprint(identity));
 
     this.logger.debug(
-      `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
+      `Hybrid search — tenant=${tenantId}, index=${index}, query: ${describeQueryForLog(queryStr)}`,
     );
 
     // Browse mode (empty query): skip embedding — many embedding servers 400 on
@@ -653,6 +660,9 @@ export class HybridSearchService {
           }
         }
         await this.requestCacheService.setMany(toCache, WORD_RARITY_TTL_MS);
+        await this.requestCacheService.deleteMany(
+          this.wordRarityKeys.add(Object.keys(toCache)),
+        );
       }
 
       const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };

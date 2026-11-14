@@ -133,6 +133,7 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
               Promise.resolve(keys.map(() => undefined)),
             ),
             setMany: jest.fn().mockResolvedValue(undefined),
+            deleteMany: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: MetricsService, useValue: createMetricsServiceMock() },

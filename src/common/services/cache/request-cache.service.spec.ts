@@ -68,4 +68,23 @@ describe('RequestCacheService many-key calls', () => {
     await service.setMany({}, 1000);
     expect(mset).not.toHaveBeenCalled();
   });
+
+  it('deleteMany removes the keys, and swallows a cache failure', async () => {
+    const mdel = jest.fn().mockResolvedValue(true);
+    const { service } = build({ mdel });
+    await service.deleteMany(['k1', 'k2']);
+    expect(mdel).toHaveBeenCalledWith(['k1', 'k2']);
+
+    const failing = build({
+      mdel: jest.fn().mockRejectedValue(new Error('x')),
+    });
+    await expect(failing.service.deleteMany(['k1'])).resolves.toBeUndefined();
+  });
+
+  it('deleteMany makes no call for no keys', async () => {
+    const mdel = jest.fn();
+    const { service } = build({ mdel });
+    await service.deleteMany([]);
+    expect(mdel).not.toHaveBeenCalled();
+  });
 });

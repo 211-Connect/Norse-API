@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 
@@ -128,6 +129,10 @@ describe('HybridSearchService', () => {
             setMany: jest.fn((entries: Record<string, unknown>) =>
               cacheSetMany(entries),
             ),
+            deleteMany: jest.fn((keys: string[]) => {
+              keys.forEach((k) => cacheStore.delete(k));
+              return Promise.resolve();
+            }),
           },
         },
         {
@@ -1099,6 +1104,18 @@ describe('HybridSearchService', () => {
         expect(cacheStore.size).toBe(0);
       });
 
+      it('keeps the cached entries under the cap, deleting the oldest first', async () => {
+        (service as any).wordRarityKeys = new BoundedKeyRegistry(2);
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits shelter'),
+          rankingVersion: 'v2',
+        });
+        expect(cacheStore.size).toBe(2);
+        const keys = [...cacheStore.keys()];
+        expect(keys.some((k) => k.includes('boyfriend'))).toBe(false);
+      });
+
       it('still answers correctly when the cache read fails', async () => {
         cacheGetMany = (keys) => Promise.resolve(keys.map(() => undefined));
         cacheSetMany = () => Promise.resolve();
@@ -1183,6 +1200,28 @@ describe('HybridSearchService', () => {
       },
     );
   });
+
+  it.each([
+    ['v1', undefined],
+    ['v2', 'v2' as const],
+  ])(
+    '%s debug log never carries the full query text',
+    async (_n, rankingVersion) => {
+      const debugSpy = jest.spyOn((service as any).logger, 'debug');
+      const text = `help ${'q'.repeat(300)}`;
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query: text },
+        rankingVersion,
+      });
+      const lines = debugSpy.mock.calls.map((c) => String(c[0]));
+      for (const line of lines) {
+        expect(line).not.toContain(text);
+        expect(line).not.toContain('q'.repeat(41));
+      }
+      expect(lines.join('\n')).toMatch(/len=305 id=[0-9a-f]{12}/);
+    },
+  );
 
   describe('v1 is unchanged without rankingVersion (/search regression guard)', () => {
     const collect = (node: any, pred: (n: any) => boolean, out: any[] = []) => {

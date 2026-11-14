@@ -118,4 +118,16 @@ export class RequestCacheService {
       );
     }
   }
+
+  /** Deletes many keys with one cache round trip. Never rejects. */
+  async deleteMany(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    try {
+      await this.cacheManager.mdel(keys);
+    } catch (error) {
+      this.logger.warn(
+        `Redis cache mdel failed for ${keys.length} keys: ${error}`,
+      );
+    }
+  }
 }

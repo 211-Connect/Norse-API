@@ -184,6 +184,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
               Promise.resolve(keys.map(() => undefined)),
             ),
             setMany: jest.fn().mockResolvedValue(undefined),
+            deleteMany: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
