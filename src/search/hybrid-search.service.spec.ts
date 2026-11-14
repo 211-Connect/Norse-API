@@ -50,6 +50,10 @@ describe('HybridSearchService', () => {
   let capturedMainRequest: any;
   let rarityRequests: any[];
   let rarityImpl: (req: any) => Promise<any>;
+  // In-memory stand-in for the per-word rarity cache (getMany / setMany).
+  let cacheStore: Map<string, unknown>;
+  let cacheGetMany: (keys: string[]) => Promise<unknown[]>;
+  let cacheSetMany: (entries: Record<string, unknown>) => Promise<void>;
 
   // Default: every word appears in 5 of 1000 docs.
   const defaultRarityResponse = (req: any) => ({
@@ -70,6 +74,13 @@ describe('HybridSearchService', () => {
     capturedMainRequest = undefined;
     rarityRequests = [];
     rarityImpl = (req) => Promise.resolve(defaultRarityResponse(req));
+    cacheStore = new Map();
+    cacheGetMany = (keys) =>
+      Promise.resolve(keys.map((k) => cacheStore.get(k)));
+    cacheSetMany = (entries) => {
+      Object.entries(entries).forEach(([k, v]) => cacheStore.set(k, v));
+      return Promise.resolve();
+    };
 
     esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
@@ -113,6 +124,10 @@ describe('HybridSearchService', () => {
           provide: RequestCacheService,
           useValue: {
             getOrSet: jest.fn((_key, factory) => factory()),
+            getMany: jest.fn((keys: string[]) => cacheGetMany(keys)),
+            setMany: jest.fn((entries: Record<string, unknown>) =>
+              cacheSetMany(entries),
+            ),
           },
         },
         {
@@ -649,10 +664,14 @@ describe('HybridSearchService', () => {
     });
 
     it('keeps the same preference for every page, limit and sort of a search', async () => {
+      // The rarity words are cached after the first request; clear between
+      // requests so every request still sends its own rarity probe.
       const preferences = [
         ...(await preferencesOf(baseQuery)),
-        ...(await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
-        ...(await preferencesOf({ ...baseQuery, sort: 'name' })),
+        ...(cacheStore.clear(),
+        await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
+        ...(cacheStore.clear(),
+        await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
       // Every search of all three requests, not just the first of each.
@@ -942,6 +961,167 @@ describe('HybridSearchService', () => {
         type: 'phrase_prefix',
       });
       expect(filters.w1.multi_match.query).toBe('hits');
+    });
+
+    describe('per-word cache', () => {
+      const probedWords = (req: any): string[] =>
+        Object.entries(req.aggs.df.filters.filters)
+          .filter(([k]) => /^w\d+$/.test(k))
+          .map(([, v]: any) => v.multi_match.query);
+
+      it('probes only the words the cache does not hold', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend shelter'),
+          rankingVersion: 'v2',
+        });
+
+        expect(rarityRequests).toHaveLength(2);
+        expect(probedWords(rarityRequests[0])).toEqual(['boyfriend', 'hits']);
+        expect(probedWords(rarityRequests[1])).toEqual(['shelter']);
+      });
+
+      it('makes no Elasticsearch rarity call on a full hit, with the same clauses', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        const first = JSON.stringify(capturedMainRequest.query);
+        await service.searchHybrid({
+          headers,
+          query: q('hits boyfriend'),
+          rankingVersion: 'v2',
+        });
+
+        expect(rarityRequests).toHaveLength(1);
+        // Word order differs, so compare the set of word clauses.
+        expect(nameEdgeClauses(capturedMainRequest.query).length).toBe(
+          nameEdgeClauses(JSON.parse(first)).length,
+        );
+      });
+
+      it('gives a cached word the same idf as a probed word', async () => {
+        rarityImpl = () =>
+          Promise.resolve({
+            hits: { total: { value: 29181 } },
+            aggregations: { df: { buckets: { w0: { doc_count: 2 } } } },
+          });
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        const boostFor = () => {
+          const found: any[] = [];
+          const walk = (n: any) => {
+            if (Array.isArray(n)) n.forEach(walk);
+            else if (n && typeof n === 'object') {
+              if (n.constant_score?.filter?.match?.['name.edge'] === 'hits') {
+                found.push(n.constant_score.boost);
+              }
+              Object.values(n).forEach(walk);
+            }
+          };
+          walk(capturedMainRequest.query);
+          return found[0];
+        };
+        const probedBoost = boostFor();
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(boostFor()).toBeCloseTo(probedBoost);
+        expect(probedBoost).toBeCloseTo(15 * idf(29181, 2));
+      });
+
+      it('keeps tenants and languages apart', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        await service.searchHybrid({
+          headers: { ...headers, 'x-tenant-id': 'tenant-b' },
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(2);
+      });
+
+      it('caches a split with its word and replays it from the cache', async () => {
+        rarityImpl = (req: any) => {
+          const keys = Object.keys(req.aggs.df.filters.filters);
+          return Promise.resolve({
+            hits: { total: { value: 1000 } },
+            aggregations: {
+              df: {
+                buckets: Object.fromEntries(
+                  keys.map((k) => [
+                    k,
+                    { doc_count: k === 'w0' ? 3 : k === 's0_1' ? 300 : 1 },
+                  ]),
+                ),
+              },
+            },
+          });
+        };
+        await service.searchHybrid({
+          headers,
+          query: q('foodbank'),
+          rankingVersion: 'v2',
+        });
+        const first = JSON.stringify(capturedMainRequest.query);
+        await service.searchHybrid({
+          headers,
+          query: q('foodbank'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(JSON.stringify(capturedMainRequest.query)).toBe(first);
+        expect(first).toContain('food bank');
+      });
+
+      it('does not cache anything when the probe fails', async () => {
+        rarityImpl = () => Promise.reject(new Error('es down'));
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(cacheStore.size).toBe(0);
+      });
+
+      it('still answers correctly when the cache read fails', async () => {
+        cacheGetMany = (keys) => Promise.resolve(keys.map(() => undefined));
+        cacheSetMany = () => Promise.resolve();
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(nameEdgeClauses(capturedMainRequest.query)).toHaveLength(2);
+      });
+
+      it('falls back to the flat match when the cache layer itself throws', async () => {
+        cacheGetMany = () => Promise.reject(new Error('redis down'));
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        expect(nameEdgeClauses(capturedMainRequest.query)).toEqual([
+          { 'name.edge': { query: 'boyfriend hits', boost: 15 } },
+        ]);
+      });
     });
   });
 

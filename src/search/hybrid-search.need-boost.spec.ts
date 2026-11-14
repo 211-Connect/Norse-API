@@ -127,7 +127,13 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
         },
         {
           provide: RequestCacheService,
-          useValue: { getOrSet: jest.fn((_k: any, f: any) => f()) },
+          useValue: {
+            getOrSet: jest.fn((_k: any, f: any) => f()),
+            getMany: jest.fn((keys: string[]) =>
+              Promise.resolve(keys.map(() => undefined)),
+            ),
+            setMany: jest.fn().mockResolvedValue(undefined),
+          },
         },
         { provide: MetricsService, useValue: createMetricsServiceMock() },
       ],

@@ -178,7 +178,13 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         },
         {
           provide: RequestCacheService,
-          useValue: { getOrSet: jest.fn((_k: any, f: any) => f()) },
+          useValue: {
+            getOrSet: jest.fn((_k: any, f: any) => f()),
+            getMany: jest.fn((keys: string[]) =>
+              Promise.resolve(keys.map(() => undefined)),
+            ),
+            setMany: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: MetricsService,
