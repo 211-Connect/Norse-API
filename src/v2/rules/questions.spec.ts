@@ -7,17 +7,53 @@ const opts = (d: ReturnType<typeof decide>, id: string) =>
 
 describe('emergency question', () => {
   const popup = { status: 'ok' as const, score: 0.9, floor_hit: false };
-  it('is first, U-0/U-1/U-3, carries hotlines', () => {
+  const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
+  const emergencyOf = (d: ReturnType<typeof decide>) =>
+    d.candidates.find((q) => q.id === 'emergency');
+  it('popup: first, level red, urgency options only (no U-0), carries hotlines (Decision 54)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
+    expect(q.level).toBe('red');
     expect(q.step).toBe(0);
-    expect(q.options.map((o) => o.value)).toEqual(['U-0', 'U-1', 'U-3']);
+    expect(q.options).toEqual([
+      { label: 'Today', parameter: 'urgency', value: 'U-1' },
+      { label: 'Not urgent', parameter: 'urgency', value: 'U-3' },
+    ]);
     expect(q.hotlines).toEqual([
       { label: 'Crisis line', number: '988' },
       { label: 'Emergency', number: '911' },
     ]);
     expect(q.multi_select || q.allow_other || q.none_of_these).toBe(false);
+  });
+  it('soft band: level orange, same urgency options (Decision 54)', () => {
+    const d = decide(req(), sig({}, { emergency: soft }));
+    expect(d.emergency_band).toBe('soft');
+    const q = emergencyOf(d);
+    expect(q.level).toBe('orange');
+    expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-3']);
+    expect(q.hotlines).toHaveLength(2);
+  });
+  it('no option anywhere offers U-0 (Decision 54)', () => {
+    for (const e of [popup, soft]) {
+      const d = decide(req(), sig({}, { emergency: e }));
+      const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
+      expect(all).not.toContain('U-0');
+    }
+  });
+  it('the question has no parameter field; each option carries one (Decision 55)', () => {
+    const d = decide(req(), sig({}, { emergency: popup }));
+    for (const q of d.candidates) {
+      expect(q).not.toHaveProperty('parameter');
+      for (const o of q.options) {
+        expect(['needs', 'passed_needs', 'urgency']).toContain(o.parameter);
+      }
+    }
+  });
+  it('the decision has no show_hotline; the band stays internal', () => {
+    const d = decide(req(), sig({}, { emergency: popup }));
+    expect(d).not.toHaveProperty('emergency');
+    expect(d.emergency_band).toBe('popup');
   });
   it('uses tenant hotlines', () => {
     const d = decide(req(), sig({}, { emergency: popup }), {
@@ -32,50 +68,120 @@ describe('emergency question', () => {
       { label: 'Emergency', number: '911' },
     ]);
   });
-  it('absent when urgency=U-3 in URL; caller answer wins, no hotline on popup', () => {
-    const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: popup }));
+  it.each(['U-1', 'U-2', 'U-3', 'U-4'] as const)(
+    'popup + caller urgency %s -> no emergency question (Decision 51)',
+    (u) => {
+      const d = decide(req({ urgency: u }), sig({}, { emergency: popup }));
+      expect(ids(d)).not.toContain('emergency');
+    },
+  );
+  it('soft + caller urgency U-3 -> no emergency question', () => {
+    const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: soft }));
     expect(ids(d)).not.toContain('emergency');
-    expect(d.emergency.show_hotline).toBe(false);
   });
-  it('popup + urgency U-1 -> no hotline, no emergency question', () => {
-    const d = decide(req({ urgency: 'U-1' }), sig({}, { emergency: popup }));
-    expect(ids(d)).not.toContain('emergency');
-    expect(d.emergency.show_hotline).toBe(false);
-  });
-  it('popup + urgency U-0 -> hotline', () => {
-    const d = decide(req({ urgency: 'U-0' }), sig({}, { emergency: popup }));
-    expect(d.emergency.show_hotline).toBe(true);
-  });
-  it('popup + urgency U-X counts as no answer -> hotline', () => {
+  it('popup + urgency U-X counts as no answer -> emergency question stays', () => {
     const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
-    expect(d.emergency.show_hotline).toBe(true);
+    expect(emergencyOf(d).level).toBe('red');
   });
-  it('popup + no urgency -> hotline', () => {
-    const d = decide(req(), sig({}, { emergency: popup }));
-    expect(d.emergency.show_hotline).toBe(true);
+  describe('caller urgency=U-0 (Decision 50, unconfirmed reading)', () => {
+    const expectU0Popup = (d: ReturnType<typeof decide>) => {
+      const q = d.candidates[0];
+      expect(q.id).toBe('emergency');
+      expect(q.type).toBe('emergency');
+      expect(q.level).toBe('red');
+      expect(q.importance).toBe('critical');
+      expect(q.options).toEqual([]);
+      expect(q.hotlines).toEqual([
+        { label: 'Crisis line', number: '988' },
+        { label: 'Emergency', number: '911' },
+      ]);
+    };
+    it('no text (check did not run) -> popup with hotlines, no options', () => {
+      expectU0Popup(
+        decide(req({ urgency: 'U-0' }), sig({}, { emergency: null })),
+      );
+    });
+    it('band none -> popup with hotlines, no options', () => {
+      expectU0Popup(decide(req({ urgency: 'U-0' }), sig()));
+    });
+    it('band soft -> still the popup (red), no options', () => {
+      expectU0Popup(
+        decide(req({ urgency: 'U-0' }), sig({}, { emergency: soft })),
+      );
+    });
+    it('band popup -> popup, no options', () => {
+      expectU0Popup(
+        decide(req({ urgency: 'U-0' }), sig({}, { emergency: popup })),
+      );
+    });
+    it('band unknown -> popup, no options', () => {
+      expectU0Popup(
+        decide(
+          req({ urgency: 'U-0' }),
+          sig({}, { emergency: { status: 'error' } }),
+        ),
+      );
+    });
+    it('clarify=never keeps it', () => {
+      expectU0Popup(decide(req({ urgency: 'U-0', clarify: 'never' }), sig()));
+    });
+    it('finalize keeps it with no options and any counts', () => {
+      const d = decide(req({ urgency: 'U-0' }), sig());
+      const c = finalize(d, {
+        counts: { total: 0, by_code: {} },
+        strong_text_match: true,
+      });
+      expect(c.questions[0].id).toBe('emergency');
+      expect(c.questions[0].options).toEqual([]);
+    });
+    it('not cacheable (Decision 28: the response holds an emergency question)', () => {
+      expect(decide(req({ urgency: 'U-0' }), sig()).cacheable).toBe(false);
+    });
   });
-  it('soft + urgency=U-0 -> show_hotline', () => {
+  it('clarify=never keeps the emergency question, drops the rest (Decision 26)', () => {
     const d = decide(
-      req({ urgency: 'U-0' }),
-      sig({}, { emergency: { status: 'ok', score: 0.3 } }),
+      req({ clarify: 'never' }),
+      sig({ 'N-HOU': 0.5 }, { emergency: soft }),
     );
-    expect(d.emergency.band).toBe('soft');
-    expect(d.emergency.show_hotline).toBe(true);
+    expect(ids(d)).toEqual(['emergency']);
+    expect(d.candidates[0].level).toBe('orange');
   });
-  it('soft without U-0 -> no hotline flag', () => {
-    const d = decide(
-      req(),
-      sig({}, { emergency: { status: 'ok', score: 0.3 } }),
-    );
-    expect(d.emergency.show_hotline).toBe(false);
-  });
-  it('cacheable only for none band and ok needs', () => {
+  it('cacheable only for none band, no emergency question and ok needs', () => {
     expect(decide(req(), sig()).cacheable).toBe(true);
     expect(decide(req(), sig({}, { emergency: null })).cacheable).toBe(true);
     expect(decide(req(), sig({}, { emergency: popup })).cacheable).toBe(false);
+    expect(decide(req(), sig({}, { emergency: soft })).cacheable).toBe(false);
+    expect(
+      decide(req(), sig({}, { emergency: { status: 'error' } })).cacheable,
+    ).toBe(false);
     expect(
       decide(req(), { needs: { status: 'error' }, emergency: null }).cacheable,
     ).toBe(false);
+  });
+});
+
+describe('option shape (Decision 55)', () => {
+  it('need options are {label, parameter: needs, value}', () => {
+    const d = decide(req(), sig({ 'N-HOU': 0.95 }));
+    const q = d.candidates.find((c) => c.type === 'find_need');
+    expect(q).toBeDefined();
+    for (const o of q.options) {
+      expect(Object.keys(o)).toEqual(['label', 'parameter', 'value']);
+      expect(o.parameter).toBe('needs');
+    }
+  });
+  it('urgency options are {label, parameter: urgency, value}', () => {
+    const d = decide(req(), {
+      needs: { status: 'ok', scores: {} },
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: { status: 'ok', score: 0.001 },
+    });
+    const q = d.candidates.find((c) => c.id === 'urgency_today');
+    expect(q.options[0]).toEqual({
+      label: 'Today',
+      parameter: 'urgency',
+      value: 'U-1',
+    });
   });
 });
 
@@ -100,6 +206,29 @@ describe('time questions', () => {
     );
     expect(q.step).toBe(5);
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-2', 'U-4', 'U-3']);
+  });
+  it('caller urgency=U-X counts as absent: question still shows (ISS-2499)', () => {
+    const d = decide(req({ urgency: 'U-X' }), askU('U-1'));
+    expect(d.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'ask',
+    });
+    expect(ids(d)).toContain('urgency_today');
+  });
+  it('caller urgency=U-X counts as absent: model guess is used (ISS-2499)', () => {
+    const s = askU('U-2');
+    s.urgency.score = 0.95;
+    expect(decide(req({ urgency: 'U-X' }), s).urgency).toEqual({
+      value: 'U-2',
+      source: 'inferred',
+      state: 'use',
+    });
+  });
+  it('caller urgency=U-X does not hide the emergency question (ISS-2499)', () => {
+    const s = askU('U-1');
+    s.emergency = { status: 'ok', score: 0.9 };
+    expect(ids(decide(req({ urgency: 'U-X' }), s))).toContain('emergency');
   });
   it('suppressed when emergency question exists', () => {
     const s = askU('U-1');
@@ -126,12 +255,12 @@ describe('start question', () => {
     );
     expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
   });
-  it('N-X option last when >= 0.07', () => {
-    const d = decide(req(), sig({ 'N-X': 0.07 }));
-    expect(opts(d, 'start').slice(-1)).toEqual(['N-X']);
-    expect(opts(decide(req(), sig({ 'N-X': 0.06 })), 'start')).not.toContain(
-      'N-X',
-    );
+  it('N-X is never an option on start, at any score (ISS-2499)', () => {
+    for (const x of [0.06, 0.07, 0.9]) {
+      expect(opts(decide(req(), sig({ 'N-X': x })), 'start')).not.toContain(
+        'N-X',
+      );
+    }
   });
   it('passed Tier 1 never offered', () => {
     const d = decide(req({ passed_needs: ['N-HOU'] }), sig());
@@ -237,10 +366,10 @@ describe('narrow', () => {
     const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
     expect(all).not.toContain('N-FOD-01');
   });
-  it('N-X option on narrow:1', () => {
+  it('N-X is never an option on narrow:1 (ISS-2499)', () => {
     expect(
-      opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1').slice(-1),
-    ).toEqual(['N-X']);
+      opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1'),
+    ).not.toContain('N-X');
   });
   describe('a Tier 2 need is already used (ISS-2697)', () => {
     const used = { 'N-HOU-01': 0.999, 'N-HOU': 0.999 };

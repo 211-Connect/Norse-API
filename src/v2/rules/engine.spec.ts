@@ -5,6 +5,7 @@ import { BAND_BASE } from './importance';
 import { displayOf, isTier1, isTier2, NX, tier1Of } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 import { Decision } from './types';
+import { asksNeeds } from './questions';
 
 const golden: {
   rows: {
@@ -30,9 +31,8 @@ const mk = (
   importance: 'high' as const,
   reason: 'no_need' as const,
   step,
-  parameter,
   stem: 's',
-  options: values.map((v) => ({ value: v, label: v })),
+  options: values.map((v) => ({ label: v, parameter, value: v })),
   multi_select: true,
   allow_other: true,
   none_of_these: true,
@@ -46,7 +46,7 @@ const dec = (
 ): Decision => ({
   rules_version: RULES_VERSION,
   option_scores,
-  emergency: { band: 'none', show_hotline: false },
+  emergency_band: 'none',
   cacheable: true,
   needs: [],
   boost_needs: [],
@@ -63,7 +63,7 @@ describe('finalize', () => {
   });
   it('strong_text_match keeps emergency + time, drops needs', () => {
     const d = dec([
-      mk('emergency', 0, ['U-0'], 'urgency'),
+      mk('emergency', 0, ['U-3'], 'urgency'),
       mk('urgency_today', 1, ['U-1'], 'urgency'),
       mk('start', 2, ['N-HOU', 'N-FOD']),
     ]);
@@ -79,14 +79,13 @@ describe('finalize', () => {
   it('sets counts and drops 0-count options; a code missing from counted by_code is 0', () => {
     // An Elasticsearch aggregation can leave out a code with no matches, so a
     // missing key in a counted by_code means 0 results, not "unknown".
-    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON', 'N-X'])]);
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'])]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
       strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
-      { value: 'N-HOU', label: 'N-HOU', results_count: 4 },
-      { value: 'N-X', label: 'N-X' },
+      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
     ]);
   });
   it('recomputes uncertainty over the options left after 0-count drops', () => {
@@ -141,15 +140,14 @@ describe('finalize', () => {
     expect(q.uncertainty).toBe(0.42);
   });
   it('by_code null (not counted) keeps every option, without counts', () => {
-    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-X'])]);
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const r = finalize(d, {
       counts: counts(10, null),
       strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
-      { value: 'N-HOU', label: 'N-HOU' },
-      { value: 'N-FOD', label: 'N-FOD' },
-      { value: 'N-X', label: 'N-X' },
+      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU' },
+      { label: 'N-FOD', parameter: 'needs', value: 'N-FOD' },
     ]);
   });
   it('an empty counted by_code drops every need option (all 0), unlike null', () => {
@@ -172,8 +170,8 @@ describe('finalize', () => {
       }).questions,
     ).toEqual([]);
   });
-  it('drops a question with only N-X left; total 0 drops needs', () => {
-    const d = dec([mk('start', 2, ['N-HOU', 'N-X'])]);
+  it('drops a question with no option left; total 0 drops needs', () => {
+    const d = dec([mk('start', 2, ['N-HOU'])]);
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
@@ -340,10 +338,10 @@ describe('golden fixture', () => {
       const first = JSON.stringify(run(r));
       for (let i = 0; i < 1000; i++) expect(JSON.stringify(run(r))).toBe(first);
       const d = run(r);
-      for (const q of d.candidates.filter((c) => c.parameter === 'needs')) {
+      for (const q of d.candidates.filter((c) => asksNeeds(c))) {
         for (const o of q.options) {
           expect(d.boost_needs).not.toContain(o.value);
-          if (q.type === 'narrow' && o.value !== 'N-X') {
+          if (q.type === 'narrow') {
             expect(r.needs[o.value]).toBeGreaterThanOrEqual(0.12);
             expect(r.needs[o.value]).toBeLessThan(0.97);
           }
@@ -360,7 +358,7 @@ describe('golden fixture', () => {
 
   it('food bank -> no needs candidate', () => {
     const d = run(row('food bank'));
-    expect(d.candidates.filter((c) => c.parameter === 'needs')).toEqual([]);
+    expect(d.candidates.filter((c) => asksNeeds(c))).toEqual([]);
     expect(d.needs.find((n) => n.code === 'N-FOD-01').state).toBe('use');
   });
   it('mental health counseling -> area:N-MHS', () => {
@@ -370,7 +368,7 @@ describe('golden fixture', () => {
   });
   it('knife -> emergency popup', () => {
     const d = run(row("he has a knife and he's outside"));
-    expect(d.emergency.band).toBe('popup');
+    expect(d.emergency_band).toBe('popup');
     expect(d.candidates[0].id).toBe('emergency');
   });
   it('help -> start question', () => {
@@ -381,7 +379,7 @@ describe('golden fixture', () => {
       req(),
       sig({}, { emergency: { status: 'ok', score: NaN, floor_hit: false } }),
     );
-    expect(d.emergency.band).toBe('unknown');
+    expect(d.emergency_band).toBe('unknown');
     expect(d.cacheable).toBe(false);
   });
 });
@@ -417,8 +415,21 @@ describe('non-finite need scores read as no score', () => {
   });
 });
 
-describe('N-X label', () => {
-  it('displayOf(N-X) is LABELS.nx, one source for the text', () => {
-    expect(displayOf(NX)).toBe(LABELS.nx);
+describe('N-X is internal (ISS-2499)', () => {
+  it('has no person-facing label', () => {
+    expect(displayOf(NX)).toBe('N-X');
+    expect('nx' in LABELS).toBe(false);
+  });
+  it('finalize never sees an N-X option from decide', () => {
+    const d = decide(
+      req(),
+      sig({ 'N-X': 0.9, 'N-HOU': 0.3, 'N-FOD': 0.2, 'N-MON': 0.1 }),
+    );
+    const r = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    const all = r.questions.flatMap((q) => q.options.map((o) => o.value));
+    expect(all).not.toContain('N-X');
   });
 });

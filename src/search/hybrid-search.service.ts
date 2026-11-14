@@ -11,6 +11,7 @@ import {
   QueryDslFunctionScoreContainer,
   SearchRequest,
   Sort,
+  SortCombinations,
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
@@ -21,6 +22,7 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
+import { CUTOFFS } from 'src/v2/rules/config';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
@@ -39,6 +41,14 @@ import {
   SUNE_ENRICHMENT_FIELDS,
   stripEnrichment,
 } from './internal/enrichment-fields';
+import {
+  contentWords,
+  idf,
+  adjacentJoins,
+  splitCandidates,
+  WORD_RARITY_FIELDS,
+} from './internal/text-matching/word-rarity';
+import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -64,9 +74,9 @@ const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
 // Need boost (ISS-2745). Start values from the 2026-11-11 boost test: each need
 // clause adds FRACTION x the top base score x the need score (K = fraction x top
-// base score). The 0.97 gate is Lucas's pick. Tier 1 needs boost at a smaller factor.
+// base score). The gate (0.97, Lucas's pick) is owned by the v2 rules config. Tier 1 needs boost at a smaller factor.
 const NEED_BOOST_FRACTION = 0.1;
-const NEED_BOOST_GATE = 0.97;
+const NEED_BOOST_GATE = CUTOFFS.needs.use;
 const NEED_BOOST_TIER1_FACTOR = 0.5;
 
 export type NeedScore = {
@@ -74,12 +84,72 @@ export type NeedScore = {
   tier: 'tier1' | 'tier2';
   score: number;
 };
+export type RankingVersion = 'v1' | 'v2';
+
+/**
+ * The one match rule: a service carries a sent need when `sune_needs` holds
+ * that exact code. Builds `m`, the sent codes the service carries, in sent
+ * order. Missing field (index not tagged yet) = none. The block sort and the
+ * `matched_needs` script field both start with this text.
+ */
+const NEED_MATCH_PAINLESS =
+  'def m = new ArrayList(); ' +
+  "if (doc.containsKey('sune_needs')) { def have = doc['sune_needs']; " +
+  'for (def c : params.codes) { if (have.contains(c)) { m.add(c); } } }';
+
+/** Painless: 2 = carries every sent need, 1 = some, 0 = none. */
+export const NEED_BLOCK_SCRIPT =
+  NEED_MATCH_PAINLESS +
+  ' return m.size() == params.codes.size() ? 2 : (m.size() > 0 ? 1 : 0);';
+
+/** Painless: the sent codes this service carries, in sent order. */
+export const MATCHED_NEEDS_SCRIPT = NEED_MATCH_PAINLESS + ' return m;';
+
+/** Script field: reads doc values, so no `_source` tag is returned and scores do not change. */
+export function buildMatchedNeedsField(codes: string[]) {
+  return {
+    script: { source: MATCHED_NEEDS_SCRIPT, params: { codes } },
+  };
+}
+
+export function buildNeedBlockSort(codes: string[]): SortCombinations {
+  return {
+    _script: {
+      type: 'number',
+      order: 'desc',
+      script: { source: NEED_BLOCK_SCRIPT, params: { codes } },
+    },
+  };
+}
+
+export type HybridSearchResult = SearchResponse & {
+  /** Present only when counts were asked for and the count succeeded. */
+  needCounts?: Record<string, number>;
+};
 
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
+  /**
+   * v2 only. Caller-sent need codes. They never filter. They order results in
+   * blocks: every code first, then some, then none (Lucas 2026-11-12). Empty or
+   * absent changes nothing.
+   */
+  selectedNeeds?: string[];
+  /**
+   * v2 only. Need codes to count: results per code, from a terms aggregation
+   * on `sune_needs`, over the same filters as the results but without the
+   * `needs=` filter. Every code is returned, 0 when the aggregation omits it.
+   */
+  countCodes?: string[];
+  /**
+   * Internal switch, not a DTO field and not a query parameter. Set only by
+   * the future /v2/search; today's /search never sets it, so it always runs
+   * v1 (flat name edge match, approximate taxonomy knn).
+   */
+  rankingVersion?: RankingVersion;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -206,6 +276,23 @@ const MIN_CUT_REDUCTION = 0.9;
  */
 const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 
+// Word rarity moves slowly (corpus-wide document counts), so a day is fresh enough.
+const WORD_RARITY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `words`: idf weight per query content word. `splits`: run-together words
+ * the index itself says are usually written as two words ("foodbank" ->
+ * "food bank"), with the idf of the split phrase. `null` = unknown, keep the
+ * flat name match. `{ words: {}, splits: [] }` = no content words, the name
+ * edge tier adds nothing.
+ */
+type WordRarity = {
+  words: Record<string, number>;
+  splits: { word: string; phrase: string; idf: number }[];
+} | null;
+
+const MAX_SPLIT_BUCKETS = 60;
+
 interface PredictedTaxonomy {
   code: string;
   name: string;
@@ -282,9 +369,15 @@ export class HybridSearchService {
     });
   }
 
-  async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
-    const { request, tenantFacets, cutoff, lang } =
+  async searchHybrid(
+    options: HybridSearchOptions,
+  ): Promise<HybridSearchResult> {
+    const { request, countRequest, tenantFacets, cutoff, lang } =
       await this.prepareHybridSearch(options, { rank: true });
+
+    const needCountsPromise = countRequest
+      ? this.runNeedCounts(countRequest, options.countCodes ?? [])
+      : Promise.resolve(undefined);
 
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
@@ -296,6 +389,7 @@ export class HybridSearchService {
         >(request),
     );
 
+    const needsSent = (options.selectedNeeds ?? []).length > 0;
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
       const normalizedFacets = SearchUtilsService.normalizeDocFacets(
         hit._source,
@@ -309,7 +403,12 @@ export class HybridSearchService {
           ...hit._source,
           facets: normalizedFacets,
         }),
-        sort: hit.sort as number[] | undefined,
+        // With needs sent, sort[0] is the internal block number. It stays server side.
+        sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+          number[] | undefined,
+        ...(needsSent
+          ? { matched_needs: this.readMatchedNeeds(hit.fields) }
+          : {}),
       };
     });
 
@@ -323,6 +422,8 @@ export class HybridSearchService {
       typeof data.hits.total === 'number'
         ? data.hits.total
         : (data.hits.total?.value ?? 0);
+
+    const needCounts = await needCountsPromise;
 
     return {
       search: {
@@ -344,7 +445,48 @@ export class HybridSearchService {
       // Omitted entirely when the caller did not opt in, so the response
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
+      ...(needCounts ? { needCounts } : {}),
     };
+  }
+
+  private readMatchedNeeds(fields: unknown): string[] {
+    const v = (fields as Record<string, unknown> | undefined)?.matched_needs;
+    return Array.isArray(v) ? (v as string[]) : [];
+  }
+
+  /**
+   * Counts per need code. A terms aggregation leaves out zero-count buckets,
+   * so every requested code is written with 0 first. A failure returns
+   * undefined, which the caller reads as "not counted" (never as all 0).
+   */
+  private async runNeedCounts(
+    request: SearchRequest,
+    codes: string[],
+  ): Promise<Record<string, number> | undefined> {
+    try {
+      const data = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_need_counts',
+        () =>
+          this.elasticsearchService.search<
+            unknown,
+            Record<string, AggregationsStringTermsAggregate>
+          >(request),
+      );
+      const buckets =
+        (data.aggregations?.need_counts?.buckets as
+          { key: string; doc_count: number }[] | undefined) ?? [];
+      const counts: Record<string, number> = Object.fromEntries(
+        codes.map((c) => [c, 0]),
+      );
+      for (const b of buckets) {
+        if (b.key in counts) counts[b.key] = b.doc_count;
+      }
+      return counts;
+    } catch (error) {
+      this.logger.warn(`Need counts skipped: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -380,6 +522,7 @@ export class HybridSearchService {
     } = q;
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
+    const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
     const hardScopeCodes = q.taxonomy ?? [];
@@ -409,18 +552,22 @@ export class HybridSearchService {
     // scoring is simply omitted for browse.
     const wantsVector = rank && queryStr.trim().length > 0;
 
-    const [embedResult, tenantFacets, searchConfig] = await Promise.all([
-      wantsVector
-        ? this.embedQuery(queryStr).catch((err: Error) => {
-            this.logger.warn(
-              `Embedding failed, falling back to lexical-only: ${err.message}`,
-            );
-            return undefined;
-          })
-        : Promise.resolve(undefined),
-      this.tenantConfigService.getFacets(tenantId),
-      this.tenantConfigService.getSearchConfig(tenantId),
-    ]);
+    const [embedResult, tenantFacets, searchConfig, wordRarity] =
+      await Promise.all([
+        wantsVector
+          ? this.embedQuery(queryStr).catch((err: Error) => {
+              this.logger.warn(
+                `Embedding failed, falling back to lexical-only: ${err.message}`,
+              );
+              return undefined;
+            })
+          : Promise.resolve(undefined),
+        this.tenantConfigService.getFacets(tenantId),
+        this.tenantConfigService.getSearchConfig(tenantId),
+        v2 && wantsVector
+          ? this.getWordRarity(index, tenantId, lang, queryStr, preference)
+          : Promise.resolve(null),
+      ]);
 
     const queryVector = embedResult;
     const pinnedMode =
@@ -429,7 +576,7 @@ export class HybridSearchService {
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId, preference)
+      ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
       : [];
 
     this.logger.log(
@@ -461,6 +608,9 @@ export class HybridSearchService {
       baseFilters.push(this.buildHardTaxonomyScopeFilter(hardScopeCodes));
     }
 
+    // Counts run over the filters above, before the relevance cut adds an ids filter.
+    const countFilters = [...baseFilters];
+
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
@@ -468,7 +618,11 @@ export class HybridSearchService {
     let cutoff: RelevanceCutoffDto | undefined;
 
     if (cutoffRequested) {
-      const cacheKey = relevanceCutoffCacheKey({ ...identity, pinnedMode });
+      const cacheKey = relevanceCutoffCacheKey({
+        ...identity,
+        pinnedMode,
+        rankingVersion: v2 ? 'v2' : 'v1',
+      });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages.
@@ -483,6 +637,7 @@ export class HybridSearchService {
             predicted: predictedTaxonomies,
             filters: baseFilters,
             pinnedMode,
+            wordRarity,
           }),
         CUTOFF_PROBE_TTL_MS,
       );
@@ -522,6 +677,7 @@ export class HybridSearchService {
         coords,
         distance: distance ?? 0,
         pinnedMode,
+        wordRarity,
       });
       if (topScore > 0) {
         needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
@@ -543,9 +699,151 @@ export class HybridSearchService {
       pinnedMode,
       sort,
       extraShould: needShould,
+      wordRarity,
+      selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
     });
 
-    return { request, tenantFacets, cutoff, lang };
+    const countCodes = options.countCodes ?? [];
+    const countRequest: SearchRequest | undefined =
+      countCodes.length > 0
+        ? {
+            index,
+            preference,
+            size: 0,
+            track_total_hits: false,
+            // Filters alone define the matched population (should clauses only
+            // rank), so a plain filter query counts the same set.
+            query: { bool: { filter: countFilters } },
+            aggs: {
+              need_counts: {
+                terms: {
+                  field: 'sune_needs',
+                  include: countCodes,
+                  size: countCodes.length,
+                },
+              },
+            },
+          }
+        : undefined;
+
+    return { request, countRequest, tenantFacets, cutoff, lang };
+  }
+
+  /**
+   * Per-word idf over the tenant's documents, so the name edge tier weights a
+   * word by how rare it is instead of by how rare its prefix is among names.
+   * Never rejects: any failure returns null and the flat name match stays.
+   */
+  private async getWordRarity(
+    index: string,
+    tenantId: string,
+    lang: string,
+    queryStr: string,
+    preference: string,
+  ): Promise<WordRarity> {
+    if (queryStr.trim().length === 0) return null;
+    const words = contentWords(queryStr, lang);
+    if (words.length === 0) return { words: {}, splits: [] };
+
+    try {
+      // The factory throws on a bad response: RequestCacheService does not
+      // cache a rejected factory, so a failure is never cached.
+      return await this.requestCacheService.getOrSet(
+        wordRarityCacheKey(tenantId, lang, words),
+        async () => {
+          const buckets: Record<string, QueryDslQueryContainer> = {};
+          words.forEach((w, i) => {
+            buckets[`w${i}`] = {
+              multi_match: {
+                query: w,
+                type: 'phrase_prefix',
+                fields: WORD_RARITY_FIELDS,
+              },
+            };
+          });
+          // Split candidates ("foo dbank", "food bank", ...) are counted as
+          // exact phrases, so the index's own counts pick the real split.
+          let splitBuckets = 0;
+          const candidates: string[][] = words.map((w, i) => {
+            const phrases = splitCandidates(w).slice(
+              0,
+              Math.max(0, MAX_SPLIT_BUCKETS - splitBuckets),
+            );
+            phrases.forEach((phrase, k) => {
+              buckets[`s${i}_${k}`] = {
+                multi_match: {
+                  query: phrase,
+                  type: 'phrase',
+                  fields: WORD_RARITY_FIELDS,
+                },
+              };
+            });
+            splitBuckets += phrases.length;
+            return phrases;
+          });
+
+          const response = await this.metrics.observeDownstream(
+            'elasticsearch',
+            'hybrid_word_rarity',
+            () =>
+              this.elasticsearchService.search({
+                index,
+                preference,
+                size: 0,
+                track_total_hits: true,
+                query: { term: { tenant_id: tenantId } },
+                aggs: {
+                  df: { filters: { filters: buckets } },
+                },
+              }),
+          );
+
+          const total = response.hits?.total;
+          const n = typeof total === 'number' ? total : total?.value;
+          const counts = (response.aggregations as any)?.df?.buckets;
+          if (typeof n !== 'number' || !(n > 0) || !counts) {
+            throw new Error('malformed word rarity response');
+          }
+
+          const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };
+          words.forEach((w, i) => {
+            const df = counts[`w${i}`]?.doc_count;
+            if (typeof df !== 'number') {
+              throw new Error('malformed word rarity response');
+            }
+            rarity.words[w] = idf(n, df);
+
+            // Keep the most common split, and only when it is more common
+            // than the run-together word itself.
+            let best: { phrase: string; df: number } | null = null;
+            candidates[i].forEach((phrase, k) => {
+              const phraseDf = counts[`s${i}_${k}`]?.doc_count;
+              if (
+                typeof phraseDf === 'number' &&
+                (!best || phraseDf > best.df)
+              ) {
+                best = { phrase, df: phraseDf };
+              }
+            });
+            const top = best as { phrase: string; df: number } | null;
+            if (top && top.df > df && top.df > 0) {
+              rarity.splits.push({
+                word: w,
+                phrase: top.phrase,
+                idf: idf(n, top.df),
+              });
+            }
+          });
+          return rarity;
+        },
+        WORD_RARITY_TTL_MS,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Word rarity lookup failed, keeping flat name match: ${(error as Error).message}`,
+      );
+      return null;
+    }
   }
 
   async embedQuery(query: string): Promise<number[]> {
@@ -598,10 +896,12 @@ export class HybridSearchService {
     queryVector: number[],
     tenantId: string,
     preference: string,
+    exact: boolean,
   ): Promise<PredictedTaxonomy[]> {
     try {
       const result = await this.metrics.observeDownstream(
         'elasticsearch',
+        // Label stays 'taxonomy_knn' for dashboard continuity.
         'taxonomy_knn',
         () =>
           this.elasticsearchService.search<{
@@ -613,13 +913,33 @@ export class HybridSearchService {
             size: TAXONOMY_K,
             track_total_hits: false,
             _source: ['code', 'name'],
-            knn: {
-              field: 'embedding',
-              query_vector: queryVector,
-              k: TAXONOMY_K,
-              num_candidates: TAXONOMY_NUM_CANDIDATES,
-              filter: [{ term: { tenant_id: tenantId } }],
-            },
+            ...(exact
+              ? {
+                  // Exact cosine over the tenant's codes. (1 + cos) / 2 is the
+                  // same scale as the knn _score for cosine similarity, so
+                  // BASE_TAXONOMY_BOOST x score keeps its meaning. Approximate
+                  // knn matched the exact top 10 on 73% of 300 real queries
+                  // (ISS-2692).
+                  query: {
+                    script_score: {
+                      query: { term: { tenant_id: tenantId } },
+                      script: {
+                        source:
+                          "(cosineSimilarity(params.qv, 'embedding') + 1.0) / 2.0",
+                        params: { qv: queryVector },
+                      },
+                    },
+                  },
+                }
+              : {
+                  knn: {
+                    field: 'embedding',
+                    query_vector: queryVector,
+                    k: TAXONOMY_K,
+                    num_candidates: TAXONOMY_NUM_CANDIDATES,
+                    filter: [{ term: { tenant_id: tenantId } }],
+                  },
+                }),
           }),
       );
 
@@ -701,6 +1021,8 @@ export class HybridSearchService {
    * the analyzed root field, so proper nouns aren't corrupted by stemming.
    *
    * `includeEdge`  – true only for top-level `name` (edge-ngram sub-field).
+   *   Each content word adds boost x idf when a name word starts with it;
+   *   function words add nothing; a null `wordRarity` keeps the flat OR match.
    * `includePhrase` – enables mid-string phrase matching on `.clean`
    *   (match_phrase + match_phrase_prefix). Suppress for single-token org
    *   queries to avoid noisy mid-field token hits ("health" → every
@@ -710,7 +1032,11 @@ export class HybridSearchService {
     field: string,
     boost: number,
     queryStr: string,
-    opts: { includePhrase: boolean; includeEdge?: boolean },
+    opts: {
+      includePhrase: boolean;
+      includeEdge?: boolean;
+      wordRarity?: WordRarity;
+    },
   ): QueryDslQueryContainer[] {
     const queryLower = queryStr.toLowerCase();
     const clauses: QueryDslQueryContainer[] = [
@@ -718,9 +1044,50 @@ export class HybridSearchService {
       { prefix: { [`${field}.lc`]: { value: queryLower, boost } } },
     ];
     if (opts.includeEdge) {
-      clauses.push({
-        match: { [`${field}.edge`]: { query: queryStr, boost } },
-      });
+      if (opts.wordRarity == null) {
+        clauses.push({
+          match: { [`${field}.edge`]: { query: queryStr, boost } },
+        });
+      } else {
+        for (const [word, weight] of Object.entries(opts.wordRarity.words)) {
+          clauses.push({
+            constant_score: {
+              filter: { match: { [`${field}.edge`]: word } },
+              boost: boost * weight,
+            },
+          });
+        }
+        // JOIN: run-together names ("food bank near me" -> "Foodbank of
+        // Central New York", "my free taxes" -> "MyFreeTaxes.com"). A join
+        // covers its words, so it is worth their rarity together. This is the
+        // shingle method (Elasticsearch `shingle` with `token_separator: ""`),
+        // done in code so no index change is needed. Function words are not in
+        // `words`, so they add 0. `.clean` is lowercase + asciifolding with the
+        // standard tokenizer, so "MyFreeTaxes.com" is the token "myfreetaxes.com".
+        for (const { join, words } of adjacentJoins(queryStr)) {
+          const sum = words.reduce(
+            (a, w) => a + (opts.wordRarity!.words[w] ?? 0),
+            0,
+          );
+          if (sum <= 0) continue;
+          clauses.push({
+            constant_score: {
+              filter: { prefix: { [`${field}.clean`]: join } },
+              boost: boost * sum,
+            },
+          });
+        }
+        // SPLIT: the WordBreakSpellChecker method (Lucene), using the index's
+        // own counts: "foodbank" -> "food bank".
+        for (const split of opts.wordRarity.splits) {
+          clauses.push({
+            constant_score: {
+              filter: { match_phrase: { [`${field}.clean`]: split.phrase } },
+              boost: boost * split.idf,
+            },
+          });
+        }
+      }
     }
     if (opts.includePhrase) {
       clauses.push({
@@ -735,6 +1102,7 @@ export class HybridSearchService {
 
   private buildLexicalShouldClauses(
     queryStr: string,
+    wordRarity: WordRarity = null,
   ): QueryDslQueryContainer[] {
     // Phrase clauses on org name are noisy for single-token queries: "health"
     // would match every "X Health Center" even when its services are unrelated.
@@ -776,6 +1144,7 @@ export class HybridSearchService {
       ...this.buildNameTierClauses('name', BM25_NAME_BOOST, queryStr, {
         includePhrase: true,
         includeEdge: true,
+        wordRarity,
       }),
       // Service name tier
       ...this.buildNameTierClauses(
@@ -793,6 +1162,16 @@ export class HybridSearchService {
       ),
       // General stemmed recall fallback on analyzed fields (low implicit boost)
       recallClause,
+      // SPLIT recall: lets "foodbank" score documents that say "food bank".
+      // Membership is unchanged: the main query has minimum_should_match 0.
+      // Plain BM25, no boost.
+      ...(wordRarity?.splits ?? []).map((split): QueryDslQueryContainer => ({
+        multi_match: {
+          query: split.phrase,
+          type: 'phrase',
+          fields: generalFields,
+        },
+      })),
       // Typo tolerance belongs on the recall clause: the name tiers above are
       // phrase/prefix by design, and the use_references clause below is
       // curated, where an approximate match defeats the curation.
@@ -890,13 +1269,23 @@ export class HybridSearchService {
     sortOption: SearchResourcesQueryDto['sort'],
     coords: number[] | undefined,
     pinnedMode: PinnedResourcesMode,
+    selectedNeeds: string[] = [],
   ): Sort {
     return SearchUtilsService.buildSortClause({
       fields: HYBRID_SORT_FIELDS,
       sortOption,
       coords,
-      leadingTiers:
-        pinnedMode === 'top' ? [{ pinned: 'desc' }, { priority: 'desc' }] : [],
+      leadingTiers: [
+        ...(selectedNeeds.length > 0
+          ? [buildNeedBlockSort(selectedNeeds)]
+          : []),
+        ...(pinnedMode === 'top'
+          ? [
+              { pinned: 'desc' } as SortCombinations,
+              { priority: 'desc' } as SortCombinations,
+            ]
+          : []),
+      ],
     });
   }
 
@@ -929,6 +1318,7 @@ export class HybridSearchService {
     predicted: PredictedTaxonomy[];
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
+    wordRarity: WordRarity;
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
     const {
       index,
@@ -938,10 +1328,11 @@ export class HybridSearchService {
       predicted,
       filters,
       pinnedMode,
+      wordRarity,
     } = args;
 
     const should = [
-      ...(queryStr ? this.buildLexicalShouldClauses(queryStr) : []),
+      ...(queryStr ? this.buildLexicalShouldClauses(queryStr, wordRarity) : []),
       ...this.buildTaxonomyBoostClauses(predicted, queryStr),
       ...(pinnedMode === 'ignore'
         ? []
@@ -1165,6 +1556,7 @@ export class HybridSearchService {
     coords: number[] | undefined;
     distance: number;
     pinnedMode: PinnedResourcesMode;
+    wordRarity: WordRarity;
   }): Promise<number> {
     const { index, preference, ...queryArgs } = args;
     try {
@@ -1226,6 +1618,8 @@ export class HybridSearchService {
     pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
+    wordRarity: WordRarity;
+    selectedNeeds?: string[];
   }): SearchRequest {
     const {
       index,
@@ -1242,9 +1636,16 @@ export class HybridSearchService {
       pinnedMode,
       sort: sortOption,
       extraShould,
+      wordRarity,
+      selectedNeeds,
     } = args;
 
-    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+    const sort = this.buildHybridSort(
+      sortOption,
+      coords,
+      pinnedMode,
+      selectedNeeds,
+    );
 
     const esQuery = this.buildHybridScoredQuery({
       queryStr,
@@ -1255,6 +1656,7 @@ export class HybridSearchService {
       distance,
       pinnedMode,
       extraShould,
+      wordRarity,
     });
 
     return {
@@ -1266,6 +1668,13 @@ export class HybridSearchService {
       _source: {
         excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
       },
+      ...(selectedNeeds && selectedNeeds.length > 0
+        ? {
+            script_fields: {
+              matched_needs: buildMatchedNeedsField(selectedNeeds),
+            },
+          }
+        : {}),
       aggs,
       query: esQuery,
       sort,
@@ -1281,6 +1690,7 @@ export class HybridSearchService {
     distance: number;
     pinnedMode: PinnedResourcesMode;
     extraShould?: QueryDslQueryContainer[];
+    wordRarity: WordRarity;
   }): QueryDslQueryContainer {
     const {
       queryStr,
@@ -1291,12 +1701,13 @@ export class HybridSearchService {
       distance,
       pinnedMode,
       extraShould,
+      wordRarity,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
     // geo + taxonomy boosts still produce a valid ranked, counted, paginated set.
     const lexicalShould = queryStr
-      ? this.buildLexicalShouldClauses(queryStr)
+      ? this.buildLexicalShouldClauses(queryStr, wordRarity)
       : [];
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted, queryStr);
     // When pinned_resources_mode is `boost`, pinned becomes a small additive
