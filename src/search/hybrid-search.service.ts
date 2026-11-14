@@ -46,6 +46,8 @@ import {
   splitCandidates,
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
+import { assertV2QueryLength, describeQueryForLog } from './internal/query-log';
+import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
@@ -224,6 +226,9 @@ const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 // Word rarity moves slowly (corpus-wide document counts), so a day is fresh enough.
 const WORD_RARITY_TTL_MS = 24 * 60 * 60 * 1000;
 
+// At most this many per-word rarity entries per process; the oldest go first.
+export const MAX_WORD_RARITY_CACHE_ENTRIES = 20000;
+
 /**
  * `words`: idf weight per query content word. `splits`: run-together words
  * the index itself says are usually written as two words ("foodbank" ->
@@ -235,6 +240,12 @@ type WordRarity = {
   words: Record<string, number>;
   splits: { word: string; phrase: string; idf: number }[];
 } | null;
+
+/** What one word contributes: its idf and its best split, if any. Cached per word. */
+type WordRarityEntry = {
+  idf: number;
+  split: { phrase: string; idf: number } | null;
+};
 
 const MAX_SPLIT_BUCKETS = 60;
 
@@ -251,6 +262,9 @@ export class HybridSearchService {
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
   private readonly needBoostEnabled: boolean;
+  private wordRarityKeys = new BoundedKeyRegistry(
+    MAX_WORD_RARITY_CACHE_ENTRIES,
+  );
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -415,6 +429,7 @@ export class HybridSearchService {
     const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
+    if (v2) assertV2QueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
@@ -434,7 +449,7 @@ export class HybridSearchService {
     const preference = shardPreference('hybrid', searchFingerprint(identity));
 
     this.logger.debug(
-      `Hybrid search — tenant=${tenantId}, index=${index}, query="${queryStr}"`,
+      `Hybrid search — tenant=${tenantId}, index=${index}, query: ${describeQueryForLog(queryStr)}`,
     );
 
     // Browse mode (empty query): skip embedding — many embedding servers 400 on
@@ -470,7 +485,7 @@ export class HybridSearchService {
       : [];
 
     this.logger.log(
-      `[Hybrid search] - query="${queryStr}" | predicted codes: [${predictedTaxonomies
+      `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
         .map((t) => t.code)
         .join(', ')}] | names: [${predictedTaxonomies
         .map((t) => t.name)
@@ -602,6 +617,8 @@ export class HybridSearchService {
   /**
    * Per-word idf over the tenant's documents, so the name edge tier weights a
    * word by how rare it is instead of by how rare its prefix is among names.
+   * Cached per word: one multi-get for all words, one Elasticsearch probe for
+   * the words that missed, one multi-set for what the probe found.
    * Never rejects: any failure returns null and the flat name match stays.
    */
   private async getWordRarity(
@@ -616,104 +633,155 @@ export class HybridSearchService {
     if (words.length === 0) return { words: {}, splits: [] };
 
     try {
-      // The factory throws on a bad response: RequestCacheService does not
-      // cache a rejected factory, so a failure is never cached.
-      return await this.requestCacheService.getOrSet(
-        wordRarityCacheKey(tenantId, lang, words),
-        async () => {
-          const buckets: Record<string, QueryDslQueryContainer> = {};
-          words.forEach((w, i) => {
-            buckets[`w${i}`] = {
-              multi_match: {
-                query: w,
-                type: 'phrase_prefix',
-                fields: WORD_RARITY_FIELDS,
-              },
-            };
-          });
-          // Split candidates ("foo dbank", "food bank", ...) are counted as
-          // exact phrases, so the index's own counts pick the real split.
-          let splitBuckets = 0;
-          const candidates: string[][] = words.map((w, i) => {
-            const phrases = splitCandidates(w).slice(
-              0,
-              Math.max(0, MAX_SPLIT_BUCKETS - splitBuckets),
-            );
-            phrases.forEach((phrase, k) => {
-              buckets[`s${i}_${k}`] = {
-                multi_match: {
-                  query: phrase,
-                  type: 'phrase',
-                  fields: WORD_RARITY_FIELDS,
-                },
-              };
-            });
-            splitBuckets += phrases.length;
-            return phrases;
-          });
+      const keys = words.map((w) => wordRarityCacheKey(tenantId, lang, w));
+      const cached =
+        await this.requestCacheService.getMany<WordRarityEntry>(keys);
+      const entries = new Map<string, WordRarityEntry>();
+      const missing: string[] = [];
+      words.forEach((w, i) => {
+        const hit = cached[i];
+        if (hit && typeof hit.idf === 'number') entries.set(w, hit);
+        else missing.push(w);
+      });
 
-          const response = await this.metrics.observeDownstream(
-            'elasticsearch',
-            'hybrid_word_rarity',
-            () =>
-              this.elasticsearchService.search({
-                index,
-                preference,
-                size: 0,
-                track_total_hits: true,
-                query: { term: { tenant_id: tenantId } },
-                aggs: {
-                  df: { filters: { filters: buckets } },
-                },
-              }),
-          );
-
-          const total = response.hits?.total;
-          const n = typeof total === 'number' ? total : total?.value;
-          const counts = (response.aggregations as any)?.df?.buckets;
-          if (typeof n !== 'number' || !(n > 0) || !counts) {
-            throw new Error('malformed word rarity response');
+      if (missing.length > 0) {
+        // A failed probe throws, so nothing is written to the cache.
+        const probed = await this.probeWordRarity(
+          index,
+          tenantId,
+          missing,
+          preference,
+        );
+        const toCache: Record<string, WordRarityEntry> = {};
+        for (const [w, probe] of probed) {
+          entries.set(w, probe.entry);
+          if (probe.complete) {
+            toCache[wordRarityCacheKey(tenantId, lang, w)] = probe.entry;
           }
+        }
+        await this.requestCacheService.setMany(toCache, WORD_RARITY_TTL_MS);
+        await this.requestCacheService.deleteMany(
+          this.wordRarityKeys.add(Object.keys(toCache)),
+        );
+      }
 
-          const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };
-          words.forEach((w, i) => {
-            const df = counts[`w${i}`]?.doc_count;
-            if (typeof df !== 'number') {
-              throw new Error('malformed word rarity response');
-            }
-            rarity.words[w] = idf(n, df);
-
-            // Keep the most common split, and only when it is more common
-            // than the run-together word itself.
-            let best: { phrase: string; df: number } | null = null;
-            candidates[i].forEach((phrase, k) => {
-              const phraseDf = counts[`s${i}_${k}`]?.doc_count;
-              if (
-                typeof phraseDf === 'number' &&
-                (!best || phraseDf > best.df)
-              ) {
-                best = { phrase, df: phraseDf };
-              }
-            });
-            const top = best as { phrase: string; df: number } | null;
-            if (top && top.df > df && top.df > 0) {
-              rarity.splits.push({
-                word: w,
-                phrase: top.phrase,
-                idf: idf(n, top.df),
-              });
-            }
-          });
-          return rarity;
-        },
-        WORD_RARITY_TTL_MS,
-      );
+      const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };
+      for (const w of words) {
+        const entry = entries.get(w)!;
+        rarity.words[w] = entry.idf;
+        if (entry.split) rarity.splits.push({ word: w, ...entry.split });
+      }
+      return rarity;
     } catch (error) {
       this.logger.warn(
         `Word rarity lookup failed, keeping flat name match: ${(error as Error).message}`,
       );
       return null;
     }
+  }
+
+  /**
+   * One size-0 Elasticsearch request that counts documents for every word and
+   * for every split candidate of those words. `complete` is false for a word
+   * whose split candidates were cut by MAX_SPLIT_BUCKETS: that entry is right
+   * for this request only, so it is not cached.
+   */
+  private async probeWordRarity(
+    index: string,
+    tenantId: string,
+    words: string[],
+    preference: string,
+  ): Promise<Map<string, { entry: WordRarityEntry; complete: boolean }>> {
+    const buckets: Record<string, QueryDslQueryContainer> = {};
+    words.forEach((w, i) => {
+      buckets[`w${i}`] = {
+        multi_match: {
+          query: w,
+          type: 'phrase_prefix',
+          fields: WORD_RARITY_FIELDS,
+        },
+      };
+    });
+    // Split candidates ("foo dbank", "food bank", ...) are counted as exact
+    // phrases, so the index's own counts pick the real split.
+    let splitBuckets = 0;
+    const candidates: string[][] = [];
+    const complete: boolean[] = [];
+    words.forEach((w, i) => {
+      const all = splitCandidates(w);
+      const phrases = all.slice(
+        0,
+        Math.max(0, MAX_SPLIT_BUCKETS - splitBuckets),
+      );
+      phrases.forEach((phrase, k) => {
+        buckets[`s${i}_${k}`] = {
+          multi_match: {
+            query: phrase,
+            type: 'phrase',
+            fields: WORD_RARITY_FIELDS,
+          },
+        };
+      });
+      splitBuckets += phrases.length;
+      candidates.push(phrases);
+      complete.push(phrases.length === all.length);
+    });
+
+    const response = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'hybrid_word_rarity',
+      () =>
+        this.elasticsearchService.search({
+          index,
+          preference,
+          size: 0,
+          track_total_hits: true,
+          query: { term: { tenant_id: tenantId } },
+          aggs: {
+            df: { filters: { filters: buckets } },
+          },
+        }),
+    );
+
+    const total = response.hits?.total;
+    const n = typeof total === 'number' ? total : total?.value;
+    const counts = (response.aggregations as any)?.df?.buckets;
+    if (typeof n !== 'number' || !(n > 0) || !counts) {
+      throw new Error('malformed word rarity response');
+    }
+
+    const out = new Map<
+      string,
+      { entry: WordRarityEntry; complete: boolean }
+    >();
+    words.forEach((w, i) => {
+      const df = counts[`w${i}`]?.doc_count;
+      if (typeof df !== 'number') {
+        throw new Error('malformed word rarity response');
+      }
+
+      // Keep the most common split, and only when it is more common than the
+      // run-together word itself.
+      let best: { phrase: string; df: number } | null = null;
+      candidates[i].forEach((phrase, k) => {
+        const phraseDf = counts[`s${i}_${k}`]?.doc_count;
+        if (typeof phraseDf === 'number' && (!best || phraseDf > best.df)) {
+          best = { phrase, df: phraseDf };
+        }
+      });
+      const top = best as { phrase: string; df: number } | null;
+      out.set(w, {
+        entry: {
+          idf: idf(n, df),
+          split:
+            top && top.df > df && top.df > 0
+              ? { phrase: top.phrase, idf: idf(n, top.df) }
+              : null,
+        },
+        complete: complete[i],
+      });
+    });
+    return out;
   }
 
   async embedQuery(query: string): Promise<number[]> {

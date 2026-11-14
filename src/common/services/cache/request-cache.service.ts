@@ -71,4 +71,63 @@ export class RequestCacheService {
 
     return result;
   }
+
+  /**
+   * Reads many keys with one cache round trip. Values come back in key order;
+   * a miss is `undefined`. Never rejects: a cache failure counts as all misses.
+   */
+  async getMany<T>(keys: string[]): Promise<Array<T | undefined>> {
+    if (keys.length === 0) return [];
+    try {
+      const values = await this.cacheManager.mget<T>(keys);
+      return keys.map((key, i) => {
+        const value = values[i];
+        if (value === undefined || value === null) {
+          this.metrics.recordCacheAccess('request-redis', 'miss');
+          return undefined;
+        }
+        this.logger.debug(`Redis cache hit: ${key}`);
+        this.metrics.recordCacheAccess('request-redis', 'hit');
+        return value;
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Redis cache mget failed for ${keys.length} keys: ${error}`,
+      );
+      this.metrics.recordCacheAccess('request-redis', 'get-error');
+      return keys.map(() => undefined);
+    }
+  }
+
+  /** Writes many keys with one lifetime. Never rejects. */
+  async setMany(
+    entries: Record<string, unknown>,
+    ttlMs = DEFAULT_CACHE_TTL_MS,
+  ): Promise<void> {
+    const list = Object.entries(entries).map(([key, value]) => ({
+      key,
+      value,
+      ttl: ttlMs,
+    }));
+    if (list.length === 0) return;
+    try {
+      await this.cacheManager.mset(list);
+    } catch (error) {
+      this.logger.warn(
+        `Redis cache mset failed for ${list.length} keys: ${error}`,
+      );
+    }
+  }
+
+  /** Deletes many keys with one cache round trip. Never rejects. */
+  async deleteMany(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    try {
+      await this.cacheManager.mdel(keys);
+    } catch (error) {
+      this.logger.warn(
+        `Redis cache mdel failed for ${keys.length} keys: ${error}`,
+      );
+    }
+  }
 }

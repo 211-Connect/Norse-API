@@ -39,6 +39,18 @@ describe('word-rarity', () => {
       ]);
     });
 
+    it('drops English function words for a region form of English', () => {
+      expect(contentWords('my boyfriend hits me', 'en-US')).toEqual([
+        'boyfriend',
+        'hits',
+      ]);
+      expect(contentWords('i couldnt leave', 'en-GB')).toEqual(['leave']);
+    });
+
+    it('drops the contraction forms the earlier list missed', () => {
+      expect(contentWords("he wouldn't leave me", 'en')).toEqual(['leave']);
+    });
+
     it('keeps every word for other languages', () => {
       expect(contentWords('my boyfriend', 'es')).toEqual(['my', 'boyfriend']);
     });
