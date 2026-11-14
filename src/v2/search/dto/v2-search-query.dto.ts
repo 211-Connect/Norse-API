@@ -4,6 +4,7 @@ import {
   IsArray,
   IsIn,
   IsOptional,
+  IsString,
   Validate,
   ValidationArguments,
   ValidatorConstraint,
@@ -20,6 +21,12 @@ export const V2_URGENCY_CODES = [
   'U-4',
   'U-X',
 ] as const;
+// Longest accepted `query`. Elasticsearch rejects a prefix query longer than
+// 1000 characters (index.max_regex_length), so a longer query was a 500 (break
+// run 2026-11-14: 1200 characters of "the "). Also protects the logs and the
+// embedding call from a pasted transcript (David, Norse-API PR #278 review).
+// The classify call still cuts the text to 512 characters.
+export const V2_QUERY_MAX_LENGTH = 1000;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
 // Only `off` exists: a request can turn AI classification off for itself, never on.
 export const V2_CLASSIFY_VALUES = ['off'] as const;
@@ -30,6 +37,47 @@ function unknownCodes(value: unknown): string[] {
   return value.filter(
     (v): v is string => typeof v === 'string' && !isKnownCode(v),
   );
+}
+
+// Counts UTF-16 code units, as Elasticsearch does: an emoji counts as 2.
+// class-validator's MaxLength counts an emoji as 1, so it lets 1000 emoji through.
+@ValidatorConstraint({ name: 'queryLength', async: false })
+class QueryLengthConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return typeof value !== 'string' || value.length <= V2_QUERY_MAX_LENGTH;
+  }
+  defaultMessage(): string {
+    return `query must be at most ${V2_QUERY_MAX_LENGTH} characters`;
+  }
+}
+
+/** `"lon,lat"` to `[lon, lat]`; anything else is left as is for the validator. */
+export function toCoords(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const parts = value.split(',');
+  if (parts.length !== 2 || parts.some((p) => p.trim() === '')) return value;
+  return parts.map((p) => Number(p));
+}
+
+@ValidatorConstraint({ name: 'isCoords', async: false })
+class CoordsConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (!Array.isArray(value) || value.length !== 2) return false;
+    const [lon, lat] = value as unknown[];
+    return (
+      typeof lon === 'number' &&
+      typeof lat === 'number' &&
+      Number.isFinite(lon) &&
+      Number.isFinite(lat) &&
+      lon >= -180 &&
+      lon <= 180 &&
+      lat >= -90 &&
+      lat <= 90
+    );
+  }
+  defaultMessage(): string {
+    return 'coords must be longitude,latitude with longitude -180 to 180 and latitude -90 to 90';
+  }
 }
 
 @ValidatorConstraint({ name: 'isSelectableNeedCode', async: false })
@@ -79,7 +127,38 @@ export function toCodeList(value: unknown): unknown {
  */
 export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   'query_type',
+  'query',
+  'coords',
 ] as const) {
+  // v1 drops a malformed coords value and passes any number through, so
+  // `Infinity,0` was a 500 and `200,100` searched an impossible point (break
+  // run 2026-11-14). v2 keeps the v1 format and rejects the rest with a 400.
+  @ApiPropertyOptional({
+    description: 'Comma-delimited longitude,latitude',
+    example: '-120.740135,47.751076',
+  })
+  @IsOptional()
+  @Transform(({ value }) => toCoords(value))
+  @Validate(CoordsConstraint)
+  coords?: [number, number];
+
+  // v1 also takes a string array or an AND/OR object. v2 has no use for them:
+  // they reached the search as "food,rent" or "[object Object]" (break run
+  // 2026-11-14). ADR 0039 OpenAPI draft types query as a string.
+  @ApiPropertyOptional({
+    type: String,
+    default: '',
+    maxLength: V2_QUERY_MAX_LENGTH,
+    description:
+      'Free text. A repeated parameter or an AND/OR object is a 400.',
+  })
+  @IsOptional()
+  @IsString({
+    message: 'query must be a string (one query parameter, plain text)',
+  })
+  @Validate(QueryLengthConstraint)
+  query: string = '';
+
   @ApiPropertyOptional({
     type: [String],
     description:

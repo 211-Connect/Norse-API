@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
@@ -76,6 +77,71 @@ function build(opts: {
 }
 
 describe('V2SearchService', () => {
+  // Break run 2026-11-14: accept-language xx-YY was a 500, because the index
+  // hybrid_search_resources_xx does not exist.
+  it('turns a missing language index into a 400 that names the language', async () => {
+    const notFound = Object.assign(new Error('index_not_found_exception'), {
+      meta: {
+        statusCode: 404,
+        body: { error: { type: 'index_not_found_exception' } },
+      },
+    });
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(notFound),
+    });
+    const err = await service
+      .search({
+        headers: { ...headers, 'accept-language': 'xx-YY' } as HeadersDto,
+        query: dto({ query: 'food' }),
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'no search index for accept-language xx-YY',
+    );
+  });
+
+  // Break run 2026-11-14: 500 emoji (1000 UTF-16 units, under the cap) made
+  // Elasticsearch fail with "input automaton is too large", a 500.
+  it.each([
+    'failed to create query: input automaton is too large: 1001',
+    'failed to create query: The length of prefix [1200] used in the Prefix Query request has exceeded the allowed maximum of [1000].',
+  ])('turns a query-too-large search error into a 400 (%s)', async (reason) => {
+    const tooLarge = Object.assign(
+      new Error('search_phase_execution_exception'),
+      {
+        meta: {
+          statusCode: 400,
+          body: {
+            error: {
+              type: 'search_phase_execution_exception',
+              root_cause: [{ type: 'query_shard_exception', reason }],
+            },
+          },
+        },
+      },
+    );
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(tooLarge),
+    });
+    const err = await service
+      .search({ headers, query: dto({ query: '😀'.repeat(500) }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'query is too long for search',
+    );
+  });
+
+  it('rethrows other search errors unchanged', async () => {
+    const boom = new Error('boom');
+    const { service } = build({ search: jest.fn().mockRejectedValue(boom) });
+    await expect(
+      service.search({ headers, query: dto({ query: 'food' }) }),
+    ).rejects.toBe(boom);
+  });
+
   it('skips classify when there is no text and still searches', async () => {
     const { service, classify, searchHybrid } = build({});
     const res = await service.search({ headers, query: dto({ query: '   ' }) });
@@ -94,7 +160,7 @@ describe('V2SearchService', () => {
     const { service, classify } = build({});
     const res = await service.search({
       headers,
-      query: dto({ query } as Partial<V2SearchQueryDto>),
+      query: dto({ query } as unknown as Partial<V2SearchQueryDto>),
     });
     expect(classify).not.toHaveBeenCalled();
     expect(res.intent.query).toBeNull();
