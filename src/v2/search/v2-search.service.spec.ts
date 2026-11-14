@@ -9,6 +9,8 @@ import {
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 
 const golden: {
   rows: {
@@ -56,15 +58,21 @@ const errorResult = (): ClassifyResult => ({
   modelVersion: null,
 });
 
-function build(opts: { classify?: jest.Mock; search?: jest.Mock }) {
+function build(opts: {
+  classify?: jest.Mock;
+  search?: jest.Mock;
+  searchConfig?: SearchConfigCache;
+}) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
     opts.search ?? jest.fn().mockResolvedValue(hybridResponse());
+  const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid } as unknown as HybridSearchService,
+    { getSearchConfig } as unknown as TenantConfigService,
   );
-  return { service, classify, searchHybrid };
+  return { service, classify, searchHybrid, getSearchConfig };
 }
 
 describe('V2SearchService', () => {
@@ -558,6 +566,11 @@ describe('V2SearchService', () => {
 });
 
 // Lucas 2026-11-13 (question 14): AI classification off for a tenant.
+// Payload writes the tenant's search engine to `search_config:<tenant>` as
+// `search_engine`; anything but `ai_classification` means AI classification off.
+const TENANT_OFF: SearchConfigCache = { search_engine: 'hybrid' };
+const TENANT_ON: SearchConfigCache = { search_engine: 'ai_classification' };
+
 describe('V2SearchService with AI classification off', () => {
   const strong = { 'N-HOU': 0.95, 'N-HOU-01': 0.99, 'N-FOD-01': 0.5 };
   const result = (emergencyScore: number) =>
@@ -579,11 +592,11 @@ describe('V2SearchService with AI classification off', () => {
   it('off: classify runs once, no need guess, no boost, no question', async () => {
     const { service, classify, searchHybrid } = build({
       classify: jest.fn().mockResolvedValue(result(0.001)),
+      searchConfig: TENANT_OFF,
     });
     const res = await service.search({
       headers,
       query: dto({ query: 'x' }),
-      aiClassification: 'off',
     });
     expect(classify).toHaveBeenCalledTimes(1);
     expect(res.intent.needs).toEqual([]);
@@ -601,11 +614,11 @@ describe('V2SearchService with AI classification off', () => {
   it('off: the emergency question and hotlines still appear', async () => {
     const { service } = build({
       classify: jest.fn().mockResolvedValue(result(0.9)),
+      searchConfig: TENANT_OFF,
     });
     const res = await service.search({
       headers,
       query: dto({ query: 'x' }),
-      aiClassification: 'off',
     });
     expect(res.clarification.questions.map((q) => q.id)).toEqual(['emergency']);
     expect(
@@ -615,16 +628,102 @@ describe('V2SearchService with AI classification off', () => {
   it('off: caller needs still boost and make blocks', async () => {
     const { service, searchHybrid } = build({
       classify: jest.fn().mockResolvedValue(result(0.001)),
+      searchConfig: TENANT_OFF,
     });
     await service.search({
       headers,
       query: dto({ query: 'x', needs: ['N-FOD-01'] }),
-      aiClassification: 'off',
     });
     const arg = searchHybrid.mock.calls[0][0];
     expect(arg.needScores).toEqual([
       { code: 'N-FOD-01', tier: 'tier2', score: 1 },
     ]);
     expect(arg.selectedNeeds).toEqual(['N-FOD-01']);
+  });
+
+  describe('where the setting comes from (tenant setting and classify=off)', () => {
+    const classifyArg = (m: jest.Mock) => m.mock.calls[0][2];
+    const guessUsed = (res: { intent: { needs: { source: string }[] } }) =>
+      res.intent.needs.some((n) => n.source === 'inferred');
+
+    it('reads the setting for the request tenant through getSearchConfig', async () => {
+      const { service, getSearchConfig } = build({});
+      await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(getSearchConfig).toHaveBeenCalledWith(headers['x-tenant-id']);
+    });
+    it('no setting in the Redis value: AI classification stays on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: {},
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('on');
+      expect(guessUsed(res)).toBe(true);
+    });
+    it('tenant setting ai_classification: on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_ON,
+      });
+      await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('on');
+    });
+    it('tenant setting off: off, with no request parameter', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_OFF,
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
+    });
+    it('classify=off turns it off for one request on a tenant that is on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_ON,
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
+    });
+    it('classify=off works when the tenant has no setting at all', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+      });
+      await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(classifyArg(classify)).toBe('off');
+    });
+    it('the request cannot turn it on for a tenant that is off', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_OFF,
+      });
+      // `classify` has only the value `off`; no value can switch it on.
+      for (const value of [undefined, 'on', 'auto'] as never[]) {
+        classify.mockClear();
+        const res = await service.search({
+          headers,
+          query: dto({ query: 'x', classify: value }),
+        });
+        expect(classifyArg(classify)).toBe('off');
+        expect(guessUsed(res)).toBe(false);
+      }
+    });
+    it('keeps classify out of the v1 query', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(searchHybrid.mock.calls[0][0].query).not.toHaveProperty(
+        'classify',
+      );
+    });
   });
 });

@@ -101,4 +101,12 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ clarify: 'always' }).props).toContain('clarify');
     expect(parse({ clarify: 'never' }).errors).toEqual([]);
   });
+
+  it('classify accepts only off; absent stays undefined; any other value is a 400', () => {
+    expect(parse({ classify: 'off' }).errors).toEqual([]);
+    expect(parse({ classify: 'off' }).dto.classify).toBe('off');
+    expect(parse({ query: 'rent' }).dto.classify).toBeUndefined();
+    for (const bad of ['on', 'auto', 'OFF', '', 'false'])
+      expect(parse({ classify: bad }).props).toContain('classify');
+  });
 });
