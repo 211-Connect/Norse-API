@@ -46,6 +46,7 @@ import {
   splitCandidates,
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
+import { assertV2QueryLength, describeQueryForLog } from './internal/query-log';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
@@ -421,6 +422,7 @@ export class HybridSearchService {
     const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
+    if (v2) assertV2QueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
@@ -476,7 +478,7 @@ export class HybridSearchService {
       : [];
 
     this.logger.log(
-      `[Hybrid search] - query="${queryStr}" | predicted codes: [${predictedTaxonomies
+      `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
         .map((t) => t.code)
         .join(', ')}] | names: [${predictedTaxonomies
         .map((t) => t.name)

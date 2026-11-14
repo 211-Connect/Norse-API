@@ -1125,6 +1125,65 @@ describe('HybridSearchService', () => {
     });
   });
 
+  describe('query length and logging (ISS-2739 follow-up)', () => {
+    const long = (n: number) => `shelter ${'z'.repeat(n)}`;
+
+    it('v2 rejects a query over 500 characters with a 400', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: long(600) },
+          rankingVersion: 'v2',
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(esSearch).not.toHaveBeenCalled();
+    });
+
+    it('v2 accepts a query of exactly 500 characters', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: 'a'.repeat(500) },
+          rankingVersion: 'v2',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('v1 still accepts a long query', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: long(5000) },
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['v1', undefined],
+      ['v2', 'v2' as const],
+    ])(
+      '%s info log carries length, id and 40 characters, never the full text',
+      async (_n, rankingVersion) => {
+        const logSpy = jest.spyOn((service as any).logger, 'log');
+        const text = `help ${'q'.repeat(300)}`;
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: text },
+          rankingVersion,
+        });
+        const lines = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(lines.length).toBeGreaterThan(0);
+        for (const line of lines) {
+          expect(line).not.toContain(text);
+          expect(line).not.toContain('q'.repeat(41));
+        }
+        expect(lines.join('\n')).toMatch(
+          /len=305 id=[0-9a-f]{12} start="help q+"/,
+        );
+      },
+    );
+  });
+
   describe('v1 is unchanged without rankingVersion (/search regression guard)', () => {
     const collect = (node: any, pred: (n: any) => boolean, out: any[] = []) => {
       if (Array.isArray(node)) node.forEach((n) => collect(n, pred, out));
