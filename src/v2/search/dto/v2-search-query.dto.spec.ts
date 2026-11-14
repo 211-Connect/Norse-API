@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { V2SearchQueryDto } from './v2-search-query.dto';
+import { V2_QUERY_MAX_LENGTH, V2SearchQueryDto } from './v2-search-query.dto';
 
 const parse = (raw: Record<string, unknown>) => {
   const dto = plainToInstance(V2SearchQueryDto, raw);
@@ -108,5 +108,65 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ query: 'rent' }).dto.classify).toBeUndefined();
     for (const bad of ['on', 'auto', 'OFF', '', 'false'])
       expect(parse({ classify: bad }).props).toContain('classify');
+  });
+
+  // Break run 2026-11-14 (HANDOFF-ASSETS/v2-search--eval-data/break-v2-2026-11-14):
+  // `query[]=food&query[]=rent` and `query[OR][]=...` reached the search as the
+  // text "food,rent" and "[object Object]". The v2 contract types query as a string.
+  it('rejects a query that is not a string (array or AND/OR object) with a reason', () => {
+    for (const bad of [['food', 'rent'], { OR: ['food', 'rent'] }, 5]) {
+      const r = parse({ query: bad });
+      expect(r.props).toContain('query');
+      expect(JSON.stringify(r.errors[0].constraints)).toContain(
+        'query must be a string',
+      );
+    }
+  });
+
+  it('accepts a plain string query and the empty default', () => {
+    expect(parse({ query: 'food pantry' }).errors).toEqual([]);
+    expect(parse({}).errors).toEqual([]);
+    expect(parse({}).dto.query).toBe('');
+  });
+
+  it('caps query at V2_QUERY_MAX_LENGTH characters (David, PR #278 review)', () => {
+    expect(V2_QUERY_MAX_LENGTH).toBe(1000);
+    expect(parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH) }).errors).toEqual(
+      [],
+    );
+    const r = parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH + 1) });
+    expect(r.props).toContain('query');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain('1000');
+  });
+
+  it('counts an emoji as 2 characters, as Elasticsearch does', () => {
+    expect(parse({ query: '😀'.repeat(500) }).errors).toEqual([]);
+    expect(parse({ query: '😀'.repeat(501) }).props).toContain('query');
+  });
+
+  // Break run 2026-11-14: coords=Infinity,0 was a 500 (Elasticsearch geo error);
+  // coords=200,100 searched with an impossible point; coords=abc,def was dropped.
+  it.each([
+    'Infinity,0',
+    '200,100',
+    '-87.6,95',
+    'abc,def',
+    '1,2,3',
+    'NaN,NaN',
+    '-87.6',
+  ])('rejects coords %p with a 400 reason', (coords) => {
+    const r = parse({ coords });
+    expect(r.props).toContain('coords');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain(
+      'coords must be longitude,latitude',
+    );
+  });
+
+  it('accepts coords in range and keeps the v1 [lon, lat] shape', () => {
+    const r = parse({ coords: '-87.6298,41.8781' });
+    expect(r.errors).toEqual([]);
+    expect(r.dto.coords).toEqual([-87.6298, 41.8781]);
+    expect(parse({ coords: '180,-90' }).errors).toEqual([]);
+    expect(parse({}).dto.coords).toBeUndefined();
   });
 });
