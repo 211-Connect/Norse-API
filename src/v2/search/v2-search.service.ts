@@ -15,6 +15,8 @@ import {
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -38,33 +40,57 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
 
 /**
- * The tenant "AI classification" setting the route uses until Norse-API can
- * read a real per-tenant value (ADR 0039 Decision 52). No server-readable
- * source exists today: Payload keeps `searchEngine` on the resource directory
- * but does not push it to the Redis `search_config:<tenant>` key.
+ * Tenant setting "AI classification off" (ADR 0039 Decisions 52, 60), read from
+ * the `search_config:<tenant>` Redis value that Payload writes. Off when the
+ * tenant's `search_engine` is a known value other than `ai_classification`.
+ * Missing, null or unknown is on, so a tenant is never switched off by a gap.
  */
-export const DEFAULT_AI_CLASSIFICATION: AiClassificationSetting = 'on';
+export function tenantAiClassification(
+  config: SearchConfigCache | null | undefined,
+): AiClassificationSetting {
+  const engine = config?.search_engine;
+  return engine === 'classic' || engine === 'hybrid' ? 'off' : 'on';
+}
+
+/**
+ * Off when the tenant setting is off OR the request says `classify=off`.
+ * A request can never turn it on.
+ */
+export function resolveAiClassification(
+  tenant: AiClassificationSetting,
+  requested: 'off' | undefined,
+): AiClassificationSetting {
+  return tenant === 'off' || requested === 'off' ? 'off' : 'on';
+}
 
 @Injectable()
 export class V2SearchService {
   constructor(
     private readonly classifier: SearchClassificationClient,
     private readonly hybridSearch: HybridSearchService,
+    private readonly tenantConfig: TenantConfigService,
   ) {}
 
   async search({
     headers,
     query: dto,
     body,
-    aiClassification = DEFAULT_AI_CLASSIFICATION,
   }: {
     headers: HeadersDto;
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
-    // `off`: one classify call still runs for the emergency check; the rules
-    // engine drops its need and urgency guesses (question 14).
-    aiClassification?: AiClassificationSetting;
   }): Promise<V2SearchResponseDto> {
+    // `off`: one classify call still runs for the emergency check; the rules
+    // engine drops its need and urgency guesses (question 14). getSearchConfig
+    // never throws: a missing or unreadable value is an empty object (on).
+    const searchConfig = await this.tenantConfig.getSearchConfig(
+      headers['x-tenant-id'],
+    );
+    const aiClassification = resolveAiClassification(
+      tenantAiClassification(searchConfig),
+      dto.classify,
+    );
+
     // Only a string with text classifies. A string array or an AND/OR object
     // is a v1 query shape and has no text for the model.
     const text = typeof dto.query === 'string' ? dto.query : '';
@@ -110,7 +136,8 @@ export class V2SearchService {
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
+      dto;
     const { needCounts, ...response } = await this.hybridSearch.searchHybrid({
       headers,
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
