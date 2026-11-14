@@ -617,11 +617,45 @@ export class HybridSearchService {
     const cutoffRequested = (q.relevance_cutoff ?? 'off') === 'on';
     let cutoff: RelevanceCutoffDto | undefined;
 
+    // Need boost (ISS-2745). Runs only with the switch on, a ranked request and
+    // at least one need at or above the gate; otherwise nothing below runs and
+    // the request is unchanged.
+    const activeNeeds = (options.needScores ?? []).filter(
+      (n) =>
+        (n.tier === 'tier1' || n.tier === 'tier2') &&
+        n.code !== 'N-X' &&
+        n.score >= NEED_BOOST_GATE,
+    );
+    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
+
+    // v2 with the cutoff and the boost both active: the cut happens after the
+    // boost (ADR 0039, option A). The probe sizes its own boost, so the main
+    // search's top-score call no longer needs the cut's ids and starts now, in
+    // parallel with the probe's own top-score call. v1 keeps its old order.
+    const boostTopScorePromise =
+      cutoffRequested && v2 && boostActive
+        ? this.fetchNeedBoostTopScore({
+            index,
+            preference,
+            queryStr,
+            queryVector,
+            predicted: predictedTaxonomies,
+            filters: [...baseFilters],
+            coords,
+            distance: distance ?? 0,
+            pinnedMode,
+            wordRarity,
+          })
+        : undefined;
+    const probeNeeds =
+      boostTopScorePromise !== undefined ? activeNeeds : undefined;
+
     if (cutoffRequested) {
       const cacheKey = relevanceCutoffCacheKey({
         ...identity,
         pinnedMode,
         rankingVersion: v2 ? 'v2' : 'v1',
+        needs: probeNeeds,
       });
 
       // Cached so pages 2..n of one search reuse a single probe rather than
@@ -638,6 +672,7 @@ export class HybridSearchService {
             filters: baseFilters,
             pinnedMode,
             wordRarity,
+            needs: probeNeeds,
           }),
         CUTOFF_PROBE_TTL_MS,
       );
@@ -655,18 +690,15 @@ export class HybridSearchService {
 
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
-    // Need boost (ISS-2745). Runs only with the switch on, a ranked request and
-    // at least one need at or above the gate; otherwise nothing below runs and
-    // the request is unchanged.
-    const activeNeeds = (options.needScores ?? []).filter(
-      (n) =>
-        (n.tier === 'tier1' || n.tier === 'tier2') &&
-        n.code !== 'N-X' &&
-        n.score >= NEED_BOOST_GATE,
-    );
     let needShould: QueryDslQueryContainer[] = [];
 
-    if (this.needBoostEnabled && rank && activeNeeds.length > 0) {
+    if (boostTopScorePromise) {
+      // Already started before the cutoff probe (v2, cutoff on).
+      const topScore = await boostTopScorePromise;
+      if (topScore > 0) {
+        needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+      }
+    } else if (boostActive) {
       const topScore = await this.fetchNeedBoostTopScore({
         index,
         preference,
@@ -1319,6 +1351,8 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    /** Active needs; set only for v2 with the need boost active (option A). */
+    needs?: NeedScore[];
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
     const {
       index,
@@ -1329,6 +1363,7 @@ export class HybridSearchService {
       filters,
       pinnedMode,
       wordRarity,
+      needs,
     } = args;
 
     const should = [
@@ -1349,12 +1384,17 @@ export class HybridSearchService {
     // coords omitted on purpose — see the doc comment above.
     const scoreFunctions = this.buildScoreFunctions(queryVector, undefined, 0);
 
-    const innerBool: QueryDslQueryContainer = {
-      bool: { minimum_should_match: 0, filter: filters, should },
-    };
-
-    const query: QueryDslQueryContainer =
-      scoreFunctions.length > 0
+    const buildProbeQuery = (
+      extraShould: QueryDslQueryContainer[],
+    ): QueryDslQueryContainer => {
+      const innerBool: QueryDslQueryContainer = {
+        bool: {
+          minimum_should_match: 0,
+          filter: filters,
+          should: [...should, ...extraShould],
+        },
+      };
+      return scoreFunctions.length > 0
         ? {
             function_score: {
               query: innerBool,
@@ -1364,6 +1404,21 @@ export class HybridSearchService {
             },
           }
         : innerBool;
+    };
+
+    // Option A: with the need boost active the cut is made after the boost,
+    // sized as a fraction of this probe's own unboosted top score (no distance,
+    // so it does not depend on where the person is).
+    let needShould: QueryDslQueryContainer[] = [];
+    if (needs && needs.length > 0) {
+      const ownTop = await this.fetchTopScore('hybrid_cutoff_boost_top_score', {
+        index,
+        preference,
+        query: buildProbeQuery([]),
+      });
+      if (ownTop > 0) needShould = this.buildNeedBoostClauses(needs, ownTop);
+    }
+    const query = buildProbeQuery(needShould);
 
     /**
      * The rule needs three numbers — the top score, the top-20 score, and how
@@ -1559,10 +1614,23 @@ export class HybridSearchService {
     wordRarity: WordRarity;
   }): Promise<number> {
     const { index, preference, ...queryArgs } = args;
+    return this.fetchTopScore('hybrid_need_boost_top_score', {
+      index,
+      preference,
+      query: this.buildHybridScoredQuery(queryArgs),
+    });
+  }
+
+  /** Top score of a query (one hit, no source); 0 when absent or on error. */
+  private async fetchTopScore(
+    operation: string,
+    args: { index: string; preference: string; query: QueryDslQueryContainer },
+  ): Promise<number> {
+    const { index, preference, query } = args;
     try {
       const response = await this.metrics.observeDownstream(
         'elasticsearch',
-        'hybrid_need_boost_top_score',
+        operation,
         () =>
           this.elasticsearchService.search({
             index,
@@ -1571,7 +1639,7 @@ export class HybridSearchService {
             _source: false,
             track_total_hits: false,
             sort: ['_score'],
-            query: this.buildHybridScoredQuery(queryArgs),
+            query,
           }),
       );
       const topScore = response.hits.hits[0]?._score ?? 0;

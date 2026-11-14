@@ -76,4 +76,20 @@ describe('relevanceCutoffCacheKey', () => {
       relevanceCutoffCacheKey(base),
     );
   });
+
+  // Option A (ISS-2499): the probe applies the need boost, so the needs and
+  // their scores move the cut. With no needs the key is the old string.
+  it('separates the active needs and their scores, and ignores their order', () => {
+    const fod = { code: 'N-FOD-01', tier: 'tier2', score: 0.98 };
+    const hou = { code: 'N-HOU-01', tier: 'tier2', score: 0.98 };
+    const key = (needs?: any[]) => relevanceCutoffCacheKey({ ...base, needs });
+
+    expect(key([fod])).not.toBe(key());
+    expect(key([fod])).not.toBe(key([hou]));
+    expect(key([fod])).not.toBe(key([{ ...fod, score: 0.99 }]));
+    expect(key([fod])).not.toBe(key([{ ...fod, tier: 'tier1' }]));
+    expect(key([fod, hou])).toBe(key([hou, fod]));
+    expect(key([])).toBe(key());
+    expect(key()).toBe(relevanceCutoffCacheKey(base));
+  });
 });
