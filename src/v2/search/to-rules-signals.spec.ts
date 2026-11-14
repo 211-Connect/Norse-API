@@ -45,6 +45,15 @@ describe('toRulesSignals', () => {
     });
   });
 
+  it('urgency null (emergency_only) leaves no urgency key and empty need scores', () => {
+    const { signals, scores } = toRulesSignals(
+      body({ urgency: null, needs: { scores: [] } }),
+    );
+    expect(signals).not.toHaveProperty('urgency');
+    expect(scores).toEqual({});
+    expect(signals.needs).toEqual({ status: 'ok', scores: {} });
+  });
+
   it('carries true booleans through unchanged', () => {
     const { signals } = toRulesSignals(
       body({
