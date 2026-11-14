@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
@@ -76,6 +77,39 @@ function build(opts: {
 }
 
 describe('V2SearchService', () => {
+  // Break run 2026-11-14: accept-language xx-YY was a 500, because the index
+  // hybrid_search_resources_xx does not exist.
+  it('turns a missing language index into a 400 that names the language', async () => {
+    const notFound = Object.assign(new Error('index_not_found_exception'), {
+      meta: {
+        statusCode: 404,
+        body: { error: { type: 'index_not_found_exception' } },
+      },
+    });
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(notFound),
+    });
+    const err = await service
+      .search({
+        headers: { ...headers, 'accept-language': 'xx-YY' } as HeadersDto,
+        query: dto({ query: 'food' }),
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'no search index for accept-language xx-YY',
+    );
+  });
+
+  it('rethrows other search errors unchanged', async () => {
+    const boom = new Error('boom');
+    const { service } = build({ search: jest.fn().mockRejectedValue(boom) });
+    await expect(
+      service.search({ headers, query: dto({ query: 'food' }) }),
+    ).rejects.toBe(boom);
+  });
+
   it('skips classify when there is no text and still searches', async () => {
     const { service, classify, searchHybrid } = build({});
     const res = await service.search({ headers, query: dto({ query: '   ' }) });
@@ -94,7 +128,7 @@ describe('V2SearchService', () => {
     const { service, classify } = build({});
     const res = await service.search({
       headers,
-      query: dto({ query } as Partial<V2SearchQueryDto>),
+      query: dto({ query } as unknown as Partial<V2SearchQueryDto>),
     });
     expect(classify).not.toHaveBeenCalled();
     expect(res.intent.query).toBeNull();

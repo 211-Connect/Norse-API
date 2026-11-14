@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
@@ -38,6 +38,13 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 // text would turn into error signals and hide the emergency band, so the text
 // sent to classify is cut to this length. The search itself uses the full query.
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
+
+/** Elasticsearch said the index does not exist (`hybrid_search_resources_<lang>`). */
+function isIndexNotFound(error: unknown): boolean {
+  const body = (error as { meta?: { body?: { error?: { type?: unknown } } } })
+    ?.meta?.body;
+  return body?.error?.type === 'index_not_found_exception';
+}
 
 /**
  * Tenant setting "AI classification off" (ADR 0039 Decisions 52, 60), read from
@@ -138,15 +145,26 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
       dto;
-    const { needCounts, ...response } = await this.hybridSearch.searchHybrid({
-      headers,
-      query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
-      rankingVersion: 'v2',
-      needScores,
-      ...(selectedNeeds.length > 0 && { selectedNeeds }),
-      ...(countCodes.length > 0 && { countCodes }),
-      body,
-    });
+    // The language picks the index. An unknown language has no index; that
+    // was a 500 (break run 2026-11-14) and is a caller error.
+    const { needCounts, ...response } = await this.hybridSearch
+      .searchHybrid({
+        headers,
+        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+        rankingVersion: 'v2',
+        needScores,
+        ...(selectedNeeds.length > 0 && { selectedNeeds }),
+        ...(countCodes.length > 0 && { countCodes }),
+        body,
+      })
+      .catch((error: unknown) => {
+        if (isIndexNotFound(error)) {
+          throw new BadRequestException(
+            `no search index for accept-language ${headers['accept-language']}`,
+          );
+        }
+        throw error;
+      });
 
     // by_code null means "not counted" (clarify=never, no codes asked, or the
     // count failed): every option is kept. An object means "counted"; the
