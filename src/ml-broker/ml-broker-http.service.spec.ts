@@ -233,11 +233,11 @@ describe('MlBrokerHttpService', () => {
   });
 
   it.each([
-    ['unset', undefined, 300],
+    ['unset', undefined, 1000],
     ['a positive integer', '250', 250],
-    ['zero', '0', 300],
-    ['negative', '-5', 300],
-    ['not a number', 'soon', 300],
+    ['zero', '0', 1000],
+    ['negative', '-5', 1000],
+    ['not a number', 'soon', 1000],
   ])(
     'uses a timeout of %s V2_CLASSIFY_TIMEOUT_MS',
     async (_label, raw, expected) => {

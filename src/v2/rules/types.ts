@@ -69,8 +69,9 @@ export type QuestionReason =
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
   label: string;
-  parameter: OptionParameter;
-  value: string;
+  /** null with value null: the option writes nothing to the URL (emergency "safe"; the client dismisses the question for this visit). */
+  parameter: OptionParameter | null;
+  value: string | null;
   /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
   results_count?: number | null;
 }

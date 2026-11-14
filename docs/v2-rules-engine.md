@@ -9,7 +9,7 @@ Pure, deterministic TypeScript that decides what `/v2/search` asks after the mod
 Needs never filter results; a used or confirmed need only boosts (`boost_needs`, never a Tier 1 together with its Tier 2).
 
 ## Inputs
-- Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (still accepts `N-X`), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
+- Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (same rule: an unknown code or `N-X` is a 400 that names it), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
 - Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), top-level `urgency` `{level, score}` (beside `needs`, as ml-broker sends it; read only when the needs call succeeded), emergency `{status, score, floor_hit, calm_context, dv_shelter}`; `emergency: null` when there is no typed text.
 - Tenant: `top_areas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
 
@@ -25,9 +25,9 @@ A cutoff or rule change bumps `RULES_VERSION`.
 ## Questions
 | Step (info) | Id | Importance | When |
 |---|---|---|---|
-| 0 | `emergency` | critical | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options `U-1` "Yes, I am in danger" and `U-3` "No, I am safe now" (same labels in both bands); carries the hotlines |
-| 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, built on an unconfirmed reading of ADR 0039 Decision 50) |
-| 1 | `urgency_today` | high | urgency ask and the model level is U-1 |
+| 0 | `emergency` | critical (strong band, popup) or high (soft band, in-page card) | band popup or soft and no `urgency` in the URL; stem "Are you in danger right now?"; options "Yes, I am in danger" (`urgency=U-0`) and "No, I am safe now" (`parameter: null`, `value: null`: writes nothing to the URL, the client dismisses the question for this visit; a later call asks again while the model still finds danger); carries the hotlines |
+| 0 | `emergency` | critical | caller `urgency=U-0`, any band; no options, only the hotlines (`callerU0EmergencyQuestion`, ADR 0039 Decision 50; also the next call after "Yes") |
+| 1 | `urgency_today` | high | urgency ask and the model level is U-1; never beside an emergency question |
 | 2 | `start` | high | no need at all; model areas when the best Tier 1 >= 0.3, else the tenant's top areas |
 | 3 | `area:<T1>` | high | a Tier 1 was picked (`needs=N-HOU`) or the area rule fired; top 3 Tier 2 by score |
 | 4 | `narrow:1` | medium | Tier 2 needs in the ask band, top 3 |
@@ -37,7 +37,7 @@ A cutoff or rule change bumps `RULES_VERSION`.
 | 8 | `narrow:2` | low | as step 6 (`narrow:2`), when a Tier 2 need is already used; stem 'Do any of these also fit?' |
 Tenant AI classification off (`TenantContext.ai_classification: 'off'`, Lucas 2026-11-13): the engine drops the model's need and urgency guesses and keeps only the `emergency` question. Caller `needs` and `urgency` still count. The emergency check always runs. The route sends `on` until Norse-API can read the tenant setting.
 
-No option offers `U-0`: a person in danger taps a hotline number (ADR 0039 Decision 54). A caller `U-1` to `U-4` removes the emergency question; `U-X` counts as no answer (Decision 51). `clarify=never` never removes it (Decision 26). The response has no top-level `emergency` block.
+Only the emergency "Yes" option offers `U-0` (Lucas 2026-11-13). A caller `U-1` to `U-4` removes the emergency question; `U-X` counts as no answer (Decision 51). `clarify=never` never removes it (Decision 26). The response has no top-level `emergency` block.
 
 Each option is `{label, parameter, value, results_count}` (ADR 0039 Decision 55). `results_count` is the number of matching services, or `null` when the server did not count (all urgency options; need options when no count ran). Null means not counted; a counted code that is missing means 0, and a 0-count option is never offered. `parameter` is the URL parameter a pick adds: `needs` (start, area and narrow options) or `urgency` (emergency and time options). The question has no `parameter`. `passed_needs` is in the enum, but no option emits it today: "None of these" stays the `none_of_these` flag, and the client sends the shown codes in `passed_needs`.
 
@@ -54,10 +54,10 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 - Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. "None of these" does not count as an option.
 - Split: with one counted option, `1 - 2 x |count / total - 0.5|`; with two or more, the normalized entropy of the option counts (even counts give 1, one dominant option gives near 0). Between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
 - `decide` fills `uncertainty`, `value` and `priority` with split 1, and keeps each option's model score in `option_scores` (internal, not in the response). `finalize` recomputes `value` and `priority` after it drops options; when a question lost options, it first recomputes `uncertainty` over the options left, so a question cut to one option has uncertainty 0.
-- `emergency` is the only critical question, so it stays first.
+- The emergency question is always first, in both bands: `finalize` sorts it ahead of every other question before priority. Strong band: importance `critical` (the client shows a popup). Soft band: importance `high` (in-page card). A caller `urgency=U-0` hotline question stays `critical` (Lucas, 2026-11-13).
 - `step` stays in the output for information only. It no longer sorts.
 
 ## Tests
 `npx jest src/v2/rules`. `engine.spec.ts` runs the 40 real model outputs in `__fixtures__/golden-scores.json` (copied from ml-broker's golden file) 1,000 times each and checks the output never changes.
 
-The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `importance`, `reason`, stem, options and hotlines; only the score-derived `uncertainty`, `value` and `priority` differ, and those are not a band label.
+The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `reason`, stem, options and hotlines; `importance` tells them apart (`critical` = strong band, `high` = soft band).
