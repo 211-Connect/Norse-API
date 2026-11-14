@@ -12,6 +12,7 @@ import { HttpExceptionFilter } from './common/filters/global-exception.filter';
 import { buildSwaggerConfig } from './common/swagger/swagger-config';
 import { configureHttp } from './common/http/configure-http';
 import { useInternalServicesBodyLimit } from './service/internal/internal-services-body';
+import { usePathVersion } from './common/versioning/path-version';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -31,6 +32,8 @@ async function bootstrap() {
     }),
   );
 
+  // ISS-2496: first, so every later layer sees the path without `/v<N>`.
+  usePathVersion(app);
   useInternalServicesBodyLimit(app);
   app.use(helmet());
   configureHttp(app);
