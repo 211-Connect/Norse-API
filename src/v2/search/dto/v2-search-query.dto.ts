@@ -21,12 +21,15 @@ export const V2_URGENCY_CODES = [
   'U-4',
   'U-X',
 ] as const;
-// Longest accepted `query`. Elasticsearch rejects a prefix query longer than
-// 1000 characters (index.max_regex_length), so a longer query was a 500 (break
-// run 2026-11-14: 1200 characters of "the "). Also protects the logs and the
-// embedding call from a pasted transcript (David, Norse-API PR #278 review).
+// Longest accepted `query`: 500 characters, the same limit as the keyword
+// rarity work in Norse-API PR #297 (Lucas, 2026-11-14). Elasticsearch rejects
+// a prefix query longer than 1000 characters (index.max_regex_length), so a
+// longer query was a 500 (break run 2026-11-14: 1200 characters of "the ").
+// Also protects the logs and the embedding call from a pasted transcript
+// (David, Norse-API PR #278 review). Local constant: PR #297 keeps its own
+// MAX_V2_QUERY_LENGTH in another file, which this branch does not have.
 // The classify call still cuts the text to 512 characters.
-export const V2_QUERY_MAX_LENGTH = 1000;
+export const V2_QUERY_MAX_LENGTH = 500;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
 // Only `off` exists: a request can turn AI classification off for itself, never on.
 export const V2_CLASSIFY_VALUES = ['off'] as const;

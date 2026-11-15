@@ -130,18 +130,18 @@ describe('V2SearchQueryDto', () => {
   });
 
   it('caps query at V2_QUERY_MAX_LENGTH characters (David, PR #278 review)', () => {
-    expect(V2_QUERY_MAX_LENGTH).toBe(1000);
+    expect(V2_QUERY_MAX_LENGTH).toBe(500);
     expect(parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH) }).errors).toEqual(
       [],
     );
     const r = parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH + 1) });
     expect(r.props).toContain('query');
-    expect(JSON.stringify(r.errors[0].constraints)).toContain('1000');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain('500');
   });
 
   it('counts an emoji as 2 characters, as Elasticsearch does', () => {
-    expect(parse({ query: '😀'.repeat(500) }).errors).toEqual([]);
-    expect(parse({ query: '😀'.repeat(501) }).props).toContain('query');
+    expect(parse({ query: '😀'.repeat(250) }).errors).toEqual([]);
+    expect(parse({ query: '😀'.repeat(251) }).props).toContain('query');
   });
 
   // Break run 2026-11-14: coords=Infinity,0 was a 500 (Elasticsearch geo error);
