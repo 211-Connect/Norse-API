@@ -30,6 +30,26 @@ Send `x-api-version: 1`, as for every versioned route, and
   everything. ISS-1887 is defence in depth. See
   [geography-filter.md](geography-filter.md#auth-the-internal-key-not-a-tenant).
 
+## Internal OpenAPI contract
+
+Generate the Region OpenAPI 3.0 JSON from the controller and DTO annotations:
+
+```sh
+npm run --silent openapi:internal-regions > internal-regions-openapi.json
+```
+
+Generation runs offline and does not connect to Elasticsearch or start an HTTP
+listener. The artifact documents the existing Region routes as well as the
+Place routes; it is not served by `/swagger/json`. CI checks the contract,
+checks that public Swagger excludes internal routes, validates representative
+API responses against the generated schemas, and publishes a short-lived
+`internal-regions-openapi` workflow artifact. Artifact access follows the
+repository's GitHub Actions permissions.
+
+Update the controller/DTO annotations and contract tests when changing these
+routes; do not hand-edit a generated specification. The generated API version
+header is optional and defaults to `1`.
+
 ## Region ids
 
 `state:MO` (postal code), `county:29095` (5-digit FIPS), `zip:64130`. The
