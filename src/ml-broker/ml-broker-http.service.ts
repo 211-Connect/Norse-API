@@ -18,8 +18,15 @@ export interface SearchClassificationRequest {
 /** ml-broker `search-classification` response, as sent on the wire. */
 export interface SearchClassificationResponse {
   model_version?: string;
-  needs: { scores: { code: string; tier: string; score: number }[] };
-  /** null only for an `emergency_only` request. */
+  needs: {
+    /**
+     * ml-broker PR #24: 'error' when the needs model failed. Missing means
+     * 'ok' (an older ml-broker).
+     */
+    status?: 'ok' | 'error';
+    scores: { code: string; tier: string; score: number }[];
+  };
+  /** null for an `emergency_only` request, and when `needs.status` is 'error'. */
   urgency: { level: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number } | null;
   emergency?: {
     status: 'ok' | 'error';
@@ -152,12 +159,18 @@ export class MlBrokerHttpService {
     emergencyOnly: boolean,
   ): SearchClassificationResponse {
     const b = body as Partial<SearchClassificationResponse> | null;
-    // An emergency_only response has `urgency: null` and empty need scores.
+    const needsStatus = b?.needs?.status;
+    const statusOk =
+      needsStatus === undefined ||
+      needsStatus === 'ok' ||
+      needsStatus === 'error';
+    // An emergency_only response, or one whose needs model failed, has
+    // `urgency: null` and empty need scores.
     const urgencyOk =
-      (emergencyOnly && b?.urgency === null) ||
+      ((emergencyOnly || needsStatus === 'error') && b?.urgency === null) ||
       (URGENCY_LEVELS.includes(b?.urgency?.level as string) &&
         typeof b?.urgency?.score === 'number');
-    if (!b || !Array.isArray(b.needs?.scores) || !urgencyOk) {
+    if (!b || !statusOk || !Array.isArray(b.needs?.scores) || !urgencyOk) {
       throw new MlBrokerError(
         'malformed',
         SEARCH_CLASSIFICATION,
