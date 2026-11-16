@@ -106,7 +106,9 @@ describe('RegionService', () => {
           },
         },
       ]);
-      expect(req.query.bool.filter).toEqual([]);
+      expect(req.query.bool.filter).toEqual([
+        { terms: { type: ['state', 'county', 'zip'] } },
+      ]);
       expect(req.query.bool.should).toEqual(TYPE_BOOST_CLAUSES);
       expect(req.sort).toEqual([
         { _score: { order: 'desc' } },
