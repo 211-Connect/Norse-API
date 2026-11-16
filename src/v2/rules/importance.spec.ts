@@ -19,7 +19,6 @@ const q = (
 ): Question => ({
   id,
   type,
-  level: 'orange',
   importance: 'high',
   reason: 'no_need',
   step: 1,
