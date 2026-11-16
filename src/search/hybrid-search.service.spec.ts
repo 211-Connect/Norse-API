@@ -1166,11 +1166,21 @@ describe('HybridSearchService', () => {
       ).resolves.toBeDefined();
     });
 
-    it('v1 still accepts a long query', async () => {
+    it('v1 rejects a query over 500 characters with a 400', async () => {
       await expect(
         service.searchHybrid({
           headers,
-          query: { ...baseQuery, query: long(5000) },
+          query: { ...baseQuery, query: long(600) },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(esSearch).not.toHaveBeenCalled();
+    });
+
+    it('v1 accepts a query of exactly 500 characters', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: 'a'.repeat(500) },
         }),
       ).resolves.toBeDefined();
     });
@@ -1179,7 +1189,7 @@ describe('HybridSearchService', () => {
       ['v1', undefined],
       ['v2', 'v2' as const],
     ])(
-      '%s info log carries length, id and 40 characters, never the full text',
+      '%s info log carries length and id only, never any query text',
       async (_n, rankingVersion) => {
         const logSpy = jest.spyOn((service as any).logger, 'log');
         const text = `help ${'q'.repeat(300)}`;
@@ -1192,11 +1202,10 @@ describe('HybridSearchService', () => {
         expect(lines.length).toBeGreaterThan(0);
         for (const line of lines) {
           expect(line).not.toContain(text);
-          expect(line).not.toContain('q'.repeat(41));
+          expect(line).not.toContain('help');
+          expect(line).not.toContain('qqqq');
         }
-        expect(lines.join('\n')).toMatch(
-          /len=305 id=[0-9a-f]{12} start="help q+"/,
-        );
+        expect(lines.join('\n')).toMatch(/len=305 id=[0-9a-f]{12}(?! start)/);
       },
     );
   });

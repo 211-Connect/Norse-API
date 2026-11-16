@@ -46,7 +46,7 @@ import {
   splitCandidates,
   WORD_RARITY_FIELDS,
 } from './internal/text-matching/word-rarity';
-import { assertV2QueryLength, describeQueryForLog } from './internal/query-log';
+import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 
@@ -429,7 +429,7 @@ export class HybridSearchService {
     const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
-    if (v2) assertV2QueryLength(queryStr);
+    assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
@@ -786,7 +786,7 @@ export class HybridSearchService {
 
   async embedQuery(query: string): Promise<number[]> {
     this.logger.debug(
-      `Embedding query: "${query}" using model: ${this.embeddingModel}`,
+      `Embedding query: ${describeQueryForLog(query)} using model: ${this.embeddingModel}`,
     );
 
     if (!this.embeddingBaseUrl || !this.embeddingModel) {
