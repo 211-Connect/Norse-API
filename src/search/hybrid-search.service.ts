@@ -54,6 +54,11 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import { queryEmbeddingCacheKey } from './internal/cache-key/query-embedding-cache-key';
+import { packEmbedding, unpackEmbedding } from './internal/embedding-codec';
+
+// An embedding of a text never changes, so it can live long in the cache.
+const DEFAULT_EMBEDDING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -343,6 +348,9 @@ export class HybridSearchService {
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
 
+  private readonly embeddingCacheEnabled: boolean;
+  private readonly embeddingCacheTtlMs: number;
+
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly configService: ConfigService,
@@ -356,6 +364,13 @@ export class HybridSearchService {
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
     this.needBoostEnabled =
       this.configService.get<string>('NEED_BOOST_ENABLED') === 'true';
+    this.embeddingCacheEnabled =
+      this.configService.get<string>('EMBEDDING_CACHE_ENABLED') !== 'false';
+    const ttl = Number(
+      this.configService.get<string>('EMBEDDING_CACHE_TTL_MS'),
+    );
+    this.embeddingCacheTtlMs =
+      Number.isInteger(ttl) && ttl > 0 ? ttl : DEFAULT_EMBEDDING_CACHE_TTL_MS;
   }
 
   /**
@@ -1401,7 +1416,46 @@ export class HybridSearchService {
     return out;
   }
 
+  /**
+   * Embeds the query text. The vector is cached by model and hashed text
+   * (24 h by default), so a repeated query skips the embedding API. A cache
+   * failure never fails the search: RequestCacheService treats a Redis error
+   * as a miss, and a thrown factory writes nothing.
+   */
   async embedQuery(query: string): Promise<number[]> {
+    return withSpan('hybrid.embed', async (span) => {
+      if (!this.embeddingCacheEnabled || !this.embeddingModel) {
+        span.setAttribute('hybrid.embed_cache_hit', false);
+        return this.fetchEmbedding(query);
+      }
+      const key = queryEmbeddingCacheKey(this.embeddingModel, query);
+      let called = false;
+      const packed = await this.requestCacheService.getOrSet<string>(
+        key,
+        async () => {
+          called = true;
+          return packEmbedding(await this.fetchEmbedding(query));
+        },
+        this.embeddingCacheTtlMs,
+      );
+      const cached = unpackEmbedding(packed);
+      if (cached) {
+        span.setAttribute('hybrid.embed_cache_hit', !called);
+        return cached;
+      }
+      // A stored value that does not decode counts as a miss: ask the API
+      // and overwrite it.
+      span.setAttribute('hybrid.embed_cache_hit', false);
+      const fresh = await this.fetchEmbedding(query);
+      await this.requestCacheService.setMany(
+        { [key]: packEmbedding(fresh) },
+        this.embeddingCacheTtlMs,
+      );
+      return fresh;
+    });
+  }
+
+  private async fetchEmbedding(query: string): Promise<number[]> {
     this.logger.debug(
       `Embedding query: ${describeQueryForLog(query)} using model: ${this.embeddingModel}`,
     );
