@@ -29,6 +29,14 @@ export class V2IntentUrgencyDto {
   state: 'use' | 'ask' | 'drop';
 }
 
+export class V2IntentTaxonomyDto {
+  @ApiProperty({ example: 'BD-1800', description: 'HSIS taxonomy code.' })
+  value: string;
+
+  @ApiProperty({ enum: ['caller'] })
+  source: 'caller';
+}
+
 export class V2IntentDto {
   @ApiProperty({
     type: String,
@@ -36,6 +44,13 @@ export class V2IntentDto {
     description: 'The typed query when it is a string with text, else null.',
   })
   query: string | null;
+
+  @ApiPropertyOptional({
+    type: [V2IntentTaxonomyDto],
+    description:
+      'The `taxonomy` codes the request sent, as sent (not expanded to child codes). Absent when none were sent.',
+  })
+  taxonomy?: V2IntentTaxonomyDto[];
 
   @ApiProperty({ type: [V2IntentNeedDto] })
   needs: V2IntentNeedDto[];
