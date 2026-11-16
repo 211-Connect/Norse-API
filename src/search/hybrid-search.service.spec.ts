@@ -358,7 +358,10 @@ describe('HybridSearchService', () => {
       .map((c) => c[0])
       .find((req) => req.index === 'hybrid_taxonomies');
     expect(taxonomyCall.query.script_score.script.params.qv).toEqual(vector);
-    const scriptFn = capturedMainRequest.query.function_score.functions.find(
+    // v2 relevance searches wrap the main query in rank fusion's `pinned`.
+    const mainQuery =
+      capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query;
+    const scriptFn = mainQuery.function_score.functions.find(
       (f: any) => f.script_score,
     );
     expect(scriptFn.script_score.script.params.qv).toEqual(vector);
@@ -702,7 +705,8 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      expect(preferences).toHaveLength(3);
+      // taxonomy, rarity, three rank-fusion lists, fused-page stats, main search
+      expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -720,8 +724,10 @@ describe('HybridSearchService', () => {
         await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
-      // Every search of all three requests, not just the first of each.
-      expect(preferences).toHaveLength(9);
+      // Every search of all three requests, not just the first of each. The
+      // relevance searches add three rank-fusion lists and a stats request
+      // each (7 + 7 + 3).
+      expect(preferences).toHaveLength(17);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });
