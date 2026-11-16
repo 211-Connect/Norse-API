@@ -56,18 +56,60 @@ const errorResult = (): ClassifyResult => ({
   modelVersion: null,
 });
 
-function build(opts: { classify?: jest.Mock; search?: jest.Mock }) {
+function build(opts: {
+  classify?: jest.Mock;
+  search?: jest.Mock;
+  startEmbedding?: jest.Mock;
+}) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
     opts.search ?? jest.fn().mockResolvedValue(hybridResponse());
+  const startEmbedding =
+    opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
-    { searchHybrid } as unknown as HybridSearchService,
+    { searchHybrid, startEmbedding } as unknown as HybridSearchService,
   );
-  return { service, classify, searchHybrid };
+  return { service, classify, searchHybrid, startEmbedding };
 }
 
 describe('V2SearchService', () => {
+  it('starts the embedding before classify resolves', async () => {
+    let resolveClassify!: (r: ClassifyResult) => void;
+    const classify = jest.fn().mockReturnValue(
+      new Promise<ClassifyResult>((r) => {
+        resolveClassify = r;
+      }),
+    );
+    const { service, startEmbedding } = build({ classify });
+    const pending = service.search({
+      headers,
+      query: dto({ query: 'food shelf' }),
+    });
+    await Promise.resolve();
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledWith('food shelf');
+    resolveClassify(okResult({}));
+    await pending;
+  });
+
+  it('passes the started embedding to searchHybrid', async () => {
+    const started = Promise.resolve([0.3, 0.4]);
+    const { service, searchHybrid } = build({
+      startEmbedding: jest.fn().mockReturnValue(started),
+    });
+    await service.search({ headers, query: dto({ query: 'rent help' }) });
+    expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
+  });
+
+  it('starts no embedding when there is no text', async () => {
+    const { service, startEmbedding, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(startEmbedding).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('queryVector');
+  });
+
   it('skips classify when there is no text and still searches', async () => {
     const { service, classify, searchHybrid } = build({});
     const res = await service.search({ headers, query: dto({ query: '   ' }) });

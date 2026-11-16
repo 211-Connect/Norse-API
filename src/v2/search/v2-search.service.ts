@@ -54,6 +54,11 @@ export class V2SearchService {
     const text = typeof dto.query === 'string' ? dto.query : '';
     const hasText = text.trim().length > 0;
 
+    // The embedding starts before classify so the two run in parallel.
+    const queryVector = hasText
+      ? this.hybridSearch.startEmbedding(text)
+      : undefined;
+
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
       ? await this.classifier.classify(
@@ -95,6 +100,7 @@ export class V2SearchService {
       headers,
       query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
       rankingVersion: 'v2',
+      ...(queryVector && { queryVector }),
       needScores,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       ...(countCodes.length > 0 && { countCodes }),

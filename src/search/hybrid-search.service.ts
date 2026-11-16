@@ -150,6 +150,12 @@ type HybridSearchOptions = {
    * v1 (flat name edge match, approximate taxonomy knn).
    */
   rankingVersion?: RankingVersion;
+  /**
+   * v2 only. An embedding the caller already started with startEmbedding for
+   * this same query text. When present, prepareHybridSearch awaits it instead
+   * of embedding again. undefined result = lexical-only fallback.
+   */
+  queryVector?: Promise<number[] | undefined>;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -555,12 +561,7 @@ export class HybridSearchService {
     const [embedResult, tenantFacets, searchConfig, wordRarity] =
       await Promise.all([
         wantsVector
-          ? this.embedQuery(queryStr).catch((err: Error) => {
-              this.logger.warn(
-                `Embedding failed, falling back to lexical-only: ${err.message}`,
-              );
-              return undefined;
-            })
+          ? (options.queryVector ?? this.startEmbedding(queryStr))
           : Promise.resolve(undefined),
         this.tenantConfigService.getFacets(tenantId),
         this.tenantConfigService.getSearchConfig(tenantId),
@@ -844,6 +845,16 @@ export class HybridSearchService {
       );
       return null;
     }
+  }
+
+  /** Starts the query embedding. Never rejects: a failure logs the same warning as before and resolves undefined (lexical-only fallback). */
+  startEmbedding(query: string): Promise<number[] | undefined> {
+    return this.embedQuery(query).catch((err: Error) => {
+      this.logger.warn(
+        `Embedding failed, falling back to lexical-only: ${err.message}`,
+      );
+      return undefined;
+    });
   }
 
   async embedQuery(query: string): Promise<number[]> {
