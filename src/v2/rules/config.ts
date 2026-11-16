@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-13.2';
+export const RULES_VERSION = 'rules-2026-11-13.3';
 
 export const CUTOFFS = {
   emergency: { popup: 0.662, soft: 0.221 },
@@ -39,7 +39,7 @@ export const LABELS = {
   // Answers to STEMS.emergency, for the red popup and the orange soft card
   // alike (Lucas 2026-11-13, question 24, option B2). Same urgency codes.
   emergency: {
-    'U-1': 'Yes, I am in danger',
-    'U-3': 'No, I am safe now',
-  } as Record<string, string>,
+    yes: 'Yes, I am in danger',
+    safe: 'No, I am safe now',
+  },
 };

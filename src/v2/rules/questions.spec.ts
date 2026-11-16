@@ -10,15 +10,15 @@ describe('emergency question', () => {
   const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
   const emergencyOf = (d: ReturnType<typeof decide>) =>
     d.candidates.find((q) => q.id === 'emergency');
-  it('popup: first, urgency options only (no U-0), carries hotlines (Decision 54)', () => {
+  it('popup: first, Yes = U-0 and safe writes nothing, carries hotlines (Lucas 2026-11-13)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
     expect(q.step).toBe(0);
     // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
-      { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-1' },
-      { label: 'No, I am safe now', parameter: 'urgency', value: 'U-3' },
+      { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-0' },
+      { label: 'No, I am safe now', parameter: null, value: null },
     ]);
     expect(q.stem).toBe('Are you in danger right now?');
     expect(q.hotlines).toEqual([
@@ -27,11 +27,49 @@ describe('emergency question', () => {
     ]);
     expect(q.multi_select || q.allow_other || q.none_of_these).toBe(false);
   });
-  it('soft band: same urgency options (Decision 54)', () => {
+  it('strong band importance critical (popup), soft band high (card) (Lucas 2026-11-13)', () => {
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: popup }))).importance,
+    ).toBe('critical');
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: soft }))).importance,
+    ).toBe('high');
+    // A keyword-floor hit below the strong cutoff is the soft band.
+    const floor = { status: 'ok' as const, score: 0.1, floor_hit: true };
+    expect(
+      emergencyOf(decide(req(), sig({}, { emergency: floor }))).importance,
+    ).toBe('high');
+  });
+  it('caller U-0 hotline question stays critical in the soft band', () => {
+    const d = decide(req({ urgency: 'U-0' }), sig({}, { emergency: soft }));
+    expect(d.candidates[0].importance).toBe('critical');
+  });
+  it('soft band: the emergency question stays first even when a high question has a larger priority', () => {
+    // Soft score 0.5 gives uncertainty 1 -> value 1 is capped; use 0.25 so the
+    // emergency value is low and needs questions (high, value near 0.95) outrank it by number.
+    const d = decide(
+      req(),
+      sig(
+        { 'N-HOU': 0.34, 'N-FOD': 0.33, 'N-MON': 0.33 },
+        { emergency: { status: 'ok', score: 0.222, floor_hit: false } },
+      ),
+    );
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    const em = c.questions.find((q) => q.id === 'emergency');
+    expect(em.importance).toBe('high');
+    expect(
+      c.questions.some((q) => q.id !== 'emergency' && q.priority > em.priority),
+    ).toBe(true);
+    expect(c.questions[0].id).toBe('emergency');
+  });
+  it('soft band: same options', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');
     const q = emergencyOf(d);
-    expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-3']);
+    expect(q.options.map((o) => o.value)).toEqual(['U-0', null]);
     expect(q.hotlines).toHaveLength(2);
   });
   it('soft band uses the same danger labels and stem as the popup (question 24, B2)', () => {
@@ -57,19 +95,54 @@ describe('emergency question', () => {
       'Not urgent',
     ]);
   });
-  it('no option anywhere offers U-0 (Decision 54)', () => {
+  it('only the emergency question offers U-0 (Lucas 2026-11-13: "in danger -> u0")', () => {
     for (const e of [popup, soft]) {
       const d = decide(req(), sig({}, { emergency: e }));
-      const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
-      expect(all).not.toContain('U-0');
+      const withU0 = d.candidates.filter((q) =>
+        q.options.some((o) => o.value === 'U-0'),
+      );
+      expect(withU0.map((q) => q.id)).toEqual(['emergency']);
     }
+  });
+  it("beside the emergency question: needs questions yes, urgency question no (today's rule)", () => {
+    // Reported to Lucas, not changed: the time questions need !hasEmergency,
+    // so after a "No" tap the page has the needs questions, never an urgency one.
+    const d = decide(req(), {
+      needs: { status: 'ok', scores: {} },
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: popup,
+    });
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    expect(c.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
+    expect(d.urgency.state).toBe('ask');
+  });
+  it('"Yes" then: the next call with urgency=U-0 ends the flow (hotlines, no options, Decision 50)', () => {
+    const first = decide(req(), sig({}, { emergency: popup }));
+    const yes = first.candidates[0].options[0];
+    expect([yes.parameter, yes.value]).toEqual(['urgency', 'U-0']);
+    const next = decide(req({ urgency: 'U-0' }), sig({}, { emergency: popup }));
+    expect(next.candidates[0].options).toEqual([]);
+    expect(next.candidates[0].hotlines).toHaveLength(2);
+    expect(next.urgency).toEqual({
+      value: 'U-0',
+      source: 'caller',
+      state: 'use',
+    });
+    expect(next.candidates.some((q) => q.type === 'confirm_urgency')).toBe(
+      false,
+    );
   });
   it('the question has no parameter field; each option carries one (Decision 55)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     for (const q of d.candidates) {
       expect(q).not.toHaveProperty('parameter');
       for (const o of q.options) {
-        expect(['needs', 'passed_needs', 'urgency']).toContain(o.parameter);
+        expect(['needs', 'passed_needs', 'urgency', null]).toContain(
+          o.parameter,
+        );
       }
     }
   });
@@ -105,7 +178,7 @@ describe('emergency question', () => {
   it('popup + urgency U-X counts as no answer -> emergency question stays', () => {
     const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
   });
-  describe('caller urgency=U-0 (Decision 50, unconfirmed reading)', () => {
+  describe('caller urgency=U-0 (Decision 50)', () => {
     const expectU0Popup = (d: ReturnType<typeof decide>) => {
       const q = d.candidates[0];
       expect(q.id).toBe('emergency');
