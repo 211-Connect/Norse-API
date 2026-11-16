@@ -93,7 +93,9 @@ describe('V2SearchService', () => {
       headers,
       query: dto({ query: 'food shelf' }),
     });
-    await Promise.resolve();
+    // Classify starts after the tenant config read; a macrotask later every
+    // microtask before it has run, however many spans wrap the steps.
+    await new Promise((r) => setImmediate(r));
     expect(classify).toHaveBeenCalledTimes(1);
     expect(startEmbedding).toHaveBeenCalledTimes(1);
     expect(startEmbedding).toHaveBeenCalledWith('food shelf');

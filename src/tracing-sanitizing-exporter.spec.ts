@@ -116,6 +116,36 @@ describe('SanitizingSpanExporter', () => {
     });
   });
 
+  it('keeps the pipeline attributes Norse-API sets, and no other custom key', () => {
+    const own = {
+      'downstream.dependency': 'elasticsearch',
+      'downstream.operation': 'hybrid_rrf_keyword',
+      'downstream.outcome': 'ok',
+      'downstream.took_ms': 12,
+      'downstream.server_timing': 'queue;dur=1, predict;dur=80',
+      'v2.has_text': true,
+      'v2.ai_classification': 'on',
+      'v2.boost_needs': 2,
+      'v2.selected_needs': 0,
+      'v2.count_codes': 3,
+      'v2.classify.failed': false,
+      'hybrid.fused': true,
+      'hybrid.fast_page': true,
+      'hybrid.cutoff': false,
+      'hybrid.need_counts': true,
+    };
+    const span = fakeSpan('v2.search', {
+      ...own,
+      'v2.query': 'search text',
+      'downstream.request': 'search text',
+    });
+    const { exporter, exported } = fakeDelegate();
+
+    new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+    expect(exported[0][0].attributes).toEqual(own);
+  });
+
   it('reduces statement attributes to the command name', () => {
     const span = fakeSpan('GET /test', {
       'db.query.text': 'GET keyv:geocode:forward:opencage:12 Main St:en:5::',
