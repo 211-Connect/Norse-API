@@ -106,6 +106,9 @@ const EMBEDDING_TIMEOUT_MS = 10_000;
 // being hard sort tiers and become small score contributions instead (so a
 // large pinned pool no longer floods the first pages). Tune these like the
 // other weights.
+const PINNED_SCORE_BOOST = 5;
+const PRIORITY_SCORE_WEIGHT = 1;
+
 /**
  * Reciprocal rank fusion (ISS-2766). `RRF_K` is the usual damping constant.
  * `RRF_LIST_SIZE` is the depth of each ranked list and of the fused order.
@@ -113,9 +116,6 @@ const EMBEDDING_TIMEOUT_MS = 10_000;
  */
 const RRF_K = 60;
 const RRF_LIST_SIZE = 100;
-
-const PINNED_SCORE_BOOST = 5;
-const PRIORITY_SCORE_WEIGHT = 1;
 
 const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
