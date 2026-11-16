@@ -38,7 +38,7 @@ const mainResponse = {
   aggregations: {},
 };
 
-type Mode = 'ok' | 'reject-vector';
+type Mode = 'ok' | 'reject-vector' | 'reject-page';
 
 // Lists as Elasticsearch would return them. Hand-worked RRF (k = 60):
 //   b = 1/62 + 1/61 = 0.032522
@@ -57,6 +57,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let mode: Mode;
   let enabled: string | undefined;
   let taxonomyGate: Promise<void> | undefined;
+  let searchConfig: Record<string, unknown>;
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
@@ -136,6 +137,41 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
           hits: { hits: [{ _id: 'top', _score: 200 }] },
         });
       }
+      // fused page fast path: stats request (totals and facets)
+      if (
+        req.size === 0 &&
+        req.track_total_hits === true &&
+        req.aggs &&
+        req.query?.bool?.filter &&
+        !req.query.bool.filter.some((f: any) => f.ids)
+      ) {
+        return Promise.resolve({
+          took: 7,
+          timed_out: false,
+          _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+          hits: { total: { value: 1234, relation: 'eq' }, hits: [] },
+          aggregations: { stats_agg: { buckets: [] } },
+        });
+      }
+      // fused page fast path: the page by id, returned in reversed order
+      const idsFilter = req.query?.bool?.filter?.find?.((f: any) => f.ids);
+      if (idsFilter && req.size <= 25 && req.track_total_hits === false) {
+        if (mode === 'reject-page') {
+          return Promise.reject(new Error('page down'));
+        }
+        return Promise.resolve({
+          took: 3,
+          timed_out: false,
+          _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+          hits: {
+            hits: [...idsFilter.ids.values].reverse().map((id: string) => ({
+              _index: 'hybrid_search_resources_en',
+              _id: id,
+              _source: { name: id, facets: {}, facets_en: {} },
+            })),
+          },
+        });
+      }
       return Promise.resolve(mainResponse);
     });
 
@@ -162,7 +198,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
           provide: TenantConfigService,
           useValue: {
             getFacets: jest.fn().mockResolvedValue([]),
-            getSearchConfig: jest.fn().mockResolvedValue({}),
+            getSearchConfig: jest.fn(() => Promise.resolve(searchConfig)),
           },
         },
         {
@@ -211,6 +247,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     mode = 'ok';
     enabled = undefined;
     taxonomyGate = undefined;
+    searchConfig = {};
     await build();
   });
 
@@ -386,5 +423,102 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       const filter = filterOf(req);
       expect(filter).toContainEqual(idsFilter);
     }
+  });
+
+  describe('fused page fast path', () => {
+    const statsRequests = () =>
+      requests.filter(
+        (r) =>
+          r.size === 0 &&
+          r.track_total_hits === true &&
+          r.aggs &&
+          r.query?.bool?.filter &&
+          !r.query.bool.filter.some((f: any) => f.ids),
+      );
+    const pageRequests = () =>
+      requests.filter(
+        (r) =>
+          !isList(r) &&
+          r.min_score == null &&
+          r.query?.bool?.filter?.some?.((f: any) => f.ids),
+      );
+    const pinnedMain = () => requests.find((r) => r.query?.pinned);
+
+    it('F1. page 1 inside the fused ids: stats before taxonomy, page by id, no pinned request', async () => {
+      let release!: () => void;
+      taxonomyGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await build();
+      const pending = run({ limit: 3 });
+
+      for (let i = 0; i < 50 && statsRequests().length < 1; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(statsRequests()).toHaveLength(1);
+      expect(pageRequests()).toHaveLength(0);
+
+      release();
+      const response = await pending;
+
+      expect(pinnedMain()).toBeUndefined();
+      expect(pageRequests()).toHaveLength(1);
+      const page = pageRequests()[0];
+      expect(page.size).toBe(3);
+      expect(page.track_total_hits).toBe(false);
+      expect(page._source.excludes).toContain('embedding');
+      expect(page.query.bool.filter.find((f: any) => f.ids).ids.values).toEqual(
+        FUSED.slice(0, 3),
+      );
+      expect(response.search.hits.hits.map((h: any) => h._id)).toEqual(
+        FUSED.slice(0, 3),
+      );
+      expect(
+        response.search.hits.hits.every((h: any) => h._score === null),
+      ).toBe(true);
+      expect(response.search.hits.max_score).toBeNull();
+      expect(response.search.hits.total.value).toBe(1234);
+      expect(response.search.took).toBe(7);
+      expect(response.facets).toBeDefined();
+    });
+
+    it('F2. page 2 with limit 3 over 4 fused ids: pinned main request', async () => {
+      const response = await run({ page: 2, limit: 3 });
+
+      expect(pageRequests()).toHaveLength(0);
+      expect(pinnedMain().query.pinned.ids).toEqual(FUSED);
+      expect(response.search.hits.total.value).toBe(1234);
+    });
+
+    it('F3. pinned mode top: pinned main request, no page request', async () => {
+      searchConfig = { pinned_resources_mode: 'top' };
+      await build();
+      await run({ limit: 3 });
+
+      expect(statsRequests()).toHaveLength(0);
+      expect(pageRequests()).toHaveLength(0);
+      expect(pinnedMain()).toBeDefined();
+    });
+
+    it('F4. cutoff on: no stats or page request, pinned main request', async () => {
+      await run({ relevance_cutoff: 'on', limit: 3 });
+
+      expect(statsRequests()).toHaveLength(0);
+      expect(pageRequests()).toHaveLength(0);
+      expect(pinnedMain()).toBeDefined();
+    });
+
+    it('F5. page request rejects: warning, pinned main request, search resolves', async () => {
+      mode = 'reject-page';
+      await build();
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      const response = await run({ limit: 3 });
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Fused page fast path failed'),
+      );
+      expect(pinnedMain()).toBeDefined();
+      expect(response.search.hits.total.value).toBe(1234);
+    });
   });
 });

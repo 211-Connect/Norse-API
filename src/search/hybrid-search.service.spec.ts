@@ -705,8 +705,8 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      // taxonomy, rarity, three rank-fusion lists, main search
-      expect(preferences).toHaveLength(6);
+      // taxonomy, rarity, three rank-fusion lists, fused-page stats, main search
+      expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -725,8 +725,9 @@ describe('HybridSearchService', () => {
       ];
 
       // Every search of all three requests, not just the first of each. The
-      // relevance searches add three rank-fusion lists each (6 + 6 + 3).
-      expect(preferences).toHaveLength(15);
+      // relevance searches add three rank-fusion lists and a stats request
+      // each (7 + 7 + 3).
+      expect(preferences).toHaveLength(17);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });

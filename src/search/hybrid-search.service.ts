@@ -407,14 +407,62 @@ export class HybridSearchService {
   async searchHybrid(
     options: HybridSearchOptions,
   ): Promise<HybridSearchResult> {
-    const { request, countRequest, tenantFacets, cutoff, lang, fused } =
-      await this.prepareHybridSearch(options, { rank: true, fuse: true });
+    const {
+      request,
+      countRequest,
+      tenantFacets,
+      cutoff,
+      lang,
+      fused,
+      fastPage,
+    } = await this.prepareHybridSearch(options, { rank: true, fuse: true });
 
     const needCountsPromise = countRequest
       ? this.runNeedCounts(countRequest, options.countCodes ?? [])
       : Promise.resolve(undefined);
 
-    const data = await this.metrics.observeDownstream(
+    type Resp = Awaited<
+      ReturnType<
+        typeof this.elasticsearchService.search<
+          SearchSource,
+          Record<string, AggregationsStringTermsAggregate>
+        >
+      >
+    >;
+    let data: Resp | undefined;
+    if (fastPage) {
+      try {
+        const [stats, page] = await Promise.all([
+          fastPage.statsPromise,
+          this.metrics.observeDownstream(
+            'elasticsearch',
+            'hybrid_search_page',
+            () =>
+              this.elasticsearchService.search<SearchSource>(
+                fastPage.pageRequest,
+              ),
+          ),
+        ]);
+        const byId = new Map(page.hits.hits.map((h) => [h._id, h]));
+        const ordered = fastPage.pageIds.flatMap((id) => {
+          const hit = byId.get(id);
+          return hit ? [{ ...hit, _score: null }] : [];
+        });
+        data = {
+          took: Math.max(stats.took, page.took),
+          timed_out: stats.timed_out || page.timed_out,
+          _shards: page._shards,
+          hits: { total: stats.hits.total, max_score: null, hits: ordered },
+          aggregations: stats.aggregations,
+        } as Resp;
+      } catch (error) {
+        this.logger.warn(
+          'Fused page fast path failed, using the full request: ' +
+            (error as Error).message,
+        );
+      }
+    }
+    data ??= await this.metrics.observeDownstream(
       'elasticsearch',
       'hybrid_search',
       () =>
@@ -670,6 +718,42 @@ export class HybridSearchService {
     // reported as unhandled if the taxonomy lookup throws first.
     earlyLists?.catch(() => undefined);
 
+    // Fused page fast path (ISS-2766). Filters alone decide membership
+    // (minimum_should_match is 0, scoring only orders), so the total and the
+    // facets of the full request equal those of a plain filter query. The
+    // stats request therefore starts now, in parallel with the lists, and the
+    // page is fetched later by id. Only when nothing else changes order or
+    // membership after fusion: the cutoff off (it adds an ids filter), pinned
+    // mode not `top` (pinned services get their own sort tier) and no selected
+    // needs (they add a block sort tier and matched_needs fields). Everything
+    // else keeps the full request.
+    const fastEligible =
+      fuseEligible &&
+      !cutoffRequested &&
+      pinnedMode !== 'top' &&
+      (options.selectedNeeds ?? []).length === 0;
+    const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
+    const statsPromise = fastEligible
+      ? this.metrics.observeDownstream(
+          'elasticsearch',
+          'hybrid_search_stats',
+          () =>
+            this.elasticsearchService.search<
+              SearchSource,
+              Record<string, AggregationsStringTermsAggregate>
+            >({
+              index,
+              preference,
+              size: 0,
+              track_total_hits: true,
+              query: { bool: { filter: [...baseFilters] } },
+              aggs,
+            }),
+        )
+      : undefined;
+    // The fast path handles a rejection; this only prevents an unhandled one.
+    statsPromise?.catch(() => undefined);
+
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
     const predictedTaxonomies = queryVector
@@ -763,8 +847,6 @@ export class HybridSearchService {
       }
     }
 
-    const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
-
     let needShould: QueryDslQueryContainer[] = [];
 
     if (boostTopScorePromise) {
@@ -853,6 +935,38 @@ export class HybridSearchService {
       selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
     });
 
+    // The page by id, once the fused order covers the whole requested page.
+    const pageSize = limit || 25;
+    const pageFrom = (page - 1) * pageSize;
+    let fastPage:
+      | {
+          statsPromise: NonNullable<typeof statsPromise>;
+          pageRequest: SearchRequest;
+          pageIds: string[];
+        }
+      | undefined;
+    if (
+      statsPromise &&
+      fusedIds !== undefined &&
+      pageFrom + pageSize <= fusedIds.length
+    ) {
+      const pageIds = fusedIds.slice(pageFrom, pageFrom + pageSize);
+      fastPage = {
+        statsPromise,
+        pageIds,
+        pageRequest: {
+          index,
+          preference,
+          size: pageIds.length,
+          track_total_hits: false,
+          _source: this.hybridSourceExcludes(),
+          query: {
+            bool: { filter: [...baseFilters, { ids: { values: pageIds } }] },
+          },
+        },
+      };
+    }
+
     const countCodes = options.countCodes ?? [];
     const countRequest: SearchRequest | undefined =
       countCodes.length > 0
@@ -883,6 +997,13 @@ export class HybridSearchService {
       cutoff,
       lang,
       fused: fusedIds !== undefined,
+      fastPage,
+    };
+  }
+
+  private hybridSourceExcludes() {
+    return {
+      excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
     };
   }
 
@@ -2143,9 +2264,7 @@ export class HybridSearchService {
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,
-      _source: {
-        excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
-      },
+      _source: this.hybridSourceExcludes(),
       ...(selectedNeeds && selectedNeeds.length > 0
         ? {
             script_fields: {
