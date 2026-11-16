@@ -139,9 +139,29 @@ export class V2SearchService {
     const text = typeof dto.query === 'string' ? dto.query : '';
     const hasText = text.trim().length > 0;
 
-    // The embedding starts before classify so the two run in parallel.
-    const queryVector = hasText
-      ? this.hybridSearch.startEmbedding(text)
+    // Only caller-sent needs make blocks; a model guess never does. N-X never
+    // makes a block. They never filter (Lucas 2026-11-12).
+    const callerNeeds = dto.needs ?? [];
+    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
+      dto;
+    // What retrieval gets that does not depend on classify. It is built once:
+    // the early start and the final call use the same values.
+    const retrievalOptions = {
+      headers,
+      query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+      rankingVersion: 'v2' as const,
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
+      body,
+    };
+    // Everything in retrieval that does not read the classify result starts
+    // now, in parallel with the tenant config read and classify: the embedding,
+    // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
+    // failure surfaces inside searchHybrid, where the catch below maps it.
+    const early = hasText
+      ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
       : undefined;
 
     // `off`: one classify call still runs for the emergency check; the rules
@@ -174,7 +194,6 @@ export class V2SearchService {
     const signals = classified?.signals ?? NO_TEXT_SIGNALS;
     const scores = classified?.scores ?? {};
 
-    const callerNeeds = dto.needs ?? [];
     const rulesRequest: RulesRequest = {
       has_text: hasText,
       needs: callerNeeds,
@@ -198,15 +217,9 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
-    // Only caller-sent needs make blocks; a model guess never does. N-X never
-    // makes a block. They never filter (Lucas 2026-11-12).
-    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
-      dto;
     // The language picks the index. An unknown language has no index; that
     // was a 500 (break run 2026-11-14) and is a caller error.
     span.setAttributes({
@@ -219,14 +232,10 @@ export class V2SearchService {
 
     const { needCounts, ...response } = await withSpan('v2.retrieval', () =>
       this.hybridSearch.searchHybrid({
-        headers,
-        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
-        rankingVersion: 'v2',
-        ...(queryVector && { queryVector }),
+        ...retrievalOptions,
+        ...(early && { early }),
         needScores,
-        ...(selectedNeeds.length > 0 && { selectedNeeds }),
         ...(countCodes.length > 0 && { countCodes }),
-        body,
       }),
     ).catch((error: unknown) => {
       if (isIndexNotFound(error)) {

@@ -166,7 +166,21 @@ type HybridSearchOptions = {
    * of embedding again. undefined result = lexical-only fallback.
    */
   queryVector?: Promise<number[] | undefined>;
+  /**
+   * v2 only. The handle from startEarlyRetrieval for these same options.
+   * When present, searchHybrid reuses the work it started instead of starting
+   * it again. Absent: nothing changes.
+   */
+  early?: EarlyRetrieval;
 };
+
+/**
+ * Opaque handle to the classify-independent part of a hybrid search, started
+ * early by startEarlyRetrieval. Pass it back in `HybridSearchOptions.early`.
+ */
+export interface EarlyRetrieval {
+  readonly stage: Promise<unknown>;
+}
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
 
@@ -616,15 +630,36 @@ export class HybridSearchService {
     return request;
   }
 
-  private async prepareHybridSearch(
+  /**
+   * Starts everything that does not depend on the classify result: the
+   * embedding, tenant facets and search config, word rarity, the keyword and
+   * vector lists, the stats request and the taxonomy lookup. Call it with the
+   * options `searchHybrid` will get (needScores and countCodes may be left
+   * out), then pass the handle back as `options.early`. Never throws and never
+   * leaves an unhandled rejection: a failure reaches `searchHybrid`.
+   */
+  startEarlyRetrieval(options: HybridSearchOptions): EarlyRetrieval {
+    const stage = withSpan('hybrid.early_start', () =>
+      this.runClassifyIndependentStage(options, { rank: true, fuse: true }),
+    );
+    // The consumer is searchHybrid; this only prevents an unhandled rejection
+    // if the request ends before it gets there.
+    stage.catch(() => undefined);
+    return { stage };
+  }
+
+  /**
+   * Stage 1 of prepareHybridSearch: everything that depends only on the
+   * request and the query vector, never on classify or the rules. It starts
+   * the keyword and vector lists, the stats request and the taxonomy lookup.
+   */
+  private async runClassifyIndependentStage(
     options: HybridSearchOptions,
     { rank, fuse }: { rank: boolean; fuse: boolean },
   ) {
     const { headers, query: q } = options;
     const {
       query,
-      page,
-      limit,
       filters,
       organization_id,
       coords,
@@ -709,16 +744,8 @@ export class HybridSearchService {
       );
     }
 
-    // Cutoff and need switches are known before the taxonomy lookup.
+    // The cutoff switch is known before the taxonomy lookup.
     const cutoffRequested = (q.relevance_cutoff ?? 'off') === 'on';
-    const activeNeeds = (options.needScores ?? []).filter(
-      (n) =>
-        (n.tier === 'tier1' || n.tier === 'tier2') &&
-        n.code !== 'N-X' &&
-        n.score >= NEED_BOOST_GATE,
-    );
-    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
-
     const fuseEligible = this.shouldFuse({
       fuse,
       v2,
@@ -727,7 +754,8 @@ export class HybridSearchService {
       queryStr,
       coords,
       sort,
-      boostActive,
+      // Not a fuse condition (see shouldFuse); needScores are unknown here.
+      boostActive: false,
     });
 
     // With the cutoff off the filters are final here, so the keyword and
@@ -797,6 +825,70 @@ export class HybridSearchService {
         .map((t) => t.name)
         .join(', ')}]`,
     );
+
+    return {
+      v2,
+      lang,
+      queryStr,
+      index,
+      preference,
+      identity,
+      wantsVector,
+      queryVector,
+      tenantFacets,
+      pinnedMode,
+      wordRarity,
+      cutoffRequested,
+      fuseEligible,
+      baseFilters,
+      earlyLists,
+      statsPromise,
+      aggs,
+      predictedTaxonomies,
+    };
+  }
+
+  private async prepareHybridSearch(
+    options: HybridSearchOptions,
+    { rank, fuse }: { rank: boolean; fuse: boolean },
+  ) {
+    const stage1 = options.early
+      ? ((await options.early.stage) as Awaited<
+          ReturnType<typeof this.runClassifyIndependentStage>
+        >)
+      : await this.runClassifyIndependentStage(options, { rank, fuse });
+    const {
+      v2,
+      lang,
+      queryStr,
+      index,
+      preference,
+      identity,
+      wantsVector,
+      queryVector,
+      tenantFacets,
+      pinnedMode,
+      wordRarity,
+      cutoffRequested,
+      fuseEligible,
+      earlyLists,
+      statsPromise,
+      aggs,
+      predictedTaxonomies,
+    } = stage1;
+    const baseFilters = [...stage1.baseFilters];
+    const { query: q } = options;
+    const { page, limit, coords, distance, sort } = q;
+
+    // Stage 2: everything below depends on needScores, the cutoff probe or the
+    // selected needs.
+    const activeNeeds = (options.needScores ?? []).filter(
+      (n) =>
+        (n.tier === 'tier1' || n.tier === 'tier2') &&
+        n.code !== 'N-X' &&
+        n.score >= NEED_BOOST_GATE,
+    );
+    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
 
     // Counts run over the filters above, before the relevance cut adds an ids filter.
     const countFilters = [...baseFilters];
