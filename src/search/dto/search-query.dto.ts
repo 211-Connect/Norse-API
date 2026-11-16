@@ -20,6 +20,10 @@ import {
   RELEVANCE_CUTOFF_VALUES,
   RelevanceCutoffValue,
 } from '../internal/relevance-cutoff/types';
+import {
+  MAX_QUERY_LENGTH,
+  QUERY_TOO_LONG_MESSAGE,
+} from '../internal/query-log';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -88,6 +92,18 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
   }
 }
 
+/** Max length (UTF-16 units, as Elasticsearch counts; class-validator's `@MaxLength` counts code points) for a `query` that may also be an array or an AND/OR object: only a string is measured. */
+@ValidatorConstraint({ name: 'isQueryWithinMaxLength', async: false })
+class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return typeof value !== 'string' || value.length <= MAX_QUERY_LENGTH;
+  }
+
+  defaultMessage(): string {
+    return QUERY_TOO_LONG_MESSAGE;
+  }
+}
+
 /** Shared with `SearchQueryApiDto`, which documents the same param. */
 export const ORGANIZATION_ID_DESCRIPTION =
   'Scope results to resources belonging to a single organization, by its ' +
@@ -107,6 +123,7 @@ export class SearchResourcesQueryDto {
   })
   @IsOptional()
   @Validate(IsSearchQueryExpressionConstraint)
+  @Validate(IsQueryWithinMaxLengthConstraint)
   query: string | string[] | ComplexQuery = '';
 
   @ApiPropertyOptional({

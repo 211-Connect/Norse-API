@@ -1,15 +1,13 @@
 import {
-  MAX_V2_QUERY_LENGTH,
-  assertV2QueryLength,
+  MAX_QUERY_LENGTH,
+  assertQueryLength,
   describeQueryForLog,
 } from './query-log';
 
 describe('describeQueryForLog', () => {
-  it('reports length, a 12-hex fingerprint and the first 40 characters', () => {
-    const text = 'x'.repeat(5000);
-    const out = describeQueryForLog(text);
-    expect(out).toMatch(/^len=5000 id=[0-9a-f]{12} start="x{40}"$/);
-    expect(out).not.toContain('x'.repeat(41));
+  it('reports length and a 12-hex fingerprint, nothing of the text', () => {
+    const out = describeQueryForLog('x'.repeat(5000));
+    expect(out).toMatch(/^len=5000 id=[0-9a-f]{12}$/);
   });
 
   it('gives the same fingerprint for the same query and another for a different one', () => {
@@ -19,39 +17,33 @@ describe('describeQueryForLog', () => {
     expect(id('food bank near me')).not.toBe(id('food bank near you'));
   });
 
-  it('keeps a short query whole in the start field', () => {
-    expect(describeQueryForLog('rent help')).toMatch(
-      /^len=9 id=[0-9a-f]{12} start="rent help"$/,
-    );
+  it('does not print a short query either', () => {
+    const out = describeQueryForLog('rent help');
+    expect(out).toMatch(/^len=9 id=[0-9a-f]{12}$/);
+    expect(out).not.toContain('rent');
   });
 
-  it('does not cut a character in two, and counts characters not bytes', () => {
-    const out = describeQueryForLog('😀'.repeat(50));
-    expect(out).toContain('len=50 ');
-    expect(out).toContain(`start="${'😀'.repeat(40)}"`);
+  it('counts UTF-16 units, like Elasticsearch', () => {
+    expect(describeQueryForLog('😀'.repeat(50))).toContain('len=100 ');
   });
 
-  it('keeps line breaks and quotes from forging log lines', () => {
-    const out = describeQueryForLog('a\nb"c');
-    expect(out).not.toContain('\n');
-    expect(out).toContain('start="a b\\"c"');
+  it('cannot forge log lines with line breaks or quotes', () => {
+    expect(describeQueryForLog('a\nb"c')).toMatch(/^len=5 id=[0-9a-f]{12}$/);
   });
 
   it('handles an empty query', () => {
-    expect(describeQueryForLog('')).toMatch(/^len=0 id=[0-9a-f]{12} start=""$/);
+    expect(describeQueryForLog('')).toMatch(/^len=0 id=[0-9a-f]{12}$/);
   });
 });
 
-describe('assertV2QueryLength', () => {
+describe('assertQueryLength', () => {
   it('accepts a query of exactly the limit', () => {
-    expect(() =>
-      assertV2QueryLength('a'.repeat(MAX_V2_QUERY_LENGTH)),
-    ).not.toThrow();
+    expect(() => assertQueryLength('a'.repeat(MAX_QUERY_LENGTH))).not.toThrow();
   });
 
   it('rejects a longer query with a 400 that asks for a short description', () => {
     try {
-      assertV2QueryLength('a'.repeat(MAX_V2_QUERY_LENGTH + 1));
+      assertQueryLength('a'.repeat(MAX_QUERY_LENGTH + 1));
       throw new Error('did not throw');
     } catch (e: any) {
       expect(e.getStatus()).toBe(400);
@@ -59,5 +51,10 @@ describe('assertV2QueryLength', () => {
       expect(e.message).toMatch(/short description of the need/);
       expect(e.message).toMatch(/not a transcript/);
     }
+  });
+
+  it('counts UTF-16 units: 251 emoji (502 units) are rejected', () => {
+    expect(() => assertQueryLength('😀'.repeat(250))).not.toThrow();
+    expect(() => assertQueryLength('😀'.repeat(251))).toThrow();
   });
 });
