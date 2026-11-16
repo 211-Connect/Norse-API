@@ -82,3 +82,30 @@ describe('SearchQueryApiDto pagination window', () => {
     ).toBeUndefined();
   });
 });
+
+describe('SearchResourcesQueryDto query length', () => {
+  const queryError = (query: unknown) =>
+    validateSync(plainToInstance(SearchResourcesQueryDto, { query }), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }).find((error) => error.property === 'query');
+
+  it('accepts 500 characters and rejects 501 with a short-description message', () => {
+    expect(queryError('a'.repeat(500))).toBeUndefined();
+    const error = queryError('a'.repeat(501));
+    expect(error).toBeDefined();
+    expect(Object.values(error!.constraints ?? {}).join(' ')).toMatch(
+      /500 characters.*short description of the need.*not a transcript/,
+    );
+  });
+
+  it('counts UTF-16 units, like Elasticsearch', () => {
+    expect(queryError('😀'.repeat(250))).toBeUndefined();
+    expect(queryError('😀'.repeat(251))).toBeDefined();
+  });
+
+  it('leaves array and AND/OR queries alone', () => {
+    expect(queryError(['a'.repeat(600)])).toBeUndefined();
+    expect(queryError({ OR: ['a', { AND: ['b', 'c'] }] })).toBeUndefined();
+  });
+});

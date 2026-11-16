@@ -72,6 +72,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   let requests: any[];
   let cacheKeys: string[];
   let enabled: string | undefined;
+  let rarityOk = false;
   let gate: Promise<void> | undefined;
 
   // The simulated index: a probe request scores each document as its base plus
@@ -110,12 +111,24 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   const build = async () => {
     requests = [];
     cacheKeys = [];
+    rarityOk = false;
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
       }
       // word-rarity lookup: not part of the request sequence under test
       if (req.size === 0 && req.aggs?.df) {
+        if (rarityOk) {
+          // A succeeded lookup keeps the probe cacheable (a failed one is not).
+          const buckets: Record<string, { doc_count: number }> = {};
+          for (const k of Object.keys(req.aggs.df.filters.filters)) {
+            buckets[k] = { doc_count: 10 };
+          }
+          return Promise.resolve({
+            hits: { total: { value: 100, relation: 'eq' }, hits: [] },
+            aggregations: { df: { buckets } },
+          });
+        }
         return Promise.reject(new Error('rarity not under test'));
       }
       requests.push(req);
@@ -193,6 +206,11 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
               if (k.startsWith('search:cutoff:')) cacheKeys.push(k);
               return f();
             }),
+            getMany: jest.fn((keys: string[]) =>
+              Promise.resolve(keys.map(() => undefined)),
+            ),
+            setMany: jest.fn().mockResolvedValue(undefined),
+            deleteMany: jest.fn().mockResolvedValue(undefined),
           },
         },
         { provide: MetricsService, useValue: createMetricsServiceMock() },
@@ -354,6 +372,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   });
 
   it('6. the cutoff cache key separates different needs and keeps the old key without a boost', async () => {
+    rarityOk = true;
     await run(tier2Fod);
     await run(tier2Hou);
     await run([{ code: 'N-FOD-01', tier: 'tier2', score: 0.99 }]);

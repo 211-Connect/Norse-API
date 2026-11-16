@@ -11,6 +11,7 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { SearchResourcesQueryDto } from '../../../search/dto/search-query.dto';
+import { MAX_QUERY_LENGTH } from '../../../search/internal/query-log';
 import { NX, isKnownCode, isTier1, isTier2 } from '../../rules/sune';
 
 export const V2_URGENCY_CODES = [
@@ -29,7 +30,7 @@ export const V2_URGENCY_CODES = [
 // (David, Norse-API PR #278 review). Local constant: PR #297 keeps its own
 // MAX_V2_QUERY_LENGTH in another file, which this branch does not have.
 // The classify call still cuts the text to 512 characters.
-export const V2_QUERY_MAX_LENGTH = 500;
+export const V2_QUERY_MAX_LENGTH = MAX_QUERY_LENGTH;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
 // Only `off` exists: a request can turn AI classification off for itself, never on.
 export const V2_CLASSIFY_VALUES = ['off'] as const;
