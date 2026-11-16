@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { RedisWarmupService } from './common/services/cache/redis-warmup.service';
 import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { TracingShutdownService } from './common/lifecycle/tracing-shutdown.service';
 import { AppController } from './app.controller';
@@ -126,6 +127,7 @@ const arcjetKey = configuration().ARCJET_KEY;
   controllers: [AppController],
   providers: [
     AppService,
+    RedisWarmupService,
     TracingShutdownService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
