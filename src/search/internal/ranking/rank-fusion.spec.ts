@@ -61,4 +61,58 @@ describe('reciprocalRankFusion', () => {
     const out = reciprocalRankFusion([['a', 'b'], ['b', 'c'], ['d']], 60);
     expect([...out].sort()).toEqual(['a', 'b', 'c', 'd']);
   });
+
+  it('weights a list: a weight of 2 on list 1 changes the order', () => {
+    // Unweighted: a = 1/61 + 1/62 = 0.03252, b = 1/62 + 1/61 (tie, a wins
+    // by earlier list), c = 1/63 -> a, b, c. Lists [a,b], [b,c].
+    // Unweighted: a = 1/61, b = 1/62 + 1/61, c = 1/62 -> b, a, c.
+    expect(
+      reciprocalRankFusion(
+        [
+          ['a', 'b'],
+          ['b', 'c'],
+        ],
+        60,
+      ),
+    ).toEqual(['b', 'a', 'c']);
+    // Weights [1, 2]: a = 1/61 = 0.016393. b = 1/62 + 2/61 = 0.048914.
+    // c = 2/62 = 0.032258. Order: b, c, a.
+    expect(
+      reciprocalRankFusion(
+        [
+          ['a', 'b'],
+          ['b', 'c'],
+        ],
+        60,
+        [1, 2],
+      ),
+    ).toEqual(['b', 'c', 'a']);
+  });
+
+  it('treats a missing weights argument as weight 1 for every list', () => {
+    expect(
+      reciprocalRankFusion(
+        [
+          ['a', 'b'],
+          ['b', 'c'],
+        ],
+        60,
+        [1, 1],
+      ),
+    ).toEqual(
+      reciprocalRankFusion(
+        [
+          ['a', 'b'],
+          ['b', 'c'],
+        ],
+        60,
+      ),
+    );
+  });
+
+  it('throws when weights and lists differ in length', () => {
+    expect(() => reciprocalRankFusion([['a'], ['b']], 60, [1])).toThrow(
+      new Error('weights must match lists'),
+    );
+  });
 });

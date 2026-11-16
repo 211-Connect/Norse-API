@@ -3,6 +3,8 @@
  * with 1 / (k + rank), where rank is the 1-based position of the id's first
  * occurrence in that list. The votes add up.
  *
+ * Each list can carry a weight (default 1): the vote is weight / (k + rank).
+ *
  * Order: score descending. A tie goes to the id with the smaller best rank,
  * then to the id whose best rank sits in the earlier list, then to the id
  * string in ascending order.
@@ -12,13 +14,18 @@ const SCORE_EPSILON = 1e-12;
 export function reciprocalRankFusion(
   lists: readonly (readonly string[])[],
   k: number,
+  weights?: readonly number[],
 ): string[] {
+  if (weights !== undefined && weights.length !== lists.length) {
+    throw new Error('weights must match lists');
+  }
   const entries = new Map<
     string,
     { score: number; bestRank: number; bestList: number }
   >();
 
   lists.forEach((list, listIndex) => {
+    const weight = weights?.[listIndex] ?? 1;
     const seen = new Set<string>();
     list.forEach((id, i) => {
       if (seen.has(id)) return;
@@ -27,13 +34,13 @@ export function reciprocalRankFusion(
       const entry = entries.get(id);
       if (!entry) {
         entries.set(id, {
-          score: 1 / (k + rank),
+          score: weight / (k + rank),
           bestRank: rank,
           bestList: listIndex,
         });
         return;
       }
-      entry.score += 1 / (k + rank);
+      entry.score += weight / (k + rank);
       // Lists are walked in order, so an equal rank never replaces an
       // earlier list.
       if (rank < entry.bestRank) {

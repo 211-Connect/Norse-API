@@ -49,12 +49,14 @@ const KEYWORD = ['a', 'b', 'c'];
 const VECTOR = ['b', 'd', 'a'];
 const TAXONOMY = ['c'];
 const FUSED = ['b', 'a', 'c', 'd'];
+const NEED = ['n1'];
 
 describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let service: HybridSearchService;
   let requests: any[];
   let mode: Mode;
   let enabled: string | undefined;
+  let taxonomyGate: Promise<void> | undefined;
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
@@ -65,7 +67,9 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       ? r.query.script_score.query.bool.should
         ? 'taxonomy'
         : 'vector'
-      : 'keyword';
+      : r.query.bool.should?.[0]?.rank_feature
+        ? 'need'
+        : 'keyword';
   const filterOf = (r: any) =>
     r.query.script_score
       ? r.query.script_score.query.bool.filter
@@ -75,7 +79,9 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     requests = [];
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
-        return Promise.resolve(taxonomyResponse);
+        return taxonomyGate
+          ? taxonomyGate.then(() => taxonomyResponse)
+          : Promise.resolve(taxonomyResponse);
       }
       requests.push(req);
 
@@ -90,7 +96,9 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
               ? KEYWORD
               : kind === 'vector'
                 ? VECTOR
-                : TAXONOMY,
+                : kind === 'need'
+                  ? NEED
+                  : TAXONOMY,
           ),
         );
       }
@@ -202,6 +210,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   beforeEach(async () => {
     mode = 'ok';
     enabled = undefined;
+    taxonomyGate = undefined;
     await build();
   });
 
@@ -265,19 +274,83 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(mainRequest().query.pinned).toBeUndefined();
   });
 
-  it('5. v2 with an active need boost: no list requests and no pinned query', async () => {
+  const NEEDS = [
+    { code: 'N-FOD-01', tier: 'tier2', score: 0.98 },
+    { code: 'N-HOU-01', tier: 'tier1', score: 0.99 },
+  ];
+  const isTopScoreHead = (r: any) => r._source === false && r.size === 1;
+
+  it('5. v2 fused with an active need boost, cutoff off: four lists, a need list, no top-score request', async () => {
     enabled = 'true';
     await build();
-    await run(
-      {},
-      {
-        needScores: [{ code: 'N-FOD-01', tier: 'tier2', score: 0.98 }],
-      },
-    );
+    await run({}, { needScores: NEEDS });
 
-    expect(lists()).toHaveLength(0);
-    expect(mainRequest().query.pinned).toBeUndefined();
-    expect(JSON.stringify(mainRequest().query)).toContain('rank_feature');
+    const sent = lists();
+    expect(sent).toHaveLength(4);
+    expect(sent.map(kindOf).sort()).toEqual([
+      'keyword',
+      'need',
+      'taxonomy',
+      'vector',
+    ]);
+
+    const need = sent.find((r: any) => kindOf(r) === 'need');
+    expect(need.query.bool.minimum_should_match).toBe(1);
+    const clauses = need.query.bool.should;
+    expect(clauses).toHaveLength(2);
+    expect(clauses[0].rank_feature.field).toBe('sune_need_weights.N-FOD-01');
+    expect(clauses[0].rank_feature.boost).toBeCloseTo(0.98);
+    expect(clauses[1].rank_feature.field).toBe('sune_need_weights.N-HOU-01');
+    expect(clauses[1].rank_feature.boost).toBeCloseTo(0.495);
+
+    expect(requests.some(isTopScoreHead)).toBe(false);
+    const main = mainRequest();
+    expect(main.query.pinned).toBeDefined();
+    expect(JSON.stringify(main.query.pinned.organic)).not.toContain(
+      'rank_feature',
+    );
+  });
+
+  it('5b. v2 fused with an active need boost, cutoff on: need list sent and the organic query keeps the boost', async () => {
+    enabled = 'true';
+    await build();
+    await run({ relevance_cutoff: 'on' }, { needScores: NEEDS });
+
+    expect(lists().map(kindOf)).toContain('need');
+    expect(lists()).toHaveLength(4);
+    const main = mainRequest();
+    expect(main.query.pinned).toBeDefined();
+    expect(JSON.stringify(main.query.pinned.organic)).toContain('rank_feature');
+  });
+
+  it('5c. fused planned with an active need boost but one list rejects: the top-score request is sent and the organic query keeps the boost', async () => {
+    enabled = 'true';
+    mode = 'reject-vector';
+    await build();
+    await run({}, { needScores: NEEDS });
+
+    expect(requests.some(isTopScoreHead)).toBe(true);
+    const main = mainRequest();
+    expect(main.query.pinned).toBeUndefined();
+    expect(JSON.stringify(main.query)).toContain('rank_feature');
+  });
+
+  it('5d. cutoff off: keyword and vector lists are sent before the taxonomy lookup resolves', async () => {
+    let release!: () => void;
+    taxonomyGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await build();
+    const pending = run();
+
+    for (let i = 0; i < 50 && lists().length < 2; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(lists().map(kindOf).sort()).toEqual(['keyword', 'vector']);
+
+    release();
+    await pending;
+    expect(lists()).toHaveLength(3);
   });
 
   it('6. v2 with one list rejecting: no pinned query and the search resolves', async () => {
