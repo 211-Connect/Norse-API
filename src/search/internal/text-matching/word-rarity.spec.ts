@@ -1,5 +1,7 @@
 import {
   contentWords,
+  FUNCTION_WORDS_ES,
+  SNOWBALL_SPANISH_STOP_WORDS,
   idf,
   adjacentJoins,
   MAX_RARITY_WORDS,
@@ -40,13 +42,61 @@ describe('word-rarity', () => {
     });
 
     it('keeps every word for other languages', () => {
-      expect(contentWords('my boyfriend', 'es')).toEqual(['my', 'boyfriend']);
+      expect(contentWords('my boyfriend', 'fr')).toEqual(['my', 'boyfriend']);
+    });
+
+    it('drops Spanish function words, accents and case folded', () => {
+      expect(contentWords('Mi novio ME pega, está EN casa', 'es')).toEqual([
+        'novio',
+        'pega',
+        'casa',
+      ]);
+      expect(contentWords('¿Qué más tú?', 'es')).toEqual([]);
+    });
+
+    it('keeps Spanish content words', () => {
+      expect(contentWords('ayuda con la renta', 'es')).toEqual([
+        'ayuda',
+        'renta',
+      ]);
     });
 
     it('caps the word count', () => {
       const q = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ');
       expect(contentWords(q, 'en')).toHaveLength(MAX_RARITY_WORDS);
       expect(MAX_RARITY_WORDS).toBe(12);
+    });
+  });
+
+  describe('FUNCTION_WORDS_ES', () => {
+    it('is the whole Snowball Spanish list: 308 entries, none repeated', () => {
+      expect(SNOWBALL_SPANISH_STOP_WORDS).toHaveLength(308);
+      expect(new Set(SNOWBALL_SPANISH_STOP_WORDS).size).toBe(308);
+    });
+
+    it('holds every word longer than one character, normalised', () => {
+      for (const w of SNOWBALL_SPANISH_STOP_WORDS) {
+        const normalised = w
+          .toLowerCase()
+          .normalize('NFKD')
+          .replace(/\p{M}/gu, '');
+        if (normalised.length >= 2) {
+          expect(FUNCTION_WORDS_ES.has(normalised)).toBe(true);
+          // a query token reaches the set through queryWords
+          for (const token of queryWords(w)) {
+            expect(FUNCTION_WORDS_ES.has(token)).toBe(true);
+          }
+        }
+      }
+    });
+
+    it('holds no accent and no capital letter', () => {
+      for (const w of FUNCTION_WORDS_ES) expect(w).toMatch(/^[a-z]+$/);
+    });
+
+    it('has spot entries from each part of the list', () => {
+      for (const w of ['de', 'que', 'tambien', 'mas', 'si', 'estaria', 'tened'])
+        expect(FUNCTION_WORDS_ES.has(w)).toBe(true);
     });
   });
 

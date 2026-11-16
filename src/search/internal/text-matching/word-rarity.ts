@@ -19,6 +19,53 @@ export const FUNCTION_WORDS_EN: ReadonlySet<string> = new Set(
   ).split(' '),
 );
 
+/**
+ * Snowball Spanish stop words (snowball `spanish_stop.txt`, 308 entries),
+ * kept whole and with accents as published. `FUNCTION_WORDS_ES` holds the
+ * same words normalised the way `queryWords` normalises a query. The list was
+ * written from memory of the Snowball file; the spec checks the count only.
+ */
+export const SNOWBALL_SPANISH_STOP_WORDS: readonly string[] = (
+  'de la que el en y a los del se las por un para con no una su al lo como ' +
+  'más pero sus le ya o este sí porque esta entre cuando muy sin sobre ' +
+  'también me hasta hay donde quien desde todo nos durante todos uno les ni ' +
+  'contra otros ese eso ante ellos e esto mí antes algunos qué unos yo otro ' +
+  'otras otra él tanto esa estos mucho quienes nada muchos cual poco ella ' +
+  'estar estas algunas algo nosotros mi mis tú te ti tu tus ellas nosotras ' +
+  'vosotros vosotras os mío mía míos mías tuyo tuya tuyos tuyas suyo suya ' +
+  'suyos suyas nuestro nuestra nuestros nuestras vuestro vuestra vuestros ' +
+  'vuestras esos esas estoy estás está estamos estáis están esté estés ' +
+  'estemos estéis estén estaré estarás estará estaremos estaréis estarán ' +
+  'estaría estarías estaríamos estaríais estarían estaba estabas estábamos ' +
+  'estabais estaban estuve estuviste estuvo estuvimos estuvisteis ' +
+  'estuvieron estuviera estuvieras estuviéramos estuvierais estuvieran ' +
+  'estuviese estuvieses estuviésemos estuvieseis estuviesen estando estado ' +
+  'estada estados estadas estad he has ha hemos habéis han haya hayas ' +
+  'hayamos hayáis hayan habré habrás habrá habremos habréis habrán habría ' +
+  'habrías habríamos habríais habrían había habías habíamos habíais habían ' +
+  'hube hubiste hubo hubimos hubisteis hubieron hubiera hubieras hubiéramos ' +
+  'hubierais hubieran hubiese hubieses hubiésemos hubieseis hubiesen ' +
+  'habiendo habido habida habidos habidas soy eres es somos sois son sea ' +
+  'seas seamos seáis sean seré serás será seremos seréis serán sería serías ' +
+  'seríamos seríais serían era eras éramos erais eran fui fuiste fue fuimos ' +
+  'fuisteis fueron fuera fueras fuéramos fuerais fueran fuese fueses ' +
+  'fuésemos fueseis fuesen siendo sido tengo tienes tiene tenemos tenéis ' +
+  'tienen tenga tengas tengamos tengáis tengan tendré tendrás tendrá ' +
+  'tendremos tendréis tendrán tendría tendrías tendríamos tendríais ' +
+  'tendrían tenía tenías teníamos teníais tenían tuve tuviste tuvo tuvimos ' +
+  'tuvisteis tuvieron tuviera tuvieras tuviéramos tuvierais tuvieran ' +
+  'tuviese tuvieses tuviésemos tuvieseis tuviesen teniendo tenido tenida ' +
+  'tenidos tenidas tened'
+).split(' ');
+
+const normalizeWord = (w: string): string =>
+  w.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').replace(/['’]/g, '');
+
+// Same filter as `queryWords`: one-letter tokens never reach a lookup.
+export const FUNCTION_WORDS_ES: ReadonlySet<string> = new Set(
+  SNOWBALL_SPANISH_STOP_WORDS.map(normalizeWord).filter((w) => w.length >= 2),
+);
+
 export const MAX_RARITY_WORDS = 12;
 
 export const WORD_RARITY_FIELDS = [
@@ -42,8 +89,13 @@ export function queryWords(q: string): string[] {
 
 export function contentWords(q: string, lang: string): string[] {
   const words = queryWords(q);
-  const kept =
-    lang === 'en' ? words.filter((w) => !FUNCTION_WORDS_EN.has(w)) : words;
+  const stop =
+    lang === 'en'
+      ? FUNCTION_WORDS_EN
+      : lang === 'es'
+        ? FUNCTION_WORDS_ES
+        : null;
+  const kept = stop ? words.filter((w) => !stop.has(w)) : words;
   return kept.slice(0, MAX_RARITY_WORDS);
 }
 
