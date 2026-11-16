@@ -62,21 +62,60 @@ const errorResult = (): ClassifyResult => ({
 function build(opts: {
   classify?: jest.Mock;
   search?: jest.Mock;
+  startEmbedding?: jest.Mock;
   searchConfig?: SearchConfigCache;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
     opts.search ?? jest.fn().mockResolvedValue(hybridResponse());
+  const startEmbedding =
+    opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
-    { searchHybrid } as unknown as HybridSearchService,
+    { searchHybrid, startEmbedding } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
   );
-  return { service, classify, searchHybrid, getSearchConfig };
+  return { service, classify, searchHybrid, startEmbedding, getSearchConfig };
 }
 
 describe('V2SearchService', () => {
+  it('starts the embedding before classify resolves', async () => {
+    let resolveClassify!: (r: ClassifyResult) => void;
+    const classify = jest.fn().mockReturnValue(
+      new Promise<ClassifyResult>((r) => {
+        resolveClassify = r;
+      }),
+    );
+    const { service, startEmbedding } = build({ classify });
+    const pending = service.search({
+      headers,
+      query: dto({ query: 'food shelf' }),
+    });
+    await Promise.resolve();
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledWith('food shelf');
+    resolveClassify(okResult({}));
+    await pending;
+  });
+
+  it('passes the started embedding to searchHybrid', async () => {
+    const started = Promise.resolve([0.3, 0.4]);
+    const { service, searchHybrid } = build({
+      startEmbedding: jest.fn().mockReturnValue(started),
+    });
+    await service.search({ headers, query: dto({ query: 'rent help' }) });
+    expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
+  });
+
+  it('starts no embedding when there is no text', async () => {
+    const { service, startEmbedding, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(startEmbedding).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('queryVector');
+  });
+
   // Break run 2026-11-14: accept-language xx-YY was a 500, because the index
   // hybrid_search_resources_xx does not exist.
   it('turns a missing language index into a 400 that names the language', async () => {

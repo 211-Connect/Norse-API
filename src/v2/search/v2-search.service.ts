@@ -107,6 +107,16 @@ export class V2SearchService {
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
+    // Only a string with text classifies. A string array or an AND/OR object
+    // is a v1 query shape and has no text for the model.
+    const text = typeof dto.query === 'string' ? dto.query : '';
+    const hasText = text.trim().length > 0;
+
+    // The embedding starts before classify so the two run in parallel.
+    const queryVector = hasText
+      ? this.hybridSearch.startEmbedding(text)
+      : undefined;
+
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
     // never throws: a missing or unreadable value is an empty object (on).
@@ -117,11 +127,6 @@ export class V2SearchService {
       tenantAiClassification(searchConfig),
       dto.classify,
     );
-
-    // Only a string with text classifies. A string array or an AND/OR object
-    // is a v1 query shape and has no text for the model.
-    const text = typeof dto.query === 'string' ? dto.query : '';
-    const hasText = text.trim().length > 0;
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
@@ -172,6 +177,7 @@ export class V2SearchService {
         headers,
         query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
         rankingVersion: 'v2',
+        ...(queryVector && { queryVector }),
         needScores,
         ...(selectedNeeds.length > 0 && { selectedNeeds }),
         ...(countCodes.length > 0 && { countCodes }),
