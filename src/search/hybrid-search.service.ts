@@ -41,6 +41,7 @@ import {
   SUNE_ENRICHMENT_FIELDS,
   stripEnrichment,
 } from './internal/enrichment-fields';
+import { languageIndexSuffix } from 'src/common/locales';
 import {
   contentWords,
   idf,
@@ -1891,16 +1892,9 @@ export class HybridSearchService {
   /**
    * Mirrors the logic in src/common/lib/utils.ts getIndexName but only
    * returns the language portion since hybrid indices are not tenant-prefixed.
+   * The naming lives in src/common/locales.ts, next to the supported list.
    */
   private sanitizeLang(lang: string): string {
-    const preferred = lang.split(',')[0].trim().toLowerCase();
-    const parts = preferred.split('-');
-    const base = parts[0];
-
-    if (parts.length > 1 && parts[1].length === 4) {
-      return `${base}_${parts[1]}`;
-    }
-
-    return base;
+    return languageIndexSuffix(lang);
   }
 }

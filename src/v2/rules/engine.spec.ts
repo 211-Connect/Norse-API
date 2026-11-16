@@ -416,6 +416,40 @@ describe('golden fixture', () => {
   });
 });
 
+describe('needs model failed, emergency still read (ADR 0037 item 3)', () => {
+  it('floor_hit true with needs error gives at least band soft, with the emergency card', () => {
+    const d = decide(
+      req(),
+      sig(
+        {},
+        {
+          needs: { status: 'error' },
+          emergency: { status: 'ok', score: 0.1, floor_hit: true },
+        },
+      ),
+    );
+    expect(['soft', 'popup']).toContain(d.emergency_band);
+    expect(d.emergency_band).toBe('soft');
+    expect(d.candidates[0].id).toBe('emergency');
+    expect(d.needs).toEqual([]);
+    expect(d.urgency.state).toBe('drop');
+  });
+
+  it('a high emergency score with needs error still gives popup', () => {
+    const d = decide(
+      req(),
+      sig(
+        {},
+        {
+          needs: { status: 'error' },
+          emergency: { status: 'ok', score: 0.9, floor_hit: false },
+        },
+      ),
+    );
+    expect(d.emergency_band).toBe('popup');
+  });
+});
+
 describe('non-finite need scores read as no score', () => {
   it('an Infinity need score is not used, boosted or offered', () => {
     const d = decide(req(), sig({ 'N-FOD-01': Infinity, 'N-HOU-01': 0.5 }));

@@ -23,9 +23,8 @@ import {
 import { Request } from 'express';
 import { CustomHeaders } from '../../common/decorators/CustomHeaders';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
-import { HeadersDto, headersSchema } from '../../common/dto/headers.dto';
+import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
-import { ZodValidationPipe } from '../../common/pipes/zod-validation-pipe';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../../common/swagger/header-descriptions';
 import {
   UsageMetricsService,
@@ -34,6 +33,7 @@ import {
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
+import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
 import { V2SearchService } from './v2-search.service';
 
@@ -78,7 +78,7 @@ export class V2SearchController {
     description: X_TENANT_ID_HEADER_DESCRIPTION,
   })
   async getResources(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: V2SearchQueryDto,
     @Req() req: Request,
@@ -118,7 +118,7 @@ export class V2SearchController {
     },
   })
   async getResourcesPost(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: V2SearchQueryDto,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))

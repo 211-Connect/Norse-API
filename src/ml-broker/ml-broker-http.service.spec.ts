@@ -193,6 +193,64 @@ describe('MlBrokerHttpService', () => {
     );
   });
 
+  describe('needs.status (ml-broker PR #24)', () => {
+    it('accepts a body with no needs.status (older ml-broker)', async () => {
+      const body = wireBody();
+      expect(body.needs).not.toHaveProperty('status');
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      await expect(build(fullConfig).classifySearch(request)).resolves.toEqual(
+        body,
+      );
+    });
+
+    it('accepts needs.status ok', async () => {
+      const body = wireBody({
+        needs: {
+          status: 'ok',
+          scores: [{ code: 'N-HOU', tier: 'tier1', score: 0.9 }],
+        },
+      });
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      await expect(build(fullConfig).classifySearch(request)).resolves.toEqual(
+        body,
+      );
+    });
+
+    it('accepts needs.status error with empty scores and urgency null, emergency ok', async () => {
+      const body = wireBody({
+        needs: { status: 'error', scores: [] },
+        urgency: null,
+      });
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      const result = await build(fullConfig).classifySearch(request);
+      expect(result).toEqual(body);
+      expect(result.emergency?.status).toBe('ok');
+    });
+
+    it.each([
+      [
+        'an unknown status',
+        wireBody({ needs: { status: 'weird', scores: [] } }),
+      ],
+      [
+        'needs error with a bad urgency level',
+        wireBody({
+          needs: { status: 'error', scores: [] },
+          urgency: { level: 'U-9', score: 1 },
+        }),
+      ],
+      [
+        'needs ok with urgency null',
+        wireBody({ needs: { status: 'ok', scores: [] }, urgency: null }),
+      ],
+    ])('throws malformed on %s', async (_label, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      expect((await failure(build(fullConfig))).kind).toBe<MlBrokerErrorKind>(
+        'malformed',
+      );
+    });
+  });
+
   it('accepts a body with no emergency block or model version', async () => {
     const body = wireBody({ emergency: undefined, model_version: undefined });
     fetchMock.mockResolvedValue(jsonResponse(body));

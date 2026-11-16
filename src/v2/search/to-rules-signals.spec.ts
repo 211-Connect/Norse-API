@@ -54,6 +54,49 @@ describe('toRulesSignals', () => {
     expect(signals.needs).toEqual({ status: 'ok', scores: {} });
   });
 
+  it('needs.status error maps to needs error with no urgency; emergency maps as normal', () => {
+    const { signals, scores } = toRulesSignals(
+      body({
+        needs: { status: 'error', scores: [] },
+        urgency: null,
+        emergency: {
+          status: 'ok',
+          score: 0.1,
+          floor_hit: true,
+          calm_context: null,
+          dv_shelter: null,
+        },
+      }),
+    );
+    expect(signals.needs).toEqual({ status: 'error' });
+    expect(signals).not.toHaveProperty('urgency');
+    expect(signals.emergency).toMatchObject({
+      status: 'ok',
+      score: 0.1,
+      floor_hit: true,
+    });
+    expect(scores).toEqual({});
+  });
+
+  it('needs.status error ignores any scores or urgency sent with it', () => {
+    const { signals, scores } = toRulesSignals(
+      body({ needs: { status: 'error', scores: body().needs.scores } }),
+    );
+    expect(signals.needs).toEqual({ status: 'error' });
+    expect(signals).not.toHaveProperty('urgency');
+    expect(scores).toEqual({});
+  });
+
+  it('needs.status ok and a missing status (older ml-broker) both map to ok', () => {
+    const ok = toRulesSignals(
+      body({ needs: { status: 'ok', scores: body().needs.scores } }),
+    );
+    const missing = toRulesSignals(body());
+    expect(ok.signals).toEqual(missing.signals);
+    expect(ok.signals.needs.status).toBe('ok');
+    expect(ok.signals.urgency).toEqual({ level: 'U-2', score: 0.95 });
+  });
+
   it('carries true booleans through unchanged', () => {
     const { signals } = toRulesSignals(
       body({
