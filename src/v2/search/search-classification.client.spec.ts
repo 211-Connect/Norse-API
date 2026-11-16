@@ -231,6 +231,29 @@ describe('SearchClassificationClient', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it('returns the error result when the body read never settles', async () => {
+    jest.useFakeTimers();
+    try {
+      // The response arrives, the body promise stays pending for ever, and
+      // the abort signal does not end it (seen once live at the timeout edge).
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => new Promise(() => undefined),
+      } as unknown as Response);
+      const client = build({
+        ML_BROKER_BASE_URL: 'http://broker',
+        ML_BROKER_API_KEY: 'k',
+        V2_CLASSIFY_TIMEOUT_MS: '100',
+      });
+      const pending = client.classify('rent help', 't1');
+      await jest.advanceTimersByTimeAsync(100 + 250);
+      await expect(pending).resolves.toEqual(ERROR_RESULT);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('returns the error result, without calling fetch, when config is missing', async () => {
     expect(
       await build({ ML_BROKER_BASE_URL: 'http://broker.test' }).classify(

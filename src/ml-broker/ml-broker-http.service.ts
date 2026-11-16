@@ -50,6 +50,9 @@ const errorName = (error: unknown): string => {
 const isTimeout = (error: unknown) =>
   errorName(error) === 'TimeoutError' || errorName(error) === 'AbortError';
 
+/** Added to the classify timeout for the hard deadline in classifySearch. */
+const HARD_DEADLINE_MARGIN_MS = 250;
+
 /**
  * Transport for ml-broker: one method per task. It reads its config on every
  * call, so a missing ml-broker config never stops the app from booting, and it
@@ -64,8 +67,45 @@ export class MlBrokerHttpService {
     private readonly metrics: MetricsService,
   ) {}
 
+  /**
+   * The abort signal is the normal timeout. The hard deadline is a second
+   * guard: one live search never returned after the response headers arrived
+   * at the same moment as the abort (2026-11-16), so a transport promise that
+   * never settles must not hold the caller.
+   */
   async classifySearch(
     request: SearchClassificationRequest,
+  ): Promise<SearchClassificationResponse> {
+    const timeoutMs = this.timeoutMs();
+    const deadlineMs = timeoutMs + HARD_DEADLINE_MARGIN_MS;
+    const work = this.sendClassifySearch(request, timeoutMs);
+    // The race below reports a failure; this only prevents an unhandled one
+    // when the work rejects after the deadline.
+    work.catch(() => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new MlBrokerError(
+              'timeout',
+              SEARCH_CLASSIFICATION,
+              `no answer after ${deadlineMs}ms`,
+            ),
+          ),
+        deadlineMs,
+      );
+    });
+    try {
+      return await Promise.race([work, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async sendClassifySearch(
+    request: SearchClassificationRequest,
+    timeoutMs: number,
   ): Promise<SearchClassificationResponse> {
     const task = SEARCH_CLASSIFICATION;
     const baseUrl = this.configService.get<string>('ML_BROKER_BASE_URL');
@@ -74,7 +114,6 @@ export class MlBrokerHttpService {
       throw new MlBrokerError('unconfigured', task, 'not configured');
     }
 
-    const timeoutMs = this.timeoutMs();
     // One signal for the request and the body read, as before.
     const signal = AbortSignal.timeout(timeoutMs);
     const fail = (error: unknown): never => {
