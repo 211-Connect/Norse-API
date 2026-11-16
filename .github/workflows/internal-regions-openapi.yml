@@ -1,0 +1,32 @@
+name: Internal Regions OpenAPI
+
+on:
+  pull_request:
+  push:
+    branches: [main, development]
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Verify internal contract and public exclusion
+        run: npm test -- --runInBand internal-regions-openapi.spec.ts region.controller.spec.ts internal-routes-exclusion.spec.ts
+      - name: Generate internal OpenAPI artifact
+        run: npm run --silent openapi:internal-regions > internal-regions-openapi.json
+      - name: Publish internal contract artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-regions-openapi
+          path: internal-regions-openapi.json
+          retention-days: 14

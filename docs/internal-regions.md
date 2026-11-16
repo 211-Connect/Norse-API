@@ -10,6 +10,8 @@ INTEG-024.
 | --- | --- | --- |
 | `GET /internal/regions` | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state, centroid? }] }` |
 | `GET /internal/regions/:id` | — | `{ id, type, name, state, centroid?, fips?, zip?, geometry, attribution? }` |
+| `GET /internal/regions/places` | `state`, `limit` (default 25, max 100), `cursor` | `{ items: [{ id, name, state, slug, place_type }], next_cursor }` |
+| `GET /internal/regions/places/:slug` | — | `{ id, type, name, state, fips, slug, lsad, place_type, centroid, bbox, geometry }` |
 
 `centroid` is `{ lat, lng }` from the seed's `[lon, lat]`, present for counties and ZIPs (the seed has none for states). ServiceNet biases address search toward it (ISS-1875).
 
@@ -18,7 +20,7 @@ Send `x-api-version: 1`, as for every versioned route, and
 
 ## Status
 
-- **Unpublished.** `@ApiExcludeController()` keeps both routes out of
+- **Unpublished.** `@ApiExcludeController()` keeps these routes out of
   `/swagger/json`, so the Norse SDK never sees them.
   `region.controller.spec.ts` checks the generated document.
 - **Internal key, not tenant scope.** Not tenant-scoped
@@ -27,6 +29,26 @@ Send `x-api-version: 1`, as for every versioned route, and
   on `api.c211.io` / `api-dev.c211.io` alike; an unset key rejects
   everything. ISS-1887 is defence in depth. See
   [geography-filter.md](geography-filter.md#auth-the-internal-key-not-a-tenant).
+
+## Internal OpenAPI contract
+
+Generate the Region OpenAPI 3.0 JSON from the controller and DTO annotations:
+
+```sh
+npm run --silent openapi:internal-regions > internal-regions-openapi.json
+```
+
+Generation runs offline and does not connect to Elasticsearch or start an HTTP
+listener. The artifact documents the existing Region routes as well as the
+Place routes; it is not served by `/swagger/json`. CI checks the contract,
+checks that public Swagger excludes internal routes, validates representative
+API responses against the generated schemas, and publishes a short-lived
+`internal-regions-openapi` workflow artifact. Artifact access follows the
+repository's GitHub Actions permissions.
+
+Update the controller/DTO annotations and contract tests when changing these
+routes; do not hand-edit a generated specification. The generated API version
+header is optional and defaults to `1`.
 
 ## Region ids
 
@@ -71,8 +93,8 @@ well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
 - **"Saint" does not match "St."** Names are stored as "St. Louis County,
   MO", and the index has no synonym for it. "st louis" finds it, "saint
   louis" finds nothing. Not planned for v1.
-- **No city Regions** (ADR 0024). "kansas city" returns the ZIPs whose name
-  carries the city.
+- **No Places in typeahead.** The existing search remains limited to states,
+  counties and ZIPs even when the catalog contains Places.
 
 ## Lookup
 
@@ -85,6 +107,36 @@ Search filtering against a Region (ISS-1873) does not fetch this geometry:
 it uses `geo_shape` `indexed_shape` against index `regions`, id = the Region
 id (documents are stored with `_id` equal to `id`). See
 [geography-filter.md](geography-filter.md#geography-and-virtual-clauses).
+
+## Place Regions
+
+These endpoints read published `type: place` documents from the same global
+`regions` alias. They do not filter by tenant or indicate tenant coverage.
+Dagster publishes state partitions on demand; unmatched and unpublished Places
+are not listed. Slug lookup matches the current canonical slug exactly and
+returns 404 if it is not published.
+
+The list is sorted by slug then Region ID. Pass its `next_cursor` to the next
+request with the same `state` filter; null means the last page. State is an
+uppercase two-letter postal code. Pagination is not a snapshot: a catalog
+publication between requests can alter later pages. List responses omit geometry.
+
+The detail returns centroid as `{lat, lng}`, geometry as GeoJSON Polygon or
+MultiPolygon, and `bbox` as `[minLng, minLat, maxLng, maxLat]`, calculated from
+all geometry coordinates. `fips` is the seven-digit Census GEOID as a string.
+Place IDs are not accepted by the existing Region-by-ID or Geography filters.
+
+For a locally configured API and Elasticsearch alias containing published Places:
+
+```sh
+curl -H "x-internal-api-key: $INTERNAL_API_KEY" \
+  'http://localhost:8080/internal/regions/places?state=WA&limit=2'
+curl -H "x-internal-api-key: $INTERNAL_API_KEY" \
+  'http://localhost:8080/internal/regions/places/spokane-wa'
+```
+
+Configure the API's `ELASTIC_NODE`, `ELASTIC_API_KEY` and `INTERNAL_API_KEY`
+for the local environment. The API also needs its normal startup dependencies.
 
 ## Errors
 
