@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AiClassificationSetting } from '../rules/types';
 import { MlBrokerHttpService } from 'src/ml-broker/ml-broker-http.service';
 import { MlBrokerError } from 'src/ml-broker/ml-broker.errors';
 import { ClassifyResult, toRulesSignals } from './to-rules-signals';
@@ -21,13 +23,30 @@ const failed = (): ClassifyResult => ({
 export class SearchClassificationClient {
   private readonly logger = new Logger(SearchClassificationClient.name);
 
-  constructor(private readonly mlBroker: MlBrokerHttpService) {}
+  constructor(
+    private readonly mlBroker: MlBrokerHttpService,
+    private readonly config: ConfigService,
+  ) {}
 
-  async classify(query: string, tenantId: string): Promise<ClassifyResult> {
+  /**
+   * Always calls ml-broker (Lucas 2026-11-13). With AI classification off and
+   * ML_BROKER_EMERGENCY_ONLY_SUPPORTED exactly `true`, the request carries
+   * `emergency_only: true` so ml-broker skips the needs model. An older
+   * ml-broker may reject the unknown field, hence the flag (default off).
+   */
+  async classify(
+    query: string,
+    tenantId: string,
+    aiClassification: AiClassificationSetting = 'on',
+  ): Promise<ClassifyResult> {
+    const emergencyOnly =
+      aiClassification === 'off' &&
+      this.config.get('ML_BROKER_EMERGENCY_ONLY_SUPPORTED') === 'true';
     try {
       const body = await this.mlBroker.classifySearch({
         query,
         tenant_id: tenantId,
+        ...(emergencyOnly && { emergency_only: true }),
       });
       return toRulesSignals(body);
     } catch (error) {

@@ -42,6 +42,14 @@ const urgencyOption = (v: string): QuestionOption => ({
   parameter: 'urgency',
   value: v,
 });
+// Lucas 2026-11-13: "in danger -> u0". "Safe" writes nothing to the URL
+// (parameter and value null): the client dismisses the question for this
+// visit. The server keeps no memory, so a later call asks again when the
+// model still finds danger (intended: a shared link shows it again).
+const EMERGENCY_OPTIONS: QuestionOption[] = [
+  { label: LABELS.emergency.yes, parameter: 'urgency', value: 'U-0' },
+  { label: LABELS.emergency.safe, parameter: null, value: null },
+];
 const needOption = (code: string): QuestionOption => ({
   label: displayOf(code),
   parameter: 'needs',
@@ -56,41 +64,37 @@ const hotlinesOf = (tenant: TenantContext) =>
   tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES;
 
 /**
- * Emergency question from the emergency band (ADR 0039 Decision 54): `red`
- * for the popup, `orange` for the soft card. Options are urgency answers only;
- * a person in danger taps a hotline number.
+ * Emergency question from the emergency band (ADR 0039 Decision 54). Both bands use the same stem and
+ * labels. "Yes" sends `urgency=U-0` (the next call shows only the hotlines,
+ * callerU0EmergencyQuestion); "safe" writes nothing to the URL.
  */
+// Lucas 2026-11-13: "bring back the popup if the model is very sure". The
+// strong band is critical (popup), the soft band high (in-page card).
 const bandEmergencyQuestion = (
-  band: 'popup' | 'soft',
   tenant: TenantContext,
+  band: EmergencyBand,
 ): Question =>
   question({
     id: 'emergency',
     type: 'emergency',
-    level: band === 'popup' ? 'red' : 'orange',
-    importance: 'critical',
+    importance: band === 'popup' ? 'critical' : 'high',
     reason: 'emergency_band',
     step: 0,
     stem: STEMS.emergency,
-    options: ['U-1', 'U-3'].map(urgencyOption),
+    options: EMERGENCY_OPTIONS.map((o) => ({ ...o })),
     ...urgencyFlags,
     hotlines: hotlinesOf(tenant),
   });
 
 /**
- * Caller sent `urgency=U-0` ("in an emergency right now").
- *
- * Built on an UNCONFIRMED reading of ADR 0039 Decision 50 (Claude's reading,
- * not yet confirmed by Lucas): the response holds the emergency question as a
- * popup (`level: red`) with the hotline numbers and no options, whatever the
- * band, and the results stay. Change only this function if Lucas decides
- * otherwise.
+ * Caller sent `urgency=U-0` (also the "Yes, I am in danger" answer). ADR 0039
+ * Decision 50, confirmed by Lucas 2026-11-12: the emergency question first,
+ * with the hotline numbers and no options, whatever the band; the results stay.
  */
 export const callerU0EmergencyQuestion = (tenant: TenantContext): Question =>
   question({
     id: 'emergency',
     type: 'emergency',
-    level: 'red',
     importance: 'critical',
     reason: 'emergency_band',
     step: 0,
@@ -115,13 +119,11 @@ const urgencyFlags = {
 const question = ({
   id,
   type,
-  level,
   importance,
   ...rest
 }: Omit<Question, 'value' | 'priority' | 'uncertainty'>): Question => ({
   id,
   type,
-  level,
   importance,
   value: 0,
   priority: 0,
@@ -147,7 +149,7 @@ export function buildCandidates(
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {
-    out.push(bandEmergencyQuestion(band as 'popup' | 'soft', tenant));
+    out.push(bandEmergencyQuestion(tenant, band));
   }
 
   // 2. time questions
@@ -158,7 +160,6 @@ export function buildCandidates(
         question({
           id: 'urgency_today',
           type: 'confirm_urgency',
-          level: 'orange',
           importance: 'high',
           reason: 'urgency_unsure',
           step: 1,
@@ -172,7 +173,6 @@ export function buildCandidates(
         question({
           id: 'urgency_time',
           type: 'confirm_urgency',
-          level: 'low',
           importance: 'low',
           reason: 'urgency_unsure',
           step: 5,
@@ -212,7 +212,6 @@ export function buildCandidates(
       return question({
         id: `area:${t1}`,
         type: 'find_need',
-        level: 'orange',
         importance: 'high',
         reason,
         step: 3,
@@ -283,7 +282,6 @@ export function buildCandidates(
             question({
               id: 'start',
               type: 'find_need',
-              level: 'orange',
               importance: 'high',
               reason: 'no_need',
               step: 2,
@@ -317,7 +315,6 @@ export function buildCandidates(
         question({
           id,
           type: 'narrow',
-          level: 'low',
           importance,
           reason: 'unsure_needs',
           step,

@@ -38,7 +38,10 @@ export function toRulesSignals(
   return {
     signals: {
       needs: { status: 'ok', scores },
-      urgency: { level: body.urgency.level, score: body.urgency.score },
+      // urgency null (emergency_only): no urgency field, as for AI off.
+      ...(body.urgency && {
+        urgency: { level: body.urgency.level, score: body.urgency.score },
+      }),
       emergency,
     },
     scores,

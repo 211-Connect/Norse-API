@@ -28,8 +28,12 @@ export default () => ({
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
-  // Timeout of the /v2/search classify call, in ms (integer; default 300).
+  // Timeout of the /v2/search classify call, in ms (integer; default 1000).
   V2_CLASSIFY_TIMEOUT_MS: process.env.V2_CLASSIFY_TIMEOUT_MS,
+  // ml-broker accepts `emergency_only` on search-classification (ml-broker
+  // PR #20); on only for the exact string `true`.
+  ML_BROKER_EMERGENCY_ONLY_SUPPORTED:
+    process.env.ML_BROKER_EMERGENCY_ONLY_SUPPORTED,
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
   ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
