@@ -85,7 +85,7 @@ describe('API versioning and release header (e2e)', () => {
       expect(without.body).toEqual(withOne.body);
     });
 
-    it.each(['2', '9', 'v1', ''])(
+    it.each(['3', '9', 'v1', ''])(
       'x-api-version %p is a 400 that names the header, not a 404',
       async (value) => {
         const res = await request(app.getHttpServer())

@@ -19,15 +19,17 @@ const q = (
 ): Question => ({
   id,
   type,
-  level: 'orange',
   importance: 'high',
   reason: 'no_need',
   step: 1,
-  parameter: type === 'find_need' || type === 'narrow' ? 'needs' : 'urgency',
   stem: 's',
   options: values.map((v, i) => ({
-    value: v,
     label: v,
+    parameter:
+      type === 'find_need' || type === 'narrow'
+        ? ('needs' as const)
+        : ('urgency' as const),
+    value: v,
     ...(counts[i] === undefined ? {} : { results_count: counts[i] }),
   })),
   multi_select: true,

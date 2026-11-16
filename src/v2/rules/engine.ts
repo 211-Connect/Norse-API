@@ -1,6 +1,6 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
-import { buildCandidates, countCodesOf } from './questions';
+import { asksNeeds, buildCandidates, countCodesOf } from './questions';
 import { scoreOf } from './scores';
 import {
   effort,
@@ -9,7 +9,7 @@ import {
   splitQuality,
   valueOf,
 } from './importance';
-import { needOptions, NX } from './sune';
+import { needOptions } from './sune';
 import {
   Clarification,
   Decision,
@@ -22,35 +22,40 @@ import {
 import { cmp } from './util';
 
 export function decide(
-  req: RulesRequest,
+  request: RulesRequest,
   signals: RulesSignals,
   tenant: TenantContext = {},
 ): Decision {
-  const band = emergencyBand(signals.emergency);
-  const urgency = urgencyState(req, signals);
-  const states = needStates(req, signals);
-  const candidates = buildCandidates(
-    req,
-    signals,
-    tenant,
-    band,
-    urgency,
-    states,
-  );
+  // U-X means "urgency not yet known": same as no urgency sent (ISS-2499).
+  const req: RulesRequest =
+    request.urgency === 'U-X' ? { ...request, urgency: undefined } : request;
+  const aiOff = tenant.ai_classification === 'off';
+  // AI classification off (question 14): the need and urgency guesses are
+  // dropped; the emergency signal stays, so the check always runs.
+  const used: RulesSignals = aiOff
+    ? { needs: { status: 'ok', scores: {} }, emergency: signals.emergency }
+    : signals;
+  const band = emergencyBand(used.emergency);
+  const urgency = urgencyState(req, used);
+  const states = needStates(req, used);
+  const built = buildCandidates(req, used, tenant, band, urgency, states);
+  // Off: no optional question (find_need, narrow, confirm_urgency).
+  const candidates = aiOff
+    ? built.filter((q) => q.type === 'emergency')
+    : built;
   const countCodes = countCodesOf(candidates);
-  const scores = signals.needs.scores ?? {};
-  const answered =
-    req.urgency !== undefined && req.urgency !== null && req.urgency !== 'U-X';
+  const scores = used.needs.scores ?? {};
+  // Decision 28: storable only when the check found nothing and the response
+  // holds no emergency question (a caller U-0 adds one with band none).
+  const hasEmergencyQuestion = candidates.some((q) => q.type === 'emergency');
   return {
     rules_version: RULES_VERSION,
     option_scores: Object.fromEntries(
       countCodes.map((c) => [c, scoreOf(scores, c)]),
     ),
-    emergency: {
-      band,
-      show_hotline: answered ? req.urgency === 'U-0' : band === 'popup',
-    },
-    cacheable: band === 'none' && signals.needs.status === 'ok',
+    emergency_band: band,
+    cacheable:
+      band === 'none' && !hasEmergencyQuestion && used.needs.status === 'ok',
     needs: states.needs,
     boost_needs: states.boostNeeds,
     nx: states.nx,
@@ -69,22 +74,18 @@ export function finalize(
   let questions: Question[] = JSON.parse(JSON.stringify(decision.candidates));
 
   if (strongTextMatch) {
-    questions = questions.filter((q) => q.parameter !== 'needs');
+    questions = questions.filter((q) => !asksNeeds(q));
   }
 
   const kept: Question[] = [];
   for (const q of questions) {
-    if (q.parameter !== 'needs') {
+    if (!asksNeeds(q)) {
       kept.push(q);
       continue;
     }
     if (total === 0) continue;
     const options = [];
     for (const o of q.options) {
-      if (o.value === NX) {
-        options.push(o);
-        continue;
-      }
       if (counts.by_code !== null) {
         const n = counts.by_code[o.value] ?? 0;
         if (n === 0) continue;
@@ -109,14 +110,23 @@ export function finalize(
   }
 
   for (const q of kept) {
+    for (const o of q.options) o.results_count ??= null;
     q.value = valueOf(
       q.uncertainty,
       effort(q),
-      q.parameter === 'needs' ? splitQuality(q, total) : 1,
+      asksNeeds(q) ? splitQuality(q, total) : 1,
     );
     q.priority = priorityOf(q.importance, q.value);
   }
-  kept.sort((a, b) => b.priority - a.priority || cmp(a.id, b.id));
+  // The emergency question is always first, in both bands (a soft-band one is
+  // only `high`, so priority alone could rank another question above it).
+  const emergencyFirst = (q: Question) => (q.type === 'emergency' ? 0 : 1);
+  kept.sort(
+    (a, b) =>
+      emergencyFirst(a) - emergencyFirst(b) ||
+      b.priority - a.priority ||
+      cmp(a.id, b.id),
+  );
   return {
     rules_version: decision.rules_version,
     questions: kept.slice(0, CUTOFFS.maxQuestions),

@@ -78,6 +78,23 @@ describe('urgencyState', () => {
       state: 'use',
     });
   });
+  it('caller U-X is no answer: model guess decides (ISS-2499)', () => {
+    expect(urgencyState(req({ urgency: 'U-X' }), withU(0.99))).toEqual({
+      value: 'U-2',
+      source: 'inferred',
+      state: 'use',
+    });
+    expect(urgencyState(req({ urgency: 'U-X' }), withU(0.5)).state).toBe(
+      'drop',
+    );
+  });
+  it('caller U-0 stays confirmed', () => {
+    expect(urgencyState(req({ urgency: 'U-0' }), withU(0.99))).toEqual({
+      value: 'U-0',
+      source: 'caller',
+      state: 'use',
+    });
+  });
   it('error -> default drop', () => {
     expect(
       urgencyState(req(), sig({}, { needs: { status: 'error' } })),

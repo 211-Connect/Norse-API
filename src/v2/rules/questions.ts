@@ -36,15 +36,73 @@ import {
 } from './types';
 import { cmp } from './util';
 
+// Key order follows ADR 0039 Decision 55: {label, parameter, value}.
 const urgencyOption = (v: string): QuestionOption => ({
-  value: v,
   label: LABELS.urgency[v],
+  parameter: 'urgency',
+  value: v,
 });
+// Lucas 2026-11-13: "in danger -> u0". "Safe" writes nothing to the URL
+// (parameter and value null): the client dismisses the question for this
+// visit. The server keeps no memory, so a later call asks again when the
+// model still finds danger (intended: a shared link shows it again).
+const EMERGENCY_OPTIONS: QuestionOption[] = [
+  { label: LABELS.emergency.yes, parameter: 'urgency', value: 'U-0' },
+  { label: LABELS.emergency.safe, parameter: null, value: null },
+];
 const needOption = (code: string): QuestionOption => ({
-  value: code,
   label: displayOf(code),
+  parameter: 'needs',
+  value: code,
 });
-const nxOption = (): QuestionOption => ({ value: NX, label: LABELS.nx });
+
+/** A question that offers need codes (start, area, narrow). */
+export const asksNeeds = (q: Question): boolean =>
+  q.type === 'find_need' || q.type === 'narrow';
+
+const hotlinesOf = (tenant: TenantContext) =>
+  tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES;
+
+/**
+ * Emergency question from the emergency band (ADR 0039 Decision 54). Both bands use the same stem and
+ * labels. "Yes" sends `urgency=U-0` (the next call shows only the hotlines,
+ * callerU0EmergencyQuestion); "safe" writes nothing to the URL.
+ */
+// Lucas 2026-11-13: "bring back the popup if the model is very sure". The
+// strong band is critical (popup), the soft band high (in-page card).
+const bandEmergencyQuestion = (
+  tenant: TenantContext,
+  band: EmergencyBand,
+): Question =>
+  question({
+    id: 'emergency',
+    type: 'emergency',
+    importance: band === 'popup' ? 'critical' : 'high',
+    reason: 'emergency_band',
+    step: 0,
+    stem: STEMS.emergency,
+    options: EMERGENCY_OPTIONS.map((o) => ({ ...o })),
+    ...urgencyFlags,
+    hotlines: hotlinesOf(tenant),
+  });
+
+/**
+ * Caller sent `urgency=U-0` (also the "Yes, I am in danger" answer). ADR 0039
+ * Decision 50, confirmed by Lucas 2026-11-12: the emergency question first,
+ * with the hotline numbers and no options, whatever the band; the results stay.
+ */
+export const callerU0EmergencyQuestion = (tenant: TenantContext): Question =>
+  question({
+    id: 'emergency',
+    type: 'emergency',
+    importance: 'critical',
+    reason: 'emergency_band',
+    step: 0,
+    stem: STEMS.emergency,
+    options: [],
+    ...urgencyFlags,
+    hotlines: hotlinesOf(tenant),
+  });
 
 const needsFlags = {
   multi_select: true,
@@ -61,13 +119,11 @@ const urgencyFlags = {
 const question = ({
   id,
   type,
-  level,
   importance,
   ...rest
 }: Omit<Question, 'value' | 'priority' | 'uncertainty'>): Question => ({
   id,
   type,
-  level,
   importance,
   value: 0,
   priority: 0,
@@ -85,24 +141,15 @@ export function buildCandidates(
 ): Question[] {
   const out: Question[] = [];
 
-  // 1. emergency
-  const hasEmergency = (band === 'popup' || band === 'soft') && !req.urgency;
-  if (hasEmergency) {
-    out.push(
-      question({
-        id: 'emergency',
-        type: 'emergency',
-        level: 'red',
-        importance: 'critical',
-        reason: 'emergency_band',
-        step: 0,
-        parameter: 'urgency',
-        stem: STEMS.emergency,
-        options: ['U-0', 'U-1', 'U-3'].map(urgencyOption),
-        ...urgencyFlags,
-        hotlines: tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES,
-      }),
-    );
+  // 1. emergency. `req.urgency` is never U-X here: decide() strips it.
+  // A caller U-1 to U-4 wins over the band (Decision 51).
+  const hasEmergency =
+    req.urgency === 'U-0' ||
+    ((band === 'popup' || band === 'soft') && !req.urgency);
+  if (req.urgency === 'U-0') {
+    out.push(callerU0EmergencyQuestion(tenant));
+  } else if (hasEmergency) {
+    out.push(bandEmergencyQuestion(tenant, band));
   }
 
   // 2. time questions
@@ -113,11 +160,9 @@ export function buildCandidates(
         question({
           id: 'urgency_today',
           type: 'confirm_urgency',
-          level: 'orange',
           importance: 'high',
           reason: 'urgency_unsure',
           step: 1,
-          parameter: 'urgency',
           stem: STEMS.today,
           options: ['U-1', 'U-2', 'U-3'].map(urgencyOption),
           ...urgencyFlags,
@@ -128,11 +173,9 @@ export function buildCandidates(
         question({
           id: 'urgency_time',
           type: 'confirm_urgency',
-          level: 'low',
           importance: 'low',
           reason: 'urgency_unsure',
           step: 5,
-          parameter: 'urgency',
           stem: STEMS.time,
           options: ['U-1', 'U-2', 'U-4', 'U-3'].map(urgencyOption),
           ...urgencyFlags,
@@ -169,11 +212,9 @@ export function buildCandidates(
       return question({
         id: `area:${t1}`,
         type: 'find_need',
-        level: 'orange',
         importance: 'high',
         reason,
         step: 3,
-        parameter: 'needs',
         stem: STEMS.area.replace('{area}', displayOf(t1)),
         options,
         ...needsFlags,
@@ -236,17 +277,14 @@ export function buildCandidates(
           }
         }
         const options = picks.map(needOption);
-        if (sc(NX) >= CUTOFFS.nx.label) options.push(nxOption());
         if (options.length > 0)
           out.push(
             question({
               id: 'start',
               type: 'find_need',
-              level: 'orange',
               importance: 'high',
               reason: 'no_need',
               step: 2,
-              parameter: 'needs',
               stem: STEMS.start,
               options,
               ...needsFlags,
@@ -277,17 +315,14 @@ export function buildCandidates(
         question({
           id,
           type: 'narrow',
-          level: 'low',
           importance,
           reason: 'unsure_needs',
           step,
-          parameter: 'needs',
           stem: sureTier2 ? STEMS.narrowAlso : STEMS.narrow,
           options,
           ...needsFlags,
         });
       if (g1.length > 0) {
-        if (sc(NX) >= CUTOFFS.nx.label) g1.push(nxOption());
         out.push(
           narrow(
             'narrow:1',
@@ -317,7 +352,7 @@ export function buildCandidates(
 export function countCodesOf(candidates: Question[]): string[] {
   const set = new Set<string>();
   for (const q of candidates) {
-    if (q.parameter !== 'needs') continue;
+    if (!asksNeeds(q)) continue;
     for (const o of needOptions(q.options)) {
       if (isKnownCode(o.value)) set.add(o.value);
     }

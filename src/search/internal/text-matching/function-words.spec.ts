@@ -1,6 +1,7 @@
 import {
   FUNCTION_WORDS,
   SNOWBALL_ENGLISH_STOP_WORDS,
+  SNOWBALL_SPANISH_STOP_WORDS,
   functionWordsFor,
 } from './function-words';
 import { queryWords } from './query-words';
@@ -52,6 +53,38 @@ describe('function words', () => {
     }
   });
 
+  describe('Spanish function words', () => {
+    it('is the whole Snowball Spanish list: 308 entries, none repeated', () => {
+      expect(SNOWBALL_SPANISH_STOP_WORDS).toHaveLength(308);
+      expect(new Set(SNOWBALL_SPANISH_STOP_WORDS).size).toBe(308);
+    });
+
+    it('holds every word longer than one character, normalised', () => {
+      for (const w of SNOWBALL_SPANISH_STOP_WORDS) {
+        const normalised = w
+          .toLowerCase()
+          .normalize('NFKD')
+          .replace(/\p{M}/gu, '');
+        if (normalised.length >= 2) {
+          expect(FUNCTION_WORDS.es.has(normalised)).toBe(true);
+          // a query token reaches the set through queryWords
+          for (const token of queryWords(w)) {
+            expect(FUNCTION_WORDS.es.has(token)).toBe(true);
+          }
+        }
+      }
+    });
+
+    it('holds no accent and no capital letter', () => {
+      for (const w of FUNCTION_WORDS.es) expect(w).toMatch(/^[a-z]+$/);
+    });
+
+    it('has spot entries from each part of the list', () => {
+      for (const w of ['de', 'que', 'tambien', 'mas', 'si', 'estaria', 'tened'])
+        expect(FUNCTION_WORDS.es.has(w)).toBe(true);
+    });
+  });
+
   describe('functionWordsFor', () => {
     it('returns the English set for en and for region forms of en', () => {
       expect(functionWordsFor('en')).toBe(FUNCTION_WORDS.en);
@@ -61,8 +94,12 @@ describe('function words', () => {
       expect(functionWordsFor('en_US')).toBe(FUNCTION_WORDS.en);
     });
 
+    it('returns the Spanish set for es', () => {
+      expect(functionWordsFor('es')).toBe(FUNCTION_WORDS.es);
+    });
+
     it('returns undefined for other languages, and does not match by prefix', () => {
-      expect(functionWordsFor('es')).toBeUndefined();
+      expect(functionWordsFor('fr')).toBeUndefined();
       expect(functionWordsFor('zh-Hans')).toBeUndefined();
       expect(functionWordsFor('eng')).toBeUndefined();
       expect(functionWordsFor('')).toBeUndefined();

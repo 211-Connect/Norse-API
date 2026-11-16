@@ -52,7 +52,23 @@ describe('word-rarity', () => {
     });
 
     it('keeps every word for other languages', () => {
-      expect(contentWords('my boyfriend', 'es')).toEqual(['my', 'boyfriend']);
+      expect(contentWords('my boyfriend', 'fr')).toEqual(['my', 'boyfriend']);
+    });
+
+    it('drops Spanish function words, accents and case folded', () => {
+      expect(contentWords('Mi novio ME pega, está EN casa', 'es')).toEqual([
+        'novio',
+        'pega',
+        'casa',
+      ]);
+      expect(contentWords('¿Qué más tú?', 'es')).toEqual([]);
+    });
+
+    it('keeps Spanish content words', () => {
+      expect(contentWords('ayuda con la renta', 'es')).toEqual([
+        'ayuda',
+        'renta',
+      ]);
     });
 
     it('caps the word count', () => {

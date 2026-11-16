@@ -342,6 +342,50 @@ describe('HybridSearchService', () => {
     expect(taxonomyCall.size).toBe(10);
   });
 
+  it('uses a provided queryVector and does not embed again', async () => {
+    const embed = service.embedQuery as jest.Mock;
+    embed.mockClear();
+    const vector = [0.5, 0.6, 0.7, 0.8];
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+      queryVector: Promise.resolve(vector),
+    });
+
+    expect(embed).not.toHaveBeenCalled();
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall.query.script_score.script.params.qv).toEqual(vector);
+    // v2 relevance searches wrap the main query in rank fusion's `pinned`.
+    const mainQuery =
+      capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query;
+    const scriptFn = mainQuery.function_score.functions.find(
+      (f: any) => f.script_score,
+    );
+    expect(scriptFn.script_score.script.params.qv).toEqual(vector);
+  });
+
+  it('a provided queryVector that resolves undefined gives the lexical-only request', async () => {
+    const embed = service.embedQuery as jest.Mock;
+    embed.mockClear();
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+      queryVector: Promise.resolve(undefined),
+    });
+
+    expect(embed).not.toHaveBeenCalled();
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall).toBeUndefined();
+    const functions = capturedMainRequest.query.function_score.functions ?? [];
+    expect(functions.find((f: any) => f.script_score)).toBeUndefined();
+  });
+
   it('emits one score-weighted constant_score clause per predicted code', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
