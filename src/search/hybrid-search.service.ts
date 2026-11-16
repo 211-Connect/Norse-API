@@ -116,6 +116,8 @@ const PRIORITY_SCORE_WEIGHT = 1;
  */
 const RRF_K = 60;
 const RRF_LIST_SIZE = 100;
+// Weight of the cosine tie-break inside the taxonomy list (taxonomy scores are 25+).
+const RRF_TAXONOMY_TIE_BREAK = 0.001;
 
 const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
@@ -772,12 +774,25 @@ export class HybridSearchService {
         }),
       );
       if (taxonomy.length > 0) {
+        // Many services carry the same predicted code and tie on the
+        // taxonomy score, so Elasticsearch would break the tie in index
+        // order. A tiny cosine term breaks it by meaning instead, as the
+        // ranking lab did (live check 2026-11-16: top-10 overlap with the
+        // lab order was 0.71 without it).
         requests.push(
           run('hybrid_rrf_taxonomy', {
-            bool: {
-              filter: filters,
-              should: taxonomy,
-              minimum_should_match: 1,
+            script_score: {
+              query: {
+                bool: {
+                  filter: filters,
+                  should: taxonomy,
+                  minimum_should_match: 1,
+                },
+              },
+              script: {
+                source: `_score + ${RRF_TAXONOMY_TIE_BREAK} * Math.max(0, cosineSimilarity(params.qv, 'embedding'))`,
+                params: { qv: queryVector },
+              },
             },
           }),
         );

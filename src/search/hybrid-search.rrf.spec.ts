@@ -62,10 +62,14 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   const isList = (r: any) => r._source === false && r.size === 100;
   const kindOf = (r: any) =>
     r.query.script_score
-      ? 'vector'
-      : JSON.stringify(r.query).includes('BH-1800')
+      ? r.query.script_score.query.bool.should
         ? 'taxonomy'
-        : 'keyword';
+        : 'vector'
+      : 'keyword';
+  const filterOf = (r: any) =>
+    r.query.script_score
+      ? r.query.script_score.query.bool.filter
+      : r.query.bool.filter;
 
   const build = async () => {
     requests = [];
@@ -221,14 +225,19 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     for (const req of sent) {
       expect(req.size).toBe(100);
       expect(req._source).toBe(false);
-      const filter =
-        kindOf(req) === 'vector'
-          ? req.query.script_score.query.bool.filter
-          : req.query.bool.filter;
+      const filter = filterOf(req);
       expect(filter).toEqual(mainFilter);
     }
 
     expect(main.query.pinned.ids).toEqual(FUSED);
+
+    // Regression (live check 2026-11-16): taxonomy ties break by cosine.
+    const tax = sent.find((r: any) => kindOf(r) === 'taxonomy');
+    expect(tax.query.script_score.query.bool.minimum_should_match).toBe(1);
+    expect(tax.query.script_score.script.source).toMatch(
+      /^_score \+ 0\.001 \* Math\.max\(0, cosineSimilarity\(params\.qv, 'embedding'\)\)$/,
+    );
+    expect(tax.query.script_score.script.params.qv).toBeDefined();
     expect(organic.function_score.query.bool.minimum_should_match).toBe(0);
     expect(main.size).toBe(25);
     expect(main.track_total_hits).toBe(true);
@@ -301,10 +310,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     const idsFilter = mainFilter.find((f: any) => f.ids);
     expect(idsFilter).toBeDefined();
     for (const req of sent) {
-      const filter =
-        kindOf(req) === 'vector'
-          ? req.query.script_score.query.bool.filter
-          : req.query.bool.filter;
+      const filter = filterOf(req);
       expect(filter).toContainEqual(idsFilter);
     }
   });
