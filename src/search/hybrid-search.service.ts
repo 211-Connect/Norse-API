@@ -49,6 +49,7 @@ import {
 import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
+import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -105,6 +106,14 @@ const EMBEDDING_TIMEOUT_MS = 10_000;
 // being hard sort tiers and become small score contributions instead (so a
 // large pinned pool no longer floods the first pages). Tune these like the
 // other weights.
+/**
+ * Reciprocal rank fusion (ISS-2766). `RRF_K` is the usual damping constant.
+ * `RRF_LIST_SIZE` is the depth of each ranked list and of the fused order.
+ * 100 is also the Elasticsearch `pinned` query limit on ids.
+ */
+const RRF_K = 60;
+const RRF_LIST_SIZE = 100;
+
 const PINNED_SCORE_BOOST = 5;
 const PRIORITY_SCORE_WEIGHT = 1;
 
@@ -329,8 +338,8 @@ export class HybridSearchService {
   }
 
   async searchHybrid(options: HybridSearchOptions): Promise<SearchResponse> {
-    const { request, tenantFacets, cutoff, lang } =
-      await this.prepareHybridSearch(options, { rank: true });
+    const { request, tenantFacets, cutoff, lang, fused } =
+      await this.prepareHybridSearch(options, { rank: true, fuse: true });
 
     const data = await this.metrics.observeDownstream(
       'elasticsearch',
@@ -350,7 +359,8 @@ export class HybridSearchService {
       return {
         _index: hit._index,
         _id: hit._id,
-        _score: hit._score ?? null,
+        // A pinned query scores about 1.7e38, which means nothing to a caller.
+        _score: fused ? null : (hit._score ?? null),
         _source: stripEnrichment({
           ...hit._source,
           facets: normalizedFacets,
@@ -382,7 +392,7 @@ export class HybridSearchService {
         },
         hits: {
           total: { value: totalHits, relation: 'eq' },
-          max_score: hits[0]?._score ?? null,
+          max_score: fused ? null : (hits[0]?._score ?? null),
           hits,
         },
       },
@@ -402,6 +412,7 @@ export class HybridSearchService {
   async buildPinsRequest(options: HybridSearchOptions): Promise<SearchRequest> {
     const { request } = await this.prepareHybridSearch(options, {
       rank: options.query.relevance_cutoff === 'on',
+      fuse: false,
     });
 
     return request;
@@ -409,7 +420,7 @@ export class HybridSearchService {
 
   private async prepareHybridSearch(
     options: HybridSearchOptions,
-    { rank }: { rank: boolean },
+    { rank, fuse }: { rank: boolean; fuse: boolean },
   ) {
     const { headers, query: q } = options;
     const {
@@ -593,6 +604,33 @@ export class HybridSearchService {
       }
     }
 
+    let fusedIds: string[] | undefined;
+    if (
+      this.shouldFuse({
+        fuse,
+        v2,
+        rank,
+        queryVector,
+        queryStr,
+        coords,
+        sort,
+        needShould,
+      })
+    ) {
+      // `baseFilters` already holds the relevance-cutoff `ids` filter when the
+      // cutoff ran, so the lists only see kept services. The cutoff decides
+      // membership from today's scores; fusion only orders.
+      fusedIds = await this.fetchFusedOrder({
+        index,
+        preference,
+        filters: baseFilters,
+        queryStr,
+        queryVector: queryVector!,
+        predicted: predictedTaxonomies,
+        wordRarity,
+      });
+    }
+
     const request = this.buildHybridQuery({
       index,
       preference,
@@ -609,9 +647,151 @@ export class HybridSearchService {
       sort,
       extraShould: needShould,
       wordRarity,
+      fusedIds,
     });
 
-    return { request, tenantFacets, cutoff, lang };
+    return {
+      request,
+      tenantFacets,
+      cutoff,
+      lang,
+      fused: fusedIds !== undefined,
+    };
+  }
+
+  /**
+   * Whether the top results are ordered by rank fusion (ISS-2766). Each
+   * condition has a reason:
+   * - `fuse`: only the ranked search page fuses. The pins request does not.
+   * - `v2`: v1 must not change at all.
+   * - `rank`: an unranked request has no scores to order.
+   * - `queryVector`: the vector list needs the embedding. Without it the
+   *   search falls back to lexical-only scoring.
+   * - non-empty query: browse mode has no keyword or vector signal.
+   * - no `coords`: the lab measured searches without a location only. With a
+   *   location the geo decay is part of the score and is in no list.
+   * - `sort` relevance: any other sort decides the order itself.
+   * - no need boost: an active need boost keeps today's summed score, so
+   *   ADR 0039 Decisions 19 and 58 hold.
+   */
+  private shouldFuse(args: {
+    fuse: boolean;
+    v2: boolean;
+    rank: boolean;
+    queryVector: number[] | undefined;
+    queryStr: string;
+    coords: number[] | undefined;
+    sort: SearchResourcesQueryDto['sort'];
+    needShould: QueryDslQueryContainer[];
+  }): boolean {
+    const { fuse, v2, rank, queryVector, queryStr, coords, sort, needShould } =
+      args;
+    return (
+      fuse &&
+      v2 &&
+      rank &&
+      queryVector !== undefined &&
+      queryStr.trim().length > 0 &&
+      (coords === undefined || coords.length === 0) &&
+      (sort ?? 'relevance') === 'relevance' &&
+      needShould.length === 0
+    );
+  }
+
+  /**
+   * Three ranked lists (keyword, vector, taxonomy), each the top
+   * `RRF_LIST_SIZE` ids, fused by reciprocal rank. The lists use the same
+   * clauses as the main query. `pinned_resources_mode` `boost` (+5 constant)
+   * and the priority function are not in the lists. Mode `top` still works:
+   * its sort tiers come before `_score`.
+   * Plain `search`, not `msearch`: the read-only Elasticsearch guard rejects
+   * `_msearch`. Never rejects: on any failure the search keeps today's
+   * summed ranking.
+   */
+  private async fetchFusedOrder(args: {
+    index: string;
+    preference: string;
+    filters: QueryDslQueryContainer[];
+    queryStr: string;
+    queryVector: number[];
+    predicted: PredictedTaxonomy[];
+    wordRarity: WordRarity;
+  }): Promise<string[] | undefined> {
+    const {
+      index,
+      preference,
+      filters,
+      queryStr,
+      queryVector,
+      predicted,
+      wordRarity,
+    } = args;
+
+    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
+    const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    const common = {
+      index,
+      preference,
+      size: RRF_LIST_SIZE,
+      _source: false,
+      track_total_hits: false,
+    } as const;
+
+    const idsOf = (response: {
+      hits: { hits: { _id?: string }[] };
+    }): string[] =>
+      response.hits.hits
+        .map((h) => h._id)
+        .filter((id): id is string => id !== undefined);
+
+    const run = (name: string, query: QueryDslQueryContainer) =>
+      this.metrics
+        .observeDownstream('elasticsearch', name, () =>
+          this.elasticsearchService.search({ ...common, query }),
+        )
+        .then(idsOf);
+
+    try {
+      const requests: Promise<string[]>[] = [];
+      if (lexical.length > 0) {
+        requests.push(
+          run('hybrid_rrf_keyword', {
+            bool: { filter: filters, should: lexical, minimum_should_match: 1 },
+          }),
+        );
+      }
+      requests.push(
+        run('hybrid_rrf_vector', {
+          script_score: {
+            query: { bool: { filter: filters } },
+            script: {
+              source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+              params: { qv: queryVector },
+            },
+          },
+        }),
+      );
+      if (taxonomy.length > 0) {
+        requests.push(
+          run('hybrid_rrf_taxonomy', {
+            bool: {
+              filter: filters,
+              should: taxonomy,
+              minimum_should_match: 1,
+            },
+          }),
+        );
+      }
+
+      const lists = await Promise.all(requests);
+      const fused = reciprocalRankFusion(lists, RRF_K).slice(0, RRF_LIST_SIZE);
+      return fused.length > 0 ? fused : undefined;
+    } catch (error) {
+      this.logger.warn(
+        `RRF lists failed, using summed ranking: ${(error as Error).message}`,
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -1547,6 +1727,7 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    fusedIds?: string[];
   }): SearchRequest {
     const {
       index,
@@ -1564,6 +1745,7 @@ export class HybridSearchService {
       sort: sortOption,
       extraShould,
       wordRarity,
+      fusedIds,
     } = args;
 
     const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
@@ -1590,7 +1772,13 @@ export class HybridSearchService {
         excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
       },
       aggs,
-      query: esQuery,
+      // The `pinned` query is free under the Basic license. It keeps the
+      // fused order for the top ids and today's order for the rest, so
+      // paging, facets and totals do not change.
+      query:
+        fusedIds && fusedIds.length > 0
+          ? { pinned: { ids: fusedIds, organic: esQuery } }
+          : esQuery,
       sort,
     };
   }
