@@ -43,6 +43,7 @@ import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import { SearchService } from 'src/search/search.service';
+import { QUERY_TOO_LONG_MESSAGE } from 'src/search/internal/query-log';
 import { FavoriteList } from 'src/common/schemas/favorite-list.schema';
 import { ResourceService } from 'src/resource/resource.service';
 import { FavoriteListService } from 'src/favorite-list/favorite-list.service';
@@ -928,7 +929,16 @@ export class PrintableDirectoryService {
     });
 
     if (errors.length > 0) {
-      throw new BadRequestException('Invalid serialized search query params');
+      const tooLong = errors.some(
+        (error) =>
+          error.property === 'query' &&
+          error.constraints?.isQueryWithinMaxLength !== undefined,
+      );
+      throw new BadRequestException(
+        tooLong
+          ? QUERY_TOO_LONG_MESSAGE
+          : 'Invalid serialized search query params',
+      );
     }
 
     return parsed;

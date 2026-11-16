@@ -5,6 +5,8 @@ import { MlBrokerError } from './ml-broker.errors';
 
 // Lucas 2026-11-13: "at least 300 ms, or even longer, ml broker is slow".
 const DEFAULT_TIMEOUT_MS = 1000;
+const MIN_TIMEOUT_MS = 100;
+const MAX_TIMEOUT_MS = 5000;
 const SEARCH_CLASSIFICATION = 'search-classification';
 const URGENCY_LEVELS: readonly string[] = ['U-1', 'U-2', 'U-3', 'U-4'];
 
@@ -147,7 +149,8 @@ export class MlBrokerHttpService {
       String(this.configService.get('V2_CLASSIFY_TIMEOUT_MS') ?? ''),
       10,
     );
-    return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+    if (!Number.isInteger(raw) || raw <= 0) return DEFAULT_TIMEOUT_MS;
+    return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, raw));
   }
 
   /**

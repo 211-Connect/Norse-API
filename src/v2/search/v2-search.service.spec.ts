@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { errors } from '@elastic/elasticsearch';
 import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
@@ -171,6 +172,106 @@ describe('V2SearchService', () => {
     expect(JSON.stringify(err.getResponse())).toContain(
       'query is too long for search',
     );
+  });
+
+  // The real client error: a ResponseError built from the HTTP body, as
+  // @elastic/transport reports it (meta.body.error.type / root_cause).
+  const responseError = (statusCode: number, error: Record<string, unknown>) =>
+    new errors.ResponseError({
+      body: { error, status: statusCode },
+      statusCode,
+      headers: {},
+      warnings: null,
+      meta: {} as any,
+    });
+
+  it('turns a real ResponseError index_not_found_exception into a 400', async () => {
+    const real = responseError(404, {
+      root_cause: [
+        {
+          type: 'index_not_found_exception',
+          reason: 'no such index [hybrid_search_resources_xx]',
+          'resource.type': 'index_or_alias',
+          'resource.id': 'hybrid_search_resources_xx',
+          index: 'hybrid_search_resources_xx',
+        },
+      ],
+      type: 'index_not_found_exception',
+      reason: 'no such index [hybrid_search_resources_xx]',
+    });
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    const err = await service
+      .search({ headers, query: dto({ query: 'food' }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain('no search index');
+  });
+
+  it.each([
+    [
+      'automaton, by type',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'too_complex_to_determinize_exception',
+            reason:
+              'Determinizing automaton would require more than 10000 work',
+          },
+        ],
+      },
+    ],
+    [
+      'automaton, by text',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'query_shard_exception',
+            reason:
+              'failed to create query: input automaton is too large: 1001',
+          },
+        ],
+      },
+    ],
+    [
+      'prefix length, by text',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'query_shard_exception',
+            reason:
+              'failed to create query: The length of prefix [1200] used in the Prefix Query request has exceeded the allowed maximum of [1000].',
+          },
+        ],
+      },
+    ],
+  ])('turns a real ResponseError (%s) into a 400', async (_label, error) => {
+    const real = responseError(400, error);
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    const err = await service
+      .search({ headers, query: dto({ query: 'food' }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'query is too long for search',
+    );
+  });
+
+  it('does not treat an unrelated real ResponseError as too large', async () => {
+    const real = responseError(400, {
+      type: 'search_phase_execution_exception',
+      reason: 'all shards failed',
+      root_cause: [{ type: 'parse_exception', reason: 'bad' }],
+    });
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    await expect(
+      service.search({ headers, query: dto({ query: 'food' }) }),
+    ).rejects.toBe(real);
   });
 
   it('rethrows other search errors unchanged', async () => {

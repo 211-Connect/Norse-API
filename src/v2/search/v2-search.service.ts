@@ -39,6 +39,8 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 // sent to classify is cut to this length. The search itself uses the full query.
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
 
+const TOO_COMPLEX_TYPE = 'too_complex_to_determinize_exception';
+
 /** Elasticsearch said the index does not exist (`hybrid_search_resources_<lang>`). */
 function isIndexNotFound(error: unknown): boolean {
   const body = (error as { meta?: { body?: { error?: { type?: unknown } } } })
@@ -52,17 +54,28 @@ function isIndexNotFound(error: unknown): boolean {
  * more than 1000 states (non-ASCII text reaches it under 1000 characters).
  */
 function isQueryTooLarge(error: unknown): boolean {
-  const causes = (
+  const err = (
     error as {
-      meta?: { body?: { error?: { root_cause?: { reason?: unknown }[] } } };
+      meta?: {
+        body?: {
+          error?: {
+            root_cause?: { type?: unknown; reason?: unknown }[];
+            caused_by?: { type?: unknown };
+          };
+        };
+      };
     }
-  )?.meta?.body?.error?.root_cause;
+  )?.meta?.body?.error;
+  const causes = err?.root_cause;
+  if (err?.caused_by?.type === TOO_COMPLEX_TYPE) return true;
   if (!Array.isArray(causes)) return false;
   return causes.some(
     (c) =>
-      typeof c?.reason === 'string' &&
-      (c.reason.includes('automaton is too large') ||
-        c.reason.includes('has exceeded the allowed maximum')),
+      c?.type === TOO_COMPLEX_TYPE ||
+      // Fallback: the prefix-length error has only a generic type.
+      (typeof c?.reason === 'string' &&
+        (c.reason.includes('automaton is too large') ||
+          c.reason.includes('has exceeded the allowed maximum'))),
   );
 }
 

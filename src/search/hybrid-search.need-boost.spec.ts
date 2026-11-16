@@ -312,4 +312,15 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
 
     expect(headCalls()).toHaveLength(0);
   });
+  // A change to this gate changes v1 ranking for every caller: v1 uses the
+  // shared CUTOFFS.needs.use (one owner, chosen in PR #283). Update this test
+  // only on purpose.
+  it('the v1 need boost gate is 0.97 (a need at 0.97 boosts, at 0.969 does not)', async () => {
+    await run([{ code: 'N-FOD-01', tier: 'tier2', score: 0.969 }]);
+    expect(headCalls()).toHaveLength(0);
+
+    await build();
+    await run([{ code: 'N-FOD-01', tier: 'tier2', score: 0.97 }]);
+    expect(headCalls()).toHaveLength(1);
+  });
 });

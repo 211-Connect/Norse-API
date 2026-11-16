@@ -270,10 +270,10 @@ describe('MlBrokerHttpService', () => {
     );
     const started = Date.now();
     const e = await failure(
-      build({ ...fullConfig, V2_CLASSIFY_TIMEOUT_MS: '25' }),
+      build({ ...fullConfig, V2_CLASSIFY_TIMEOUT_MS: '100' }),
     );
     expect(e.kind).toBe<MlBrokerErrorKind>('timeout');
-    expect(e.message).toContain('25ms');
+    expect(e.message).toContain('100ms');
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
@@ -296,6 +296,10 @@ describe('MlBrokerHttpService', () => {
     ['zero', '0', 1000],
     ['negative', '-5', 1000],
     ['not a number', 'soon', 1000],
+    ['below the floor', '50', 100],
+    ['at the floor', '100', 100],
+    ['at the ceiling', '5000', 5000],
+    ['above the ceiling', '60000', 5000],
   ])(
     'uses a timeout of %s V2_CLASSIFY_TIMEOUT_MS',
     async (_label, raw, expected) => {
