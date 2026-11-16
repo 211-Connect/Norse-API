@@ -28,9 +28,17 @@ export interface Hotline {
   label: string;
   number: string;
 }
+/**
+ * A tenant's "AI classification" setting (ADR 0039 Decision 52; Lucas
+ * 2026-11-13, question 14). `off`: no need guess, no model urgency and no
+ * optional question; the emergency check always runs. Absent means `on`.
+ */
+export type AiClassificationSetting = 'on' | 'off';
+
 export interface TenantContext {
   top_areas?: string[]; // Tier 1 codes by service count, desc
   hotlines?: Hotline[];
+  ai_classification?: AiClassificationSetting;
 }
 
 export type EmergencyBand = 'popup' | 'soft' | 'none' | 'unknown';
@@ -49,7 +57,6 @@ export interface UrgencyState {
 
 export type QuestionType =
   'emergency' | 'confirm_urgency' | 'find_need' | 'narrow';
-export type QuestionLevel = 'red' | 'orange' | 'low';
 export type QuestionImportance = 'critical' | 'high' | 'medium' | 'low';
 export type QuestionReason =
   | 'emergency_band'
@@ -62,14 +69,15 @@ export type QuestionReason =
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
   label: string;
-  parameter: OptionParameter;
-  value: string;
-  results_count?: number;
+  /** null with value null: the option writes nothing to the URL (emergency "safe"; the client dismisses the question for this visit). */
+  parameter: OptionParameter | null;
+  value: string | null;
+  /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
+  results_count?: number | null;
 }
 export interface Question {
   id: string;
   type: QuestionType;
-  level: QuestionLevel;
   importance: QuestionImportance;
   value: number; // within-band importance in [0, 0.999]: model uncertainty x answer effort x result split (rules engine)
   priority: number; // BAND_BASE[importance] + value; questions are ranked by this, high first

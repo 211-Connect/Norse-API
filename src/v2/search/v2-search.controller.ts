@@ -84,7 +84,10 @@ export class V2SearchController {
     @Req() req: Request,
   ): Promise<V2SearchResponseDto> {
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query }),
+      this.v2SearchService.search({
+        headers,
+        query,
+      }),
     );
   }
 
@@ -127,7 +130,11 @@ export class V2SearchController {
       throw new BadRequestException('Content-Type must be application/json');
     }
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query, body }),
+      this.v2SearchService.search({
+        headers,
+        query,
+        body,
+      }),
     );
   }
 

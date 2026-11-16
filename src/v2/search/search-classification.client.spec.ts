@@ -56,6 +56,7 @@ describe('SearchClassificationClient', () => {
         configService,
         metrics as unknown as MetricsService,
       ),
+      configService,
     );
   };
   const fullConfig = {
@@ -70,6 +71,51 @@ describe('SearchClassificationClient', () => {
   });
   afterEach(() => {
     global.fetch = realFetch;
+  });
+
+  describe('emergency_only (AI classification off)', () => {
+    const sentBody = () => JSON.parse(fetchMock.mock.calls[0][1].body);
+    const emergencyOnlyBody = brokerBody({
+      needs: { scores: [] },
+      urgency: null,
+    });
+    it('not sent when the flag is off, even for AI off', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(brokerBody()));
+      await build(fullConfig).classify('q', 't1', 'off');
+      expect(sentBody()).not.toHaveProperty('emergency_only');
+    });
+    it('not sent for AI on, even with the flag', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(brokerBody()));
+      await build({
+        ...fullConfig,
+        ML_BROKER_EMERGENCY_ONLY_SUPPORTED: 'true',
+      }).classify('q', 't1', 'on');
+      expect(sentBody()).not.toHaveProperty('emergency_only');
+    });
+    it('sent for AI off with the flag; the emergency_only response maps to no guess', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(emergencyOnlyBody));
+      const r = await build({
+        ...fullConfig,
+        ML_BROKER_EMERGENCY_ONLY_SUPPORTED: 'true',
+      }).classify('q', 't1', 'off');
+      expect(sentBody().emergency_only).toBe(true);
+      expect(r.signals).toEqual({
+        needs: { status: 'ok', scores: {} },
+        emergency: {
+          status: 'ok',
+          score: 0.1,
+          floor_hit: false,
+          calm_context: undefined,
+          dv_shelter: true,
+        },
+      });
+    });
+    it('urgency null without emergency_only sent is still malformed', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(emergencyOnlyBody));
+      expect(await build(fullConfig).classify('q', 't1', 'off')).toEqual(
+        ERROR_RESULT,
+      );
+    });
   });
 
   it('posts to the search-classification task and maps the response to signals', async () => {
@@ -249,16 +295,22 @@ describe('SearchClassificationClient', () => {
   );
 
   it('returns the error result when the transport throws something unexpected', async () => {
-    const client = new SearchClassificationClient({
-      classifySearch: jest.fn().mockRejectedValue('not an Error'),
-    } as unknown as MlBrokerHttpService);
+    const client = new SearchClassificationClient(
+      {
+        classifySearch: jest.fn().mockRejectedValue('not an Error'),
+      } as unknown as MlBrokerHttpService,
+      { get: jest.fn() } as unknown as ConfigService,
+    );
     expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
   });
 
   it('returns the error result when the mapping throws', async () => {
-    const client = new SearchClassificationClient({
-      classifySearch: jest.fn().mockResolvedValue(null),
-    } as unknown as MlBrokerHttpService);
+    const client = new SearchClassificationClient(
+      {
+        classifySearch: jest.fn().mockResolvedValue(null),
+      } as unknown as MlBrokerHttpService,
+      { get: jest.fn() } as unknown as ConfigService,
+    );
     expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
   });
 });

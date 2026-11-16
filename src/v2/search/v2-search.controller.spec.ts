@@ -33,7 +33,10 @@ describe('V2SearchController', () => {
     await expect(controller.getResources(headers, query, req)).resolves.toBe(
       response,
     );
-    expect(search).toHaveBeenCalledWith({ headers, query });
+    expect(search).toHaveBeenCalledWith({
+      headers,
+      query,
+    });
     expect(recordSearchRequest).toHaveBeenCalledTimes(1);
     expect(recordSearchRequest).toHaveBeenCalledWith(
       { tenantId: 't', acceptLanguage: 'en' },
@@ -78,7 +81,11 @@ describe('V2SearchController', () => {
       await expect(
         controller.getResourcesPost(headers, query, body as never, postReq),
       ).resolves.toBe(response);
-      expect(search).toHaveBeenCalledWith({ headers, query, body });
+      expect(search).toHaveBeenCalledWith({
+        headers,
+        query,
+        body,
+      });
       expect(recordSearchRequest).toHaveBeenCalledTimes(1);
       expect(recordSearchRequest).toHaveBeenCalledWith(
         { tenantId: 't', acceptLanguage: 'en' },

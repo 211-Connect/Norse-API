@@ -23,11 +23,22 @@ export const relevanceCutoffCacheKey = (
   args: SearchIdentity & {
     pinnedMode: string;
     rankingVersion?: 'v1' | 'v2';
+    /**
+     * Active needs when the probe applies the need boost (v2, option A). Their
+     * code, tier and score size the boost, so they move the cut. Absent or
+     * empty leaves the key exactly as it was.
+     */
+    needs?: { code: string; tier: string; score: number }[];
   },
 ): string => {
+  const needs = [...(args.needs ?? [])]
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map(({ code, tier, score }) => ({ code, tier, score }));
+
   const fingerprint = hashCacheKey({
     search: searchFingerprint(args),
     pinnedMode: args.pinnedMode,
+    ...(needs.length > 0 ? { needs } : {}),
   });
 
   // v1 keeps the key string it always had; v2 scores differently, so it must

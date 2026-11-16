@@ -14,6 +14,8 @@ export type PinnedResourcesMode = 'ignore' | 'boost' | 'top';
  * Tenant search configuration written by PayloadCMS to Redis DB 2 under
  * `search_config:${tenantId}` and read by Norse API.
  */
+export type SearchEngineSetting = 'classic' | 'hybrid' | 'ai_classification';
+
 export interface SearchConfigCache {
   /**
    * Controls pinned/priority behavior for hybrid, AI-classification, and
@@ -26,4 +28,13 @@ export interface SearchConfigCache {
    * When false (default), only taxonomy search is performed.
    */
   enable_organization_search?: boolean;
+
+  /**
+   * The tenant's search engine setting (Payload: resource directory,
+   * `search.searchSettings.searchEngine`). `/v2/search` treats any value other
+   * than `ai_classification` as "AI classification off". Payload does not write
+   * this field to Redis yet; absent, null or unknown means AI classification
+   * on (today's behaviour).
+   */
+  search_engine?: SearchEngineSetting | null;
 }
