@@ -239,12 +239,118 @@ const isViolence = (t: Tok[], k: number): boolean => {
   if (!VIOLENCE_RE.test(raw)) return false;
   return !(raw === 'shot' && NOT_THAT_SHOT.has(t[k - 1]?.raw ?? ''));
 };
-const hasViolence = (t: Tok[], from = 0, to = t.length): boolean => {
+/** Violence words that are not excused for this mention (see excusedFor). */
+const hasViolence = (
+  t: Tok[],
+  c: Context,
+  from = 0,
+  to = t.length,
+): boolean => {
   for (let k = from; k < Math.min(to, t.length); k++) {
-    if (isViolence(t, k)) return true;
+    if (isViolence(t, k) && !c.excused.has(k)) return true;
   }
   return false;
 };
+
+// ---- abuse-service phrases and passive victims (they excuse violence words) ----
+
+const ABUSE_AFTER = set(
+  'hotline hotlines shelter shelters counseling counselling reporting ' +
+    'victim victims survivor survivors',
+);
+const TRAILING = set(
+  'victim victims survivor survivors hotline hotlines shelter shelters reporting counseling counselling',
+);
+
+interface Span {
+  s: number;
+  e: number;
+}
+
+/**
+ * Phrases that mark a request FOR an abuse service: "domestic violence",
+ * "dating violence", "elder/senior abuse", "sexual assault", "abuse
+ * hotline/shelter/counseling/reporting/victim/survivor", "fleeing" (with
+ * abuse or violence after it), "battered", "military sexual trauma". A
+ * trailing victim/survivor/shelter/hotline word joins the span.
+ */
+function phraseSpans(t: Tok[]): Span[] {
+  const out: Span[] = [];
+  const at = (k: number) => t[k]?.raw ?? '';
+  for (let k = 0; k < t.length; k++) {
+    let e = 0;
+    const r = at(k);
+    const r1 = at(k + 1);
+    if (
+      ['domestic', 'dating', 'intimate'].includes(r) &&
+      ['violence', 'abuse'].includes(r1)
+    )
+      e = k + 2;
+    else if (r === 'intimate' && r1 === 'partner' && at(k + 2) === 'violence')
+      e = k + 3;
+    else if (['elder', 'senior', 'elderly'].includes(r) && r1 === 'abuse')
+      e = k + 2;
+    else if (r === 'sexual' && r1 === 'assault') e = k + 2;
+    else if (r === 'military' && r1 === 'sexual' && at(k + 2) === 'trauma')
+      e = k + 3;
+    else if (r === 'abuse' && ABUSE_AFTER.has(r1)) e = k + 2;
+    else if (r === 'fleeing') {
+      e = k + 1;
+      if (['abuse', 'violence'].includes(r1)) e = k + 2;
+      else if (r1 === 'domestic' && ['violence', 'abuse'].includes(at(k + 2)))
+        e = k + 3;
+    } else if (r === 'battered') e = k + 1;
+    if (e) {
+      while (TRAILING.has(at(e))) e++;
+      out.push({ s: k, e });
+      k = e - 1;
+    }
+  }
+  return out;
+}
+
+const PASSIVE_AUX = set('was were is are being been got gets who that');
+const PASSIVE_PARTICIPLES = set(
+  'hit beaten beat assaulted raped abused attacked harassed stalked molested ' +
+    'hurt injured threatened killed shot stabbed',
+);
+const IN_SERVICE = set('service military combat');
+
+/**
+ * Index of the passive participle that says the group member is the VICTIM:
+ * "my elderly mother is being hit by her aide", "veterans who were raped in
+ * the military", "veteran assaulted in service". Starts right after the
+ * mention. Without an auxiliary the participle needs "in service/military".
+ */
+function passiveVictim(t: Tok[], i: number): number | null {
+  let k = i + 1;
+  let aux = false;
+  // skip up to 2 relation words: "my elderly MOTHER is being hit"
+  for (let n = 0; n < 2 && k < t.length; n++) {
+    const r = t[k].raw;
+    if (PASSIVE_AUX.has(r) || PASSIVE_PARTICIPLES.has(r) || t[k].brk) break;
+    k++;
+  }
+  while (k < t.length && k <= i + 6 && PASSIVE_AUX.has(t[k].raw)) {
+    aux = true;
+    k++;
+  }
+  if (!PASSIVE_PARTICIPLES.has(t[k]?.raw ?? '')) return null;
+  if (aux) return k;
+  const next = [t[k + 1]?.raw, t[k + 2]?.raw, t[k + 3]?.raw];
+  return next[0] === 'in' && next.slice(1).some((r) => IN_SERVICE.has(r ?? ''))
+    ? k
+    : null;
+}
+
+/** Violence words excused for the mention at i: inside service phrases or the passive victim participle. */
+function excusedFor(t: Tok[], i: number, spans: Span[]): Set<number> {
+  const out = new Set<number>();
+  for (const sp of spans) for (let k = sp.s; k < sp.e; k++) out.add(k);
+  const v = passiveVictim(t, i);
+  if (v !== null) out.add(v);
+  return out;
+}
 
 /**
  * Shape guard for the possessive pattern: after the mention, "me" or "my
@@ -317,6 +423,10 @@ interface Context {
   all: ReadonlySet<string>;
   /** Sex, gender and orientation codes: a possessive mention is an actor there. */
   actorProne: boolean;
+  /** Token indices of violence words excused for the current mention. */
+  excused: ReadonlySet<number>;
+  /** Abuse-service phrase spans of the query. */
+  spans: Span[];
 }
 
 /** 1. FOR: "for men", "for my veteran husband", "for abused women". */
@@ -337,7 +447,7 @@ function serviceRun(t: Tok[], i: number, c: Context): boolean {
   // "man group keeps following me": a singular mention with a violence word
   // within 3 words after the run names an actor, not a service request.
   const singular = t[i].raw === 'man' || t[i].raw === 'woman';
-  return !(singular && hasViolence(t, end, end + 3));
+  return !(singular && hasViolence(t, c, end, end + 3));
 }
 
 function serviceRunEnd(t: Tok[], i: number, c: Context): number | null {
@@ -408,7 +518,7 @@ const NEED_WORDS = set('needs need living lives looking wants struggling');
 
 /** 7. QUESTION: "where can seniors get free meals", "do shelters take men". */
 function questionForm(t: Tok[], i: number, c: Context): boolean {
-  if (hasViolence(t)) return false;
+  if (hasViolence(t, c)) return false;
   let k = i - 1;
   while (
     k >= 0 &&
@@ -480,6 +590,24 @@ function isNegated(t: Tok[], i: number, c: Context): boolean {
   return false;
 }
 
+/**
+ * 9. ABUSE SERVICE: the mention sits in, or right before or after, an abuse
+ * service phrase: "women fleeing domestic violence", "teen dating violence
+ * hotline". Sex and gender codes need the phrase right next to the mention
+ * (no word between); others allow 2 words. Not when an un-excused violence
+ * word is in the query.
+ */
+function serviceUse(t: Tok[], i: number, c: Context): boolean {
+  if (hasViolence(t, c)) return false;
+  const gap = c.actorProne ? 0 : 2;
+  return c.spans.some((sp) => {
+    if (i >= sp.s && i < sp.e) return true;
+    if (sp.s > i)
+      return sp.s - i - 1 <= gap && !t.slice(i, sp.s).some((x) => x.brk);
+    return i - sp.e <= gap && !t.slice(sp.e - 1, i).some((x) => x.brk);
+  });
+}
+
 function isRequest(t: Tok[], i: number, c: Context): boolean {
   return (
     afterFor(t, i, c) ||
@@ -488,8 +616,13 @@ function isRequest(t: Tok[], i: number, c: Context): boolean {
     selfDescribed(t, i) ||
     womenAndChildren(t, i) ||
     questionForm(t, i, c) ||
+    serviceUse(t, i, c) ||
     (!c.actorProne &&
-      !hasViolence(t) &&
+      passiveVictim(t, i) !== null &&
+      !hasViolence(t, c) &&
+      !actsOnSearcher(t, i)) ||
+    (!c.actorProne &&
+      !hasViolence(t, c) &&
       !actsOnSearcher(t, i) &&
       ((POSSESSIVES.has(t[i - 1]?.raw ?? '') && !COMPARATIVES.has(t[i].norm)) ||
         careStatement(t, i)))
@@ -526,8 +659,14 @@ export function queryAsksForGroup(
   actorProne = false,
 ): boolean {
   const t = sequence(queryText);
-  const c: Context = { all, actorProne };
+  const spans = phraseSpans(t);
   return t.some((tok, i) => {
+    const c: Context = {
+      all,
+      actorProne,
+      spans,
+      excused: excusedFor(t, i, spans),
+    };
     if (tok.raw === 'vet') return isSelfVet(t, i, words, c);
     return words.has(tok.norm) && isRequest(t, i, c) && !isNegated(t, i, c);
   });

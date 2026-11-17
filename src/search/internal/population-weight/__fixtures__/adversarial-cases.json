@@ -3913,7 +3913,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -3923,7 +3923,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -3973,7 +3973,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -4023,7 +4023,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -4153,7 +4153,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -4213,7 +4213,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-keep",
@@ -4363,7 +4363,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-care",
@@ -4373,7 +4373,7 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert"
   },
   {
     "cat": "r2-care",
@@ -5393,6 +5393,36 @@
     "reason": "run 2",
     "tester_actual": null,
     "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "r3-service-phrase",
+    "query": "my veteran husband is abusing me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuse-service phrases (Lucas)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r3-service-phrase",
+    "query": "a man is abusing me i need a domestic violence shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuse-service phrases (Lucas)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r3-service-phrase",
+    "query": "my elderly father sexually assaulted me",
+    "code": "older",
+    "expected": "zero",
+    "reason": "abuse-service phrases (Lucas)",
+    "tester_actual": null,
+    "tester_result": "new",
     "status": "assert"
   }
 ]
