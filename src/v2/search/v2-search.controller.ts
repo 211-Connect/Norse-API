@@ -22,10 +22,11 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CustomHeaders } from '../../common/decorators/CustomHeaders';
+import { SetCdnCacheTTL } from '../../common/decorators/cdn-cache-ttl.decorator';
+import { ONE_HOUR } from '../../common/const/one-hour';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
-import { HeadersDto, headersSchema } from '../../common/dto/headers.dto';
+import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
-import { ZodValidationPipe } from '../../common/pipes/zod-validation-pipe';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../../common/swagger/header-descriptions';
 import {
   UsageMetricsService,
@@ -34,20 +35,27 @@ import {
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
+import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
 import { V2SearchService } from './v2-search.service';
 
 /**
  * Reached by `GET /v2/search` (the `/v2/` path selects version 2) and by
- * `GET /search` with `x-api-version: 2`. No CDN cache decorator: the rules
- * engine's `decision.cacheable` (internal emergency band none and no emergency
- * question, ADR 0039 Decision 28) is the cache rule, but no `Cache-Control`
- * header is written from it yet (exact numbers: ADR 0039 Question 11).
+ * `GET /search` with `x-api-version: 2` (ADR 0039 Decision 9).
+ *
+ * Cache (Decisions 28 and 59): `GET` declares `V2_SEARCH_CDN_TTL`, and the
+ * shared `CdnCacheControlInterceptor` writes the header. The service marks an
+ * answer with an emergency question, or a failed check, as not storable
+ * (`markNotStorable`), so it gets `no-store`. On `/search` the header picked
+ * v2, so the interceptor never lets a shared cache store it there.
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
  * generates the frontend SDK, and a draft must not reach it. Remove
  * `@ApiExcludeController()` when the v2 ADR (ISS-2493) is accepted.
  */
+/** ADR 0039 Question 11 leaves the number open; the same hour as v1 /search. */
+export const V2_SEARCH_CDN_TTL = ONE_HOUR;
+
 @ApiExcludeController()
 @ApiTags('Search v2')
 @Controller(['v2/search', 'search'])
@@ -62,6 +70,7 @@ export class V2SearchController {
   @Get()
   @Version('2')
   @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
   @ApiOperation({
     summary:
       'Search with intent and clarification questions, the emergency question first (draft)',
@@ -78,13 +87,16 @@ export class V2SearchController {
     description: X_TENANT_ID_HEADER_DESCRIPTION,
   })
   async getResources(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: V2SearchQueryDto,
     @Req() req: Request,
   ): Promise<V2SearchResponseDto> {
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query }),
+      this.v2SearchService.search({
+        headers,
+        query,
+      }),
     );
   }
 
@@ -115,7 +127,7 @@ export class V2SearchController {
     },
   })
   async getResourcesPost(
-    @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
     query: V2SearchQueryDto,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
@@ -127,7 +139,11 @@ export class V2SearchController {
       throw new BadRequestException('Content-Type must be application/json');
     }
     return this.trackSearch(req, () =>
-      this.v2SearchService.search({ headers, query, body }),
+      this.v2SearchService.search({
+        headers,
+        query,
+        body,
+      }),
     );
   }
 

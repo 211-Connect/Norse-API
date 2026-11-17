@@ -193,6 +193,64 @@ describe('MlBrokerHttpService', () => {
     );
   });
 
+  describe('needs.status (ml-broker PR #24)', () => {
+    it('accepts a body with no needs.status (older ml-broker)', async () => {
+      const body = wireBody();
+      expect(body.needs).not.toHaveProperty('status');
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      await expect(build(fullConfig).classifySearch(request)).resolves.toEqual(
+        body,
+      );
+    });
+
+    it('accepts needs.status ok', async () => {
+      const body = wireBody({
+        needs: {
+          status: 'ok',
+          scores: [{ code: 'N-HOU', tier: 'tier1', score: 0.9 }],
+        },
+      });
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      await expect(build(fullConfig).classifySearch(request)).resolves.toEqual(
+        body,
+      );
+    });
+
+    it('accepts needs.status error with empty scores and urgency null, emergency ok', async () => {
+      const body = wireBody({
+        needs: { status: 'error', scores: [] },
+        urgency: null,
+      });
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      const result = await build(fullConfig).classifySearch(request);
+      expect(result).toEqual(body);
+      expect(result.emergency?.status).toBe('ok');
+    });
+
+    it.each([
+      [
+        'an unknown status',
+        wireBody({ needs: { status: 'weird', scores: [] } }),
+      ],
+      [
+        'needs error with a bad urgency level',
+        wireBody({
+          needs: { status: 'error', scores: [] },
+          urgency: { level: 'U-9', score: 1 },
+        }),
+      ],
+      [
+        'needs ok with urgency null',
+        wireBody({ needs: { status: 'ok', scores: [] }, urgency: null }),
+      ],
+    ])('throws malformed on %s', async (_label, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(body));
+      expect((await failure(build(fullConfig))).kind).toBe<MlBrokerErrorKind>(
+        'malformed',
+      );
+    });
+  });
+
   it('accepts a body with no emergency block or model version', async () => {
     const body = wireBody({ emergency: undefined, model_version: undefined });
     fetchMock.mockResolvedValue(jsonResponse(body));
@@ -212,10 +270,10 @@ describe('MlBrokerHttpService', () => {
     );
     const started = Date.now();
     const e = await failure(
-      build({ ...fullConfig, V2_CLASSIFY_TIMEOUT_MS: '25' }),
+      build({ ...fullConfig, V2_CLASSIFY_TIMEOUT_MS: '100' }),
     );
     expect(e.kind).toBe<MlBrokerErrorKind>('timeout');
-    expect(e.message).toContain('25ms');
+    expect(e.message).toContain('100ms');
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
@@ -233,11 +291,15 @@ describe('MlBrokerHttpService', () => {
   });
 
   it.each([
-    ['unset', undefined, 300],
+    ['unset', undefined, 1000],
     ['a positive integer', '250', 250],
-    ['zero', '0', 300],
-    ['negative', '-5', 300],
-    ['not a number', 'soon', 300],
+    ['zero', '0', 1000],
+    ['negative', '-5', 1000],
+    ['not a number', 'soon', 1000],
+    ['below the floor', '50', 100],
+    ['at the floor', '100', 100],
+    ['at the ceiling', '5000', 5000],
+    ['above the ceiling', '60000', 5000],
   ])(
     'uses a timeout of %s V2_CLASSIFY_TIMEOUT_MS',
     async (_label, raw, expected) => {

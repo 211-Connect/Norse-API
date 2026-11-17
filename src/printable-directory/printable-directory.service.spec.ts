@@ -658,6 +658,61 @@ describe('PrintableDirectoryService', () => {
     expect(result.sections[0].maxResources).toBe(2);
   });
 
+  it.each([
+    ['too long', 'a'.repeat(501), 'at most 500 characters'],
+    [
+      'an unsupported query_type',
+      'food',
+      'Invalid serialized search query params',
+    ],
+  ])(
+    'preview query source with a bad query (%s) names the cause',
+    async (label, query, message) => {
+      const directory = createDirectoryDoc({
+        sections: [
+          {
+            id: 'section-1',
+            order: 0,
+            headingLocalized: { values: { en: 'Heading' } },
+            descriptionLocalized: { values: { en: 'desc' } },
+            maxResources: 2,
+            sources: [
+              {
+                id: 'src-1',
+                order: 0,
+                type: 'query',
+                query: {
+                  title: 'q',
+                  params: {
+                    query,
+                    query_type: label === 'too long' ? 'text' : 'nonsense',
+                    page: 1,
+                    limit: 25,
+                  },
+                },
+                favoritesListId: null,
+                resourceIds: [],
+              },
+            ],
+          },
+        ],
+      });
+      mockPrintableDirectoryModel.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue(directory),
+      });
+
+      const err = await service
+        .preview(
+          '6ad0dcb938dccb2e7af9f9c1',
+          'en',
+          { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+          scope,
+        )
+        .catch((e) => e);
+      expect(JSON.stringify(err.getResponse())).toContain(message);
+    },
+  );
+
   it('resolves section text in the requested locale, falling back to the primary language', async () => {
     const directory = createDirectoryDoc({
       primaryLanguage: 'es',

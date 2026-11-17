@@ -20,6 +20,10 @@ import {
   RELEVANCE_CUTOFF_VALUES,
   RelevanceCutoffValue,
 } from '../internal/relevance-cutoff/types';
+import {
+  MAX_QUERY_LENGTH,
+  QUERY_TOO_LONG_MESSAGE,
+} from '../internal/query-log';
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -88,6 +92,40 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
   }
 }
 
+/**
+ * Length of the query text: a string as is, an array joined with ',' (the join
+ * SearchService uses), an AND/OR object as every string in it joined with ','.
+ * A value that is none of these (the shape validator rejects it) counts 0.
+ */
+const queryTextLength = (value: unknown): number => {
+  const parts: string[] = [];
+  const collect = (node: unknown, depth: number): void => {
+    if (typeof node === 'string') {
+      parts.push(node);
+    } else if (Array.isArray(node)) {
+      node.forEach((item) => collect(item, depth + 1));
+    } else if (node && typeof node === 'object' && depth <= 50) {
+      const { OR, AND } = node as ComplexQuery;
+      collect(OR, depth + 1);
+      collect(AND, depth + 1);
+    }
+  };
+  collect(value, 0);
+  return parts.join(',').length;
+};
+
+/** Max length (UTF-16 units, as Elasticsearch counts; class-validator's `@MaxLength` counts code points) of the query text, whether `query` is a string, an array or an AND/OR object. */
+@ValidatorConstraint({ name: 'isQueryWithinMaxLength', async: false })
+export class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    return queryTextLength(value) <= MAX_QUERY_LENGTH;
+  }
+
+  defaultMessage(): string {
+    return QUERY_TOO_LONG_MESSAGE;
+  }
+}
+
 /** Shared with `SearchQueryApiDto`, which documents the same param. */
 export const ORGANIZATION_ID_DESCRIPTION =
   'Scope results to resources belonging to a single organization, by its ' +
@@ -107,6 +145,7 @@ export class SearchResourcesQueryDto {
   })
   @IsOptional()
   @Validate(IsSearchQueryExpressionConstraint)
+  @Validate(IsQueryWithinMaxLengthConstraint)
   query: string | string[] | ComplexQuery = '';
 
   @ApiPropertyOptional({

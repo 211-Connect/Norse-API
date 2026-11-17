@@ -3,6 +3,7 @@ import { validateSync } from 'class-validator';
 import { SearchQueryApiDto } from './search-query.api.dto';
 import { SearchResourcesQueryDto } from './search-query.dto';
 import { ValidationError } from 'class-validator';
+import { QUERY_TOO_LONG_MESSAGE } from '../internal/query-log';
 
 const pageError = <T extends object>(
   raw: Record<string, unknown>,
@@ -80,5 +81,74 @@ describe('SearchQueryApiDto pagination window', () => {
     expect(
       pageError({ query: 'housing', page: 400, limit: 25 }, SearchQueryApiDto),
     ).toBeUndefined();
+  });
+});
+
+describe('SearchResourcesQueryDto query length', () => {
+  const queryError = (query: unknown) =>
+    validateSync(plainToInstance(SearchResourcesQueryDto, { query }), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }).find((error) => error.property === 'query');
+
+  it('accepts 500 characters and rejects 501 with a short-description message', () => {
+    expect(queryError('a'.repeat(500))).toBeUndefined();
+    const error = queryError('a'.repeat(501));
+    expect(error).toBeDefined();
+    expect(Object.values(error!.constraints ?? {}).join(' ')).toMatch(
+      /500 characters.*short description of the need.*not a transcript/,
+    );
+  });
+
+  it('counts UTF-16 units, like Elasticsearch', () => {
+    expect(queryError('😀'.repeat(250))).toBeUndefined();
+    expect(queryError('😀'.repeat(251))).toBeDefined();
+  });
+
+  it('leaves short array and AND/OR queries alone', () => {
+    expect(queryError(['a'.repeat(100)])).toBeUndefined();
+    expect(queryError({ OR: ['a', { AND: ['b', 'c'] }] })).toBeUndefined();
+  });
+});
+
+describe('SearchResourcesQueryDto query length cap', () => {
+  const queryError = (query: unknown) =>
+    validateSync(plainToInstance(SearchResourcesQueryDto, { query }), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }).find((error) => error.property === 'query');
+
+  // The search joins an array with ',' (SearchService) so the cap counts the
+  // same joined text: every string in the query, joined with ','.
+  it('rejects an array query over the cap', () => {
+    const error = queryError(['a'.repeat(300), 'b'.repeat(300)]);
+    expect(error?.constraints).toHaveProperty(
+      'isQueryWithinMaxLength',
+      QUERY_TOO_LONG_MESSAGE,
+    );
+  });
+
+  it('rejects an {OR: [...]} query over the cap, nested strings included', () => {
+    const error = queryError({
+      OR: ['a'.repeat(300), { AND: ['b'.repeat(300)] }],
+    });
+    expect(error?.constraints).toHaveProperty(
+      'isQueryWithinMaxLength',
+      QUERY_TOO_LONG_MESSAGE,
+    );
+  });
+
+  it('accepts an array just under the cap (joined length 500)', () => {
+    expect(queryError(['a'.repeat(250), 'b'.repeat(249)])).toBeUndefined();
+  });
+
+  it('accepts an {OR: [...]} just under the cap (joined length 500)', () => {
+    expect(
+      queryError({ OR: ['a'.repeat(250), { AND: ['b'.repeat(249)] }] }),
+    ).toBeUndefined();
+  });
+
+  it('rejects an array one over the cap (joined length 501)', () => {
+    expect(queryError(['a'.repeat(250), 'b'.repeat(250)])).toBeDefined();
   });
 });

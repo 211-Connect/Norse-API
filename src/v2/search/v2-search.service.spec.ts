@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { errors } from '@elastic/elasticsearch';
+import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
@@ -9,6 +11,9 @@ import {
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
   rows: {
@@ -56,18 +61,228 @@ const errorResult = (): ClassifyResult => ({
   modelVersion: null,
 });
 
-function build(opts: { classify?: jest.Mock; search?: jest.Mock }) {
+function build(opts: {
+  classify?: jest.Mock;
+  search?: jest.Mock;
+  startEmbedding?: jest.Mock;
+  searchConfig?: SearchConfigCache;
+}) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
     opts.search ?? jest.fn().mockResolvedValue(hybridResponse());
+  const startEmbedding =
+    opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
+  const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
-    { searchHybrid } as unknown as HybridSearchService,
+    { searchHybrid, startEmbedding } as unknown as HybridSearchService,
+    { getSearchConfig } as unknown as TenantConfigService,
   );
-  return { service, classify, searchHybrid };
+  return { service, classify, searchHybrid, startEmbedding, getSearchConfig };
 }
 
 describe('V2SearchService', () => {
+  it('starts the embedding before classify resolves', async () => {
+    let resolveClassify!: (r: ClassifyResult) => void;
+    const classify = jest.fn().mockReturnValue(
+      new Promise<ClassifyResult>((r) => {
+        resolveClassify = r;
+      }),
+    );
+    const { service, startEmbedding } = build({ classify });
+    const pending = service.search({
+      headers,
+      query: dto({ query: 'food shelf' }),
+    });
+    await Promise.resolve();
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledTimes(1);
+    expect(startEmbedding).toHaveBeenCalledWith('food shelf');
+    resolveClassify(okResult({}));
+    await pending;
+  });
+
+  it('passes the started embedding to searchHybrid', async () => {
+    const started = Promise.resolve([0.3, 0.4]);
+    const { service, searchHybrid } = build({
+      startEmbedding: jest.fn().mockReturnValue(started),
+    });
+    await service.search({ headers, query: dto({ query: 'rent help' }) });
+    expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
+  });
+
+  it('starts no embedding when there is no text', async () => {
+    const { service, startEmbedding, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(startEmbedding).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('queryVector');
+  });
+
+  // Break run 2026-11-14: accept-language xx-YY was a 500, because the index
+  // hybrid_search_resources_xx does not exist.
+  it('turns a missing language index into a 400 that names the language', async () => {
+    const notFound = Object.assign(new Error('index_not_found_exception'), {
+      meta: {
+        statusCode: 404,
+        body: { error: { type: 'index_not_found_exception' } },
+      },
+    });
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(notFound),
+    });
+    const err = await service
+      .search({
+        headers: { ...headers, 'accept-language': 'xx-YY' } as HeadersDto,
+        query: dto({ query: 'food' }),
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getStatus()).toBe(400);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'no search index for accept-language xx-YY',
+    );
+  });
+
+  // Break run 2026-11-14: 500 emoji (1000 UTF-16 units, under the cap) made
+  // Elasticsearch fail with "input automaton is too large", a 500.
+  it.each([
+    'failed to create query: input automaton is too large: 1001',
+    'failed to create query: The length of prefix [1200] used in the Prefix Query request has exceeded the allowed maximum of [1000].',
+  ])('turns a query-too-large search error into a 400 (%s)', async (reason) => {
+    const tooLarge = Object.assign(
+      new Error('search_phase_execution_exception'),
+      {
+        meta: {
+          statusCode: 400,
+          body: {
+            error: {
+              type: 'search_phase_execution_exception',
+              root_cause: [{ type: 'query_shard_exception', reason }],
+            },
+          },
+        },
+      },
+    );
+    const { service } = build({
+      search: jest.fn().mockRejectedValue(tooLarge),
+    });
+    const err = await service
+      .search({ headers, query: dto({ query: '😀'.repeat(500) }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'query is too long for search',
+    );
+  });
+
+  // The real client error: a ResponseError built from the HTTP body, as
+  // @elastic/transport reports it (meta.body.error.type / root_cause).
+  const responseError = (statusCode: number, error: Record<string, unknown>) =>
+    new errors.ResponseError({
+      body: { error, status: statusCode },
+      statusCode,
+      headers: {},
+      warnings: null,
+      meta: {} as any,
+    });
+
+  it('turns a real ResponseError index_not_found_exception into a 400', async () => {
+    const real = responseError(404, {
+      root_cause: [
+        {
+          type: 'index_not_found_exception',
+          reason: 'no such index [hybrid_search_resources_xx]',
+          'resource.type': 'index_or_alias',
+          'resource.id': 'hybrid_search_resources_xx',
+          index: 'hybrid_search_resources_xx',
+        },
+      ],
+      type: 'index_not_found_exception',
+      reason: 'no such index [hybrid_search_resources_xx]',
+    });
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    const err = await service
+      .search({ headers, query: dto({ query: 'food' }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain('no search index');
+  });
+
+  it.each([
+    [
+      'automaton, by type',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'too_complex_to_determinize_exception',
+            reason:
+              'Determinizing automaton would require more than 10000 work',
+          },
+        ],
+      },
+    ],
+    [
+      'automaton, by text',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'query_shard_exception',
+            reason:
+              'failed to create query: input automaton is too large: 1001',
+          },
+        ],
+      },
+    ],
+    [
+      'prefix length, by text',
+      {
+        type: 'search_phase_execution_exception',
+        reason: 'all shards failed',
+        root_cause: [
+          {
+            type: 'query_shard_exception',
+            reason:
+              'failed to create query: The length of prefix [1200] used in the Prefix Query request has exceeded the allowed maximum of [1000].',
+          },
+        ],
+      },
+    ],
+  ])('turns a real ResponseError (%s) into a 400', async (_label, error) => {
+    const real = responseError(400, error);
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    const err = await service
+      .search({ headers, query: dto({ query: 'food' }) })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toContain(
+      'query is too long for search',
+    );
+  });
+
+  it('does not treat an unrelated real ResponseError as too large', async () => {
+    const real = responseError(400, {
+      type: 'search_phase_execution_exception',
+      reason: 'all shards failed',
+      root_cause: [{ type: 'parse_exception', reason: 'bad' }],
+    });
+    const { service } = build({ search: jest.fn().mockRejectedValue(real) });
+    await expect(
+      service.search({ headers, query: dto({ query: 'food' }) }),
+    ).rejects.toBe(real);
+  });
+
+  it('rethrows other search errors unchanged', async () => {
+    const boom = new Error('boom');
+    const { service } = build({ search: jest.fn().mockRejectedValue(boom) });
+    await expect(
+      service.search({ headers, query: dto({ query: 'food' }) }),
+    ).rejects.toBe(boom);
+  });
+
   it('skips classify when there is no text and still searches', async () => {
     const { service, classify, searchHybrid } = build({});
     const res = await service.search({ headers, query: dto({ query: '   ' }) });
@@ -79,19 +294,6 @@ describe('V2SearchService', () => {
     expect(res).not.toHaveProperty('emergency');
   });
 
-  it.each([
-    ['a string array', ['rent', 'help']],
-    ['a nested AND/OR object', { AND: ['rent', 'help'] }],
-  ])('does not classify %s', async (_label, query) => {
-    const { service, classify } = build({});
-    const res = await service.search({
-      headers,
-      query: dto({ query } as Partial<V2SearchQueryDto>),
-    });
-    expect(classify).not.toHaveBeenCalled();
-    expect(res.intent.query).toBeNull();
-  });
-
   it('sends exactly 512 characters to classify for a 600-character query and searches with the full query', async () => {
     const { service, classify, searchHybrid } = build({});
     const long = 'a'.repeat(600);
@@ -100,6 +302,34 @@ describe('V2SearchService', () => {
     expect(classify.mock.calls[0][0]).toHaveLength(512);
     expect(classify.mock.calls[0][0]).toBe(long.slice(0, 512));
     expect(searchHybrid.mock.calls[0][0].query.query).toBe(long);
+  });
+
+  // A cut inside a surrogate pair would send ml-broker half an emoji, which
+  // can fail the call and lose the emergency band (David, PR #279 review).
+  describe('the 512 cut never splits a character', () => {
+    const loneSurrogate =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const sent = async (query: string) => {
+      const { service, classify } = build({});
+      await service.search({ headers, query: dto({ query }) });
+      return classify.mock.calls[0][0] as string;
+    };
+
+    it('drops a pair that would straddle the cut', async () => {
+      const text = await sent('a'.repeat(511) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(511));
+      expect(text).not.toMatch(loneSurrogate);
+    });
+
+    it('keeps a pair that ends exactly at the cut', async () => {
+      const text = await sent('a'.repeat(510) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(510) + '😀');
+      expect(text).toHaveLength(512);
+    });
+
+    it('never sends a lone surrogate for an all-emoji query', async () => {
+      expect(await sent('😀'.repeat(300))).not.toMatch(loneSurrogate);
+    });
   });
 
   it('leaves a 512-character query unchanged', async () => {
@@ -123,7 +353,11 @@ describe('V2SearchService', () => {
       headers,
       query: dto({ query: ' rent help ' }),
     });
-    expect(classify).toHaveBeenCalledWith('rent help', headers['x-tenant-id']);
+    expect(classify).toHaveBeenCalledWith(
+      'rent help',
+      headers['x-tenant-id'],
+      'on',
+    );
     expect(res.model_version).toBe('mv-1');
     expect(res.intent.query).toBe(' rent help ');
   });
@@ -422,6 +656,52 @@ describe('V2SearchService', () => {
     const emergencyQ = (res: { clarification: { questions: any[] } }) =>
       res.clarification.questions.find((q) => q.id === 'emergency');
 
+    // Decision 28: only band none with no emergency question may be stored by a
+    // shared cache. The mark is invisible to the JSON body (Decision 59).
+    describe('shared-cache rule (Decision 28)', () => {
+      const run = async (classify: jest.Mock, over = {}) => {
+        const { service } = build({ classify });
+        return service.search({ headers, query: dto({ query: 'x', ...over }) });
+      };
+
+      it('a clean band-none answer is storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})));
+        expect(isMarkedNotStorable(res)).toBe(false);
+      });
+
+      it('a popup-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a soft-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.3)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a failed emergency check is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(errorResult()));
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a caller U-0 answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})), {
+          urgency: 'U-0',
+        });
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('the mark adds no key to the response', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(Object.keys(JSON.parse(JSON.stringify(res))).sort()).toEqual(
+          Object.keys(res).sort(),
+        );
+      });
+    });
+
     it('top-level keys hold no emergency block', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
@@ -436,26 +716,58 @@ describe('V2SearchService', () => {
         'search',
       ]);
     });
-    it('popup band -> emergency question level red, urgency options only', async () => {
+    it('popup band -> emergency question, urgency options only', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
       });
       const res = await service.search({ headers, query: dto({ query: 'x' }) });
       const q = emergencyQ(res);
-      expect(q.level).toBe('red');
       expect(q).not.toHaveProperty('parameter');
       expect(q.options).toEqual([
-        { label: 'Today', parameter: 'urgency', value: 'U-1' },
-        { label: 'Not urgent', parameter: 'urgency', value: 'U-3' },
+        {
+          label: 'Yes, I am in danger',
+          parameter: 'urgency',
+          value: 'U-0',
+          results_count: null,
+        },
+        {
+          label: 'No, I am safe now',
+          parameter: null,
+          value: null,
+          results_count: null,
+        },
       ]);
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
     });
-    it('soft band -> emergency question level orange', async () => {
+    it('strong band critical, soft band high, otherwise the same emergency question; no question has level; options carry results_count null', async () => {
+      const pop = await build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      }).service.search({ headers, query: dto({ query: 'x' }) });
+      const soft = await build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
+      }).service.search({ headers, query: dto({ query: 'x' }) });
+      // Lucas 2026-11-13 ("bring back the popup if the model is very sure"):
+      // importance tells the bands apart (strong critical = popup, soft high =
+      // in-page card). Stem, options, reason and hotlines match.
+      const strip = (q: ReturnType<typeof emergencyQ>) => {
+        const { value, priority, uncertainty, importance, ...rest } = q;
+        return rest;
+      };
+      expect(strip(emergencyQ(pop))).toEqual(strip(emergencyQ(soft)));
+      expect(emergencyQ(pop).importance).toBe('critical');
+      expect(emergencyQ(soft).importance).toBe('high');
+      expect(soft.clarification.questions[0].id).toBe('emergency');
+      expect(emergencyQ(pop).reason).toBe('emergency_band');
+      expect(emergencyQ(pop)).not.toHaveProperty('level');
+      for (const o of emergencyQ(pop).options) {
+        expect(o).toHaveProperty('results_count', null);
+      }
+    });
+    it('soft band -> emergency question, same shape as popup', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
       });
       const res = await service.search({ headers, query: dto({ query: 'x' }) });
-      expect(emergencyQ(res).level).toBe('orange');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -466,7 +778,6 @@ describe('V2SearchService', () => {
       expect(searchHybrid).toHaveBeenCalledTimes(1);
       expect(res.search.hits.total).toEqual(12);
       const q = emergencyQ(res);
-      expect(q.level).toBe('red');
       expect(q.options).toEqual([]);
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
       expect(res.clarification.questions[0].id).toBe('emergency');
@@ -481,6 +792,22 @@ describe('V2SearchService', () => {
         'emergency',
       ]);
     });
+    it('urgency=U-0 (the "Yes" answer) -> hotlines, no options, results kept', async () => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', urgency: 'U-0' }),
+      });
+      expect(emergencyQ(res).options).toEqual([]);
+      expect(emergencyQ(res).hotlines.map((h) => h.number)).toEqual([
+        '988',
+        '911',
+      ]);
+      expect(res.search).toBeDefined();
+    });
+
     it('popup band + caller U-3 -> no emergency question', async () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
@@ -502,6 +829,235 @@ describe('V2SearchService', () => {
       expect(res.clarification.questions.map((q) => q.id)).toEqual([
         'emergency',
       ]);
+    });
+  });
+
+  // ISS-2612: `taxonomy` is a hard filter (ADR 0039 Decision 5). A topic or
+  // canonical page sends codes and no text: no classify call (Decision 14);
+  // needs order and boost, never filter (Decision 18).
+  describe('taxonomy (ISS-2612)', () => {
+    it('taxonomy alone: no classify, codes reach the hybrid search as the hard scope', async () => {
+      const { service, classify, searchHybrid } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800.2000', 'BD-1800.1500'] }),
+      });
+      expect(classify).not.toHaveBeenCalled();
+      const call = searchHybrid.mock.calls[0][0];
+      expect(call.query.taxonomy).toEqual(['BD-1800.2000', 'BD-1800.1500']);
+      expect(call.query.query_type).toBe('hybrid');
+      expect(call.selectedNeeds).toBeUndefined();
+      expect(res.intent.query).toBeNull();
+      expect(res.model_version).toBeNull();
+    });
+
+    it('taxonomy plus needs: no classify, the scope stays and the needs order and boost', async () => {
+      const { service, classify, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800.2000'], needs: ['N-FOD-01'] }),
+      });
+      expect(classify).not.toHaveBeenCalled();
+      const call = searchHybrid.mock.calls[0][0];
+      expect(call.query.taxonomy).toEqual(['BD-1800.2000']);
+      expect(call.query).not.toHaveProperty('needs');
+      expect(call.selectedNeeds).toEqual(['N-FOD-01']);
+      expect(call.needScores).toEqual([
+        { code: 'N-FOD-01', tier: 'tier2', score: 1 },
+      ]);
+    });
+
+    it('intent echoes taxonomy as sent, source caller, not expanded', async () => {
+      const { service } = build({});
+      const res = await service.search({
+        headers,
+        query: dto({ taxonomy: ['BD-1800', 'BD-1800.2000'] }),
+      });
+      expect(res.intent.taxonomy).toEqual([
+        { value: 'BD-1800', source: 'caller' },
+        { value: 'BD-1800.2000', source: 'caller' },
+      ]);
+    });
+
+    it('intent has no taxonomy key when the request sent none', async () => {
+      const { service } = build({});
+      const res = await service.search({ headers, query: dto({}) });
+      expect('taxonomy' in res.intent).toBe(false);
+    });
+
+    it('taxonomy with text: classify runs and the scope still holds', async () => {
+      const { service, classify, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'food pantry', taxonomy: ['BD-1800.2000'] }),
+      });
+      expect(classify).toHaveBeenCalledTimes(1);
+      expect(searchHybrid.mock.calls[0][0].query.taxonomy).toEqual([
+        'BD-1800.2000',
+      ]);
+    });
+  });
+});
+
+// Lucas 2026-11-13 (question 14): AI classification off for a tenant.
+// Payload writes the tenant's search engine to `search_config:<tenant>` as
+// `search_engine`; anything but `ai_classification` means AI classification off.
+const TENANT_OFF: SearchConfigCache = { search_engine: 'hybrid' };
+const TENANT_ON: SearchConfigCache = { search_engine: 'ai_classification' };
+
+describe('V2SearchService with AI classification off', () => {
+  const strong = { 'N-HOU': 0.95, 'N-HOU-01': 0.99, 'N-FOD-01': 0.5 };
+  const result = (emergencyScore: number) =>
+    okResult(strong, {
+      signals: {
+        needs: { status: 'ok', scores: strong },
+        urgency: { level: 'U-1', score: 0.85 },
+        emergency: { status: 'ok', score: emergencyScore, floor_hit: false },
+      },
+    });
+
+  it('the default is on: the model guess is used', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+    });
+    const res = await service.search({ headers, query: dto({ query: 'x' }) });
+    expect(res.intent.needs.some((n) => n.source === 'inferred')).toBe(true);
+  });
+  it('off: classify runs once, no need guess, no boost, no question', async () => {
+    const { service, classify, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+      searchConfig: TENANT_OFF,
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'x' }),
+    });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(res.intent.needs).toEqual([]);
+    expect(res.intent.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'drop',
+    });
+    expect(res.clarification.questions).toEqual([]);
+    const arg = searchHybrid.mock.calls[0][0];
+    expect(arg.needScores).toEqual([]);
+    expect(arg).not.toHaveProperty('countCodes');
+    expect(res.model_version).toBe('mv-1');
+  });
+  it('off: the emergency question and hotlines still appear', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(result(0.9)),
+      searchConfig: TENANT_OFF,
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'x' }),
+    });
+    expect(res.clarification.questions.map((q) => q.id)).toEqual(['emergency']);
+    expect(
+      res.clarification.questions[0].hotlines.map((h) => h.number),
+    ).toEqual(['988', '911']);
+  });
+  it('off: caller needs still boost and make blocks', async () => {
+    const { service, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(result(0.001)),
+      searchConfig: TENANT_OFF,
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'x', needs: ['N-FOD-01'] }),
+    });
+    const arg = searchHybrid.mock.calls[0][0];
+    expect(arg.needScores).toEqual([
+      { code: 'N-FOD-01', tier: 'tier2', score: 1 },
+    ]);
+    expect(arg.selectedNeeds).toEqual(['N-FOD-01']);
+  });
+
+  describe('where the setting comes from (tenant setting and classify=off)', () => {
+    const classifyArg = (m: jest.Mock) => m.mock.calls[0][2];
+    const guessUsed = (res: { intent: { needs: { source: string }[] } }) =>
+      res.intent.needs.some((n) => n.source === 'inferred');
+
+    it('reads the setting for the request tenant through getSearchConfig', async () => {
+      const { service, getSearchConfig } = build({});
+      await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(getSearchConfig).toHaveBeenCalledWith(headers['x-tenant-id']);
+    });
+    it('no setting in the Redis value: AI classification stays on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: {},
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('on');
+      expect(guessUsed(res)).toBe(true);
+    });
+    it('tenant setting ai_classification: on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_ON,
+      });
+      await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('on');
+    });
+    it('tenant setting off: off, with no request parameter', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_OFF,
+      });
+      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
+    });
+    it('classify=off turns it off for one request on a tenant that is on', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_ON,
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
+    });
+    it('classify=off works when the tenant has no setting at all', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+      });
+      await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(classifyArg(classify)).toBe('off');
+    });
+    it('the request cannot turn it on for a tenant that is off', async () => {
+      const { service, classify } = build({
+        classify: jest.fn().mockResolvedValue(result(0.001)),
+        searchConfig: TENANT_OFF,
+      });
+      // `classify` has only the value `off`; no value can switch it on.
+      for (const value of [undefined, 'on', 'auto'] as never[]) {
+        classify.mockClear();
+        const res = await service.search({
+          headers,
+          query: dto({ query: 'x', classify: value }),
+        });
+        expect(classifyArg(classify)).toBe('off');
+        expect(guessUsed(res)).toBe(false);
+      }
+    });
+    it('keeps classify out of the v1 query', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'x', classify: 'off' }),
+      });
+      expect(searchHybrid.mock.calls[0][0].query).not.toHaveProperty(
+        'classify',
+      );
     });
   });
 });

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.module';
-import { RegionController } from './region.controller';
+import { InternalRegionController } from './region.controller';
 import { RegionService } from './region.service';
 
 /** RegionService alone, for modules that need it without mounting the routes. */
@@ -13,6 +13,6 @@ export class RegionServiceModule {}
 
 @Module({
   imports: [RegionServiceModule],
-  controllers: [RegionController],
+  controllers: [InternalRegionController],
 })
 export class RegionInternalModule {}

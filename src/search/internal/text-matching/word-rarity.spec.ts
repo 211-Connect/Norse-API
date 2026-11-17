@@ -39,8 +39,36 @@ describe('word-rarity', () => {
       ]);
     });
 
+    it('drops English function words for a region form of English', () => {
+      expect(contentWords('my boyfriend hits me', 'en-US')).toEqual([
+        'boyfriend',
+        'hits',
+      ]);
+      expect(contentWords('i couldnt leave', 'en-GB')).toEqual(['leave']);
+    });
+
+    it('drops the contraction forms the earlier list missed', () => {
+      expect(contentWords("he wouldn't leave me", 'en')).toEqual(['leave']);
+    });
+
     it('keeps every word for other languages', () => {
-      expect(contentWords('my boyfriend', 'es')).toEqual(['my', 'boyfriend']);
+      expect(contentWords('my boyfriend', 'fr')).toEqual(['my', 'boyfriend']);
+    });
+
+    it('drops Spanish function words, accents and case folded', () => {
+      expect(contentWords('Mi novio ME pega, está EN casa', 'es')).toEqual([
+        'novio',
+        'pega',
+        'casa',
+      ]);
+      expect(contentWords('¿Qué más tú?', 'es')).toEqual([]);
+    });
+
+    it('keeps Spanish content words', () => {
+      expect(contentWords('ayuda con la renta', 'es')).toEqual([
+        'ayuda',
+        'renta',
+      ]);
     });
 
     it('caps the word count', () => {

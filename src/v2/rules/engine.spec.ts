@@ -27,7 +27,6 @@ const mk = (
     parameter === 'needs'
       ? ('find_need' as const)
       : ('confirm_urgency' as const),
-  level: 'orange' as const,
   importance: 'high' as const,
   reason: 'no_need' as const,
   step,
@@ -88,6 +87,29 @@ describe('finalize', () => {
       { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
     ]);
   });
+  it('an option the server did not count carries results_count null (Lucas 2026-11-13, question 7)', () => {
+    const d = dec([
+      mk('emergency', 0, ['U-3'], 'urgency'),
+      mk('start', 2, ['N-HOU', 'N-FOD']),
+    ]);
+    const r = finalize(d, {
+      counts: counts(10, null),
+      strong_text_match: false,
+    });
+    expect(r.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
+    for (const q of r.questions) {
+      for (const o of q.options) expect(o.results_count).toBeNull();
+    }
+  });
+  it('a counted option keeps its number; no question carries level', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
+    const [q] = finalize(d, {
+      counts: counts(10, { 'N-HOU': 4, 'N-FOD': 6 }),
+      strong_text_match: false,
+    }).questions;
+    expect(q.options.map((o) => o.results_count)).toEqual([4, 6]);
+    expect(q).not.toHaveProperty('level');
+  });
   it('recomputes uncertainty over the options left after 0-count drops', () => {
     // Housing and Food are a toss-up (uncertainty ~0.80). With Food at 0
     // results the question is Housing vs Money, which the model favours
@@ -139,15 +161,25 @@ describe('finalize', () => {
     }).questions;
     expect(q.uncertainty).toBe(0.42);
   });
-  it('by_code null (not counted) keeps every option, without counts', () => {
+  it('by_code null (not counted) keeps every option, results_count null', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const r = finalize(d, {
       counts: counts(10, null),
       strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
-      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU' },
-      { label: 'N-FOD', parameter: 'needs', value: 'N-FOD' },
+      {
+        label: 'N-HOU',
+        parameter: 'needs',
+        value: 'N-HOU',
+        results_count: null,
+      },
+      {
+        label: 'N-FOD',
+        parameter: 'needs',
+        value: 'N-FOD',
+        results_count: null,
+      },
     ]);
   });
   it('an empty counted by_code drops every need option (all 0), unlike null', () => {
@@ -384,6 +416,40 @@ describe('golden fixture', () => {
   });
 });
 
+describe('needs model failed, emergency still read (ADR 0037 item 3)', () => {
+  it('floor_hit true with needs error gives at least band soft, with the emergency card', () => {
+    const d = decide(
+      req(),
+      sig(
+        {},
+        {
+          needs: { status: 'error' },
+          emergency: { status: 'ok', score: 0.1, floor_hit: true },
+        },
+      ),
+    );
+    expect(['soft', 'popup']).toContain(d.emergency_band);
+    expect(d.emergency_band).toBe('soft');
+    expect(d.candidates[0].id).toBe('emergency');
+    expect(d.needs).toEqual([]);
+    expect(d.urgency.state).toBe('drop');
+  });
+
+  it('a high emergency score with needs error still gives popup', () => {
+    const d = decide(
+      req(),
+      sig(
+        {},
+        {
+          needs: { status: 'error' },
+          emergency: { status: 'ok', score: 0.9, floor_hit: false },
+        },
+      ),
+    );
+    expect(d.emergency_band).toBe('popup');
+  });
+});
+
 describe('non-finite need scores read as no score', () => {
   it('an Infinity need score is not used, boosted or offered', () => {
     const d = decide(req(), sig({ 'N-FOD-01': Infinity, 'N-HOU-01': 0.5 }));
@@ -431,5 +497,104 @@ describe('N-X is internal (ISS-2499)', () => {
     });
     const all = r.questions.flatMap((q) => q.options.map((o) => o.value));
     expect(all).not.toContain('N-X');
+  });
+});
+
+// Lucas 2026-11-13 (question 14): a tenant with AI classification off gets no
+// need guess and no optional question, but the emergency check always runs.
+describe('tenant AI classification off', () => {
+  const off = { ai_classification: 'off' as const };
+  const strong = {
+    'N-HOU': 0.95,
+    'N-HOU-01': 0.99,
+    'N-FOD-01': 0.5,
+    'N-FOD-02': 0.3,
+  };
+  const withAskUrgency = (emergencyScore = 0.001) =>
+    sig(strong, {
+      urgency: { level: 'U-1', score: 0.85 },
+      emergency: { status: 'ok', score: emergencyScore, floor_hit: false },
+    });
+
+  it('the default (no setting) still guesses needs and asks', () => {
+    const d = decide(req(), withAskUrgency());
+    expect(d.needs.some((n) => n.source === 'inferred')).toBe(true);
+    expect(d.candidates.length).toBeGreaterThan(0);
+  });
+  it('setting on behaves like the default', () => {
+    expect(
+      decide(req(), withAskUrgency(), { ai_classification: 'on' }),
+    ).toEqual(decide(req(), withAskUrgency()));
+  });
+  it('off: no inferred need, no boost from the model, no question', () => {
+    const d = decide(req(), withAskUrgency(), off);
+    expect(d.needs).toEqual([]);
+    expect(d.boost_needs).toEqual([]);
+    expect(d.candidates).toEqual([]);
+    expect(d.count_codes).toEqual([]);
+    expect(d.option_scores).toEqual({});
+    expect(d.nx).toBe(false);
+  });
+  it('off: the model urgency is not used or asked', () => {
+    const sure = sig(strong, { urgency: { level: 'U-1', score: 0.99 } });
+    const d = decide(req(), sure, off);
+    expect(d.urgency).toEqual({
+      value: 'U-X',
+      source: 'default',
+      state: 'drop',
+    });
+  });
+  it('off: caller needs and caller urgency still count; no area question', () => {
+    const d = decide(
+      req({ needs: ['N-HOU'], urgency: 'U-2' }),
+      withAskUrgency(),
+      off,
+    );
+    expect(d.needs).toEqual([
+      { code: 'N-HOU', state: 'use', source: 'caller' },
+    ]);
+    expect(d.boost_needs).toEqual(['N-HOU']);
+    expect(d.urgency).toEqual({ value: 'U-2', source: 'caller', state: 'use' });
+    expect(d.candidates).toEqual([]);
+  });
+  it.each([
+    ['popup', 0.9],
+    ['soft', 0.3],
+  ])(
+    'off: the %s emergency question and hotlines still appear',
+    (band, score) => {
+      const d = decide(req(), withAskUrgency(score), off);
+      expect(d.emergency_band).toBe(band);
+      expect(d.candidates.map((q) => q.id)).toEqual(['emergency']);
+      expect(d.candidates[0].hotlines).toHaveLength(2);
+      expect(d.cacheable).toBe(false);
+    },
+  );
+  it('off: a failed emergency check still reads as band unknown', () => {
+    const d = decide(
+      req(),
+      { needs: { status: 'error' }, emergency: { status: 'error' } },
+      off,
+    );
+    expect(d.emergency_band).toBe('unknown');
+    expect(d.cacheable).toBe(false);
+  });
+  it('off: caller U-0 still gets the hotline popup', () => {
+    const d = decide(req({ urgency: 'U-0' }), withAskUrgency(), off);
+    expect(d.candidates.map((q) => q.id)).toEqual(['emergency']);
+    expect(d.candidates[0].options).toEqual([]);
+  });
+  it('off: a calm query is cacheable', () => {
+    const d = decide(req(), withAskUrgency(), off);
+    expect(d.emergency_band).toBe('none');
+    expect(d.cacheable).toBe(true);
+  });
+  it('off: finalize keeps only the emergency question', () => {
+    const d = decide(req(), withAskUrgency(0.9), off);
+    const c = finalize(d, {
+      counts: { total: 10, by_code: null },
+      strong_text_match: false,
+    });
+    expect(c.questions.map((q) => q.id)).toEqual(['emergency']);
   });
 });

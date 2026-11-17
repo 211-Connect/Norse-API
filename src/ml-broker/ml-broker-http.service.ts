@@ -3,20 +3,33 @@ import { ConfigService } from '@nestjs/config';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { MlBrokerError } from './ml-broker.errors';
 
-const DEFAULT_TIMEOUT_MS = 300;
+// Lucas 2026-11-13: "at least 300 ms, or even longer, ml broker is slow".
+const DEFAULT_TIMEOUT_MS = 1000;
+const MIN_TIMEOUT_MS = 100;
+const MAX_TIMEOUT_MS = 5000;
 const SEARCH_CLASSIFICATION = 'search-classification';
 const URGENCY_LEVELS: readonly string[] = ['U-1', 'U-2', 'U-3', 'U-4'];
 
 export interface SearchClassificationRequest {
   query: string;
   tenant_id: string;
+  /** Skip the needs model (ml-broker PR #20); sent only when true. */
+  emergency_only?: boolean;
 }
 
 /** ml-broker `search-classification` response, as sent on the wire. */
 export interface SearchClassificationResponse {
   model_version?: string;
-  needs: { scores: { code: string; tier: string; score: number }[] };
-  urgency: { level: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number };
+  needs: {
+    /**
+     * ml-broker PR #24: 'error' when the needs model failed. Missing means
+     * 'ok' (an older ml-broker).
+     */
+    status?: 'ok' | 'error';
+    scores: { code: string; tier: string; score: number }[];
+  };
+  /** null for an `emergency_only` request, and when `needs.status` is 'error'. */
+  urgency: { level: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number } | null;
   emergency?: {
     status: 'ok' | 'error';
     score: number | null;
@@ -94,6 +107,7 @@ export class MlBrokerHttpService {
             body: JSON.stringify({
               query: request.query,
               tenant_id: request.tenant_id,
+              ...(request.emergency_only === true && { emergency_only: true }),
             }),
             signal,
           }),
@@ -124,7 +138,10 @@ export class MlBrokerHttpService {
         `unparsable body: ${errorName(error)}`,
       );
     }
-    return this.assertSearchClassificationShape(body);
+    return this.assertSearchClassificationShape(
+      body,
+      request.emergency_only === true,
+    );
   }
 
   private timeoutMs(): number {
@@ -132,7 +149,8 @@ export class MlBrokerHttpService {
       String(this.configService.get('V2_CLASSIFY_TIMEOUT_MS') ?? ''),
       10,
     );
-    return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+    if (!Number.isInteger(raw) || raw <= 0) return DEFAULT_TIMEOUT_MS;
+    return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, raw));
   }
 
   /**
@@ -141,14 +159,21 @@ export class MlBrokerHttpService {
    */
   private assertSearchClassificationShape(
     body: unknown,
+    emergencyOnly: boolean,
   ): SearchClassificationResponse {
     const b = body as Partial<SearchClassificationResponse> | null;
-    if (
-      !b ||
-      !Array.isArray(b.needs?.scores) ||
-      !URGENCY_LEVELS.includes(b.urgency?.level as string) ||
-      typeof b.urgency?.score !== 'number'
-    ) {
+    const needsStatus = b?.needs?.status;
+    const statusOk =
+      needsStatus === undefined ||
+      needsStatus === 'ok' ||
+      needsStatus === 'error';
+    // An emergency_only response, or one whose needs model failed, has
+    // `urgency: null` and empty need scores.
+    const urgencyOk =
+      ((emergencyOnly || needsStatus === 'error') && b?.urgency === null) ||
+      (URGENCY_LEVELS.includes(b?.urgency?.level as string) &&
+        typeof b?.urgency?.score === 'number');
+    if (!b || !statusOk || !Array.isArray(b.needs?.scores) || !urgencyOk) {
       throw new MlBrokerError(
         'malformed',
         SEARCH_CLASSIFICATION,

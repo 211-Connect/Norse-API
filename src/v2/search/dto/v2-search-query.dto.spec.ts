@@ -1,6 +1,10 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { V2SearchQueryDto } from './v2-search-query.dto';
+import {
+  MAX_QUERY_LENGTH,
+  QUERY_TOO_LONG_MESSAGE,
+} from 'src/search/internal/query-log';
 
 const parse = (raw: Record<string, unknown>) => {
   const dto = plainToInstance(V2SearchQueryDto, raw);
@@ -73,8 +77,10 @@ describe('V2SearchQueryDto', () => {
     expect(parse({ needs: 'N-HOU,N-X' }).props).toContain('needs');
   });
 
-  it('still accepts N-X in passed_needs (internal state, not an option)', () => {
-    expect(parse({ passed_needs: 'N-X' }).errors).toEqual([]);
+  it('rejects N-X in passed_needs and names it (ADR 0039 Decision 57)', () => {
+    const r = parse({ passed_needs: 'N-HOU,N-X' });
+    expect(r.props).toContain('passed_needs');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain('N-X');
   });
 
   it('still accepts urgency=U-X (counts as absent in the engine)', () => {
@@ -98,5 +104,85 @@ describe('V2SearchQueryDto', () => {
   it('rejects an unknown clarify value', () => {
     expect(parse({ clarify: 'always' }).props).toContain('clarify');
     expect(parse({ clarify: 'never' }).errors).toEqual([]);
+  });
+
+  // ISS-2612: `taxonomy` comes from the v1 DTO unchanged (comma list or array).
+  it('keeps the v1 taxonomy parameter: comma list and repeated values', () => {
+    const comma = parse({ taxonomy: 'BD-1800.2000, BD-1800.1500' });
+    expect(comma.errors).toEqual([]);
+    expect(comma.dto.taxonomy).toEqual(['BD-1800.2000', 'BD-1800.1500']);
+    const repeated = parse({ taxonomy: ['BD-1800.2000', 'BD-1800.2000'] });
+    expect(repeated.dto.taxonomy).toEqual(['BD-1800.2000']);
+    expect(parse({}).dto.taxonomy).toEqual([]);
+  });
+
+  it('classify accepts only off; absent stays undefined; any other value is a 400', () => {
+    expect(parse({ classify: 'off' }).errors).toEqual([]);
+    expect(parse({ classify: 'off' }).dto.classify).toBe('off');
+    expect(parse({ query: 'rent' }).dto.classify).toBeUndefined();
+    for (const bad of ['on', 'auto', 'OFF', '', 'false'])
+      expect(parse({ classify: bad }).props).toContain('classify');
+  });
+
+  // Break run 2026-11-14 (HANDOFF-ASSETS/v2-search--eval-data/break-v2-2026-11-14):
+  // `query[]=food&query[]=rent` and `query[OR][]=...` reached the search as the
+  // text "food,rent" and "[object Object]". The v2 contract types query as a string.
+  it('rejects a query that is not a string (array or AND/OR object) with a reason', () => {
+    for (const bad of [['food', 'rent'], { OR: ['food', 'rent'] }, 5]) {
+      const r = parse({ query: bad });
+      expect(r.props).toContain('query');
+      expect(JSON.stringify(r.errors[0].constraints)).toContain(
+        'query must be a string',
+      );
+    }
+  });
+
+  it('accepts a plain string query and the empty default', () => {
+    expect(parse({ query: 'food pantry' }).errors).toEqual([]);
+    expect(parse({}).errors).toEqual([]);
+    expect(parse({}).dto.query).toBe('');
+  });
+
+  // One rule for v1 and v2: the same limit and the same 400 message, so the
+  // printable directory recognises a v2 rejection too (David, PR #279 review).
+  it('caps query at MAX_QUERY_LENGTH with the v1 message (David, PR #278 review)', () => {
+    expect(MAX_QUERY_LENGTH).toBe(500);
+    expect(parse({ query: 'a'.repeat(MAX_QUERY_LENGTH) }).errors).toEqual([]);
+    const r = parse({ query: 'a'.repeat(MAX_QUERY_LENGTH + 1) });
+    expect(r.props).toContain('query');
+    expect(Object.values(r.errors[0].constraints ?? {})).toContain(
+      QUERY_TOO_LONG_MESSAGE,
+    );
+  });
+
+  it('counts an emoji as 2 characters, as Elasticsearch does', () => {
+    expect(parse({ query: '😀'.repeat(250) }).errors).toEqual([]);
+    expect(parse({ query: '😀'.repeat(251) }).props).toContain('query');
+  });
+
+  // Break run 2026-11-14: coords=Infinity,0 was a 500 (Elasticsearch geo error);
+  // coords=200,100 searched with an impossible point; coords=abc,def was dropped.
+  it.each([
+    'Infinity,0',
+    '200,100',
+    '-87.6,95',
+    'abc,def',
+    '1,2,3',
+    'NaN,NaN',
+    '-87.6',
+  ])('rejects coords %p with a 400 reason', (coords) => {
+    const r = parse({ coords });
+    expect(r.props).toContain('coords');
+    expect(JSON.stringify(r.errors[0].constraints)).toContain(
+      'coords must be longitude,latitude',
+    );
+  });
+
+  it('accepts coords in range and keeps the v1 [lon, lat] shape', () => {
+    const r = parse({ coords: '-87.6298,41.8781' });
+    expect(r.errors).toEqual([]);
+    expect(r.dto.coords).toEqual([-87.6298, 41.8781]);
+    expect(parse({ coords: '180,-90' }).errors).toEqual([]);
+    expect(parse({}).dto.coords).toBeUndefined();
   });
 });

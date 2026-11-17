@@ -29,6 +29,14 @@ export class V2IntentUrgencyDto {
   state: 'use' | 'ask' | 'drop';
 }
 
+export class V2IntentTaxonomyDto {
+  @ApiProperty({ example: 'BD-1800', description: 'HSIS taxonomy code.' })
+  value: string;
+
+  @ApiProperty({ enum: ['caller'] })
+  source: 'caller';
+}
+
 export class V2IntentDto {
   @ApiProperty({
     type: String,
@@ -36,6 +44,13 @@ export class V2IntentDto {
     description: 'The typed query when it is a string with text, else null.',
   })
   query: string | null;
+
+  @ApiPropertyOptional({
+    type: [V2IntentTaxonomyDto],
+    description:
+      'The `taxonomy` codes the request sent, as sent (not expanded to child codes). Absent when none were sent.',
+  })
+  taxonomy?: V2IntentTaxonomyDto[];
 
   @ApiProperty({ type: [V2IntentNeedDto] })
   needs: V2IntentNeedDto[];
@@ -51,23 +66,28 @@ export class V2QuestionOptionDto {
 
   @ApiProperty({
     enum: ['needs', 'passed_needs', 'urgency'],
+    nullable: true,
     description:
-      'The URL parameter that a pick of this option adds. One question can mix kinds.',
+      'The URL parameter that a pick of this option adds. One question can mix kinds. null (with value null): the pick writes nothing to the URL; the client dismisses the question for this visit (emergency "No, I am safe now").',
   })
-  parameter: 'needs' | 'passed_needs' | 'urgency';
+  parameter: 'needs' | 'passed_needs' | 'urgency' | null;
 
   @ApiProperty({
+    nullable: true,
     example: 'N-HOU-02',
     description:
-      'The value added to that parameter, for example N-HOU-02 or U-3.',
+      'The value added to that parameter, for example N-HOU-02 or U-0; null when parameter is null.',
   })
-  value: string;
+  value: string | null;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
+    type: Number,
+    nullable: true,
     description:
-      'Services that match this need; need options only, absent when not counted.',
+      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number. An option with count 0 is never offered.',
   })
-  results_count?: number;
+  // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
+  results_count?: number | null;
 }
 
 export class V2HotlineDto {
@@ -84,12 +104,6 @@ export class V2QuestionDto {
     enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
   })
   type: string;
-  @ApiProperty({
-    enum: ['red', 'orange', 'low'],
-    description:
-      'Emergency question: `red` shows the popup, `orange` the soft card (ADR 0039 Decision 54). Other questions: `orange` or `low`.',
-  })
-  level: string;
   @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
   importance: string;
   @ApiProperty() value: number;
@@ -101,7 +115,7 @@ export class V2QuestionDto {
   @ApiProperty({
     type: [V2QuestionOptionDto],
     description:
-      'Emergency question: urgency answers only, never U-0; empty for a caller `urgency=U-0`.',
+      'Emergency question: "Yes" adds `urgency=U-0`; "No, I am safe now" has parameter and value null (writes nothing); empty for a caller `urgency=U-0`.',
   })
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;

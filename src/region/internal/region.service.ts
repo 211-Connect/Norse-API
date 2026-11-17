@@ -11,6 +11,19 @@ import {
 } from './dto';
 import { REGIONS_INDEX, unknownRegionsError } from './region.constants';
 import { buildRegionGet, buildRegionSearch } from './region.query';
+import {
+  PlaceDetailDto,
+  PlaceListDto,
+  PlaceListQueryDto,
+} from './dto/place.dto';
+import {
+  encodePlaceCursor,
+  placeDetail,
+  placeListRequest,
+  placeLookupRequest,
+  placeSummary,
+  PlaceSource,
+} from './place.query';
 
 interface RegionSource {
   id?: string;
@@ -46,6 +59,31 @@ export class RegionService {
     return {
       items: result.hits.hits.map((hit) => toSummary(hit._source ?? {})),
     };
+  }
+
+  async listPlaces(query: PlaceListQueryDto): Promise<PlaceListDto> {
+    const limit = query.limit ?? 25;
+    const result = await this.call('place list', () =>
+      this.elasticsearch.search<PlaceSource>(placeListRequest(query)),
+    );
+    const hits = result.hits.hits.slice(0, limit);
+    const last = hits[hits.length - 1]?._source;
+    return {
+      items: hits.map((hit) => placeSummary(hit._source!)),
+      next_cursor:
+        result.hits.hits.length > limit && last
+          ? encodePlaceCursor(query.state, last.slug, last.id)
+          : null,
+    };
+  }
+
+  async getPlace(slug: string): Promise<PlaceDetailDto> {
+    const result = await this.call('place lookup', () =>
+      this.elasticsearch.search<PlaceSource>(placeLookupRequest(slug)),
+    );
+    const source = result.hits.hits[0]?._source;
+    if (!source) throw new NotFoundException(`Place ${slug} not found`);
+    return placeDetail(source);
   }
 
   async get(id: string): Promise<RegionDetailDto> {

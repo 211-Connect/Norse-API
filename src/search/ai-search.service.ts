@@ -4,6 +4,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { describeQueryForLog } from './internal/query-log';
 import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -18,7 +19,7 @@ import { AiSearchPredictQueryDto } from './dto/ai-search-predict-query.dto';
 import { AiSearchReRankPayload } from './dto/ai-search-re-rank-query.dto';
 
 const ML_BROKER_TIMEOUT_MS = 10_000;
-const ML_BROKER_TOP_K = 250;
+export const ML_BROKER_TOP_K = 250;
 const PRESELECTED_THRESHOLD = 0.6;
 
 enum MlBrokerTask {
@@ -89,7 +90,7 @@ export class AiSearchService {
     });
 
     this.logger.debug(
-      `[predict] query="${queryParams.query}" tenant=${headers['x-tenant-id']} | ` +
+      `[predict] query: ${describeQueryForLog(String(queryParams.query ?? ''))} tenant=${headers['x-tenant-id']} | ` +
         `needs=[${(brokerResponse.needs || [])
           .map((n) => `${n.code}:${n.score}`)
           .join(', ')}] | ` +

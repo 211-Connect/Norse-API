@@ -4,12 +4,17 @@ import {
   IsArray,
   IsIn,
   IsOptional,
+  IsString,
   Validate,
   ValidationArguments,
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
-import { SearchResourcesQueryDto } from '../../../search/dto/search-query.dto';
+import {
+  IsQueryWithinMaxLengthConstraint,
+  SearchResourcesQueryDto,
+} from '../../../search/dto/search-query.dto';
+import { MAX_QUERY_LENGTH } from '../../../search/internal/query-log';
 import { NX, isKnownCode, isTier1, isTier2 } from '../../rules/sune';
 
 export const V2_URGENCY_CODES = [
@@ -21,6 +26,8 @@ export const V2_URGENCY_CODES = [
   'U-X',
 ] as const;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
+// Only `off` exists: a request can turn AI classification off for itself, never on.
+export const V2_CLASSIFY_VALUES = ['off'] as const;
 
 /** Codes that are neither SUNE Tier 1, Tier 2 nor N-X, in request order. */
 function unknownCodes(value: unknown): string[] {
@@ -28,6 +35,35 @@ function unknownCodes(value: unknown): string[] {
   return value.filter(
     (v): v is string => typeof v === 'string' && !isKnownCode(v),
   );
+}
+
+/** `"lon,lat"` to `[lon, lat]`; anything else is left as is for the validator. */
+export function toCoords(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const parts = value.split(',');
+  if (parts.length !== 2 || parts.some((p) => p.trim() === '')) return value;
+  return parts.map((p) => Number(p));
+}
+
+@ValidatorConstraint({ name: 'isCoords', async: false })
+class CoordsConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (!Array.isArray(value) || value.length !== 2) return false;
+    const [lon, lat] = value as unknown[];
+    return (
+      typeof lon === 'number' &&
+      typeof lat === 'number' &&
+      Number.isFinite(lon) &&
+      Number.isFinite(lat) &&
+      lon >= -180 &&
+      lon <= 180 &&
+      lat >= -90 &&
+      lat <= 90
+    );
+  }
+  defaultMessage(): string {
+    return 'coords must be longitude,latitude with longitude -180 to 180 and latitude -90 to 90';
+  }
 }
 
 @ValidatorConstraint({ name: 'isSelectableNeedCode', async: false })
@@ -70,25 +106,6 @@ export function toCodeList(value: unknown): unknown {
   return Array.from(new Set(codes));
 }
 
-@ValidatorConstraint({ name: 'isKnownNeedCode', async: false })
-class IsKnownNeedCodeConstraint implements ValidatorConstraintInterface {
-  validate(value: unknown): boolean {
-    return (
-      Array.isArray(value) &&
-      value.every((v) => typeof v === 'string' && isKnownCode(v))
-    );
-  }
-  defaultMessage(args: ValidationArguments): string {
-    const unknown = unknownCodes(args.value);
-    return [
-      '$property must hold only known need codes (a SUNE Tier 1 or Tier 2 code, or N-X)',
-      ...(unknown.length > 0
-        ? [`unknown need code(s): ${unknown.join(', ')}`]
-        : []),
-    ].join('; ');
-  }
-}
-
 /**
  * Query of `GET /v2/search`: the v1 search parameters (location, paging, sort,
  * cutoff, filters) minus `query_type` (v2 always runs hybrid), plus the v2-only
@@ -96,7 +113,42 @@ class IsKnownNeedCodeConstraint implements ValidatorConstraintInterface {
  */
 export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   'query_type',
+  'query',
+  'coords',
 ] as const) {
+  // v1 drops a malformed coords value and passes any number through, so
+  // `Infinity,0` was a 500 and `200,100` searched an impossible point (break
+  // run 2026-11-14). v2 keeps the v1 format and rejects the rest with a 400.
+  @ApiPropertyOptional({
+    description: 'Comma-delimited longitude,latitude',
+    example: '-120.740135,47.751076',
+  })
+  @IsOptional()
+  @Transform(({ value }) => toCoords(value))
+  @Validate(CoordsConstraint)
+  coords?: [number, number];
+
+  // v1 also takes a string array or an AND/OR object. v2 has no use for them:
+  // they reached the search as "food,rent" or "[object Object]" (break run
+  // 2026-11-14). ADR 0039 OpenAPI draft types query as a string.
+  @ApiPropertyOptional({
+    type: String,
+    default: '',
+    maxLength: MAX_QUERY_LENGTH,
+    description:
+      'Free text. A repeated parameter or an AND/OR object is a 400.',
+  })
+  @IsOptional()
+  @IsString({
+    message: 'query must be a string (one query parameter, plain text)',
+  })
+  // The v1 rule, one place (David, PR #278 and #279 reviews): 500 UTF-16
+  // units, as Elasticsearch counts (an emoji is 2); Elasticsearch rejects a
+  // prefix query over 1000 characters, and a cap keeps a pasted transcript out
+  // of the logs and the embedding call. Classify still cuts to 512.
+  @Validate(IsQueryWithinMaxLengthConstraint)
+  query: string = '';
+
   @ApiPropertyOptional({
     type: [String],
     description:
@@ -114,12 +166,12 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
     type: [String],
     description:
       'Need codes the caller already declined. They are never offered again. ' +
-      'Same formats as `needs`.',
+      'Same formats and codes as `needs`: an unknown code or N-X is a 400 that names it.',
   })
   @IsOptional()
   @Transform(({ value }) => toCodeList(value))
   @IsArray()
-  @Validate(IsKnownNeedCodeConstraint)
+  @Validate(IsSelectableNeedCodeConstraint)
   passed_needs?: string[];
 
   @ApiPropertyOptional({
@@ -140,4 +192,13 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsOptional()
   @IsIn(V2_CLARIFY_VALUES)
   clarify: (typeof V2_CLARIFY_VALUES)[number] = 'auto';
+
+  @ApiPropertyOptional({
+    enum: V2_CLASSIFY_VALUES,
+    description:
+      '`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).',
+  })
+  @IsOptional()
+  @IsIn(V2_CLASSIFY_VALUES)
+  classify?: (typeof V2_CLASSIFY_VALUES)[number];
 }
