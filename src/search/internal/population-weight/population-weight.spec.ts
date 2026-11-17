@@ -328,13 +328,26 @@ describe('applyPopulationWeight: asking for the group, not mentioning it', () =>
     ]);
   });
 
-  it.each(['im a vet', 'vets housing'])(
-    '"vet" counts as Veterans: "%s"',
-    (q) => {
-      const input = [code('YN-1000.1000', 'Veterans')];
-      expect(applyPopulationWeight(input, q, 'en')).toEqual(input);
-    },
-  );
+  it.each([
+    'im a vet',
+    'i am a vet',
+    'as a vet',
+    'being a vet, i need housing',
+  ])('"vet" in a self-description counts as Veterans: "%s"', (q) => {
+    const input = [code('YN-1000.1000', 'Veterans')];
+    expect(applyPopulationWeight(input, q, 'en')).toEqual(input);
+  });
+
+  it.each([
+    'low cost vet',
+    'vet clinic',
+    'vet for my dog',
+    'free vet care for pets',
+    'im a vet tech looking for work',
+  ])('"vet" elsewhere is a veterinarian, no Veterans boost: "%s"', (q) => {
+    const input = [code('YN-1000.1000', 'Veterans', 0.8, ['Military'])];
+    expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
+  });
 
   it('"not for women and children" still zeroes Women', () => {
     const women = [code('YS-5000.8000', 'Women')];

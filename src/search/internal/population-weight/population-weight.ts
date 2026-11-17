@@ -123,7 +123,6 @@ const IRREGULAR: Readonly<Record<string, string>> = {
   people: 'person',
   teenage: 'teen',
   teenager: 'teen',
-  vet: 'veteran',
 };
 
 export function normalizeToken(tok: string): string {
@@ -497,6 +496,28 @@ function isRequest(t: Tok[], i: number, c: Context): boolean {
   );
 }
 
+const VET_NOUN_NEXT = set(
+  'tech technician assistant clinic office hospital student school nurse practice',
+);
+
+/**
+ * "vet" means veterinarian everywhere except in a self-description ("im a
+ * vet", "as a vet", "being a vet"): only there it names the Veterans group.
+ */
+function isSelfVet(
+  t: Tok[],
+  i: number,
+  words: ReadonlySet<string>,
+  c: Context,
+): boolean {
+  return (
+    words.has('veteran') &&
+    !VET_NOUN_NEXT.has(t[i + 1]?.raw ?? '') &&
+    selfFillers(t, i) &&
+    !isNegated(t, i, c)
+  );
+}
+
 /** True when the query asks for the group, at least once and not negated. */
 export function queryAsksForGroup(
   queryText: string,
@@ -506,10 +527,10 @@ export function queryAsksForGroup(
 ): boolean {
   const t = sequence(queryText);
   const c: Context = { all, actorProne };
-  return t.some(
-    (tok, i) =>
-      words.has(tok.norm) && isRequest(t, i, c) && !isNegated(t, i, c),
-  );
+  return t.some((tok, i) => {
+    if (tok.raw === 'vet') return isSelfVet(t, i, words, c);
+    return words.has(tok.norm) && isRequest(t, i, c) && !isNegated(t, i, c);
+  });
 }
 
 /** Identity parts of a code, each with its own code and name. */
