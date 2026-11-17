@@ -65,18 +65,31 @@ export const isSupportedLanguage = (code: string): boolean =>
  * Index suffix for an `accept-language` value, lenient (v1): first entry of a
  * list, region dropped, a 4-letter script kept (`zh-Hans` becomes `zh_hans`).
  * It never checks the list; an unknown code names an index that does not exist.
+ * A value that is not a code at all (`*`, `_all`, empty) is a 400, never an
+ * index pattern.
  */
 export function languageIndexSuffix(lang: string): string {
   const preferred = lang.split(',')[0].trim().toLowerCase();
   const parts = preferred.split('-');
   const base = parts[0];
 
-  if (parts.length > 1 && parts[1].length === 4) {
-    return `${base}_${parts[1]}`;
-  }
+  const suffix =
+    parts.length > 1 && parts[1].length === 4 ? `${base}_${parts[1]}` : base;
 
-  return base;
+  // The suffix becomes part of an index name, where `*`, `?`, `,` and `_all`
+  // are patterns: `accept-language: *` would search every language index.
+  // Fail loudly rather than name a pattern (David, PR #279 review).
+  if (!INDEX_SUFFIX.test(suffix)) {
+    throw new BadRequestException(V1_ACCEPT_LANGUAGE_MESSAGE);
+  }
+  return suffix;
 }
+
+/** A language code as an index suffix: `en`, `haw`, `zh_hans`. */
+const INDEX_SUFFIX = /^[a-z]{2,3}(_[a-z]{4})?$/;
+
+export const V1_ACCEPT_LANGUAGE_MESSAGE =
+  'accept-language must start with a language code such as en, es or zh-Hans';
 
 export const V2_ACCEPT_LANGUAGE_MESSAGE =
   'accept-language must be exactly one supported code (en, es, ...); ' +

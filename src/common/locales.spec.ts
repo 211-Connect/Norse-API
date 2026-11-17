@@ -31,6 +31,16 @@ describe('locales', () => {
         expect(languageIndexSuffix(c)).toBe(c.replace('-', '_'));
       }
     });
+
+    // The suffix goes straight into an index name, where `*` and `?` are
+    // wildcards, `,` lists indices and `_all` means every index: one header
+    // would search every language index at once (David, PR #279 review).
+    it.each(['*', '*,en', 'e*', 'en?', '_all', '-en', '', '  ', 'e n'])(
+      'rejects %p loudly instead of naming an index pattern',
+      (raw) => {
+        expect(() => languageIndexSuffix(raw)).toThrow(BadRequestException);
+      },
+    );
   });
 
   describe('parseExactLanguage (v2, strict)', () => {
