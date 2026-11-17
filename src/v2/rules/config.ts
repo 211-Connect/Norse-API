@@ -1,9 +1,9 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-13.3';
+export const RULES_VERSION = 'rules-2026-11-17.1';
 
 export const CUTOFFS = {
-  emergency: { popup: 0.662, soft: 0.221 },
+  emergency: { popup: 0.667, soft: 0.217 }, // Argus L12 (argus-l12-s0-floor4-2026-11-14),
   urgency: { drop: 0.8, use: 0.93 }, // score < drop -> drop; drop <= s < use -> ask; s >= use -> use
   needs: { use: 0.97, ask: 0.12 }, // `use` is also the v1 hybrid need boost gate; s >= use -> use; ask <= s < use -> ask; else drop
   area: { tier1Min: 0.9, tier2Max: 0.5 },
