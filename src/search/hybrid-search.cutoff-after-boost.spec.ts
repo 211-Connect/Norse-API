@@ -89,8 +89,15 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   };
 
   const hasGauss = (r: any) => JSON.stringify(r.query).includes('"gauss"');
+  // With coords, v2 fuses (ISS-2499) and sends a proximity request; it is not
+  // a top-score call and has no hits here.
+  const isProximity = (r: any) =>
+    r._source === false && r.sort?.[0]?._geo_distance !== undefined;
   const isTopCall = (r: any) =>
-    r.size === 1 && r._source === false && r.min_score == null;
+    r.size === 1 &&
+    r._source === false &&
+    r.min_score == null &&
+    !isProximity(r);
   const probeOwnTop = () =>
     requests.filter((r) => isTopCall(r) && !hasGauss(r));
   const mainTop = () => requests.filter((r) => isTopCall(r) && hasGauss(r));
@@ -133,6 +140,9 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
       }
       requests.push(req);
 
+      if (isProximity(req)) {
+        return Promise.resolve({ hits: { hits: [] } });
+      }
       if (isTopCall(req)) {
         const top = hasGauss(req) ? MAIN_TOP : OWN_TOP;
         const respond = () =>
@@ -346,8 +356,10 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(requests.map(withoutPreference)).toEqual(baseline);
   });
 
+  // v2 relevance with coords now fuses (ISS-2499); sort=distance keeps the
+  // summed path, which this test checks.
   it('4. cutoff off: no extra call, only the main top-score call and the main search', async () => {
-    await run(tier2Fod, { relevance_cutoff: 'off' });
+    await run(tier2Fod, { relevance_cutoff: 'off', sort: 'distance' });
 
     expect(probeCalls()).toHaveLength(0);
     expect(probeOwnTop()).toHaveLength(0);
