@@ -18,6 +18,7 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
+import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
 // means the check did not run (same as the rules engine's own specs).
@@ -217,7 +218,7 @@ export class V2SearchService {
       strong_text_match: false,
     });
 
-    return {
+    const result: V2SearchResponseDto = {
       ...response,
       intent: {
         query: hasText ? text : null,
@@ -246,5 +247,8 @@ export class V2SearchService {
       model_version: classified?.modelVersion ?? null,
       rules_version: decision.rules_version,
     };
+    // A shared cache may store only band none with no emergency question
+    // (ADR 0039 Decision 28); the controller's TTL covers the rest.
+    return decision.cacheable ? result : markNotStorable(result);
   }
 }

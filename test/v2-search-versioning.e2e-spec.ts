@@ -11,6 +11,7 @@ import {
   Version,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { HttpExceptionFilter } from 'src/common/filters/global-exception.filter';
@@ -19,6 +20,12 @@ import {
   API_VERSION_MIDDLEWARE_ROUTES,
 } from 'src/common/middleware/ApiVersionMiddleware';
 import { configureHttp } from 'src/common/http/configure-http';
+import {
+  CdnCacheControlInterceptor,
+  markNotStorable,
+} from 'src/common/interceptors/cdn-cache-control.interceptor';
+import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import { ONE_HOUR } from 'src/common/const/one-hour';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
 import { V2SearchEnabledGuard } from 'src/v2/search/v2-search-enabled.guard';
@@ -29,6 +36,7 @@ import { V2SearchService } from 'src/v2/search/v2-search.service';
 class V1SearchStubController {
   @Get()
   @Version('1')
+  @SetCdnCacheTTL(ONE_HOUR)
   get() {
     return { route: 'v1' };
   }
@@ -51,6 +59,7 @@ describe('v2 search versioning (e2e)', () => {
       controllers: [V1SearchStubController, V2SearchController],
       providers: [
         V2SearchEnabledGuard,
+        { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
         { provide: V2SearchService, useValue: { search: searchMock } },
         {
           provide: UsageMetricsService,
@@ -165,6 +174,45 @@ describe('v2 search versioning (e2e)', () => {
       const res = await get('/v2/search?urgency=U-9');
       expect(res.status).toBe(400);
       expect(searchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ADR 0039 Decisions 9 and 28: /search answers v1 or v2 by header, so a
+  // cache keyed by URL must never hold a v2 body there, and an emergency
+  // answer is never stored anywhere.
+  describe('cache headers', () => {
+    const NO_STORE = 'no-store, no-cache, must-revalidate, private';
+    beforeEach(async () => {
+      app = await boot('true');
+    });
+
+    it('/v2/search stores a band-none answer, with no Vary on the version', async () => {
+      const res = await get('/v2/search?query=rent');
+      expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toMatch(/^public, /);
+      expect(res.headers['vary'] ?? '').not.toMatch(/x-api-version/i);
+    });
+
+    it('/v2/search never stores an answer the service marked', async () => {
+      searchMock.mockResolvedValue(
+        markNotStorable({ route: 'v2', search: { hits: { total: 0 } } }),
+      );
+      const res = await get('/v2/search?query=rent');
+      expect(res.headers['cache-control']).toBe(NO_STORE);
+      expect(res.body).toEqual({ route: 'v2', search: { hits: { total: 0 } } });
+    });
+
+    it('/search with x-api-version: 2 is never stored', async () => {
+      const res = await get('/search?query=rent', '2');
+      expect(res.body.route).toBe('v2');
+      expect(res.headers['cache-control']).toBe(NO_STORE);
+    });
+
+    it('/search for v1 is stored and varies on x-api-version', async () => {
+      const res = await get('/search?query=rent');
+      expect(res.body.route).toBe('v1');
+      expect(res.headers['cache-control']).toMatch(/^public, /);
+      expect(res.headers['vary']).toMatch(/x-api-version/i);
     });
   });
 

@@ -13,6 +13,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
   rows: {
@@ -639,6 +640,52 @@ describe('V2SearchService', () => {
       );
     const emergencyQ = (res: { clarification: { questions: any[] } }) =>
       res.clarification.questions.find((q) => q.id === 'emergency');
+
+    // Decision 28: only band none with no emergency question may be stored by a
+    // shared cache. The mark is invisible to the JSON body (Decision 59).
+    describe('shared-cache rule (Decision 28)', () => {
+      const run = async (classify: jest.Mock, over = {}) => {
+        const { service } = build({ classify });
+        return service.search({ headers, query: dto({ query: 'x', ...over }) });
+      };
+
+      it('a clean band-none answer is storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})));
+        expect(isMarkedNotStorable(res)).toBe(false);
+      });
+
+      it('a popup-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a soft-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.3)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a failed emergency check is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(errorResult()));
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a caller U-0 answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})), {
+          urgency: 'U-0',
+        });
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('the mark adds no key to the response', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(Object.keys(JSON.parse(JSON.stringify(res))).sort()).toEqual(
+          Object.keys(res).sort(),
+        );
+      });
+    });
 
     it('top-level keys hold no emergency block', async () => {
       const { service } = build({
