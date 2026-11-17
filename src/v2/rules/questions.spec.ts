@@ -10,15 +10,28 @@ describe('emergency question', () => {
   const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
   const emergencyOf = (d: ReturnType<typeof decide>) =>
     d.candidates.find((q) => q.id === 'emergency');
-  it('popup: first, Yes = U-0 and safe writes nothing, carries hotlines (Lucas 2026-11-13)', () => {
+  it('popup: first, 3 options write U-0 / U-1 / U-2, carries hotlines (Lucas 2026-11-17)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
     expect(q.step).toBe(0);
     // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
-      { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-0' },
-      { label: 'No, I am safe now', parameter: null, value: null },
+      {
+        label: "Yes, I'm in danger right now",
+        parameter: 'urgency',
+        value: 'U-0',
+      },
+      {
+        label: "No, I'm safe, but I need help today",
+        parameter: 'urgency',
+        value: 'U-1',
+      },
+      {
+        label: "No, I'm safe, I need help soon (within a week)",
+        parameter: 'urgency',
+        value: 'U-2',
+      },
     ]);
     expect(q.stem).toBe('Are you in danger right now?');
     expect(q.hotlines).toEqual([
@@ -69,7 +82,7 @@ describe('emergency question', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');
     const q = emergencyOf(d);
-    expect(q.options.map((o) => o.value)).toEqual(['U-0', null]);
+    expect(q.options.map((o) => o.value)).toEqual(['U-0', 'U-1', 'U-2']);
     expect(q.hotlines).toHaveLength(2);
   });
   it('soft band uses the same danger labels and stem as the popup (question 24, B2)', () => {
@@ -78,8 +91,9 @@ describe('emergency question', () => {
     expect(orange.stem).toBe(red.stem);
     expect(orange.options).toEqual(red.options);
     expect(orange.options.map((o) => o.label)).toEqual([
-      'Yes, I am in danger',
-      'No, I am safe now',
+      "Yes, I'm in danger right now",
+      "No, I'm safe, but I need help today",
+      "No, I'm safe, I need help soon (within a week)",
     ]);
   });
   it('time questions keep the time labels (only the emergency question changes)', () => {
@@ -175,8 +189,88 @@ describe('emergency question', () => {
     const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: soft }));
     expect(ids(d)).not.toContain('emergency');
   });
-  it('popup + urgency U-X counts as no answer -> emergency question stays', () => {
-    const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
+  it.each([
+    ['popup', popup],
+    ['soft', soft],
+  ] as const)(
+    '%s + urgency U-X (time not known) -> emergency question present',
+    (_n, e) => {
+      const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: e }));
+      expect(ids(d)).toContain('emergency');
+    },
+  );
+  it('picking "safe today" puts U-1 in the URL; the next call has no emergency card and no time question', () => {
+    const first = decide(req(), sig({}, { emergency: popup }));
+    const safe = first.candidates[0].options[1];
+    expect([safe.parameter, safe.value]).toEqual(['urgency', 'U-1']);
+    const next = decide(
+      req({ urgency: safe.value as 'U-1' }),
+      sig({}, { emergency: popup }),
+    );
+    expect(ids(next)).not.toContain('emergency');
+    expect(ids(next)).not.toContain('urgency_today');
+  });
+  describe('keyword floor hit (Lucas 2026-11-17 final: caller urgency U-1..U-4 hides the card)', () => {
+    const floor = { status: 'ok' as const, score: 0.1, floor_hit: true };
+    it.each(['U-1', 'U-2', 'U-3', 'U-4'] as const)(
+      'floor hit + caller urgency %s -> no emergency question',
+      (u) => {
+        const d = decide(req({ urgency: u }), sig({}, { emergency: floor }));
+        expect(ids(d)).not.toContain('emergency');
+      },
+    );
+    it('floor hit + no urgency -> emergency question present', () => {
+      const d = decide(req(), sig({}, { emergency: floor }));
+      expect(ids(d)).toContain('emergency');
+    });
+    it('floor hit + caller U-X (time not known) -> emergency question present', () => {
+      const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: floor }));
+      expect(ids(d)).toContain('emergency');
+    });
+  });
+  describe('soft card needs a content word', () => {
+    it('soft band, no content word -> no card', () => {
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: soft }),
+      );
+      expect(ids(d)).not.toContain('emergency');
+    });
+    it('soft band, content word -> card', () => {
+      const d = decide(
+        req({ has_content_word: true }),
+        sig({}, { emergency: soft }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('has_content_word absent -> card (older callers)', () => {
+      expect(ids(decide(req(), sig({}, { emergency: soft })))).toContain(
+        'emergency',
+      );
+    });
+    it('exempt: floor hit', () => {
+      const e = { status: 'ok' as const, score: 0.1, floor_hit: true };
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: e }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('exempt: score at or above the popup cutoff (calm context caps the band at soft)', () => {
+      const e = { status: 'ok' as const, score: 0.9, calm_context: true };
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: e }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('popup band is not touched', () => {
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: popup }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
   });
   describe('caller urgency=U-0 (Decision 50)', () => {
     const expectU0Popup = (d: ReturnType<typeof decide>) => {
@@ -300,7 +394,7 @@ describe('time questions', () => {
     expect(q.step).toBe(5);
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-2', 'U-4', 'U-3']);
   });
-  it('caller urgency=U-X counts as absent: question still shows (ISS-2499)', () => {
+  it('caller urgency=U-X means time not known: the time question still shows (ISS-2499)', () => {
     const d = decide(req({ urgency: 'U-X' }), askU('U-1'));
     expect(d.urgency).toEqual({
       value: 'U-X',
@@ -309,7 +403,7 @@ describe('time questions', () => {
     });
     expect(ids(d)).toContain('urgency_today');
   });
-  it('caller urgency=U-X counts as absent: model guess is used (ISS-2499)', () => {
+  it('caller urgency=U-X: the model urgency guess is still used (ISS-2499)', () => {
     const s = askU('U-2');
     s.urgency.score = 0.95;
     expect(decide(req({ urgency: 'U-X' }), s).urgency).toEqual({
@@ -318,10 +412,12 @@ describe('time questions', () => {
       state: 'use',
     });
   });
-  it('caller urgency=U-X does not hide the emergency question (ISS-2499)', () => {
+  it('caller urgency=U-X does not hide the emergency question (time not known)', () => {
     const s = askU('U-1');
     s.emergency = { status: 'ok', score: 0.9 };
-    expect(ids(decide(req({ urgency: 'U-X' }), s))).toContain('emergency');
+    const d = decide(req({ urgency: 'U-X' }), s);
+    expect(ids(d)).toContain('emergency');
+    expect(d.emergency_band).toBe('popup');
   });
   it('suppressed when emergency question exists', () => {
     const s = askU('U-1');

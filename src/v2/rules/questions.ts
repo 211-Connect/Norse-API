@@ -42,13 +42,14 @@ const urgencyOption = (v: string): QuestionOption => ({
   parameter: 'urgency',
   value: v,
 });
-// Lucas 2026-11-13: "in danger -> u0". "Safe" writes nothing to the URL
-// (parameter and value null): the client dismisses the question for this
-// visit. The server keeps no memory, so a later call asks again when the
-// model still finds danger (intended: a shared link shows it again).
+// Lucas 2026-11-17 (final): the emergency question has 3 answers, each
+// writes urgency: danger = U-0, safe but help today = U-1, safe but help
+// within a week = U-2. A caller U-1 to U-4 then hides the card (Decision 51).
+// ADR 0039 Decision 50 needs a follow-up line that lists the 3 answers.
 const EMERGENCY_OPTIONS: QuestionOption[] = [
   { label: LABELS.emergency.yes, parameter: 'urgency', value: 'U-0' },
-  { label: LABELS.emergency.safe, parameter: null, value: null },
+  { label: LABELS.emergency.safeToday, parameter: 'urgency', value: 'U-1' },
+  { label: LABELS.emergency.safeSoon, parameter: 'urgency', value: 'U-2' },
 ];
 const needOption = (code: string): QuestionOption => ({
   label: displayOf(code),
@@ -142,10 +143,20 @@ export function buildCandidates(
   const out: Question[] = [];
 
   // 1. emergency. `req.urgency` is never U-X here: decide() strips it.
-  // A caller U-1 to U-4 wins over the band (Decision 51).
+  // A caller U-1 to U-4 wins over the band, also on a keyword floor hit
+  // (Decision 51 as written; Lucas 2026-11-17 (final)).
+  const e = signals.emergency;
+  const floorHit = e?.status === 'ok' && e.floor_hit === true;
+  // The soft card needs a content word; a floor hit or a score at the popup
+  // cutoff is exempt (Lucas 2026-11-17).
+  const thinSoft =
+    band === 'soft' &&
+    req.has_content_word === false &&
+    !floorHit &&
+    !((e?.score ?? 0) >= CUTOFFS.emergency.popup);
   const hasEmergency =
     req.urgency === 'U-0' ||
-    ((band === 'popup' || band === 'soft') && !req.urgency);
+    ((band === 'popup' || band === 'soft') && !req.urgency && !thinSoft);
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {

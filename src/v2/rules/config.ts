@@ -39,7 +39,8 @@ export const LABELS = {
   // Answers to STEMS.emergency, for the red popup and the orange soft card
   // alike (Lucas 2026-11-13, question 24, option B2). Same urgency codes.
   emergency: {
-    yes: 'Yes, I am in danger',
-    safe: 'No, I am safe now',
+    yes: "Yes, I'm in danger right now",
+    safeToday: "No, I'm safe, but I need help today",
+    safeSoon: "No, I'm safe, I need help soon (within a week)",
   },
 };

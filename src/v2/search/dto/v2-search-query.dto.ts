@@ -206,7 +206,7 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,
     description:
-      'Urgency the caller confirmed. `U-X` means not yet known and counts as absent.',
+      'Urgency the caller confirmed. `U-X` means the time is not yet known and counts as absent. `U-1` to `U-4` hide the emergency card, also on a keyword floor hit.',
   })
   @IsOptional()
   @IsIn(V2_URGENCY_CODES)
