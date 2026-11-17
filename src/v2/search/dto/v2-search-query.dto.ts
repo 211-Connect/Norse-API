@@ -1,8 +1,11 @@
 import { ApiPropertyOptional, OmitType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  IsInt,
   IsIn,
+  Max,
+  Min,
   IsOptional,
   IsString,
   Validate,
@@ -127,6 +130,15 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @Transform(({ value }) => toCoords(value))
   @Validate(CoordsConstraint)
   coords?: [number, number];
+
+  // v1 keeps @Min(25); v2 takes 1 to 300 (Lucas 2026-11-17).
+  @ApiPropertyOptional({ minimum: 1, maximum: 300, default: 25 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(300)
+  limit: number = 25;
 
   // v1 also takes a string array or an AND/OR object. v2 has no use for them:
   // they reached the search as "food,rent" or "[object Object]" (break run

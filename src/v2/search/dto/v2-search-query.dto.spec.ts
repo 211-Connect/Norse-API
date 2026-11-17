@@ -1,5 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
+import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import { V2SearchQueryDto } from './v2-search-query.dto';
 import {
   MAX_QUERY_LENGTH,
@@ -23,6 +24,20 @@ describe('V2SearchQueryDto', () => {
     expect(dto.page).toBe(1);
     expect(dto.limit).toBe(25);
     expect(dto.sort).toBe('relevance');
+  });
+
+  it('limit takes 1 to 300 on v2 (v1 keeps 25 to 300)', () => {
+    for (const limit of ['1', '10', '24', '300']) {
+      expect(parse({ query: 'rent', limit }).errors).toEqual([]);
+    }
+    for (const limit of ['0', '-1', '301', 'abc', '1.5']) {
+      expect(parse({ query: 'rent', limit }).props).toContain('limit');
+    }
+    expect(parse({ query: 'rent', limit: '10' }).dto.limit).toBe(10);
+    const v1 = validateSync(
+      plainToInstance(SearchResourcesQueryDto, { limit: '10' }),
+    );
+    expect(v1.map((e) => e.property)).toContain('limit');
   });
 
   it('does not carry query_type', () => {
