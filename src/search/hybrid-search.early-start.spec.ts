@@ -6,6 +6,7 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
 
 const headers = {
   'x-tenant-id': 'tenant-a',
@@ -38,7 +39,7 @@ const mainResponse = {
   aggregations: {},
 };
 
-type Mode = 'ok' | 'reject-vector' | 'reject-page';
+type Mode = 'ok' | 'reject-vector' | 'reject-keyword' | 'reject-page';
 
 // Lists as Elasticsearch would return them. Hand-worked RRF (k = 60):
 //   b = 1/62 + 1/61 = 0.032522
@@ -56,6 +57,7 @@ describe('HybridSearchService — early retrieval start', () => {
   let mode: Mode;
   let enabled: string | undefined;
   let taxonomyGate: Promise<void> | undefined;
+  let rarityGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
   let facetsImpl: () => Promise<unknown[]>;
 
@@ -86,6 +88,9 @@ describe('HybridSearchService — early retrieval start', () => {
       if (isList(req)) {
         const kind = kindOf(req);
         if (kind === 'vector' && mode === 'reject-vector') {
+          return Promise.reject(new Error('es down'));
+        }
+        if (kind === 'keyword' && mode === 'reject-keyword') {
           return Promise.reject(new Error('es down'));
         }
         return Promise.resolve(
@@ -203,7 +208,9 @@ describe('HybridSearchService — early retrieval start', () => {
           useValue: {
             getOrSet: jest.fn((_k: any, f: any) => f()),
             getMany: jest.fn((keys: string[]) =>
-              Promise.resolve(keys.map(() => undefined)),
+              (rarityGate ?? Promise.resolve()).then(() =>
+                keys.map(() => undefined),
+              ),
             ),
             setMany: jest.fn().mockResolvedValue(undefined),
             deleteMany: jest.fn().mockResolvedValue(undefined),
@@ -244,6 +251,7 @@ describe('HybridSearchService — early retrieval start', () => {
     mode = 'ok';
     enabled = undefined;
     taxonomyGate = undefined;
+    rarityGate = undefined;
     searchConfig = {};
     facetsImpl = () => Promise.resolve([]);
     await build();
@@ -253,9 +261,11 @@ describe('HybridSearchService — early retrieval start', () => {
     service.startEarlyRetrieval(options());
     await tick();
 
-    // The taxonomy and need lists wait for the taxonomy lookup, not for classify.
+    // The taxonomy list waits for the taxonomy lookup, not for classify. The
+    // need list waits for the need scores, which arrive with classify.
     expect(requests.filter(isList).map(kindOf).sort()).toEqual([
       'keyword',
+      'taxonomy',
       'vector',
     ]);
     expect(requests.filter(isStats)).toHaveLength(1);
@@ -298,6 +308,136 @@ describe('HybridSearchService — early retrieval start', () => {
     const b = await run(true);
     expect(b.sent.sort()).toEqual(a.sent.sort());
     expect(b.res).toEqual(a.res);
+  });
+
+  describe('each request starts when its own inputs exist', () => {
+    const needScores = [
+      { code: 'N-FOD-01', tier: 'tier2', score: 0.98 },
+      { code: 'N-HOU-01', tier: 'tier1', score: 0.99 },
+    ];
+    const listKinds = () => requests.filter(isList).map(kindOf);
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await tick();
+    };
+    const hitIds = (res: any) => res.search.hits.hits.map((h: any) => h._id);
+
+    it('keyword list starts before the embedding returns', async () => {
+      const baseline = await service.searchHybrid(options());
+
+      requests.length = 0;
+      let release!: (v: number[]) => void;
+      jest.spyOn(service, 'embedQuery').mockReturnValue(
+        new Promise<number[]>((resolve) => {
+          release = resolve;
+        }),
+      );
+      const pending = service.searchHybrid(options());
+      await flush();
+
+      expect(listKinds()).toEqual(['keyword']);
+      const keyword = requests.find(isList);
+      expect(keyword.query.bool.minimum_should_match).toBe(1);
+      expect(keyword.query.bool.should.length).toBeGreaterThan(0);
+
+      release([0.1, 0.2, 0.3, 0.4]);
+      const res = await pending;
+      expect(res).toEqual(baseline);
+      expect(hitIds(res)).toEqual(hitIds(baseline));
+    });
+
+    it('vector list and taxonomy lookup start before word rarity returns', async () => {
+      let release!: () => void;
+      rarityGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await build();
+      const early = service.startEarlyRetrieval(options());
+      await flush();
+
+      expect(listKinds().sort()).toEqual(['taxonomy', 'vector']);
+      expect(requests.some((r) => r.index === 'hybrid_taxonomies')).toBe(true);
+      expect(listKinds()).not.toContain('keyword');
+
+      release();
+      await early.stage;
+      expect(listKinds().sort()).toEqual(['keyword', 'taxonomy', 'vector']);
+    });
+
+    it('taxonomy list starts before classify, and searchHybrid sends only the need list', async () => {
+      enabled = 'true';
+      await build();
+      const opts = options();
+      const searchHybrid = jest.spyOn(service, 'searchHybrid');
+      const early = service.startEarlyRetrieval(opts);
+      await flush();
+
+      expect(searchHybrid).not.toHaveBeenCalled();
+      expect(listKinds().sort()).toEqual(['keyword', 'taxonomy', 'vector']);
+      const tax = requests.find((r) => isList(r) && kindOf(r) === 'taxonomy');
+      expect(tax.query.script_score.query.bool.should.length).toBeGreaterThan(
+        0,
+      );
+
+      const before = requests.length;
+      await service.searchHybrid({ ...opts, needScores, early });
+      const after = requests.slice(before).filter(isList).map(kindOf);
+      expect(after).toEqual(['need']);
+    });
+
+    describe('embedding fails after a speculative keyword list', () => {
+      let unhandled: unknown[];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      beforeEach(() => {
+        unhandled = [];
+        process.on('unhandledRejection', onUnhandled);
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embed down'));
+      });
+      afterEach(() => process.off('unhandledRejection', onUnhandled));
+
+      it('returns the lexical-only result and does not fuse', async () => {
+        const res = await service.searchHybrid(options());
+        await flush();
+
+        expect(listKinds()).toEqual(['keyword']);
+        expect(requests.some((r) => r.index === 'hybrid_taxonomies')).toBe(
+          false,
+        );
+        expect(requests.some((r) => r.query?.pinned)).toBe(false);
+        expect(hitIds(res)).toEqual(['doc-1']);
+        expect(unhandled).toEqual([]);
+      });
+
+      it('a rejected speculative keyword list is no unhandled rejection', async () => {
+        mode = 'reject-keyword';
+        const res = await service.searchHybrid(options());
+        await flush();
+
+        expect(hitIds(res)).toEqual(['doc-1']);
+        expect(unhandled).toEqual([]);
+      });
+    });
+
+    it('same lists, same order: keyword, vector, taxonomy, need', async () => {
+      enabled = 'true';
+      await build();
+      const expected = reciprocalRankFusion(
+        [KEYWORD, VECTOR, TAXONOMY, NEED],
+        60,
+        [1, 1, 1, 1],
+      );
+      const fusedIds = () =>
+        requests.find((r) => r.query?.pinned)?.query.pinned.ids;
+      const opts = options({ needScores });
+      await service.searchHybrid(opts);
+      expect(fusedIds()).toEqual(expected);
+
+      requests.length = 0;
+      const early = service.startEarlyRetrieval(opts);
+      await service.searchHybrid({ ...opts, early });
+      expect(fusedIds()).toEqual(expected);
+    });
   });
 
   describe('failures', () => {
