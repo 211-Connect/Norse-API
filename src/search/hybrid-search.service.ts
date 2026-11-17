@@ -37,7 +37,10 @@ import {
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
-import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
+import {
+  fuzzyFallbackFor,
+  needsTypoClauses,
+} from './internal/text-matching/fuzzy-match';
 import {
   SUNE_ENRICHMENT_FIELDS,
   stripEnrichment,
@@ -345,11 +348,18 @@ export const MAX_WORD_RARITY_CACHE_ENTRIES = 20000;
 type WordRarity = {
   words: Record<string, number>;
   splits: { word: string; phrase: string; idf: number }[];
+  /**
+   * Whether the keyword list carries the two typo clauses. False only when
+   * every content word has more than TYPO_GATE_MAX_DOCS matching documents.
+   */
+  typoClauses: boolean;
 } | null;
 
 /** What one word contributes: its idf and its best split, if any. Cached per word. */
 type WordRarityEntry = {
   idf: number;
+  /** Tenant documents that match the word (general recall fields). */
+  docs: number;
   split: { phrase: string; idf: number } | null;
 };
 
@@ -768,9 +778,20 @@ export class HybridSearchService {
       this.tenantConfigService.getSearchConfig(tenantId);
     const wordRarityPromise: Promise<WordRarity> =
       v2 && wantsVector
-        ? withSpan('hybrid.word_rarity', () =>
-            this.getWordRarity(index, tenantId, lang, queryStr, preference),
-          )
+        ? withSpan('hybrid.word_rarity', async (span) => {
+            const rarity = await this.getWordRarity(
+              index,
+              tenantId,
+              lang,
+              queryStr,
+              preference,
+            );
+            span.setAttribute(
+              'hybrid.typo_clauses',
+              rarity?.typoClauses ?? true,
+            );
+            return rarity;
+          })
         : Promise.resolve(null);
 
     // The keyword list needs word rarity only, not the embedding.
@@ -1456,7 +1477,7 @@ export class HybridSearchService {
   ): Promise<WordRarity> {
     if (queryStr.trim().length === 0) return null;
     const words = contentWords(queryStr, lang);
-    if (words.length === 0) return { words: {}, splits: [] };
+    if (words.length === 0) return { words: {}, splits: [], typoClauses: true };
 
     try {
       const keys = words.map((w) => wordRarityCacheKey(tenantId, lang, w));
@@ -1466,8 +1487,13 @@ export class HybridSearchService {
       const missing: string[] = [];
       words.forEach((w, i) => {
         const hit = cached[i];
-        if (hit && typeof hit.idf === 'number') entries.set(w, hit);
-        else missing.push(w);
+        if (
+          hit &&
+          typeof hit.idf === 'number' &&
+          typeof hit.docs === 'number'
+        ) {
+          entries.set(w, hit);
+        } else missing.push(w);
       });
 
       if (missing.length > 0) {
@@ -1491,12 +1517,19 @@ export class HybridSearchService {
         );
       }
 
-      const rarity: NonNullable<WordRarity> = { words: {}, splits: [] };
+      const rarity: NonNullable<WordRarity> = {
+        words: {},
+        splits: [],
+        typoClauses: true,
+      };
+      const docs: number[] = [];
       for (const w of words) {
         const entry = entries.get(w)!;
+        docs.push(entry.docs);
         rarity.words[w] = entry.idf;
         if (entry.split) rarity.splits.push({ word: w, ...entry.split });
       }
+      rarity.typoClauses = needsTypoClauses(docs, words.length);
       return rarity;
     } catch (error) {
       this.logger.warn(
@@ -1535,6 +1568,17 @@ export class HybridSearchService {
           query: w,
           type: 'phrase_prefix',
           fields: WORD_RARITY_FIELDS,
+        },
+      };
+    });
+    // Document count per word over the general recall fields: the same fields
+    // the recall clause searches, so a word with few documents here is a word
+    // the recall clause barely matches (the typo gate, ISS-2793).
+    words.forEach((w, i) => {
+      buckets[`c${i}`] = {
+        multi_match: {
+          query: w,
+          fields: SearchUtilsService.GENERAL_RECALL_FIELDS,
         },
       };
     });
@@ -1596,6 +1640,11 @@ export class HybridSearchService {
         throw new Error('malformed word rarity response');
       }
 
+      const docs = counts[`c${i}`]?.doc_count;
+      if (typeof docs !== 'number') {
+        throw new Error('malformed word rarity response');
+      }
+
       // Keep the most common split, and only when it is more common than the
       // run-together word itself.
       let best: { phrase: string; df: number } | null = null;
@@ -1609,6 +1658,7 @@ export class HybridSearchService {
       out.set(w, {
         entry: {
           idf: idf(n, df),
+          docs,
           split:
             top && top.df > df && top.df > 0
               ? { phrase: top.phrase, idf: idf(n, top.df) }
@@ -1951,13 +2001,11 @@ export class HybridSearchService {
     const isMultiToken =
       queryStr.trim().split(/\s+/).filter(Boolean).length >= 2;
 
-    // organization.name is handled exclusively via the name tier below
-    // (phrase/exact/prefix on .clean/.lc). organization.description is
-    // mission-statement prose that matches unrelated need tokens — both are
-    // excluded from the recall fallback so they don't leak noise at token level.
-    const generalFields = SearchUtilsService.FIELDS_TO_QUERY.filter(
-      (f) => f !== 'organization.name' && f !== 'organization.description',
-    );
+    // organization.name is handled exclusively via the name tier below; see
+    // GENERAL_RECALL_FIELDS for why it and organization.description are out.
+    const generalFields = SearchUtilsService.GENERAL_RECALL_FIELDS;
+    // A null word rarity (v1, failed lookup, no caller input) keeps them.
+    const typoClauses = wordRarity?.typoClauses !== false;
 
     const recallClause: QueryDslQueryContainer = {
       multi_match: {
@@ -2012,16 +2060,22 @@ export class HybridSearchService {
       })),
       // Typo tolerance belongs on the recall clause: the name tiers above are
       // phrase/prefix by design, and the use_references clause below is
-      // curated, where an approximate match defeats the curation.
-      fuzzyFallbackFor(recallClause),
+      // curated, where an approximate match defeats the curation. Both typo
+      // clauses are left out when the rarity gate says every content word of
+      // the query is a real word (more than TYPO_GATE_MAX_DOCS documents).
+      ...(typoClauses ? [fuzzyFallbackFor(recallClause)] : []),
       // Nested taxonomy name/description boost
       { nested: { path: 'taxonomies', query: nestedRecallClause } },
-      {
-        nested: {
-          path: 'taxonomies',
-          query: fuzzyFallbackFor(nestedRecallClause),
-        },
-      },
+      ...(typoClauses
+        ? [
+            {
+              nested: {
+                path: 'taxonomies',
+                query: fuzzyFallbackFor(nestedRecallClause),
+              },
+            },
+          ]
+        : []),
       // Nested taxonomy use_references (curated aliases) — dedicated higher
       // boost. "scouts" matches "Scouts"/"Girl Scouts"/"Scouting" on
       // PS-9800.8500 (Scouting Programs) and lifts it above generic hits.

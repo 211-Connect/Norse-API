@@ -51,6 +51,7 @@ const ALLOWED_ATTRIBUTES = [
   'v2.count_codes',
   'v2.classify.failed',
   'hybrid.embed_cache_hit',
+  'hybrid.typo_clauses',
   'hybrid.fused',
   'hybrid.fast_page',
   'hybrid.cutoff',
