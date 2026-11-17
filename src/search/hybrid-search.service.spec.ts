@@ -691,6 +691,9 @@ describe('HybridSearchService', () => {
         'sune_needs',
         'sune_need_weights',
         'sune_scorecard_version',
+        'taxonomies.description',
+        'taxonomies.use_references',
+        'taxonomies.see_also_references',
       ]),
     );
   });

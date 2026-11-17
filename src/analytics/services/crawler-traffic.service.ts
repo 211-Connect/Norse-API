@@ -10,7 +10,6 @@ import {
 } from '../../common/schemas/crawler-traffic-hourly.schema';
 import {
   CRAWLER_TRAFFIC_MAX_HOURLY_RANGE_DAYS,
-  CrawlerTrafficAllTenantsResponse,
   CrawlerTrafficBucketDto,
   CrawlerTrafficCountsDto,
   CrawlerTrafficGranularity,
@@ -139,57 +138,12 @@ export class CrawlerTrafficService {
   }
 
   /** One tenant's counts: totals, top crawlers and an hour/day series. */
-  getStats(
+  async getStats(
     tenantId: string,
     start: string,
     end: string,
     granularity: CrawlerTrafficGranularity = 'day',
   ): Promise<CrawlerTrafficResponse> {
-    return this.aggregate({
-      tenantId,
-      start,
-      end,
-      granularity,
-      byTenant: false,
-    });
-  }
-
-  /** Every tenant's counts together, plus a per-tenant breakdown. */
-  getAllTenantsStats(
-    start: string,
-    end: string,
-    granularity: CrawlerTrafficGranularity = 'day',
-  ): Promise<CrawlerTrafficAllTenantsResponse> {
-    return this.aggregate({ start, end, granularity, byTenant: true });
-  }
-
-  private async aggregate(options: {
-    tenantId?: string;
-    start: string;
-    end: string;
-    granularity: CrawlerTrafficGranularity;
-    byTenant: true;
-  }): Promise<CrawlerTrafficAllTenantsResponse>;
-  private async aggregate(options: {
-    tenantId: string;
-    start: string;
-    end: string;
-    granularity: CrawlerTrafficGranularity;
-    byTenant: false;
-  }): Promise<CrawlerTrafficResponse>;
-  private async aggregate({
-    tenantId,
-    start,
-    end,
-    granularity,
-    byTenant,
-  }: {
-    tenantId?: string;
-    start: string;
-    end: string;
-    granularity: CrawlerTrafficGranularity;
-    byTenant: boolean;
-  }): Promise<CrawlerTrafficResponse | CrawlerTrafficAllTenantsResponse> {
     const startMs = floorToHour(Date.parse(start));
     const endMs = Date.parse(end);
     if (
@@ -202,7 +156,7 @@ export class CrawlerTrafficService {
     }
 
     const match = {
-      ...(tenantId !== undefined && { tenantId }),
+      tenantId,
       hour: { $gte: new Date(startMs), $lte: new Date(endMs) },
     };
 
@@ -231,12 +185,6 @@ export class CrawlerTrafficService {
         { $sort: { _id: 1 } },
       ],
     };
-    if (byTenant) {
-      facets.byTenant = [
-        { $group: { _id: '$tenantId', ...OUTCOME_SUMS } },
-        { $sort: { total: -1, _id: 1 } },
-      ];
-    }
 
     const [result] = await this.model
       .aggregate<{
@@ -248,11 +196,10 @@ export class CrawlerTrafficService {
           };
         })[];
         series: (CountsRow & { _id: Date })[];
-        byTenant?: (CountsRow & { _id: string })[];
       }>([{ $match: match }, { $facet: facets }])
       .exec();
 
-    const response: CrawlerTrafficResponse = {
+    return {
       granularity,
       totals: toCounts(result?.totals[0]),
       byCrawler: (result?.byCrawler ?? []).map((row) => ({
@@ -262,15 +209,6 @@ export class CrawlerTrafficService {
       })),
       series: (result?.series ?? []).map((row) => ({
         bucket: new Date(row._id).toISOString(),
-        ...toCounts(row),
-      })),
-    };
-
-    if (!byTenant) return response;
-    return {
-      ...response,
-      byTenant: (result?.byTenant ?? []).map((row) => ({
-        tenantId: row._id,
         ...toCounts(row),
       })),
     };

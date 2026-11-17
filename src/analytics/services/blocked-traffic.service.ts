@@ -42,6 +42,10 @@ export class BlockedTrafficService {
     private readonly crawlerModel: Model<CrawlerTrafficHourly>,
   ) {}
 
+  /**
+   * @deprecated Only for Norse instances still on the old counters during
+   * a deploy; current Norse calls `CrawlerTrafficService.record`.
+   */
   async record(
     tenantId: string,
     buckets: BlockedTrafficBucketDto[],

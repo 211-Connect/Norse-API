@@ -53,11 +53,6 @@ export class CrawlerTrafficSeriesPointDto extends CrawlerTrafficCountsDto {
   bucket: string;
 }
 
-export class CrawlerTrafficByTenantDto extends CrawlerTrafficCountsDto {
-  @ApiProperty({ example: '7f4c2a51-0c7e-4b8e-9d0a-2f8a3b1c9e10' })
-  tenantId: string;
-}
-
 export class CrawlerTrafficResponse {
   @ApiProperty({ enum: CRAWLER_TRAFFIC_GRANULARITIES, example: 'day' })
   granularity: string;
@@ -77,12 +72,4 @@ export class CrawlerTrafficResponse {
     type: [CrawlerTrafficSeriesPointDto],
   })
   series: CrawlerTrafficSeriesPointDto[];
-}
-
-export class CrawlerTrafficAllTenantsResponse extends CrawlerTrafficResponse {
-  @ApiProperty({
-    description: 'Per tenant, largest total first.',
-    type: [CrawlerTrafficByTenantDto],
-  })
-  byTenant: CrawlerTrafficByTenantDto[];
 }

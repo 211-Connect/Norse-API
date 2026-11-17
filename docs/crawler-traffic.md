@@ -3,7 +3,7 @@
 Hourly, per-tenant counts of the crawler requests Norse sees, per crawler
 name and outcome. Umami never sees these requests: most crawlers run no
 JavaScript, and blocked requests get a 403 before the page renders. This
-store feeds two Payload dashboard widgets, **Crawler traffic** (chart and
+store feeds two Payload dashboard widgets (per tenant), **Crawler traffic** (chart and
 top crawlers) and **Blocked Bots** (stat card, see
 [blocked-traffic.md](blocked-traffic.md)).
 
@@ -28,9 +28,9 @@ one document per bucket:
 | `classification` | `seo` \| `nefarious` \| `unknown` (rules live in Norse `src/lib/arcjet-classification.ts`) |
 | `count` | requests in the bucket |
 
-- **Indexes:** a unique index on
-  `{ tenantId, hour, crawler, outcome, classification }`, and an index on
-  `{ hour: 1 }` for the all-tenants view.
+- **Index:** a unique index on
+  `{ tenantId, hour, crawler, outcome, classification }`. Its
+  `{ tenantId, hour }` prefix also serves the range reads.
 - **Writes:** `updateOne` + `$inc` + `upsert` in one unordered
   `bulkWrite`. Pushes from several Norse instances for the same bucket add
   up, with no read-modify-write and no lost updates.
@@ -46,7 +46,6 @@ one document per bucket:
 | --- | --- | --- |
 | `POST /internal/crawler-traffic` | `InternalApiGuard` + `TenantMiddleware` | Norse pushes `{ buckets: [{ hour, crawler, outcome, classification, count }] }` (at most 1,000). See the push rules below. Returns `{ recorded }`. |
 | `GET /analytics/crawler-traffic?start&end[&granularity=hour\|day]` | `AnalyticsApiKeyGuard` (like every `/analytics/*` route) | One tenant's data, described below. |
-| `GET /internal/crawler-traffic-all-tenants?start&end[&granularity]` | `InternalApiGuard`, `@NotTenantScoped()` | The same for all tenants together, plus `byTenant`. For the super-admin view of the dashboard. |
 
 Push rules for `POST /internal/crawler-traffic`:
 
@@ -85,12 +84,9 @@ Code:
 - **Writes:** one `bulkWrite` per tenant with traffic, per Norse instance,
   per minute. For example, 3 instances × 30 tenants is about 1.5 requests/s,
   whatever the bot volume.
-- **Reads:**
-  - One tenant: a range scan on the unique index prefix
-    `{ tenantId, hour }`.
-  - All tenants: a scan on `{ hour }`.
-  - Responses carry the analytics CDN `Cache-Control`, with a long TTL for
-    closed ranges.
+- **Reads:** a range scan on the unique index prefix `{ tenantId, hour }`.
+  Responses carry the analytics CDN `Cache-Control`, with a long TTL for
+  closed ranges.
 
 ## Limits
 

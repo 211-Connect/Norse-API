@@ -5,8 +5,10 @@
 > `blocked_traffic_hourly` is no longer written. It is kept read-only for
 > history, and `GET /analytics/blocked-traffic` now sums it with the new
 > collection (`blocked` + `rate_limited` count as enforced, `logged` as not
-> enforced). `POST /internal/blocked-traffic` is left in place for Norse
-> instances still running the old version during a deploy.
+> enforced). `POST /internal/blocked-traffic` is **deprecated**: it is left
+> in place for Norse instances still running the old version during a
+> deploy, and can be removed once every Norse deployment has the
+> per-crawler counters.
 
 Hourly, per-tenant counts of requests that Norse's Arcjet bot protection
 denied. These requests get a 403 before the page renders, so Umami never

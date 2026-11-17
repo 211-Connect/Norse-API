@@ -60,6 +60,7 @@ export class BlockedTrafficBucketDto {
   count: number;
 }
 
+/** @deprecated Use `RecordCrawlerTrafficDto`. */
 export class RecordBlockedTrafficDto {
   @ApiProperty({
     description: `Per-bucket deltas for the tenant in x-tenant-id (max ${BLOCKED_TRAFFIC_MAX_BUCKETS_PER_PUSH}).`,

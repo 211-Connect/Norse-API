@@ -15,10 +15,7 @@ import {
 } from '../common/schemas/crawler-traffic-hourly.schema';
 import { AnalyticsController } from './analytics.controller';
 import { BlockedTrafficInternalController } from './blocked-traffic-internal.controller';
-import {
-  CrawlerTrafficAllTenantsInternalController,
-  CrawlerTrafficInternalController,
-} from './crawler-traffic-internal.controller';
+import { CrawlerTrafficInternalController } from './crawler-traffic-internal.controller';
 import { AnalyticsApiKeyGuard } from './guards/analytics-api-key.guard';
 import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsCacheService } from './services/analytics-cache.service';
@@ -43,7 +40,6 @@ import { UmamiHttpService } from './services/umami-http.service';
     AnalyticsController,
     BlockedTrafficInternalController,
     CrawlerTrafficInternalController,
-    CrawlerTrafficAllTenantsInternalController,
   ],
   providers: [
     AnalyticsApiKeyGuard,

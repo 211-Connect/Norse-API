@@ -177,7 +177,6 @@ describe('CrawlerTrafficService', () => {
           },
         },
       });
-      expect(pipeline[1].$facet.byTenant).toBeUndefined();
       expect(result).toEqual({
         granularity: 'day',
         totals: {
@@ -238,48 +237,6 @@ describe('CrawlerTrafficService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(mockAggregate).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('getAllTenantsStats', () => {
-    it('reads every tenant and adds the per-tenant breakdown', async () => {
-      mockAggregateExec.mockResolvedValue([
-        {
-          totals: [],
-          byCrawler: [],
-          series: [],
-          byTenant: [
-            {
-              _id: TENANT,
-              blocked: 1,
-              logged: 0,
-              rateLimited: 0,
-              allowed: 0,
-              shed: 4,
-              total: 5,
-            },
-          ],
-        },
-      ]);
-
-      const result = await service.getAllTenantsStats(
-        '2026-11-17T00:00:00Z',
-        '2026-11-17T13:00:00Z',
-      );
-
-      const pipeline = mockAggregate.mock.calls[0][0];
-      expect(pipeline[0].$match.tenantId).toBeUndefined();
-      expect(result.byTenant).toEqual([
-        {
-          tenantId: TENANT,
-          blocked: 1,
-          logged: 0,
-          rateLimited: 0,
-          allowed: 0,
-          shed: 4,
-          total: 5,
-        },
-      ]);
     });
   });
 });

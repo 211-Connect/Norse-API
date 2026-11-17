@@ -74,6 +74,3 @@ CrawlerTrafficHourlySchema.index(
   { tenantId: 1, hour: 1, crawler: 1, outcome: 1, classification: 1 },
   { unique: true },
 );
-
-// All-tenants range reads (super admin view).
-CrawlerTrafficHourlySchema.index({ hour: 1 });

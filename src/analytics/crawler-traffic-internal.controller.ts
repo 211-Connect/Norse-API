@@ -1,10 +1,8 @@
 import {
   Body,
   Controller,
-  Get,
   HttpCode,
   Post,
-  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -17,12 +15,9 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 
-import { NotTenantScoped } from '../auth/gateway/gateway-principal';
 import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
 import {
-  CrawlerTrafficAllTenantsResponse,
-  CrawlerTrafficQueryDto,
   RecordCrawlerTrafficDto,
   RecordCrawlerTrafficResponseDto,
 } from './dto';
@@ -62,36 +57,5 @@ export class CrawlerTrafficInternalController {
       payload.buckets,
     );
     return { recorded };
-  }
-}
-
-/**
- * Cross-tenant read for Norse's super-admin analytics view. Not tenant
- * scoped, so it is a separate controller kept out of TenantMiddleware;
- * Norse checks the super-admin role before calling it.
- */
-@ApiTags('Crawler Traffic (Internal)')
-@NotTenantScoped()
-@UseGuards(InternalApiGuard)
-@ApiSecurity('x-internal-api-key')
-@Controller({ path: 'internal/crawler-traffic-all-tenants', version: '1' })
-export class CrawlerTrafficAllTenantsInternalController {
-  constructor(private readonly crawlerTrafficService: CrawlerTrafficService) {}
-
-  @Get()
-  @ApiOkResponse({ type: CrawlerTrafficAllTenantsResponse })
-  @ApiOperation({
-    summary: 'Get per-crawler request counts across all tenants',
-    description:
-      'Totals, top crawlers, an hour or day series and a per-tenant breakdown. For super admins only (Norse checks the role).',
-  })
-  getAllTenants(
-    @Query() query: CrawlerTrafficQueryDto,
-  ): Promise<CrawlerTrafficAllTenantsResponse> {
-    return this.crawlerTrafficService.getAllTenantsStats(
-      query.start,
-      query.end,
-      query.granularity ?? 'day',
-    );
   }
 }
