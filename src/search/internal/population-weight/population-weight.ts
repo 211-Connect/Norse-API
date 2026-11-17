@@ -5,6 +5,12 @@
  * extra boost goes away. Pure functions, no Nest, no I/O.
  */
 
+import { FUNCTION_WORDS } from '../text-matching/function-words';
+import { queryWords } from '../text-matching/query-words';
+
+// Group words come from English code names and references (HSIS).
+const GROUP_STOP_WORDS: ReadonlySet<string> = FUNCTION_WORDS.en;
+
 /**
  * HSIS branches that hold "who it is for" codes: YB age groups, YS sex and
  * gender, YT orientation and gender identity, YN military. A tenant with its
@@ -25,19 +31,27 @@ export interface WeightablePrediction {
   useReferences?: string[];
 }
 
+// Irregular forms, mapped to one spelling so label and query agree.
+const IRREGULAR: Readonly<Record<string, string>> = {
+  man: 'men',
+  woman: 'women',
+  children: 'child',
+  people: 'person',
+};
+
 export function normalizeToken(tok: string): string {
-  let t = tok.toLowerCase().replace(/['’]/g, '');
-  if (t.endsWith('man')) t = t.slice(0, -3) + 'men';
-  if (t.length > 3 && t.endsWith('s')) t = t.slice(0, -1);
+  const t = tok.toLowerCase().replace(/['’]/g, '');
+  if (Object.prototype.hasOwnProperty.call(IRREGULAR, t)) return IRREGULAR[t];
+  if (t.length > 4 && t.endsWith('ies')) return `${t.slice(0, -3)}y`;
+  if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) {
+    return t.slice(0, -1);
+  }
   return t;
 }
 
+/** The same words word rarity sees (accent-folded, Unicode letters), normalized. */
 export function tokenize(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of text.match(/[A-Za-z0-9']+/g) ?? []) {
-    out.add(normalizeToken(m));
-  }
-  return out;
+  return new Set(queryWords(text).map(normalizeToken));
 }
 
 /** The names of the identity parts of a (possibly compound) code, or ''. */
@@ -61,7 +75,9 @@ export function groupWords(
 ): Set<string> {
   const out = new Set<string>();
   for (const text of [label, ...useReferences]) {
-    for (const t of tokenize(text)) if (t.length >= 3) out.add(t);
+    for (const t of tokenize(text)) {
+      if (t.length >= 3 && !GROUP_STOP_WORDS.has(t)) out.add(t);
+    }
   }
   return out;
 }
