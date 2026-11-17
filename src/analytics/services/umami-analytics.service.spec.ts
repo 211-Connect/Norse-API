@@ -6,13 +6,17 @@ import { ResourceService } from '../../resource/resource.service';
 import { GeocodingService } from '../../geocoding/geocoding.service';
 import { UmamiEvent } from '../internal/umami-events';
 import type { UmamiEventDataPivotRow } from '../types/umami/umami-event-data-pivot';
+import { buildSearchExportCSV } from '../internal/search-export-csv';
 
 describe('UmamiAnalyticsService', () => {
   let service: UmamiAnalyticsService;
   let umamiHttpService: { fanOut: jest.Mock };
   let resourceService: { findTitlesByIds: jest.Mock };
   let analyticsCacheService: { getOrSet: jest.Mock };
-  let geocodingService: { forwardGeocode: jest.Mock };
+  let geocodingService: {
+    forwardGeocode: jest.Mock;
+    reverseGeocode: jest.Mock;
+  };
 
   const buildRow = (
     properties: Record<string, string>,
@@ -32,7 +36,10 @@ describe('UmamiAnalyticsService', () => {
         fn(),
       ),
     };
-    geocodingService = { forwardGeocode: jest.fn() };
+    geocodingService = {
+      forwardGeocode: jest.fn(),
+      reverseGeocode: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -519,6 +526,191 @@ describe('UmamiAnalyticsService', () => {
         expect.objectContaining({
           queryLabel: 'search_hybrid-0',
           queryType: 'hybrid',
+        }),
+      );
+    });
+    it('reuses stored search and user location metadata without geocoding', async () => {
+      const event = buildRow({
+        queryLabel: 'food',
+        session_id: 'session-1',
+        searchCoordinates: '-87.6298,41.8781',
+        searchCity: 'Chicago',
+        searchZipCode: '60601',
+        searchCounty: 'Cook County',
+        userCoordinates: '-87.6877,42.0451',
+        userCity: 'Evanston',
+        userZipCode: '60201',
+        userCounty: 'Cook County',
+      });
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string },
+        ) => {
+          const rows = params.eventName === 'search_text' ? [event] : [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(result.data).toContainEqual(
+        expect.objectContaining({
+          searchCity: 'Chicago',
+          searchZipCode: '60601',
+          searchCounty: 'Cook County',
+          searchLatitude: 41.8781,
+          searchLongitude: -87.6298,
+          userCity: 'Evanston',
+          userZipCode: '60201',
+          userCounty: 'Cook County',
+          userLatitude: 42.0451,
+          userLongitude: -87.6877,
+        }),
+      );
+      expect(geocodingService.reverseGeocode).not.toHaveBeenCalled();
+    });
+
+    it('reverse-geocodes historical rows without stored location metadata', async () => {
+      const event = buildRow({
+        queryLabel: 'food',
+        searchCoordinates: '-87.6298,41.8781',
+        userCoordinates: '-87.6877,42.0451',
+      });
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string },
+        ) => {
+          const rows = params.eventName === 'search_text' ? [event] : [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+      geocodingService.reverseGeocode.mockResolvedValue([
+        { postcode: '60601', place: 'Chicago', district: 'Cook County' },
+      ]);
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(geocodingService.reverseGeocode).toHaveBeenCalledTimes(2);
+      expect(result.data[0]).toEqual(
+        expect.objectContaining({
+          searchCity: 'Chicago',
+          searchZipCode: '60601',
+          searchCounty: 'Cook County',
+          userCity: 'Chicago',
+          userZipCode: '60601',
+          userCounty: 'Cook County',
+        }),
+      );
+    });
+    it('reverse-geocodes blank stored metadata when generating the CSV export', async () => {
+      const event = buildRow({
+        queryLabel: 'food',
+        session_id: 'session-1',
+        searchCoordinates: '-87.6298,41.8781',
+        searchCity: '',
+        searchZipCode: '',
+        searchCounty: '',
+        userCoordinates: '-87.6877,42.0451',
+        userCity: '',
+        userZipCode: '',
+        userCounty: '',
+      });
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string },
+        ) => {
+          const rows = params.eventName === 'search_text' ? [event] : [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+      geocodingService.reverseGeocode
+        .mockResolvedValueOnce([
+          { postcode: '60601', place: 'Chicago', district: 'Cook County' },
+        ])
+        .mockResolvedValueOnce([
+          { postcode: '60201', place: 'Evanston', district: 'Cook County' },
+        ]);
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(geocodingService.reverseGeocode).toHaveBeenCalledTimes(2);
+      expect(result.data[0]).toEqual(
+        expect.objectContaining({
+          searchCity: 'Chicago',
+          searchZipCode: '60601',
+          searchCounty: 'Cook County',
+          userCity: 'Evanston',
+          userZipCode: '60201',
+          userCounty: 'Cook County',
+        }),
+      );
+      const csv = buildSearchExportCSV(result.data);
+      expect(csv).toContain('Chicago,60601,Cook County');
+      expect(csv).toContain('Evanston,60201,Cook County');
+    });
+
+    it('keeps existing metadata fields and uses geocoding only for missing legacy fields', async () => {
+      const partiallyEnriched = buildRow({
+        queryLabel: 'food',
+        searchCoordinates: '-87.6298,41.8781',
+        searchCity: 'Chicago',
+        searchZipCode: '60601',
+        userCoordinates: '-87.6877,42.0451',
+        userCity: 'Evanston',
+        userZipCode: '60201',
+      });
+      umamiHttpService.fanOut.mockImplementation(
+        async (
+          _websiteIds: string[],
+          _endpoint: string,
+          params: { eventName: string },
+        ) => {
+          const rows =
+            params.eventName === 'search_text' ? [partiallyEnriched] : [];
+          return [{ data: rows, count: rows.length }];
+        },
+      );
+      geocodingService.reverseGeocode.mockResolvedValue([
+        { postcode: '60601', place: 'Chicago', district: 'Cook County' },
+      ]);
+
+      const result = await service.getExportSearchData({
+        tenantId: 'tenant-1',
+        start: '2026-09-30T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        websiteIds: ['website-1'],
+      });
+
+      expect(geocodingService.reverseGeocode).toHaveBeenCalledTimes(2);
+      expect(result.data[0]).toEqual(
+        expect.objectContaining({
+          searchCity: 'Chicago',
+          searchZipCode: '60601',
+          searchCounty: 'Cook County',
+          userCity: 'Evanston',
+          userZipCode: '60201',
+          userCounty: 'Cook County',
         }),
       );
     });

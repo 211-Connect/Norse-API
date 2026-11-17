@@ -48,7 +48,7 @@ export function mapOpenCageResultToGeocodeResponse(
     postcode: components.postcode,
     place: components.city || components.town || components.village,
     district:
-      components.suburb || components.neighbourhood || components.county,
+      components.county || components.suburb || components.neighbourhood,
     region: components.state,
     country: components.country,
     place_type: components._type ? [components._type] : undefined,

@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ForwardGeocodeQueryDto, GeocodingProvider } from './dto/geocoding.dto';
+import {
+  ForwardGeocodeQueryDto,
+  GeocodingProvider,
+  ReverseGeocodeQueryDto,
+} from './dto/geocoding.dto';
 import { GeocodingService } from './geocoding.service';
 import { IGeocodingProvider } from './providers/geocoding-provider.interface';
 
@@ -105,5 +109,34 @@ describe('GeocodingService.forwardGeocode (ISS-1875)', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(opencage.forwardGeocode).not.toHaveBeenCalled();
+  });
+
+  it('bypasses reverse-geocode entries cached before the output mapping changed', async () => {
+    store.set('geocode:reverse:opencage:-87.6298,41.8781:en', [
+      {
+        type: 'coordinates',
+        postcode: '60601',
+        place: 'Chicago',
+        district: 'Near West Side',
+      },
+    ]);
+    opencage.reverseGeocode.mockResolvedValue([
+      {
+        type: 'coordinates',
+        postcode: '60601',
+        place: 'Chicago',
+        district: 'Cook County',
+      },
+    ]);
+
+    const result = await service.reverseGeocode(
+      plainToInstance(ReverseGeocodeQueryDto, {
+        coordinates: '-87.6298,41.8781',
+        provider: 'opencage',
+      }),
+    );
+
+    expect(opencage.reverseGeocode).toHaveBeenCalledTimes(1);
+    expect(result[0].district).toBe('Cook County');
   });
 });
