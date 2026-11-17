@@ -10,7 +10,7 @@ import {
   SearchClassificationClient,
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import { V2SearchService } from './v2-search.service';
+import { hasContentWord, V2SearchService } from './v2-search.service';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
@@ -713,7 +713,10 @@ describe('V2SearchService', () => {
     describe('shared-cache rule (Decision 28)', () => {
       const run = async (classify: jest.Mock, over = {}) => {
         const { service } = build({ classify });
-        return service.search({ headers, query: dto({ query: 'x', ...over }) });
+        return service.search({
+          headers,
+          query: dto({ query: 'help', ...over }),
+        });
       };
 
       it('a clean band-none answer is storable', async () => {
@@ -758,7 +761,10 @@ describe('V2SearchService', () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
       });
-      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'help' }),
+      });
       expect(Object.keys(res).sort()).toEqual([
         'clarification',
         'facets',
@@ -772,20 +778,29 @@ describe('V2SearchService', () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
       });
-      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'help' }),
+      });
       const q = emergencyQ(res);
       expect(q).not.toHaveProperty('parameter');
       expect(q.options).toEqual([
         {
-          label: 'Yes, I am in danger',
+          label: "Yes, I'm in danger right now",
           parameter: 'urgency',
           value: 'U-0',
           results_count: null,
         },
         {
-          label: 'No, I am safe now',
-          parameter: null,
-          value: null,
+          label: "No, I'm safe, but I need help today",
+          parameter: 'urgency',
+          value: 'U-1',
+          results_count: null,
+        },
+        {
+          label: "No, I'm safe, I need help soon (within a week)",
+          parameter: 'urgency',
+          value: 'U-2',
           results_count: null,
         },
       ]);
@@ -794,10 +809,10 @@ describe('V2SearchService', () => {
     it('strong band critical, soft band high, otherwise the same emergency question; no question has level; options carry results_count null', async () => {
       const pop = await build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.9)),
-      }).service.search({ headers, query: dto({ query: 'x' }) });
+      }).service.search({ headers, query: dto({ query: 'help' }) });
       const soft = await build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
-      }).service.search({ headers, query: dto({ query: 'x' }) });
+      }).service.search({ headers, query: dto({ query: 'help' }) });
       // Lucas 2026-11-13 ("bring back the popup if the model is very sure"):
       // importance tells the bands apart (strong critical = popup, soft high =
       // in-page card). Stem, options, reason and hotlines match.
@@ -819,7 +834,10 @@ describe('V2SearchService', () => {
       const { service } = build({
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
       });
-      const res = await service.search({ headers, query: dto({ query: 'x' }) });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'help' }),
+      });
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -838,7 +856,7 @@ describe('V2SearchService', () => {
       const { service } = build({});
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', urgency: 'U-0', clarify: 'never' }),
+        query: dto({ query: 'help', urgency: 'U-0', clarify: 'never' }),
       });
       expect(res.clarification.questions.map((q) => q.id)).toEqual([
         'emergency',
@@ -850,7 +868,7 @@ describe('V2SearchService', () => {
       });
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', urgency: 'U-0' }),
+        query: dto({ query: 'help', urgency: 'U-0' }),
       });
       expect(emergencyQ(res).options).toEqual([]);
       expect(emergencyQ(res).hotlines.map((h) => h.number)).toEqual([
@@ -866,7 +884,7 @@ describe('V2SearchService', () => {
       });
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', urgency: 'U-3' }),
+        query: dto({ query: 'help', urgency: 'U-3' }),
       });
       expect(emergencyQ(res)).toBeUndefined();
     });
@@ -876,7 +894,7 @@ describe('V2SearchService', () => {
       });
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', clarify: 'never' }),
+        query: dto({ query: 'help', clarify: 'never' }),
       });
       expect(res.clarification.questions.map((q) => q.id)).toEqual([
         'emergency',
@@ -1135,5 +1153,58 @@ describe('V2SearchService with AI classification off', () => {
         'classify',
       );
     });
+  });
+});
+
+describe('hasContentWord', () => {
+  it.each(['i', 'a', 'ok', 'OK', 'okay', '123', '?', '', 'I am', 'a 1', '😀'])(
+    'no content word in %p',
+    (q) => expect(hasContentWord(q, 'en')).toBe(false),
+  );
+  it.each(['help', 'kill myself', 'rent', 'comida', 'ab1', '救命'])(
+    'content word in %p',
+    (q) => expect(hasContentWord(q, 'en')).toBe(true),
+  );
+  it('uses the request language list; a language with no list counts any 2-letter token', () => {
+    expect(hasContentWord('yo', 'en')).toBe(true);
+    expect(hasContentWord('de la', 'es')).toBe(false);
+    expect(hasContentWord('de la', 'fr')).toBe(true);
+  });
+});
+
+describe('V2SearchService soft card needs a content word', () => {
+  const soft = (): ClassifyResult =>
+    okResult(
+      {},
+      {
+        signals: {
+          needs: { status: 'ok', scores: {} },
+          emergency: { status: 'ok', score: 0.3, floor_hit: false },
+        },
+      },
+    );
+  const floor = (): ClassifyResult =>
+    okResult(
+      {},
+      {
+        signals: {
+          needs: { status: 'ok', scores: {} },
+          emergency: { status: 'ok', score: 0.1, floor_hit: true },
+        },
+      },
+    );
+  const hasCard = async (query: string, r: ClassifyResult) => {
+    const { service } = build({ classify: jest.fn().mockResolvedValue(r) });
+    const res = await service.search({ headers, query: dto({ query }) });
+    return res.clarification.questions.some((q) => q.id === 'emergency');
+  };
+  it.each(['i', 'a', 'ok', '123', '?'])('%p: soft band, no card', async (q) => {
+    expect(await hasCard(q, soft())).toBe(false);
+  });
+  it('help: soft band, card', async () => {
+    expect(await hasCard('help', soft())).toBe(true);
+  });
+  it('a floor hit shows the card even without a content word', async () => {
+    expect(await hasCard('i', floor())).toBe(true);
   });
 });

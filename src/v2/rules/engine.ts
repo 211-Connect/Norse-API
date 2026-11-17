@@ -26,7 +26,7 @@ export function decide(
   signals: RulesSignals,
   tenant: TenantContext = {},
 ): Decision {
-  // U-X means "urgency not yet known": same as no urgency sent (ISS-2499).
+  // U-X means "time not known": same as no urgency sent (ISS-2499).
   const req: RulesRequest =
     request.urgency === 'U-X' ? { ...request, urgency: undefined } : request;
   const aiOff = tenant.ai_classification === 'off';

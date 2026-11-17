@@ -18,6 +18,7 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
+import { contentWords } from 'src/search/internal/text-matching/word-rarity';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -63,6 +64,22 @@ function cutWholeCharacters(text: string, max: number): string {
   const last = text.charCodeAt(max - 1);
   const splitsPair = last >= 0xd800 && last <= 0xdbff;
   return text.slice(0, splitsPair ? max - 1 : max);
+}
+
+// Filler the function-word lists do not hold ("ok" is not a stop word in
+// search, so it is kept out of the shared lists). Only this check reads it.
+const FILLER_WORDS = new Set(['ok', 'okay']);
+
+/**
+ * True when the text has a content word: a token with 2 or more letters
+ * (Unicode letters; digits-only does not count) that is not a function word of
+ * the request language. A language with no list counts any such token. The soft
+ * emergency card needs one (Lucas 2026-11-17): "i", "ok", "123" and "?" get no card.
+ */
+export function hasContentWord(text: string, lang: string): boolean {
+  return contentWords(text, lang).some(
+    (w) => !FILLER_WORDS.has(w) && /\p{L}.*\p{L}/u.test(w),
+  );
 }
 
 const TOO_COMPLEX_TYPE = 'too_complex_to_determinize_exception';
@@ -180,6 +197,10 @@ export class V2SearchService {
     const callerNeeds = dto.needs ?? [];
     const rulesRequest: RulesRequest = {
       has_text: hasText,
+      has_content_word: hasContentWord(
+        text,
+        headers['accept-language'] || 'en',
+      ),
       needs: callerNeeds,
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,
