@@ -37,5 +37,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Before the tests, to fail fast: ts-jest only compiles the files the
+      # specs import, so a break elsewhere would otherwise surface in the
+      # Docker build after merge.
+      - name: Type-check
+        run: npx tsc --noEmit -p tsconfig.json
+
       - name: Run search and v2 tests
         run: npx jest --ci --testPathPatterns 'src/(search|v2)/'
