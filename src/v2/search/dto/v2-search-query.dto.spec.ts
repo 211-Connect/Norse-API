@@ -40,6 +40,16 @@ describe('V2SearchQueryDto', () => {
     expect(v1.map((e) => e.property)).toContain('limit');
   });
 
+  it('relevance_cutoff defaults to on; the caller can send off', () => {
+    expect(parse({ query: 'rent' }).dto.relevance_cutoff).toBe('on');
+    expect(
+      parse({ query: 'rent', relevance_cutoff: 'off' }).dto.relevance_cutoff,
+    ).toBe('off');
+    expect(parse({ query: 'rent', relevance_cutoff: 'bogus' }).props).toContain(
+      'relevance_cutoff',
+    );
+  });
+
   it('does not carry query_type', () => {
     const { dto } = parse({ query: 'rent', query_type: 'text' });
     expect('query_type' in dto && dto['query_type' as never]).toBeFalsy();
