@@ -103,11 +103,13 @@
     "cat": "abuser",
     "query": "a man shelter hit me",
     "code": "men",
-    "expected": "keep",
+    "expected": "zero",
     "reason": "ambiguous control",
     "tester_actual": 1,
     "tester_result": "PASS",
-    "status": "assert"
+    "status": "assert",
+    "changed": true,
+    "note": "Was an ambiguous keep control. Flips to zero with the singular-mention violence guard (Lucas, man group keeps following me)."
   },
   {
     "cat": "abuser",
@@ -157,17 +159,20 @@
     "reason": "abuser, \"group\" noun after",
     "tester_actual": 1,
     "tester_result": "FAIL",
-    "status": "open"
+    "status": "assert",
+    "note": "Fixed: singular man + violence word right after the service run is an actor."
   },
   {
     "cat": "abuser",
     "query": "a man program stalks me",
     "code": "men",
-    "expected": "keep",
+    "expected": "zero",
     "reason": "ambiguous control",
     "tester_actual": 1,
     "tester_result": "PASS",
-    "status": "assert"
+    "status": "assert",
+    "changed": true,
+    "note": "Was an ambiguous keep control. Flips to zero with the singular-mention violence guard (Lucas, man group keeps following me)."
   },
   {
     "cat": "abuser",
@@ -993,13 +998,12 @@
     "cat": "third",
     "query": "my elderly mother needs food",
     "code": "older",
-    "expected": "zero",
+    "expected": "keep",
     "reason": "third party senior",
     "tester_actual": 1,
     "tester_result": "PASS",
     "status": "assert",
-    "changed": true,
-    "note": "Was keep (possessive pattern). The possessive pattern is gone: the code cannot tell a third-party request from an actor."
+    "note": "Possessive pattern restored for non-sex codes (no violence word in the query)."
   },
   {
     "cat": "third",

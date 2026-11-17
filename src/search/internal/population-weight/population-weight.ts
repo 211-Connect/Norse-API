@@ -40,9 +40,16 @@
  *  5. WOMEN AND CHILDREN  "women and children" (either order) is a request
  *           for the Women code.
  *
- * There is no possessive pattern. "my veteran husband hits me" and "my
- * elderly father hits me" name the abuser, and the code cannot tell a
- * third-party request from an actor, so such a query loses the boost.
+ * 6. THIRD PARTY  (age, military and other non-sex codes only) a possessive
+ *    sits right before it: "my elderly mother needs food". Not for older,
+ *    younger, young, old, adult, little, big, grown. The pattern gives no
+ *    boost when the query holds a violence or threat word anywhere (hit,
+ *    beat, attack, threaten, abuse, hurt, harass, stalk, follow, ...):
+ *    "my veteran husband hits me" names the abuser. Sex and gender codes
+ *    never use this pattern.
+ *
+ * The SERVICE pattern also fails for a singular "man" or "woman" with a
+ * violence word within 3 words after the run: "man group keeps following me".
  *
  * NEGATION. A mention is cancelled when a negator (not, no, non, never,
  * without, except, excluding, exclude, avoid, nor, isnt, arent, dont,
@@ -198,6 +205,20 @@ const NEGATION_BRIDGE = set(
 const SELF_VERBS = set('am are was were');
 const SELF_SHORT = set('im as being');
 const ARTICLES = set('a an');
+const POSSESSIVES = set('my our his her their');
+/** Not a person who needs help when it follows "my": "my older brother". */
+const COMPARATIVES = set('older younger young old adult little big grown');
+/** Violence and threat words (own list; no shared list exists in the repo). */
+const VIOLENCE = set(
+  'hit hits hitting beat beats beating beaten attack attacks attacked ' +
+    'attacking threaten threatens threatened threatening abuse abuses ' +
+    'abused abusing abusive hurt hurts hurting harass harasses harassed ' +
+    'harassing stalk stalks stalked stalking follow follows followed ' +
+    'following assault assaults assaulted assaulting violent punch punched ' +
+    'slap slapped choke choked kill kills killed',
+);
+const hasViolence = (t: Tok[], from = 0, to = t.length): boolean =>
+  t.slice(from, to).some((x) => VIOLENCE.has(x.raw));
 const SELF_ADVERBS = set('just also now currently really truly');
 /** Never a describing word in "i am a ___ man": links, verbs, pronouns, people. */
 const NOT_DESCRIBING = set(
@@ -264,6 +285,15 @@ function afterFor(t: Tok[], i: number, c: Context): boolean {
 
 /** 2. SERVICE: "men's shelter", "senior housing", "women support group". */
 function serviceRun(t: Tok[], i: number, c: Context): boolean {
+  const end = serviceRunEnd(t, i, c);
+  if (end === null) return false;
+  // "man group keeps following me": a singular mention with a violence word
+  // within 3 words after the run names an actor, not a service request.
+  const singular = t[i].raw === 'man' || t[i].raw === 'woman';
+  return !(singular && hasViolence(t, end, end + 3));
+}
+
+function serviceRunEnd(t: Tok[], i: number, c: Context): number | null {
   let noun = false;
   let k = i + 1;
   for (; k < t.length && k <= i + 4; k++) {
@@ -279,7 +309,7 @@ function serviceRun(t: Tok[], i: number, c: Context): boolean {
       break;
     }
   }
-  return k > i + 1 && noun;
+  return k > i + 1 && noun ? k : null;
 }
 
 /** 4. SELF: "i am a man", "im a veteran", "as a senior", "we are seniors". */
@@ -356,7 +386,11 @@ function isRequest(t: Tok[], i: number, c: Context): boolean {
     serviceRun(t, i, c) ||
     (!c.actorProne && (t[i + 1]?.raw === 'only' || t[i - 1]?.raw === 'only')) ||
     selfDescribed(t, i) ||
-    womenAndChildren(t, i)
+    womenAndChildren(t, i) ||
+    (!c.actorProne &&
+      POSSESSIVES.has(t[i - 1]?.raw ?? '') &&
+      !COMPARATIVES.has(t[i].norm) &&
+      !hasViolence(t))
   );
 }
 

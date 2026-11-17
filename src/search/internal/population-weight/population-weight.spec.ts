@@ -220,14 +220,13 @@ describe('applyPopulationWeight: asking for the group, not mentioning it', () =>
     expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
   });
 
-  it.each([
-    'my veteran husband has ptsd',
-    'my veteran husband hits me',
-    'my military husband threatens me',
-  ])('a possessive does not keep Veterans: "%s"', (q) => {
-    const input = [code('YN-1000.1000', 'Veterans', 0.8, ['Military'])];
-    expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
-  });
+  it.each(['my veteran husband hits me', 'my military husband threatens me'])(
+    'a possessive does not keep Veterans: "%s"',
+    (q) => {
+      const input = [code('YN-1000.1000', 'Veterans', 0.8, ['Military'])];
+      expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
+    },
+  );
 
   it.each([
     'a man only hit me once',
@@ -256,6 +255,53 @@ describe('applyPopulationWeight: asking for the group, not mentioning it', () =>
   ])('keeps Women for "%s"', (q) => {
     const women = [code('YS-5000.8000', 'Women')];
     expect(applyPopulationWeight(women, q, 'en')[0].score).toBe(0.8);
+  });
+
+  it.each([
+    'my elderly mother needs food',
+    'my veteran husband needs housing',
+    'my disabled son needs a program',
+  ])('a possessive keeps a non-sex code: "%s"', (q) => {
+    const input = [
+      code('YB-1000.1000', 'Older Adults', 0.8, ['Elderly']),
+      code('YN-1000.1000', 'Veterans', 0.8, ['Military']),
+      code('YB-3000.1000', 'Disabled', 0.8, ['Disabled']),
+    ];
+    const out = applyPopulationWeight(input, q, 'en');
+    expect(out.filter((p) => p.score > 0).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    'my elderly mother hits me',
+    'my veteran husband is threatening me',
+    'my senior coworker keeps following me',
+    'my teen son attacks me',
+  ])('the violence guard cancels the possessive: "%s"', (q) => {
+    const input = [
+      code('YB-1000.1000', 'Older Adults', 0.8, ['Elderly', 'Seniors']),
+      code('YN-1000.1000', 'Veterans', 0.8, ['Military']),
+      code('YB-2000.1000', 'Youth', 0.8, ['Teens']),
+    ];
+    const out = applyPopulationWeight(input, q, 'en');
+    expect(out.map((p) => p.score)).toEqual([0, 0, 0]);
+  });
+
+  it('a possessive never keeps a sex code, with or without violence', () => {
+    for (const q of ['my man needs food', 'my male friend needs a program']) {
+      expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0);
+    }
+  });
+
+  it.each(['man group keeps following me', 'a man group stalks me'])(
+    'zeroes Men for "%s"',
+    (q) => {
+      expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0);
+    },
+  );
+
+  it('plural men with a violence word later still keeps the service request', () => {
+    const q = "men's support group, a man hit me";
+    expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0.8);
   });
 
   it('"not for women and children" still zeroes Women', () => {
