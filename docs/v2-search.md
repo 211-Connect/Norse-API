@@ -72,3 +72,13 @@ Measured on 2026-11-17: on 620 real search texts the gate removes the typo claus
 ## Tests
 
 `npx jest src/v2/search`; `npx jest --config ./test/jest-e2e.json test/v2-search-versioning.e2e-spec.ts`.
+
+## OpenAPI file
+
+`docs/openapi/v2-search.openapi.json` holds the OpenAPI 3.0 document of `/v2/search` and `/search` with `x-api-version: 2`. The code generates it. The main Swagger document (`/swagger/json`) and the frontend SDK do not contain these routes: `@ApiExcludeController()` stays on the controller until the v2 ADR (ISS-2493) is accepted.
+
+```sh
+npm run openapi:v2-search
+```
+
+The script builds a documentation controller that inherits the routes and switches the exclusion off for this one document. It needs no Redis, Elasticsearch or secret. A spec fails when the committed file differs from the code, so run the script after each change to a v2 route or DTO and commit the result. Do not edit the file by hand.
