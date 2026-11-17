@@ -68,10 +68,20 @@ describe('locales', () => {
       expect(fail).toThrow(V2_ACCEPT_LANGUAGE_MESSAGE);
     });
 
-    it('uses the agreed message text', () => {
+    it('uses the agreed message text, naming every supported code', () => {
       expect(V2_ACCEPT_LANGUAGE_MESSAGE).toBe(
-        'accept-language must be exactly one supported code (en, es, ...); region tags like en-US and weighted lists are not accepted',
+        `accept-language must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); region tags like en-US and weighted lists are not accepted`,
       );
+      for (const c of SUPPORTED_LANGUAGES) {
+        expect(V2_ACCEPT_LANGUAGE_MESSAGE).toContain(c);
+      }
+    });
+
+    it('lists the 34 languages with a prod index', () => {
+      expect(SUPPORTED_LANGUAGES).toHaveLength(34);
+      for (const c of ['fi', 'km', 'lo', 'mww', 'or']) {
+        expect(isSupportedLanguage(c)).toBe(false);
+      }
     });
   });
 });

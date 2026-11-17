@@ -5,11 +5,13 @@ import { BadRequestException } from '@nestjs/common';
  * One list: `languageIndexSuffix` (index naming) and `parseExactLanguage`
  * (the /v2/search header check) both read it.
  *
- * TODO verify against prod index list (ISS-2499). This repo holds no index
- * list. The codes below are the Norse CMS locale list that
- * `PLATFORM_LOCALES` (src/metrics/usage-metrics.service.ts) reduces, with
- * `zh` split back into `zh-hans` and `zh-hant` (index names `zh_hans`,
- * `zh_hant`). That is 39 codes; the production index count is 34.
+ * The 34 codes below match the production index list. They come from the Norse
+ * CMS locale list that `PLATFORM_LOCALES` (src/metrics/usage-metrics.service.ts)
+ * reduces, with `zh` split back into `zh-hans` and `zh-hant` (index names
+ * `zh_hans`, `zh_hant`).
+ *
+ * `fi`, `km`, `lo`, `mww` and `or` are CMS locales without a prod index. They
+ * return to this list when their `hybrid_search_resources_{lang}` index exists.
  *
  * Codes are lowercase. A script subtag joins with `-` here and with `_` in the
  * index name.
@@ -22,7 +24,6 @@ export const SUPPORTED_LANGUAGES: readonly string[] = [
   'es',
   'fa',
   'ff',
-  'fi',
   'fil',
   'fj',
   'fr',
@@ -32,13 +33,9 @@ export const SUPPORTED_LANGUAGES: readonly string[] = [
   'hr',
   'ht',
   'ja',
-  'km',
   'ko',
-  'lo',
-  'mww',
   'ne',
   'om',
-  'or',
   'pl',
   'prs',
   'ps',
@@ -92,7 +89,7 @@ export const V1_ACCEPT_LANGUAGE_MESSAGE =
   'accept-language must start with a language code such as en, es or zh-Hans';
 
 export const V2_ACCEPT_LANGUAGE_MESSAGE =
-  'accept-language must be exactly one supported code (en, es, ...); ' +
+  `accept-language must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); ` +
   'region tags like en-US and weighted lists are not accepted';
 
 /**
