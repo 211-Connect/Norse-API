@@ -106,6 +106,25 @@ describe('urgencyState', () => {
   });
 });
 
+describe('needStates Tier 1 gate', () => {
+  it('Tier 1 uses its own gate (0.8): food at 0.851 is used, never asked', () => {
+    const r = needStates(req(), sig({ 'N-FOD': 0.851 }));
+    expect(r.needs).toEqual([
+      { code: 'N-FOD', state: 'use', source: 'inferred', confidence: 0.851 },
+    ]);
+    expect(r.boostNeeds).toEqual(['N-FOD']);
+  });
+  it('Tier 1 below the gate is dropped, not asked', () => {
+    expect(needStates(req(), sig({ 'N-FOD': 0.79 })).needs).toEqual([]);
+  });
+  it('Tier 2 keeps the 0.97 gate and the ask band', () => {
+    const r = needStates(req(), sig({ 'N-FOD-01': 0.9 }));
+    expect(r.needs.map((n) => [n.code, n.state])).toEqual([
+      ['N-FOD-01', 'ask'],
+    ]);
+  });
+});
+
 describe('needStates', () => {
   const find = (r: ReturnType<typeof needStates>, c: string) =>
     r.needs.find((n) => n.code === c);
@@ -187,11 +206,14 @@ describe('areaRuleTarget', () => {
   it('fires at T1 0.9 and max T2 0.4999', () => {
     expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.4999 })).toBe('N-MHS');
   });
+  it('fires at T1 0.8 (the Tier 1 area minimum)', () => {
+    expect(t({ 'N-MHS': 0.8, 'N-MHS-01': 0.1 })).toBe('N-MHS');
+  });
   it('not at T2 0.5', () => {
     expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.5 })).toBeNull();
   });
-  it('not at T1 0.8999', () => {
-    expect(t({ 'N-MHS': 0.8999, 'N-MHS-01': 0.1 })).toBeNull();
+  it('not at T1 0.7999', () => {
+    expect(t({ 'N-MHS': 0.7999, 'N-MHS-01': 0.1 })).toBeNull();
   });
   it('not when area has confirmed Tier 2', () => {
     expect(t({ 'N-MHS': 0.95 }, req({ needs: ['N-MHS-01'] }))).toBeNull();

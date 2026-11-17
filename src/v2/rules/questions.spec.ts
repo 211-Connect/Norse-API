@@ -464,6 +464,23 @@ describe('start question', () => {
   });
 });
 
+describe('one-word Tier 1 query: food (Lucas 2026-11-17)', () => {
+  it('N-FOD 0.851 is used and the area question asks about Food & Water', () => {
+    const d = decide(
+      req(),
+      sig({ 'N-FOD': 0.851, 'N-FOD-01': 0.05, 'N-FOD-02': 0.04 }),
+    );
+    expect(d.needs.map((n) => [n.code, n.state])).toEqual([['N-FOD', 'use']]);
+    expect(ids(d)).toEqual(['area:N-FOD']);
+    expect(d.candidates[0].stem).toBe('Which kind of help with Food & Water?');
+    expect(d.candidates[0].reason).toBe('area_only');
+  });
+  it('a clear Tier 1 below the new gate (0.79) asks no area question', () => {
+    const d = decide(req(), sig({ 'N-FOD': 0.79 }));
+    expect(ids(d)).not.toContain('area:N-FOD');
+  });
+});
+
 describe('area questions', () => {
   it('confirmed Tier 1 -> area:N-HOU, no start', () => {
     const d = decide(

@@ -105,7 +105,11 @@ export function needStates(
     for (const code of [...TIER1_CODES, ...TIER2_CODES]) {
       if (code === NX || skip.has(code)) continue;
       const s = scoreOf(scores, code);
-      if (s >= CUTOFFS.needs.use) {
+      // Tier 1 has its own, lower gate and is never `ask` (Lucas 2026-11-17).
+      const useGate = isTier1(code)
+        ? CUTOFFS.needs.tier1Use
+        : CUTOFFS.needs.use;
+      if (s >= useGate) {
         inferredUse.push({
           code,
           state: 'use',

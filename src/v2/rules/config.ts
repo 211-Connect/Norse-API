@@ -1,12 +1,14 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-18.2';
+export const RULES_VERSION = 'rules-2026-11-18.3';
 
 export const CUTOFFS = {
   emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
   urgency: { drop: 0.8, use: 0.93 }, // score < drop -> drop; drop <= s < use -> ask; s >= use -> use
-  needs: { use: 0.97, ask: 0.12 }, // `use` is also the v1 hybrid need boost gate; s >= use -> use; ask <= s < use -> ask; else drop
-  area: { tier1Min: 0.9, tier2Max: 0.5 },
+  // `use` is also the v1 hybrid need boost gate (Tier 2 and Tier 1 boosts both read it).
+  // Tier 2: s >= use -> use; ask <= s < use -> ask; else drop. Tier 1 is never `ask`: s >= tier1Use -> use; else drop.
+  needs: { use: 0.97, tier1Use: 0.8, ask: 0.12 },
+  area: { tier1Min: 0.8, tier2Max: 0.5 },
   nx: { label: 0.07 },
   start: { modelAreasMin: 0.3 },
   maxQuestions: 3,

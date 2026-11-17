@@ -19,8 +19,8 @@ Needs never filter results; a used or confirmed need only boosts (`boost_needs`,
 - Emergency, in order: floor hit -> popup at score >= 0.65, else soft; calm context -> soft at >= 0.217, else none; DV shelter below 0.65 -> soft; >= 0.65 popup; >= 0.217 soft; else none. Error -> `unknown`, not cacheable.
 - Cache rule (`cacheable`, ADR 0039 Decision 28): true only when the band is `none`, there is no emergency question (a caller `urgency=U-0` adds one with band `none`), and the needs call succeeded.
 - Urgency: a caller level other than `U-X` is confirmed (`use`); `U-X` from the caller is ignored. From the model: < 0.8 drop (U-X); 0.8 to 0.93 ask; >= 0.93 use the model level.
-- Needs: >= 0.97 use; Tier 2 from 0.12 to 0.97 ask; below 0.12 drop.
-- Area rule: best Tier 1 >= 0.9 and every Tier 2 < 0.5 -> one area question.
+- Needs: Tier 2 >= 0.97 use, 0.12 to 0.97 ask, below 0.12 drop. Tier 1 >= 0.8 (`tier1Use`) use, else drop; a Tier 1 code is never asked. The v1 hybrid need boost gate (`NEED_BOOST_GATE`) stays 0.97 for both tiers, so a Tier 1 need between 0.8 and 0.97 is `use` in the intent and the area question fires, but it adds no ranking boost.
+- Area rule: best Tier 1 >= 0.8 and every Tier 2 < 0.5 -> one area question.
 - N-X means "need not yet known". It is internal: it is never an option and has no label. `nx` in the decision is true when no need is used and N-X scores >= 0.07, or the engine is given `N-X` as a confirmed need.
   A cutoff or rule change bumps `RULES_VERSION`.
 
