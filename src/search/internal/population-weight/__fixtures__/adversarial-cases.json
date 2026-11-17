@@ -1,0 +1,2034 @@
+[
+  {
+    "cat": "abuser",
+    "query": "a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my husband is a violent man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my father beats me and I need to leave",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "stepdad hits me, I need a place to stay",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a guy is stalking me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "he is a man who threatens to kill me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my male partner hurts me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser (male via ref)",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "men keep harassing me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my ex is a violent man need shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser; shelter far",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a man is threatening me need shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser, then service noun later",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a man shelter hit me",
+    "code": "men",
+    "expected": "keep",
+    "reason": "ambiguous control",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "man hit me, need shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser, comma then shelter",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "the man I live with hits me help shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "afraid of my boyfriend, he is a man with a gun",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a man at my home hurts me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser, \"home\" service noun right after",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "man group keeps following me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser, \"group\" noun after",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "abuser",
+    "query": "a man program stalks me",
+    "code": "men",
+    "expected": "keep",
+    "reason": "ambiguous control",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my husband is a man who hits me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my husband beats me, shelter for women",
+    "code": "women",
+    "expected": "keep",
+    "reason": "victim asks women",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my husband beats me, shelter for women",
+    "code": "men",
+    "expected": "zero",
+    "reason": "victim, men code must be zero",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a woman hit me, I am a man",
+    "code": "men",
+    "expected": "keep",
+    "reason": "self man",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a woman hits me",
+    "code": "women",
+    "expected": "zero",
+    "reason": "abuser female",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my wife is a violent woman",
+    "code": "women",
+    "expected": "zero",
+    "reason": "abuser female",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "a veteran hit me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet (not actor-prone)",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my veteran husband hits me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet via possessive -> flagged hole",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my veteran boyfriend beats me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my elderly father hits me",
+    "code": "older",
+    "expected": "zero",
+    "reason": "abuser senior",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my senior coworker hits me",
+    "code": "older",
+    "expected": "zero",
+    "reason": "abuser senior",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my teenage son hits me",
+    "code": "youth",
+    "expected": "zero",
+    "reason": "abuser youth (teenage not ref)",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my teen son attacks me",
+    "code": "youth",
+    "expected": "zero",
+    "reason": "abuser youth, possessive hole",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my young son hits me",
+    "code": "youth",
+    "expected": "zero",
+    "reason": "young comparative",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my son is a veteran and he hits me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my husband a veteran assaults me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my military husband threatens me",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet, possessive",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "my male roommate assaulted me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser, male ref after my",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "abuser",
+    "query": "his male friends threaten me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "not for men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "no male staff shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "no male + shelter",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter without men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "without",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "women-only because men scare me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "men is feared",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "women only shelter, no men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "no men",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "women only shelter, no men",
+    "code": "women",
+    "expected": "keep",
+    "reason": "women only",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter that doesn't allow men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter that doesn't allow men",
+    "code": "women",
+    "expected": "zero",
+    "reason": "no explicit women request",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter that isnt for men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter other than for men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "other than",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "I do not want a shelter with men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated far",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "I do not want a shelter that has men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated farther than 5 tokens",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "no shelters that house men and boys",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter, not mens",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "avoid mens shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "avoid",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "a place free of men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "free of not negator",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "a place away from men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "away from",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "I am scared of men, need shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "fear",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "afraid of men please help with housing",
+    "code": "men",
+    "expected": "zero",
+    "reason": "fear",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "not only for men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "not only for men: ambiguous",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "negation",
+    "query": "no one except men shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "except men positive",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "negation",
+    "query": "not a shelter for seniors",
+    "code": "older",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "not for veterans",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "I am not a veteran",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "negated self",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "I am no senior but need housing",
+    "code": "older",
+    "expected": "zero",
+    "reason": "negated self",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "never a man shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "never",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "men shelter not",
+    "code": "men",
+    "expected": "keep",
+    "reason": "trailing not; men shelter request",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter for women, not men",
+    "code": "women",
+    "expected": "keep",
+    "reason": "women requested",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "shelter for women, not men",
+    "code": "men",
+    "expected": "zero",
+    "reason": "men negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "no men's shelter please",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "negation",
+    "query": "women only no men allowed",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated; \"no men allowed\" men only?",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "MENS shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "casing",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "mens shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "no apostrophe",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "MEN'S SHELTER",
+    "code": "men",
+    "expected": "keep",
+    "reason": "caps",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "womens shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "typo",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "womans shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "typo womans",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "vets housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "vets",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "vet housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "vet",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "veterns housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "misspelling",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter for mn",
+    "code": "men",
+    "expected": "keep",
+    "reason": "typo men",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter for woman",
+    "code": "women",
+    "expected": "keep",
+    "reason": "singular",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter for ladies",
+    "code": "women",
+    "expected": "keep",
+    "reason": "ref",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "seniors housing",
+    "code": "older",
+    "expected": "keep",
+    "reason": "seniors",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "senior citizens housing",
+    "code": "older",
+    "expected": "keep",
+    "reason": "citizens",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "housing for elders",
+    "code": "older",
+    "expected": "keep",
+    "reason": "elders",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "housing for the elderly",
+    "code": "older",
+    "expected": "keep",
+    "reason": "elderly",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "elderly housing",
+    "code": "older",
+    "expected": "keep",
+    "reason": "elderly service",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter 4 men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "txt speak",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter fr men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "typo for",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "sheltr for men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "typo irrelevant",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "MEN",
+    "code": "men",
+    "expected": "keep",
+    "reason": "bare",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "one-word group",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "women",
+    "code": "women",
+    "expected": "keep",
+    "reason": "one-word",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "veterans",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "one-word",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "seniors",
+    "code": "older",
+    "expected": "keep",
+    "reason": "one-word",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "youth",
+    "code": "youth",
+    "expected": "keep",
+    "reason": "one-word",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "men?",
+    "code": "men",
+    "expected": "keep",
+    "reason": "punct",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "typo",
+    "query": "men shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "no possessive",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "male shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "male ref + noun",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "shelter for males",
+    "code": "men",
+    "expected": "keep",
+    "reason": "males",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "typo",
+    "query": "gentlemen shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "ref",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "third",
+    "query": "shelter for my son",
+    "code": "men",
+    "expected": "keep",
+    "reason": "son is male; arguably keep",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "my grandma needs food",
+    "code": "older",
+    "expected": "keep",
+    "reason": "grandma not a group word; ambiguous",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "my elderly mother needs food",
+    "code": "older",
+    "expected": "zero",
+    "reason": "third party senior",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert",
+    "changed": true,
+    "note": "Was keep (possessive pattern). The possessive pattern is gone: the code cannot tell a third-party request from an actor."
+  },
+  {
+    "cat": "third",
+    "query": "my grandfather is a veteran and needs housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "third party vet",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "my husband is a veteran needs help",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "third party vet",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "my dad is a senior, needs meals",
+    "code": "older",
+    "expected": "keep",
+    "reason": "third-party",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "help for my daughter, she is a teen",
+    "code": "youth",
+    "expected": "keep",
+    "reason": "teen",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "shelter for my brother who is a man",
+    "code": "men",
+    "expected": "keep",
+    "reason": "for... far",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "my friend is a woman who needs shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "third party woman",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "she is a woman and needs shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "third woman",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "third",
+    "query": "help for him he is a veteran",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "for far",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "im a 70 year old",
+    "code": "older",
+    "expected": "keep",
+    "reason": "self age not in group words",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "I'm a female veteran",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I'm a female veteran",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self female",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a woman fleeing my husband",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a man fleeing my wife",
+    "code": "men",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "i am a 70 year old senior",
+    "code": "older",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "as a veteran I need help",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "being a veteran, I need housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self via being",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I served in the military and need housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "I have been a veteran for years",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self odd",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "I am a very old man",
+    "code": "men",
+    "expected": "keep",
+    "reason": "self with adj",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a homeless disabled veteran",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "self with fillers",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a poor single mother and a woman in danger",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "we are seniors",
+    "code": "older",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a young black man",
+    "code": "men",
+    "expected": "keep",
+    "reason": "self adj not filler (black)",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a gay man who needs help",
+    "code": "men",
+    "expected": "keep",
+    "reason": "self adj",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a battered woman",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a battered, abused woman",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am an undocumented woman afraid of my husband",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am a transgender woman",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "woman here, need shelter tonight",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "woman escaping abuse",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self implicit",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "self",
+    "query": "Im a woman",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "self",
+    "query": "I am 65 and homeless",
+    "code": "older",
+    "expected": "keep",
+    "reason": "age number",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "multi",
+    "query": "men and women shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "both",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "multi",
+    "query": "men and women shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "both",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "shelter for women, my husband is a man who hits me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser after request",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "shelter for women, my husband is a man who hits me",
+    "code": "women",
+    "expected": "keep",
+    "reason": "request",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "women and children shelter",
+    "code": "women",
+    "expected": "keep",
+    "reason": "chain",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "women veterans housing",
+    "code": "women",
+    "expected": "keep",
+    "reason": "chain",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "multi",
+    "query": "women veterans housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "chain",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "my husband the veteran hits me, I need a shelter for women",
+    "code": "vets",
+    "expected": "zero",
+    "reason": "abuser vet",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "shelter for men and a man hit me",
+    "code": "men",
+    "expected": "keep",
+    "reason": "request present",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "not for men, for women",
+    "code": "men",
+    "expected": "zero",
+    "reason": "negated",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "multi",
+    "query": "not for men, for women",
+    "code": "women",
+    "expected": "keep",
+    "reason": "request",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "far",
+    "query": "shelter near downtown tonight please for men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "for men",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "far",
+    "query": "I need a safe place to stay tonight because I have nowhere to go, men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "bare men at end - ambiguous",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "for a safe warm clean place to stay tonight men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "for far",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "for tonight at a safe place please, for men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "second for",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "far",
+    "query": "for tonight, looking for a shelter that takes men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "far request",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "I am looking for a women and children shelter for tonight",
+    "code": "women",
+    "expected": "keep",
+    "reason": "service run",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "far",
+    "query": "where can a homeless man get a hot meal near downtown",
+    "code": "men",
+    "expected": "keep",
+    "reason": "homeless man = self-ish; keep",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "where can a veteran get a free bus pass",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "generic veteran",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "veteran",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "single",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "far",
+    "query": "housing assistance for homeless elderly veterans in the bronx",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "for chain",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "far",
+    "query": "where do homeless women go for help with rent",
+    "code": "women",
+    "expected": "keep",
+    "reason": "women go",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "punct",
+    "query": "shelter. for. men.",
+    "code": "men",
+    "expected": "keep",
+    "reason": "punct",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "shelter-for-men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "hyphens",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "shelter/men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "slash",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "punct",
+    "query": "for​men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "zero width",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "FOR MEN",
+    "code": "men",
+    "expected": "keep",
+    "reason": "caps",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for  men",
+    "code": "men",
+    "expected": "keep",
+    "reason": "double space",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "men-only shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "hyphen only",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "men's-shelter",
+    "code": "men",
+    "expected": "keep",
+    "reason": "weird",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "a man's hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser w apostrophe",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "a man's shelter hit me",
+    "code": "men",
+    "expected": "keep",
+    "reason": "ctl",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "punct",
+    "query": "MAN HIT ME",
+    "code": "men",
+    "expected": "zero",
+    "reason": "caps",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "hit by a man!",
+    "code": "men",
+    "expected": "zero",
+    "reason": "hit by",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for me a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "for far",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for my safety a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "\"for\" + safety?",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "garbled; for a man = request? actor",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for my protection from a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "for my then from",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "help for me, my ex is a man and violent",
+    "code": "men",
+    "expected": "zero",
+    "reason": "for me",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "for the man who hit me, shelter",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser w for the",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I need to leave for a shelter, a man is hurting me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I am afraid for my life, the man next door has a knife",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser; I am afraid",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "as a victim a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "as a ... man? \"as a victim a man\" -> ?",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "im scared a man will find me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "im scared",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "i am a victim, a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "im being hit by a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I was hit by a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "we were attacked by a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "as a woman a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "as a woman",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "as a woman a man hit me",
+    "code": "women",
+    "expected": "keep",
+    "reason": "self",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "we are afraid, a man is outside",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I am hiding from a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser; am hiding... not filler",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I am a woman hiding from a man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "I am just a woman hiding from my abusive husband the man",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "i am only a kid and a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "only a kid",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "only a man hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "only before: ONLY pattern false positive",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "a man only hit me once",
+    "code": "men",
+    "expected": "zero",
+    "reason": "only after: ONLY false positive",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "only men hit me",
+    "code": "men",
+    "expected": "zero",
+    "reason": "only men hit; abuser",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "men only hit me when drunk",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser; only after",
+    "tester_actual": 1,
+    "tester_result": "FAIL",
+    "status": "assert"
+  },
+  {
+    "cat": "punct",
+    "query": "my husband only hits me when he is drunk, he is a man of few words",
+    "code": "men",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "homeless shelter",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "identity not requested: 0",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "homeless shelter for men",
+    "code": "cmen",
+    "expected": "keep",
+    "reason": "requested",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "a man hit me need shelter",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "abuser + shelter: compound must be zero",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "my husband hit me, need emergency shelter",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "husband not in group words",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "emergency shelter men keep harassing me",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "abuser, shelter before men",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "shelter men harass me",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "abuser; shelter before",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "shelter, a man hit me",
+    "code": "cmen",
+    "expected": "zero",
+    "reason": "abuser",
+    "tester_actual": 0,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "housing for seniors",
+    "code": "colder",
+    "expected": "keep",
+    "reason": "compound identity named via refs? none on compound",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "compound",
+    "query": "housing for older adults",
+    "code": "colder",
+    "expected": "keep",
+    "reason": "label words",
+    "tester_actual": 1,
+    "tester_result": "PASS",
+    "status": "assert"
+  },
+  {
+    "cat": "compound",
+    "query": "senior housing",
+    "code": "colder",
+    "expected": "keep",
+    "reason": "no use_refs on compound -> zero? hole",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  },
+  {
+    "cat": "compound",
+    "query": "elderly housing",
+    "code": "colder",
+    "expected": "keep",
+    "reason": "hole",
+    "tester_actual": 0,
+    "tester_result": "FAIL",
+    "status": "open"
+  }
+]

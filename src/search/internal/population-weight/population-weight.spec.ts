@@ -220,10 +220,53 @@ describe('applyPopulationWeight: asking for the group, not mentioning it', () =>
     expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
   });
 
-  it('keeps Veterans for "my veteran husband has ptsd" (third party)', () => {
+  it.each([
+    'my veteran husband has ptsd',
+    'my veteran husband hits me',
+    'my military husband threatens me',
+  ])('a possessive does not keep Veterans: "%s"', (q) => {
+    const input = [code('YN-1000.1000', 'Veterans', 0.8, ['Military'])];
+    expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0);
+  });
+
+  it.each([
+    'a man only hit me once',
+    'only men hit me',
+    'men only hit me when drunk',
+    'for a man hit me',
+    'for the man who hit me, shelter',
+    'i am a woman, men hit me',
+    'i am a woman hiding from a man',
+  ])('zeroes Men for the actor query "%s"', (q) => {
+    expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0);
+  });
+
+  it.each(['men only shelter', 'men-only shelter', 'i am a very old man'])(
+    'keeps Men for "%s"',
+    (q) => {
+      expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0.8);
+    },
+  );
+
+  it.each([
+    'women and children',
+    'women and children shelter',
+    'children and women',
+    'help for women & children',
+  ])('keeps Women for "%s"', (q) => {
+    const women = [code('YS-5000.8000', 'Women')];
+    expect(applyPopulationWeight(women, q, 'en')[0].score).toBe(0.8);
+  });
+
+  it('"not for women and children" still zeroes Women', () => {
+    const women = [code('YS-5000.8000', 'Women')];
+    const q = 'not for women and children';
+    expect(applyPopulationWeight(women, q, 'en')[0].score).toBe(0);
+  });
+
+  it('"veterans only" keeps Veterans (only still counts for non-sex codes)', () => {
     const input = [code('YN-1000.1000', 'Veterans')];
-    const q = 'my veteran husband has ptsd';
-    expect(applyPopulationWeight(input, q, 'en')).toEqual(input);
+    expect(applyPopulationWeight(input, 'veterans only', 'en')).toEqual(input);
   });
 
   it('a possessive does not keep a sex code: "my man hits me"', () => {

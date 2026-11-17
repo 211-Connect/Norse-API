@@ -18,18 +18,31 @@
  *           (a, an, the, my, our, his, her, their, your, some, all, other,
  *           and, or, homeless, poor, abused, battered, disabled, low, income,
  *           young, elderly, or another group word of the predicted codes):
- *           "for men", "for my veteran husband", "for abused women".
+ *           "for men", "for abused women". For sex and gender codes the
+ *           articles a, an and the are NOT fillers: "for a man hit me" and
+ *           "for the man who hit me" name an actor, not a request.
  *  2. SERVICE  the next words are service words and the run holds at least
  *           one service noun: "men's shelter", "senior housing",
- *           "veterans housing", "women support group". A verb or a pronoun
- *           ends the run, so "a man hit me" and "man keeps hitting" fail.
- *  3. ONLY  "only" is right before or right after: "men only", "only women".
+ *           "veterans housing", "women support group", "men only shelter".
+ *           A verb or a pronoun ends the run, so "a man hit me", "a man only
+ *           hit me once" and "man keeps hitting" fail.
+ *  3. ONLY  (age, military and other non-sex codes only) "only" is right
+ *           before or right after: "veterans only", "only seniors". For sex
+ *           and gender codes "only" does not count by itself, because
+ *           "only men hit me" and "men only hit me when drunk" are actors.
  *  4. SELF  the speaker says it about self: "i am a man", "im a veteran",
- *           "as a senior", "we are seniors".
- *  5. THIRD PARTY  (age and military codes only, not sex or gender codes)
- *           a possessive sits right before it: "my veteran husband",
- *           "my elderly mother". Not for older, younger, young, old, adult,
- *           little, big, grown ("my older brother hits me").
+ *           "as a senior", "we are seniors", "being a veteran", and with up
+ *           to 3 describing words after a or an: "i am a very old man",
+ *           "im a female veteran", "i am an undocumented woman". The
+ *           describing words may not be a preposition, pronoun, verb, -ing
+ *           word or person noun, and no comma or full stop may sit between
+ *           the self words and the mention: "i am a woman, men hit me".
+ *  5. WOMEN AND CHILDREN  "women and children" (either order) is a request
+ *           for the Women code.
+ *
+ * There is no possessive pattern. "my veteran husband hits me" and "my
+ * elderly father hits me" name the abuser, and the code cannot tell a
+ * third-party request from an actor, so such a query loses the boost.
  *
  * NEGATION. A mention is cancelled when a negator (not, no, non, never,
  * without, except, excluding, exclude, avoid, nor, isnt, arent, dont,
@@ -41,7 +54,7 @@
  * NOT cancelled ("money" is not a bridge word).
  *
  * A mention that is only an ACTOR ("a man hit me", "my ex is a violent
- * man", "my older brother") matches none of the five patterns.
+ * man", "my veteran husband") matches none of the patterns.
  *
  * COMPOUND CODES ("Homeless Shelter * Men"): when the identity part is not
  * requested, the score is multiplied by COMPOUND_NOT_NAMED_WEIGHT (the
@@ -143,18 +156,27 @@ export function groupWords(
 interface Tok {
   raw: string;
   norm: string;
+  /** A comma, full stop, colon, semicolon, bracket, ! or ? follows this word. */
+  brk: boolean;
 }
 
 /** Words in order, not deduped: lowercase, accent-folded, apostrophes dropped. */
 function sequence(text: string): Tok[] {
-  return text
+  const clean = text
     .toLowerCase()
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
-    .replace(/['’]/g, '')
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean)
-    .map((raw) => ({ raw, norm: normalizeToken(raw) }));
+    .replace(/['’]/g, '');
+  const found = [...clean.matchAll(/[\p{L}\p{N}]+/gu)];
+  return found.map((m, n) => {
+    const end = (m.index ?? 0) + m[0].length;
+    const next = found[n + 1]?.index ?? clean.length;
+    return {
+      raw: m[0],
+      norm: normalizeToken(m[0]),
+      brk: /[,.;:!?()\n]/.test(clean.slice(end, next)),
+    };
+  });
 }
 
 const set = (s: string): ReadonlySet<string> => new Set(s.split(/\s+/));
@@ -165,9 +187,6 @@ const FILLERS = set(
     'specifically especially homeless poor abused battered disabled low ' +
     'income young elderly',
 );
-const POSSESSIVES = set('my our his her their');
-/** Not a person who needs help when it follows "my": "my older brother hits me". */
-const COMPARATIVES = set('older younger young old adult little big grown');
 const NEGATORS = set(
   'not no non never without except excluding exclude avoid nor isnt arent ' +
     'dont doesnt cant wont',
@@ -177,7 +196,19 @@ const NEGATION_BRIDGE = set(
     'allowed want need any place one',
 );
 const SELF_VERBS = set('am are was were');
-const SELF_SHORT = set('im as');
+const SELF_SHORT = set('im as being');
+const ARTICLES = set('a an');
+const SELF_ADVERBS = set('just also now currently really truly');
+/** Never a describing word in "i am a ___ man": links, verbs, pronouns, people. */
+const NOT_DESCRIBING = set(
+  'from by with of to at in on for about near after before into over under ' +
+    'who that which when while because but so if and or not no the a an ' +
+    'my our his her their your me him them us it he she they i we you ' +
+    'is are was were am be been being has have had hit hits hurt hurts beat ' +
+    'beats attack attacks man men woman women boy girl guy lady person people ' +
+    'child children kid kids husband wife mother father mom dad partner ' +
+    'victim survivor',
+);
 
 const SERVICE_NOUNS = set(
   'shelter housing home house apartment program service group clinic center ' +
@@ -194,7 +225,7 @@ const SERVICE_MODIFIERS = set(
   'emergency affordable low income transitional temporary free subsidized ' +
     'public mental behavioral substance abuse domestic violence legal ' +
     'medical dental vision support health crisis permanent supportive ' +
-    'independent assisted day senior-friendly',
+    'independent assisted day senior-friendly only',
 );
 
 function isServiceNoun(raw: string): boolean {
@@ -224,6 +255,8 @@ interface Context {
 function afterFor(t: Tok[], i: number, c: Context): boolean {
   for (let k = i - 1; k >= 0 && i - k <= 5; k--) {
     if (t[k].raw === 'for') return true;
+    if (c.actorProne && ARTICLES.has(t[k].raw)) return false;
+    if (c.actorProne && t[k].raw === 'the') return false;
     if (!FILLERS.has(t[k].raw) && !c.all.has(t[k].norm)) return false;
   }
   return false;
@@ -251,12 +284,53 @@ function serviceRun(t: Tok[], i: number, c: Context): boolean {
 
 /** 4. SELF: "i am a man", "im a veteran", "as a senior", "we are seniors". */
 function selfDescribed(t: Tok[], i: number): boolean {
+  return selfFillers(t, i) || selfDescribing(t, i);
+}
+
+function isSelfMarker(t: Tok[], k: number): boolean {
+  const raw = t[k]?.raw;
+  if (SELF_SHORT.has(raw ?? '')) return true;
+  return SELF_VERBS.has(raw ?? '') && ['i', 'we'].includes(t[k - 1]?.raw ?? '');
+}
+
+function selfFillers(t: Tok[], i: number): boolean {
   let k = i - 1;
   while (k >= 0 && i - k <= 3 && FILLERS.has(t[k].raw)) k--;
-  if (k < 0) return false;
-  const raw = t[k].raw;
-  if (SELF_SHORT.has(raw)) return true;
-  return SELF_VERBS.has(raw) && ['i', 'we'].includes(t[k - 1]?.raw ?? '');
+  return k >= 0 && isSelfMarker(t, k);
+}
+
+/** "i am a very old man", "im a female veteran": a or an, then up to 3 describing words. */
+function selfDescribing(t: Tok[], i: number): boolean {
+  let k = i - 1;
+  let n = 0;
+  while (k >= 0 && n < 3 && isDescribing(t[k].raw)) {
+    k--;
+    n++;
+  }
+  if (k < 0 || !ARTICLES.has(t[k].raw)) return false;
+  k--;
+  while (k >= 0 && SELF_ADVERBS.has(t[k].raw)) k--;
+  if (k < 0 || !isSelfMarker(t, k)) return false;
+  for (let j = k; j < i; j++) if (t[j].brk) return false;
+  return true;
+}
+
+function isDescribing(raw: string): boolean {
+  return raw.length >= 2 && !NOT_DESCRIBING.has(raw) && !raw.endsWith('ing');
+}
+
+/** 5. WOMEN AND CHILDREN: "women and children shelter", "children and women". */
+function womenAndChildren(t: Tok[], i: number): boolean {
+  if (t[i].norm !== 'women') return false;
+  const isKid = (r?: string) =>
+    ['child', 'kid', 'family'].includes(normalizeToken(r ?? ''));
+  const joined = (a: number) => t[a]?.raw === 'and' || t[a]?.raw === 'or';
+  return (
+    isKid(t[i + 1]?.raw) ||
+    (joined(i + 1) && isKid(t[i + 2]?.raw)) ||
+    isKid(t[i - 1]?.raw) ||
+    (joined(i - 1) && isKid(t[i - 2]?.raw))
+  );
 }
 
 function isNegated(t: Tok[], i: number, c: Context): boolean {
@@ -280,12 +354,9 @@ function isRequest(t: Tok[], i: number, c: Context): boolean {
   return (
     afterFor(t, i, c) ||
     serviceRun(t, i, c) ||
-    t[i + 1]?.raw === 'only' ||
-    t[i - 1]?.raw === 'only' ||
+    (!c.actorProne && (t[i + 1]?.raw === 'only' || t[i - 1]?.raw === 'only')) ||
     selfDescribed(t, i) ||
-    (!c.actorProne &&
-      POSSESSIVES.has(t[i - 1]?.raw ?? '') &&
-      !COMPARATIVES.has(t[i].norm))
+    womenAndChildren(t, i)
   );
 }
 
