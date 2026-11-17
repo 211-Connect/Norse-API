@@ -25,6 +25,11 @@ describe('normalizeToken', () => {
     ['woman', 'women'],
     ['seniors', 'senior'],
     ['bus', 'bus'],
+    ['children', 'child'],
+    ['child', 'child'],
+    ['families', 'family'],
+    ['human', 'human'],
+    ['class', 'class'],
   ])('%s -> %s', (input, expected) => {
     expect(normalizeToken(input)).toBe(expected);
   });
@@ -35,6 +40,12 @@ describe('tokenize', () => {
     expect([...tokenize("Shelter for Men's beds")].sort()).toEqual(
       ['bed', 'for', 'men', 'shelter'].sort(),
     );
+  });
+});
+
+describe('tokenize, shared with word rarity', () => {
+  it('folds accents instead of splitting the word', () => {
+    expect(tokenize('niñas y niños')).toEqual(new Set(['nina', 'nino']));
   });
 });
 
@@ -67,6 +78,14 @@ describe('groupWords', () => {
   });
 });
 
+describe('groupWords: function words never name a group', () => {
+  it('drops function words from use references', () => {
+    expect([...groupWords('Men', ['Persons Who Are Male'])].sort()).toEqual(
+      ['male', 'men', 'person'].sort(),
+    );
+  });
+});
+
 describe('applyPopulationWeight', () => {
   const list = () => [
     code('YS-5000.5000', 'Men'),
@@ -96,6 +115,31 @@ describe('applyPopulationWeight', () => {
     expect(applyPopulationWeight(input, 'food help for seniors')[0].score).toBe(
       0,
     );
+  });
+
+  it('a function word shared with a use reference does not keep the boost', () => {
+    const input = [code('YS-5000.5000', 'Men', 0.8, ['Persons Who Are Male'])];
+    expect(applyPopulationWeight(input, 'who can help me')[0].score).toBe(0);
+  });
+
+  it.each(['food for my child', 'food for my children'])(
+    'keeps Children for "%s"',
+    (q) => {
+      const input = [code('YB-9500.1500', 'Children')];
+      expect(applyPopulationWeight(input, q)).toEqual(input);
+    },
+  );
+
+  // Known limit, pinned so a fix shows up here (ISS-2693 review). One shared
+  // word keeps the boost, so a victim who names the abuser's gender, or a
+  // negation, keeps the Men boost.
+  it.each([
+    'a man keeps hitting me',
+    'my ex is a violent man',
+    'shelters not for men',
+  ])('known limit: "%s" keeps the Men boost', (q) => {
+    const input = list();
+    expect(applyPopulationWeight(input, q)[0].score).toBe(0.8);
   });
 
   it('keeps a military code named in the query', () => {
