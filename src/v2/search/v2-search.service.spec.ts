@@ -952,10 +952,10 @@ describe('V2SearchService', () => {
 });
 
 // Lucas 2026-11-13 (question 14): AI classification off for a tenant.
-// Payload writes the tenant's search engine to `search_config:<tenant>` as
-// `search_engine`; anything but `ai_classification` means AI classification off.
-const TENANT_OFF: SearchConfigCache = { search_engine: 'hybrid' };
-const TENANT_ON: SearchConfigCache = { search_engine: 'ai_classification' };
+// v2 reads its own field `ai_classification` of `search_config:<tenant>`;
+// only exactly 'off' is off. `search_engine` is the v1 field and is ignored.
+const TENANT_OFF: SearchConfigCache = { ai_classification: 'off' };
+const TENANT_ON: SearchConfigCache = { ai_classification: 'on' };
 
 describe('V2SearchService with AI classification off', () => {
   const strong = { 'N-HOU': 0.95, 'N-HOU-01': 0.99, 'N-FOD-01': 0.5 };
@@ -1045,6 +1045,30 @@ describe('V2SearchService with AI classification off', () => {
       const res = await service.search({ headers, query: dto({ query: 'x' }) });
       expect(classifyArg(classify)).toBe('on');
       expect(guessUsed(res)).toBe(true);
+    });
+    it('a v1 hybrid or classic tenant (search_engine) stays on in v2', async () => {
+      for (const search_engine of ['hybrid', 'classic'] as const) {
+        const { service, classify } = build({
+          classify: jest.fn().mockResolvedValue(result(0.001)),
+          searchConfig: { search_engine },
+        });
+        const res = await service.search({
+          headers,
+          query: dto({ query: 'x' }),
+        });
+        expect(classifyArg(classify)).toBe('on');
+        expect(guessUsed(res)).toBe(true);
+      }
+    });
+    it('only exactly off is off: null, unknown and on stay on', async () => {
+      for (const ai_classification of [null, 'OFF', 'maybe', 'on']) {
+        const { service, classify } = build({
+          classify: jest.fn().mockResolvedValue(result(0.001)),
+          searchConfig: { ai_classification } as SearchConfigCache,
+        });
+        await service.search({ headers, query: dto({ query: 'x' }) });
+        expect(classifyArg(classify)).toBe('on');
+      }
     });
     it('tenant setting ai_classification: on', async () => {
       const { service, classify } = build({

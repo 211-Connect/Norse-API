@@ -107,15 +107,15 @@ function isQueryTooLarge(error: unknown): boolean {
 
 /**
  * Tenant setting "AI classification off" (ADR 0039 Decisions 52, 60), read from
- * the `search_config:<tenant>` Redis value that Payload writes. Off when the
- * tenant's `search_engine` is a known value other than `ai_classification`.
- * Missing, null or unknown is on, so a tenant is never switched off by a gap.
+ * the `ai_classification` field of the `search_config:<tenant>` Redis value.
+ * v2 has its own field: the v1 `search_engine` (classic or hybrid) must not
+ * switch v2 AI off. Only exactly `off` is off; missing, null or unknown is on,
+ * so a tenant is never switched off by a gap.
  */
 export function tenantAiClassification(
   config: SearchConfigCache | null | undefined,
 ): AiClassificationSetting {
-  const engine = config?.search_engine;
-  return engine === 'classic' || engine === 'hybrid' ? 'off' : 'on';
+  return config?.ai_classification === 'off' ? 'off' : 'on';
 }
 
 /**

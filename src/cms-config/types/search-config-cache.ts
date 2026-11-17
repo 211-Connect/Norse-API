@@ -31,10 +31,8 @@ export interface SearchConfigCache {
 
   /**
    * The tenant's search engine setting (Payload: resource directory,
-   * `search.searchSettings.searchEngine`). `/v2/search` treats any value other
-   * than `ai_classification` as "AI classification off". Payload does not write
-   * this field to Redis yet; absent, null or unknown means AI classification
-   * on (today's behaviour).
+   * `search.searchSettings.searchEngine`). v1 setting; `/v2/search` does not
+   * read it (see `ai_classification`). Payload does not write it yet.
    */
   search_engine?: SearchEngineSetting | null;
 
@@ -55,4 +53,11 @@ export interface SearchConfigCache {
    * a cache written before it still works (`true` → `all`).
    */
   include_unlocated_in_area_search?: boolean;
+
+  /**
+   * v2 only: the tenant's "AI classification" switch for `/v2/search`. Only
+   * exactly `off` turns it off; absent, null or any other value is on.
+   * Payload does not write this field yet.
+   */
+  ai_classification?: 'on' | 'off' | null;
 }
