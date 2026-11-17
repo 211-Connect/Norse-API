@@ -32,13 +32,14 @@ import {
   UpdatePrintableDirectoryDeliveryDto,
 } from './dto';
 import { PrintableDirectoryDeliveryService } from './printable-directory-delivery.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Printable Directory Deliveries')
 @UseGuards(KeycloakGuard)
 @ApiBearerAuth()
 @Controller({
   path: 'printable-directories/:id/deliveries',
-  version: '1',
+  version: V1_AND_LEGACY,
 })
 @ApiTenantIdQuery()
 @ApiHeader({

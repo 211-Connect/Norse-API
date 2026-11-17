@@ -227,14 +227,17 @@ Scaffold `<module>/dto/`, `<module>.controller.ts`, `<module>.service.ts`, and
 - [src/main.ts](src/main.ts) sets up the global `HttpExceptionFilter`, the global
   `ValidationPipe` (see whitelist note above), Helmet, and — through
   [src/common/http/configure-http.ts](src/common/http/configure-http.ts), which the
-  e2e specs call too — CORS and header-based API versioning. `x-api-version` is
-  optional and defaults to `1` via a custom extractor
-  ([src/common/versioning/api-version.ts](src/common/versioning/api-version.ts));
-  `VersioningType.HEADER` with `defaultVersion` does **not** do that (a header-less
-  request matches only `VERSION_NEUTRAL` routes, ISS-2481). An `x-api-version` no
-  route is declared under is a `400` from `ApiVersionMiddleware`, which also sets
-  `x-norse-api-release` on every response (ISS-2482). Adding a route under a new
-  version means adding it to `SUPPORTED_API_VERSIONS`.
+  e2e specs call too — CORS and URI API versioning (ISS-2496). The path picks the
+  version: `/v1/search` is v1, `/v2/search` is v2
+  ([src/common/versioning/api-version.ts](src/common/versioning/api-version.ts)). A
+  v1 route uses `V1_AND_LEGACY` (the default for a controller without `@Version`),
+  so it also answers at the legacy unversioned path (`/search`) while the gateway
+  still strips `/norse-api/v1`. A path no route is declared under is a 404.
+  `x-api-version` no longer picks a version: `1` is ignored, anything else is a
+  `400` from `ApiVersionMiddleware`, which also sets `x-norse-api-release` on every
+  response (ISS-2482). `pathVersionOf` is the one place that reads the version from
+  a path. Swagger lists the unversioned paths only (`setup-swagger.ts`) and is
+  served at `/swagger` and `/v1/swagger`.
 - [src/app.module.ts](src/app.module.ts) wires infra providers and registers domain
   modules: Redis cache (`cache-manager-redis-store`), a Redis-backed rate limiter, and
   the MongoDB connection (Mongoose).

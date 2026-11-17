@@ -1,16 +1,9 @@
-import type { Request } from 'express';
+import { VERSION_NEUTRAL, VersioningType } from '@nestjs/common';
 import {
   apiVersioningOptions,
   pathVersionOf,
-  SUPPORTED_API_VERSIONS,
+  V1_AND_LEGACY,
 } from './api-version';
-
-const extract = (req: Partial<Request>): string =>
-  (
-    apiVersioningOptions as unknown as {
-      extractor: (r: unknown) => string;
-    }
-  ).extractor(req);
 
 describe('pathVersionOf', () => {
   it.each([
@@ -41,29 +34,16 @@ describe('pathVersionOf', () => {
   });
 });
 
-describe('apiVersioningOptions extractor', () => {
-  it('supports versions 1 and 2', () => {
-    expect(SUPPORTED_API_VERSIONS).toEqual(['1', '2']);
+describe('apiVersioningOptions (ISS-2496)', () => {
+  it('routes by the path only (URI versioning), never by a header', () => {
+    expect(apiVersioningOptions.type).toBe(VersioningType.URI);
+    expect('extractor' in apiVersioningOptions).toBe(false);
   });
 
-  it('returns 2 for a /v2/ path, whatever the header says', () => {
-    expect(extract({ originalUrl: '/v2/search?query=a', headers: {} })).toBe(
-      '2',
-    );
+  it('a route with no version of its own serves /v1/<route> and the legacy /<route>', () => {
+    expect(V1_AND_LEGACY).toEqual(['1', VERSION_NEUTRAL]);
     expect(
-      extract({ originalUrl: '/v2/search', headers: { 'x-api-version': '1' } }),
-    ).toBe('2');
-  });
-
-  it('falls back to url when originalUrl is missing', () => {
-    expect(extract({ url: '/v2/search', headers: {} })).toBe('2');
-  });
-
-  it('keeps the header, then the default 1, for other paths', () => {
-    expect(
-      extract({ originalUrl: '/search', headers: { 'x-api-version': '2' } }),
-    ).toBe('2');
-    expect(extract({ originalUrl: '/search', headers: {} })).toBe('1');
-    expect(extract({ originalUrl: '/search?x=/v2/', headers: {} })).toBe('1');
+      (apiVersioningOptions as { defaultVersion?: unknown }).defaultVersion,
+    ).toBe(V1_AND_LEGACY);
   });
 });

@@ -1,4 +1,4 @@
-import { Controller, Get, Logger, Res, VERSION_NEUTRAL } from '@nestjs/common';
+import { Controller, Get, Logger, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { timingSafeEqual } from 'node:crypto';
@@ -6,15 +6,16 @@ import type { Response } from 'express';
 import { Public } from 'src/auth/gateway/gateway-principal';
 import { SkipMetrics } from './skip-metrics.decorator';
 import { MetricsService } from './metrics.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 /**
  * Scrape endpoint for Prometheus (Kubernetes). Disabled unless
  * METRICS_ENDPOINT_ENABLED is on, so it stays inert on DigitalOcean
- * App Platform. VERSION_NEUTRAL because Prometheus does not send
- * x-api-version.
+ * App Platform. Served at /metrics (Prometheus scrapes it there) and at
+ * /v1/metrics, like every v1 route (ISS-2496).
  */
 @ApiExcludeController()
-@Controller({ path: 'metrics', version: VERSION_NEUTRAL })
+@Controller({ path: 'metrics', version: V1_AND_LEGACY })
 @Public()
 @SkipMetrics()
 export class MetricsController {

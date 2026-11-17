@@ -50,6 +50,7 @@ import {
   searchTypeFor,
 } from '../metrics/usage-metrics.service';
 import { Request } from 'express';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -186,7 +187,7 @@ export class SearchController {
   ) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
@@ -238,7 +239,7 @@ export class SearchController {
   }
 
   @Post()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiResponse({
@@ -373,7 +374,7 @@ export class SearchController {
   }
 
   @Get('pins')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiOperation({
@@ -405,7 +406,7 @@ export class SearchController {
   }
 
   @Get('predict')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,
@@ -438,7 +439,7 @@ export class SearchController {
   }
 
   @Get('re-rank')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
   @ApiResponse({
     status: 200,

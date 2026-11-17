@@ -22,6 +22,7 @@ import {
   RecordBlockedTrafficResponseDto,
 } from './dto';
 import { BlockedTrafficService } from './services/blocked-traffic.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 /**
  * Service-to-service ingest for Norse's blocked-traffic counters
@@ -31,7 +32,7 @@ import { BlockedTrafficService } from './services/blocked-traffic.service';
 @ApiTags('Blocked Traffic (Internal)')
 @UseGuards(InternalApiGuard)
 @ApiSecurity('x-internal-api-key')
-@Controller({ path: 'internal/blocked-traffic', version: '1' })
+@Controller({ path: 'internal/blocked-traffic', version: V1_AND_LEGACY })
 @ApiHeader({
   name: 'x-tenant-id',
   required: true,

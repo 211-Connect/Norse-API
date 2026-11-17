@@ -15,6 +15,7 @@ import {
 } from './dto/geocoding.dto';
 import { SetCdnCacheTTL } from '../common/decorators/cdn-cache-ttl.decorator';
 import { ONE_MONTH } from '../common/const';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Geocoding')
 @Controller('geocoding')
@@ -30,7 +31,7 @@ export class GeocodingController {
   constructor(private readonly geocodingService: GeocodingService) {}
 
   @Get('forward')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_MONTH)
   @ApiOperation({
     summary: 'Forward geocoding - convert address to coordinates',
@@ -58,7 +59,7 @@ export class GeocodingController {
   }
 
   @Get('reverse')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_MONTH)
   @ApiOperation({
     summary: 'Reverse geocoding - convert coordinates to address',

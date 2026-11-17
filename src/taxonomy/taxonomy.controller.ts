@@ -25,6 +25,7 @@ import {
 } from './dto/taxonomy-terms-query.dto';
 import { TaxonomySearchResponse } from './dto/taxonomy-response.dto';
 import { TaxonomyResponseDto } from './dto/taxonomy-response.dto';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Taxonomy')
 @Controller('taxonomy')
@@ -34,7 +35,7 @@ export class TaxonomyController {
   constructor(private readonly taxonomyService: TaxonomyService) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiResponse({
     status: 200,
     description:
@@ -87,7 +88,7 @@ export class TaxonomyController {
   }
 
   @Get('term')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get taxonomy terms by codes',
     description:

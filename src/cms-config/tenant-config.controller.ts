@@ -1,4 +1,4 @@
-import { Controller, Get, Param, VERSION_NEUTRAL } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { ApiTags, ApiParam, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { TenantConfigService } from './tenant-config.service';
 import {
@@ -6,9 +6,10 @@ import {
   SuggestionsConfigResponseDto,
   TopicsConfigResponseDto,
 } from './dto';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Tenant Config')
-@Controller({ path: 'tenant-config', version: VERSION_NEUTRAL })
+@Controller({ path: 'tenant-config', version: V1_AND_LEGACY })
 export class TenantConfigController {
   constructor(private readonly tenantConfigService: TenantConfigService) {}
 

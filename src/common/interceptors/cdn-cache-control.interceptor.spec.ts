@@ -57,79 +57,45 @@ describe('CdnCacheControlInterceptor', () => {
     expect(h['cache-control']).toBeUndefined();
   });
 
-  describe('a path the x-api-version header can switch', () => {
-    it('stores a v1 response and varies it on the version header', async () => {
-      const h = await run({ ttl: 3600, url: '/search?query=food' });
+  // ISS-2496: the path alone picks the version, so one URL answers one
+  // version. The x-api-version header never changes a stored body (1 is
+  // ignored, anything else is a 400), so nothing varies on it.
+  describe.each([
+    ['legacy path', '/search?query=food', undefined],
+    ['legacy path, header 1', '/search?query=food', '1'],
+    ['/v1 path', '/v1/search?query=food', undefined],
+    ['/v2 path', '/v2/search?query=food', undefined],
+    ['/v3 path', '/v3/search', undefined],
+  ])('%s', (_label, url, apiVersionHeader) => {
+    it('is stored, with no Vary on the version header', async () => {
+      const h = await run({ ttl: 3600, url, apiVersionHeader });
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBe('x-api-version');
-    });
-
-    it('stores an explicit v1 the same way', async () => {
-      const h = await run({
-        ttl: 3600,
-        url: '/search?query=food',
-        apiVersionHeader: '1',
-      });
-      expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBe('x-api-version');
-    });
-
-    // A cache keyed by URL only would hand this body to v1 callers of the
-    // same URL, and v1 bodies to v2 callers (ADR 0039 Decision 9, Question 11).
-    it('never stores a version the header picked over the default', async () => {
-      const h = await run({
-        ttl: 3600,
-        url: '/search?query=food',
-        apiVersionHeader: '2',
-      });
-      expect(h['cache-control']).toBe(NO_STORE);
-    });
-
-    it('appends to an existing Vary instead of replacing it', async () => {
-      const headers: Record<string, string> = { vary: 'Origin' };
-      const res = {
-        statusCode: 200,
-        setHeader: (k: string, v: string) => (headers[k.toLowerCase()] = v),
-        getHeader: (k: string) => headers[k.toLowerCase()],
-      };
-      const context = {
-        getHandler: () => () => undefined,
-        switchToHttp: () => ({
-          getResponse: () => res,
-          getRequest: () => ({ originalUrl: '/search', headers: {} }),
-        }),
-      } as unknown as ExecutionContext;
-      await lastValueFrom(
-        new CdnCacheControlInterceptor({
-          get: () => 3600,
-        } as unknown as Reflector).intercept(context, {
-          handle: () => of({}),
-        }),
-      );
-      expect(headers['vary']).toBe('Origin, x-api-version');
+      expect(h['vary']).toBeUndefined();
     });
   });
 
-  describe('a version in the path', () => {
-    it('stores the response with no Vary on the header', async () => {
-      const h = await run({
-        ttl: 3600,
-        url: '/v2/search?query=food',
-        apiVersionHeader: '1',
-      });
-      expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBeUndefined();
-    });
-
-    it('treats any /v<N> path the same, not only /v2', async () => {
-      const h = await run({
-        ttl: 3600,
-        url: '/v3/search',
-        apiVersionHeader: '3',
-      });
-      expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBeUndefined();
-    });
+  it('keeps an existing Vary as it is', async () => {
+    const headers: Record<string, string> = { vary: 'Origin' };
+    const res = {
+      statusCode: 200,
+      setHeader: (k: string, v: string) => (headers[k.toLowerCase()] = v),
+      getHeader: (k: string) => headers[k.toLowerCase()],
+    };
+    const context = {
+      getHandler: () => () => undefined,
+      switchToHttp: () => ({
+        getResponse: () => res,
+        getRequest: () => ({ originalUrl: '/search', headers: {} }),
+      }),
+    } as unknown as ExecutionContext;
+    await lastValueFrom(
+      new CdnCacheControlInterceptor({
+        get: () => 3600,
+      } as unknown as Reflector).intercept(context, {
+        handle: () => of({}),
+      }),
+    );
+    expect(headers['vary']).toBe('Origin');
   });
 
   describe('a response its handler marked not storable', () => {
