@@ -801,6 +801,14 @@ export class HybridSearchService {
         .map((t) => t.name)
         .join(', ')}]`,
     );
+    const unboosted = boostTaxonomies
+      .filter((t, i) => t.score === 0 && predictedTaxonomies[i].score !== 0)
+      .map((t) => t.code);
+    if (unboosted.length > 0) {
+      this.logger.log(
+        `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | no group boost (query does not name the group): [${unboosted.join(', ')}]`,
+      );
+    }
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -822,7 +830,7 @@ export class HybridSearchService {
             preference,
             queryStr,
             queryVector,
-            predicted: predictedTaxonomies,
+            predicted: boostTaxonomies,
             filters: [...baseFilters],
             coords,
             distance: distance ?? 0,
@@ -919,7 +927,7 @@ export class HybridSearchService {
         filters: baseFilters,
         queryStr,
         queryVector: queryVector!,
-        predicted: predictedTaxonomies,
+        predicted: boostTaxonomies,
         wordRarity,
         needs: boostActive ? activeNeeds : [],
         earlyLists,
@@ -933,7 +941,7 @@ export class HybridSearchService {
           preference,
           queryStr,
           queryVector,
-          predicted: predictedTaxonomies,
+          predicted: boostTaxonomies,
           filters: baseFilters,
           coords,
           distance: distance ?? 0,
