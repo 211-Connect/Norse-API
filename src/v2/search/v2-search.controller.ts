@@ -22,7 +22,10 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CustomHeaders } from '../../common/decorators/CustomHeaders';
-import { SetCdnCacheTTL } from '../../common/decorators/cdn-cache-ttl.decorator';
+import {
+  RequireCdnUrlMirrors,
+  SetCdnCacheTTL,
+} from '../../common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from '../../common/const/one-hour';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
 import { HeadersDto } from '../../common/dto/headers.dto';
@@ -47,7 +50,10 @@ import { V2SearchService } from './v2-search.service';
  * shared `CdnCacheControlInterceptor` writes the header. The service marks an
  * answer with an emergency question, or a failed check, as not storable
  * (`markNotStorable`), so it gets `no-store`. On `/search` the header picked
- * v2, so the interceptor never lets a shared cache store it there.
+ * v2, so the interceptor never lets a shared cache store it there. The body
+ * depends on `x-tenant-id` and `accept-language`, and a URL-keyed CDN ignores
+ * `Vary`: so the answer is storable only with the `tenant_id` and `locale`
+ * URL mirrors; without them it is `private, no-store` (not an error).
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
  * generates the frontend SDK, and a draft must not reach it. Remove
@@ -71,6 +77,7 @@ export class V2SearchController {
   @Version('2')
   @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
+  @RequireCdnUrlMirrors()
   @ApiOperation({
     summary:
       'Search with intent and clarification questions, the emergency question first (draft)',

@@ -2,6 +2,7 @@ import { CallHandler, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { lastValueFrom, of } from 'rxjs';
 import {
+  CDN_REQUIRES_URL_MIRRORS_KEY,
   CdnCacheControlInterceptor,
   markNotStorable,
 } from './cdn-cache-control.interceptor';
@@ -12,6 +13,7 @@ const PUBLIC_HOUR = 'public, max-age=3600, s-maxage=3600';
 function run(opts: {
   ttl: number | undefined;
   url: string;
+  requireMirrors?: boolean;
   apiVersionHeader?: string;
   status?: number;
   body?: unknown;
@@ -25,6 +27,9 @@ function run(opts: {
   const req = {
     originalUrl: opts.url,
     url: opts.url,
+    query: Object.fromEntries(
+      new URL(opts.url, 'http://x').searchParams.entries(),
+    ),
     headers:
       opts.apiVersionHeader === undefined
         ? {}
@@ -34,7 +39,10 @@ function run(opts: {
     getHandler: () => () => undefined,
     switchToHttp: () => ({ getResponse: () => res, getRequest: () => req }),
   } as unknown as ExecutionContext;
-  const reflector = { get: () => opts.ttl } as unknown as Reflector;
+  const reflector = {
+    get: (key: string) =>
+      key === CDN_REQUIRES_URL_MIRRORS_KEY ? opts.requireMirrors : opts.ttl,
+  } as unknown as Reflector;
   const next: CallHandler = { handle: () => of(opts.body ?? { ok: true }) };
   return lastValueFrom(
     new CdnCacheControlInterceptor(reflector).intercept(context, next),
@@ -61,7 +69,7 @@ describe('CdnCacheControlInterceptor', () => {
     it('stores a v1 response and varies it on the version header', async () => {
       const h = await run({ ttl: 3600, url: '/search?query=food' });
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBe('x-api-version');
+      expect(h['vary']).toBe('x-api-version, x-tenant-id, accept-language');
     });
 
     it('stores an explicit v1 the same way', async () => {
@@ -71,7 +79,7 @@ describe('CdnCacheControlInterceptor', () => {
         apiVersionHeader: '1',
       });
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBe('x-api-version');
+      expect(h['vary']).toBe('x-api-version, x-tenant-id, accept-language');
     });
 
     // A cache keyed by URL only would hand this body to v1 callers of the
@@ -106,7 +114,9 @@ describe('CdnCacheControlInterceptor', () => {
           handle: () => of({}),
         }),
       );
-      expect(headers['vary']).toBe('Origin, x-api-version');
+      expect(headers['vary']).toBe(
+        'Origin, x-api-version, x-tenant-id, accept-language',
+      );
     });
   });
 
@@ -118,7 +128,7 @@ describe('CdnCacheControlInterceptor', () => {
         apiVersionHeader: '1',
       });
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBeUndefined();
+      expect(h['vary']).toBe('x-tenant-id, accept-language');
     });
 
     it('treats any /v<N> path the same, not only /v2', async () => {
@@ -128,7 +138,61 @@ describe('CdnCacheControlInterceptor', () => {
         apiVersionHeader: '3',
       });
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
-      expect(h['vary']).toBeUndefined();
+      expect(h['vary']).toBe('x-tenant-id, accept-language');
+    });
+  });
+
+  describe('a route that needs the tenant_id and locale URL mirrors', () => {
+    const url = '/v2/search?query=food';
+    const T = 'tenant_id=0e50850f-6a7f-49c1-9af8-7d124e2a7008';
+
+    // A CDN keyed by URL only (DigitalOcean App Platform / Cloudflare, verified
+    // 2026-11-17) ignores Vary, so only the URL can tell two tenants apart.
+    it('is no-store when both mirrors are missing', async () => {
+      const h = await run({ ttl: 3600, url, requireMirrors: true });
+      expect(h['cache-control']).toBe(NO_STORE);
+    });
+
+    it('is no-store when only tenant_id is present', async () => {
+      const h = await run({
+        ttl: 3600,
+        url: `${url}&${T}`,
+        requireMirrors: true,
+      });
+      expect(h['cache-control']).toBe(NO_STORE);
+    });
+
+    it('is no-store when only locale is present', async () => {
+      const h = await run({
+        ttl: 3600,
+        url: `${url}&locale=en`,
+        requireMirrors: true,
+      });
+      expect(h['cache-control']).toBe(NO_STORE);
+    });
+
+    it('is no-store for an empty mirror value', async () => {
+      const h = await run({
+        ttl: 3600,
+        url: `${url}&tenant_id=&locale=en`,
+        requireMirrors: true,
+      });
+      expect(h['cache-control']).toBe(NO_STORE);
+    });
+
+    it('is public with Vary when both mirrors are present', async () => {
+      const h = await run({
+        ttl: 3600,
+        url: `${url}&${T}&locale=en`,
+        requireMirrors: true,
+      });
+      expect(h['cache-control']).toBe(PUBLIC_HOUR);
+      expect(h['vary']).toBe('x-tenant-id, accept-language');
+    });
+
+    it('does not change a route that does not ask for the mirrors', async () => {
+      const h = await run({ ttl: 3600, url });
+      expect(h['cache-control']).toBe(PUBLIC_HOUR);
     });
   });
 
