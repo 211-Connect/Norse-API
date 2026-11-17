@@ -1,8 +1,8 @@
 name: PR tests
 
-# Runs the search and v2 unit tests on every pull request.
-# These tests mock fetch and need no Elasticsearch, Redis, network or secrets.
-# Path patterns, not file lists: new tests under these folders run automatically.
+# Runs the whole unit test suite on every pull request, so a new spec in any
+# folder runs without a change here. The tests mock their I/O and need no
+# Elasticsearch, Redis, network or secrets.
 
 on:
   pull_request:
@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 jobs:
-  search-and-v2-tests:
-    name: Jest (src/search, src/v2)
+  unit-tests:
+    name: Jest
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -43,5 +43,13 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit -p tsconfig.json
 
-      - name: Run search and v2 tests
-        run: npx jest --ci --testPathPatterns 'src/(search|v2)/'
+      # These 5 suites already fail on development and are skipped until they
+      # are fixed. Remove a line here when its suite passes again.
+      - name: Run unit tests
+        run: >-
+          npx jest --ci --testPathIgnorePatterns
+          'src/analytics/analytics\.controller\.spec\.ts$'
+          'src/analytics/services/umami-analytics\.service\.spec\.ts$'
+          'src/cms-config/tenant-config\.controller\.spec\.ts$'
+          'src/taxonomy/taxonomy\.controller\.spec\.ts$'
+          'src/taxonomy-scorecard/taxonomy-scorecard\.service\.spec\.ts$'
