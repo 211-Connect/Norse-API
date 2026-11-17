@@ -791,7 +791,7 @@ export class HybridSearchService {
     // v2 only (ISS-2693): a "who it is for" code keeps its boost only when the
     // query names the group. Only the boost builders read this list.
     const boostTaxonomies = v2
-      ? applyPopulationWeight(predictedTaxonomies, queryStr)
+      ? applyPopulationWeight(predictedTaxonomies, queryStr, lang)
       : predictedTaxonomies;
 
     this.logger.log(
