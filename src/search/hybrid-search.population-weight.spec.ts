@@ -149,6 +149,57 @@ describe('HybridSearchService - population weight (ISS-2693)', () => {
     expect(Object.keys(boosts).sort()).toEqual([DV, HOMELESS_MEN, MEN].sort());
   });
 
+  // Every Elasticsearch request the search sent, not just the main one: the
+  // fused lists, the cutoff probe and the need-boost top-score request each
+  // build their own taxonomy clauses.
+  const requestsCarrying = (code: string) =>
+    requests.filter((r) =>
+      JSON.stringify(r).includes(`"taxonomies.code":${JSON.stringify(code)}`),
+    );
+
+  it('v2 default (fused) path: no request boosts the Men codes', async () => {
+    await run('my boyfriend hits me', 'v2');
+    expect(requestsCarrying(DV).length).toBeGreaterThan(0);
+    expect(requestsCarrying(MEN)).toEqual([]);
+    expect(requestsCarrying(HOMELESS_MEN)).toEqual([]);
+  });
+
+  it('v2 with the cutoff and the need boost on: no request boosts the Men codes', async () => {
+    (service as any).needBoostEnabled = true;
+    await service.searchHybrid({
+      headers,
+      query: {
+        query: 'my boyfriend hits me',
+        page: 1,
+        limit: 25,
+        filters: {},
+        distance: 0,
+        taxonomy: [] as string[],
+        relevance_cutoff: 'on',
+      } as any,
+      needScores: [{ code: 'N-SAF-01', tier: 'tier2', score: 0.98 }],
+      rankingVersion: 'v2',
+    } as any);
+    expect(requestsCarrying(DV).length).toBeGreaterThan(1);
+    expect(requestsCarrying(MEN)).toEqual([]);
+    expect(requestsCarrying(HOMELESS_MEN)).toEqual([]);
+  });
+
+  it('logs never carry the query text, and name the codes whose boost was removed', async () => {
+    const logs: string[] = [];
+    const logger = (service as any).logger;
+    for (const level of ['log', 'warn', 'debug', 'verbose', 'error']) {
+      jest.spyOn(logger, level).mockImplementation((...args: unknown[]) => {
+        logs.push(args.map((a) => String(a)).join(' '));
+      });
+    }
+    await run('my boyfriend hits me', 'v2');
+    expect(logs.filter((l) => l.includes('boyfriend'))).toEqual([]);
+    expect(
+      logs.some((l) => l.includes('no group boost') && l.includes(MEN)),
+    ).toBe(true);
+  });
+
   it('v2 "shelter for men": the Men clause is present', async () => {
     await run('shelter for men', 'v2');
     const boosts = taxonomyBoosts(mainRequest());
