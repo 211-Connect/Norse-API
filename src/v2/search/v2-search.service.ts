@@ -213,7 +213,12 @@ export class V2SearchService {
     const { needCounts, totalCounted, ...response } = await this.hybridSearch
       .searchHybrid({
         headers,
-        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+        query: {
+          ...v1Fields,
+          query_type: 'hybrid',
+          // On by default with text (DTO); a browse has nothing to trim.
+          ...(!hasText && { relevance_cutoff: 'off' }),
+        } as SearchResourcesQueryDto,
         rankingVersion: 'v2',
         ...(queryVector && { queryVector }),
         needScores,
