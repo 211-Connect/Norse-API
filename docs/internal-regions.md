@@ -6,12 +6,12 @@ its boundary through two internal routes over the Elasticsearch **alias
 Region seed (Dagster PR #602, INTEG-023). See architecture-docs ADR 0024 (ArchitectureDocs PR #31) and
 INTEG-024.
 
-| Route | Query | Returns |
-| --- | --- | --- |
-| `GET /internal/regions` | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state, centroid? }] }` |
-| `GET /internal/regions/:id` | — | `{ id, type, name, state, centroid?, fips?, zip?, geometry, attribution? }` |
-| `GET /internal/regions/places` | `state`, `limit` (default 25, max 100), `cursor` | `{ items: [{ id, name, state, slug, place_type }], next_cursor }` |
-| `GET /internal/regions/places/:slug` | — | `{ id, type, name, state, fips, slug, lsad, place_type, centroid, bbox, geometry }` |
+| Route                                | Query                                                           | Returns                                                                             |
+| ------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GET /internal/regions`              | `q` (required), `types`, `states`, `limit` (default 10, max 25) | `{ items: [{ id, type, name, state, centroid? }] }`                                 |
+| `GET /internal/regions/:id`          | —                                                               | `{ id, type, name, state, centroid?, fips?, zip?, geometry, attribution? }`         |
+| `GET /internal/regions/places`       | `state`, `limit` (default 25, max 100), `cursor`                | `{ items: [{ id, name, state, slug, place_type }], next_cursor }`                   |
+| `GET /internal/regions/places/:slug` | —                                                               | `{ id, type, name, state, fips, slug, lsad, place_type, centroid, bbox, geometry }` |
 
 `centroid` is `{ lat, lng }` from the seed's `[lon, lat]`, present for counties and ZIPs (the seed has none for states). ServiceNet biases address search toward it (ISS-1875).
 
@@ -52,9 +52,12 @@ header is optional and defaults to `1`.
 
 ## Region ids
 
-`state:MO` (postal code), `county:29095` (5-digit FIPS), `zip:64130`. The
-`:id` route validates the form exactly
-(`^(state:[A-Z]{2}|county:\d{5}|zip:\d{5})$`): a malformed id is 400, a
+The same ids are what public `GET /search` takes as `region` and `GET
+/regions/:id` returns outlines for — see [area-search.md](area-search.md).
+
+`state:MO` (postal code), `county:29095` (5-digit FIPS), `place:5363000`
+(7-digit Census place GEOID), `zip:64130`. The `:id` route validates the form
+exactly (`^(state:[A-Z]{2}|county:\d{5}|place:\d{7}|zip:\d{5})$`): a malformed id is 400, a
 well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
 
 ## Typeahead
@@ -71,17 +74,18 @@ well-formed id with no Region is 404. The colon may be sent raw or as `%3A`.
   boosted `term` would instead scale with how rare the term is: a boost of 3
   on `type: state` scored about 20.
 
-  | Boost | Adds | When |
-  | --- | --- | --- |
-  | Exact state | 100 | The whole text is a state's postal code or name ("MO", "missouri", "new york"). |
-  | State name prefix | 10 | At least 3 characters, and a state's full name starts with the text ("kan" → Kansas; "miss" → Mississippi, Missouri; "new" → the four New states). The exact state is not counted again here. |
-  | Type order | state 3, county 2, ZIP 0 | Always, on the text branch, so state > county > ZIP when name scores are close. "jackson mo" puts Jackson County, MO (7.5 + 2) above the ZIP for Jackson, MO (8.5 + 0). |
-  | `states` | 4 | The Region is in one of the listed states. Enough for an in-state ZIP (0 + 4) to beat an out-of-state county (+2) on an equal name match. |
+  | Boost             | Adds                     | When                                                                                                                                                                                          |
+  | ----------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Exact state       | 100                      | The whole text is a state's postal code or name ("MO", "missouri", "new york").                                                                                                               |
+  | State name prefix | 10                       | At least 3 characters, and a state's full name starts with the text ("kan" → Kansas; "miss" → Mississippi, Missouri; "new" → the four New states). The exact state is not counted again here. |
+  | Type order        | state 3, county 2, ZIP 0 | Always, on the text branch, so state > county > ZIP when name scores are close. "jackson mo" puts Jackson County, MO (7.5 + 2) above the ZIP for Jackson, MO (8.5 + 0).                       |
+  | `states`          | 4                        | The Region is in one of the listed states. Enough for an in-state ZIP (0 + 4) to beat an out-of-state county (+2) on an equal name match.                                                     |
 
   The two state boosts are alternatives to the name match: a state can match
   on them alone. That is how "DC" finds District of Columbia although its
   name holds no "dc" word. Text of 1 or 2 characters gets only the exact-code
   rule, so "ok" lifts Oklahoma and nothing else.
+
 - **`states` is a bias, not a filter.** Other states still appear. It lets a
   tenant's own area rank first among similar matches.
 - **`types`** (`state`, `county`, `zip`) filters. `types` and `states` take a

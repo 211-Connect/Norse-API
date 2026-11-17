@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import {
+  AREA_MATCH_VALUES,
+  AreaMatch,
+} from 'src/search/internal/area/area-match';
 
 export type PrintableDirectoryDocument = HydratedDocument<PrintableDirectory>;
 
@@ -110,6 +114,14 @@ export class PrintableDirectoryDefaultQueryConfig {
 
   @Prop({ type: Number, default: null })
   radius?: number | null;
+
+  /** Region the directory is scoped to (docs/area-search.md); wins over radius. */
+  @Prop({ type: String, default: null })
+  regionId?: string | null;
+
+  /** `area_match` for the Region; null means the tenant default. */
+  @Prop({ type: String, enum: [...AREA_MATCH_VALUES, null], default: null })
+  areaMatch?: AreaMatch | null;
 }
 
 @Schema({ _id: false })

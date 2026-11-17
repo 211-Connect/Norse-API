@@ -14,6 +14,7 @@ import {
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
+import { AreaFilter } from './internal/area/area-match';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
   SearchHit,
@@ -80,6 +81,8 @@ type HybridSearchOptions = {
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
+  /** An area search, as `SearchService` settled it. */
+  area?: AreaFilter;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -397,6 +400,7 @@ export class HybridSearchService {
       geoType: geo_type,
       organizationId: organization_id,
       geometry,
+      area: options.area,
     };
     const preference = shardPreference('hybrid', searchFingerprint(identity));
 
@@ -454,6 +458,7 @@ export class HybridSearchService {
       geo_type,
       geometry,
       organization_id,
+      options.area,
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
