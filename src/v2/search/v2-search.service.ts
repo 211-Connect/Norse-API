@@ -40,6 +40,18 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 // sent to classify is cut to this length. The search itself uses the full query.
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
 
+/**
+ * At most `max` UTF-16 units, never ending on the first half of a surrogate
+ * pair: half an emoji is not valid text for ml-broker, and a failed classify
+ * hides the emergency band (David, PR #279 review).
+ */
+function cutWholeCharacters(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  const splitsPair = last >= 0xd800 && last <= 0xdbff;
+  return text.slice(0, splitsPair ? max - 1 : max);
+}
+
 const TOO_COMPLEX_TYPE = 'too_complex_to_determinize_exception';
 
 /** Elasticsearch said the index does not exist (`hybrid_search_resources_<lang>`). */
@@ -144,7 +156,7 @@ export class V2SearchService {
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
       ? await this.classifier.classify(
-          text.trim().slice(0, CLASSIFY_MAX_TEXT_LENGTH),
+          cutWholeCharacters(text.trim(), CLASSIFY_MAX_TEXT_LENGTH),
           headers['x-tenant-id'],
           aiClassification,
         )

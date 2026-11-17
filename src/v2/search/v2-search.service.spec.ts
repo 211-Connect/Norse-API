@@ -304,6 +304,34 @@ describe('V2SearchService', () => {
     expect(searchHybrid.mock.calls[0][0].query.query).toBe(long);
   });
 
+  // A cut inside a surrogate pair would send ml-broker half an emoji, which
+  // can fail the call and lose the emergency band (David, PR #279 review).
+  describe('the 512 cut never splits a character', () => {
+    const loneSurrogate =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const sent = async (query: string) => {
+      const { service, classify } = build({});
+      await service.search({ headers, query: dto({ query }) });
+      return classify.mock.calls[0][0] as string;
+    };
+
+    it('drops a pair that would straddle the cut', async () => {
+      const text = await sent('a'.repeat(511) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(511));
+      expect(text).not.toMatch(loneSurrogate);
+    });
+
+    it('keeps a pair that ends exactly at the cut', async () => {
+      const text = await sent('a'.repeat(510) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(510) + '😀');
+      expect(text).toHaveLength(512);
+    });
+
+    it('never sends a lone surrogate for an all-emoji query', async () => {
+      expect(await sent('😀'.repeat(300))).not.toMatch(loneSurrogate);
+    });
+  });
+
   it('leaves a 512-character query unchanged', async () => {
     const { service, classify } = build({});
     const text = 'b'.repeat(512);
