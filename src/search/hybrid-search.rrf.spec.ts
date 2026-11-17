@@ -31,6 +31,8 @@ const mainResponse = {
         _index: 'hybrid_search_resources_en',
         _id: 'doc-1',
         _score: 42,
+        // A pinned query sorts by its ~1.7e38 score (ISS-2766).
+        sort: [1.7e38, 7],
         _source: { name: 'Shelter', facets: {}, facets_en: {} },
       },
     ],
@@ -293,6 +295,20 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     );
     expect(response.search.hits.max_score).toBeNull();
     expect(response.search.hits.total.value).toBe(1234);
+  });
+
+  // `_score` is nulled on a fused search because the pinned score means
+  // nothing to a caller; `sort` carries the same number, and fast-path pages
+  // return none, so pages of one search differed (David, PR #279 review).
+  it('2b. fused hits carry no sort; v1 hits keep theirs', async () => {
+    const fused: any = await run({});
+    expect(mainRequest().query.pinned).toBeDefined();
+    expect(fused.search.hits.hits[0]._score).toBeNull();
+    expect(fused.search.hits.hits[0]).not.toHaveProperty('sort');
+
+    await build();
+    const v1: any = await run({}, { rankingVersion: undefined });
+    expect(v1.search.hits.hits[0].sort).toEqual([1.7e38, 7]);
   });
 
   it('3. v2 with coords: no list requests and no pinned query', async () => {

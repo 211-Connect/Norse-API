@@ -487,9 +487,15 @@ export class HybridSearchService {
           ...hit._source,
           facets: normalizedFacets,
         }),
-        // With needs sent, sort[0] is the internal block number. It stays server side.
-        sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
-          number[] | undefined,
+        // With needs sent, sort[0] is the internal block number. It stays server
+        // side. A fused search sorts by the pinned score (~1.7e38), so it has
+        // no sort to show, like the fast-path pages.
+        ...(fused
+          ? {}
+          : {
+              sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+                number[] | undefined,
+            }),
         ...(needsSent
           ? { matched_needs: this.readMatchedNeeds(hit.fields) }
           : {}),
