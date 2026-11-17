@@ -274,6 +274,27 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   });
 
   describe('when a cut is found', () => {
+    // The need counts feed option results_count, which finalize compares with
+    // the result total; both must count the same cut population (David, PR
+    // #279 review).
+    it('counts needs over the kept ids, the same population as the results', async () => {
+      await build();
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, relevance_cutoff: 'on' },
+        countCodes: ['N-FOD'],
+      } as any);
+      const count = requests.find((r) => r.aggs?.need_counts);
+      const main = requests.find((r) => !isProbe(r) && !r.aggs?.need_counts);
+      const idsOf = (filters: any[]) =>
+        filters.find((clause: any) => clause.ids)?.ids.values;
+
+      expect(idsOf(count.query.bool.filter)).toHaveLength(18);
+      expect(idsOf(count.query.bool.filter)).toEqual(
+        idsOf(main.query.function_score.query.bool.filter),
+      );
+    });
+
     it('constrains the main query to the kept ids', async () => {
       await run();
 

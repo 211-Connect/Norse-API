@@ -768,9 +768,6 @@ export class HybridSearchService {
         .join(', ')}]`,
     );
 
-    // Counts run over the filters above, before the relevance cut adds an ids filter.
-    const countFilters = [...baseFilters];
-
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
@@ -976,8 +973,10 @@ export class HybridSearchService {
             size: 0,
             track_total_hits: false,
             // Filters alone define the matched population (should clauses only
-            // rank), so a plain filter query counts the same set.
-            query: { bool: { filter: countFilters } },
+            // rank), so a plain filter query counts the same set. Built after
+            // the relevance cut, so it counts the cut population: option
+            // results_count and the result total stay comparable in finalize.
+            query: { bool: { filter: [...baseFilters] } },
             aggs: {
               need_counts: {
                 terms: {
