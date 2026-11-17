@@ -40,12 +40,20 @@
  *  5. WOMEN AND CHILDREN  "women and children" (either order) is a request
  *           for the Women code.
  *
+ * 7. QUESTION  the group is the subject of get, find, apply, stay, qualify
+ *    and similar in a question: "where can seniors get free meals", "do
+ *    shelters take men". Not when the query holds a violence word.
+ * 8. CARE STATEMENT  "my mom is elderly and needs meals", "my husband is a
+ *    veteran and needs a job" (non-sex codes, same guards as 6).
  * 6. THIRD PARTY  (age, military and other non-sex codes only) a possessive
  *    sits right before it: "my elderly mother needs food". Not for older,
  *    younger, young, old, adult, little, big, grown. The pattern gives no
  *    boost when the query holds a violence or threat word anywhere (hit,
  *    beat, attack, threaten, abuse, hurt, harass, stalk, follow, ...):
- *    "my veteran husband hits me" names the abuser. Sex and gender codes
+ *    "my veteran husband hits me" names the abuser. The pattern also gives
+ *    no boost when "me" or "my money/phone/..." follows the mention within 6
+ *    words ("my elderly dad shoves me"), except after need and help verbs.
+ *    Violence words match by stem ("chokes", "grabbed", "scares"). Sex and gender codes
  *    never use this pattern.
  *
  * The SERVICE pattern also fails for a singular "man" or "woman" with a
@@ -113,6 +121,9 @@ const IRREGULAR: Readonly<Record<string, string>> = {
   woman: 'women',
   children: 'child',
   people: 'person',
+  teenage: 'teen',
+  teenager: 'teen',
+  vet: 'veteran',
 };
 
 export function normalizeToken(tok: string): string {
@@ -120,7 +131,10 @@ export function normalizeToken(tok: string): string {
   if (Object.prototype.hasOwnProperty.call(IRREGULAR, t)) return IRREGULAR[t];
   if (t.length > 4 && t.endsWith('ies')) return `${t.slice(0, -3)}y`;
   if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) {
-    return t.slice(0, -1);
+    const stem = t.slice(0, -1);
+    return Object.prototype.hasOwnProperty.call(IRREGULAR, stem)
+      ? IRREGULAR[stem]
+      : stem;
   }
   return t;
 }
@@ -200,7 +214,7 @@ const NEGATORS = set(
 );
 const NEGATION_BRIDGE = set(
   'for to be is are just only meant intended open suitable available ' +
-    'allowed want need any place one',
+    'allowed want need any place one take takes accept accepts allow allows house houses',
 );
 const SELF_VERBS = set('am are was were');
 const SELF_SHORT = set('im as being');
@@ -208,17 +222,51 @@ const ARTICLES = set('a an');
 const POSSESSIVES = set('my our his her their');
 /** Not a person who needs help when it follows "my": "my older brother". */
 const COMPARATIVES = set('older younger young old adult little big grown');
-/** Violence and threat words (own list; no shared list exists in the repo). */
-const VIOLENCE = set(
-  'hit hits hitting beat beats beating beaten attack attacks attacked ' +
-    'attacking threaten threatens threatened threatening abuse abuses ' +
-    'abused abusing abusive hurt hurts hurting harass harasses harassed ' +
-    'harassing stalk stalks stalked stalking follow follows followed ' +
-    'following assault assaults assaulted assaulting violent punch punched ' +
-    'slap slapped choke choked kill kills killed',
+/**
+ * Violence and threat words, matched by stem at the start of the word (own
+ * list; no shared list exists in the repo). "rap" matches only rape forms, so
+ * "rapid" and "therapy" do not match. "shot" is skipped after flu, covid and
+ * similar words.
+ */
+const VIOLENCE_RE = new RegExp(
+  '^(hit|hits|hitting|beat|beats|beating|beaten|attack|threat|abus|hurt|' +
+    'harass|stalk|assault|violen|punch|slap|chok|strangl|molest|kick|shov|' +
+    'grab|stab|shoot|kill|afraid|follow(s|ed|ing)?$|' +
+    'rap(e|es|ed|ing|ist|ists)$|scar(e|es|ed|y|ing)$|shot$)',
 );
-const hasViolence = (t: Tok[], from = 0, to = t.length): boolean =>
-  t.slice(from, to).some((x) => VIOLENCE.has(x.raw));
+const NOT_THAT_SHOT = set('flu covid booster vaccine tetanus allergy free');
+const isViolence = (t: Tok[], k: number): boolean => {
+  const raw = t[k].raw;
+  if (!VIOLENCE_RE.test(raw)) return false;
+  return !(raw === 'shot' && NOT_THAT_SHOT.has(t[k - 1]?.raw ?? ''));
+};
+const hasViolence = (t: Tok[], from = 0, to = t.length): boolean => {
+  for (let k = from; k < Math.min(to, t.length); k++) {
+    if (isViolence(t, k)) return true;
+  }
+  return false;
+};
+
+/**
+ * Shape guard for the possessive pattern: after the mention, "me" or "my
+ * money" means the person acts on the searcher ("my elderly dad shoves me",
+ * "my elderly father controls my money"). Not after a need or help verb:
+ * "my elderly mother needs me to find food".
+ */
+const ASKING = set(
+  'need needs want wants ask asks asked require requires help helps tell show give let',
+);
+const MY_THINGS = set(
+  'money phone car check checks card cards keys paycheck property mail ' +
+    'wallet id passport benefits',
+);
+function actsOnSearcher(t: Tok[], i: number): boolean {
+  for (let k = i + 1; k < t.length && k <= i + 6; k++) {
+    if (t[k].raw === 'me' && !ASKING.has(t[k - 1]?.raw ?? '')) return true;
+    if (t[k].raw === 'my' && MY_THINGS.has(t[k + 1]?.raw ?? '')) return true;
+  }
+  return false;
+}
 const SELF_ADVERBS = set('just also now currently really truly');
 /** Never a describing word in "i am a ___ man": links, verbs, pronouns, people. */
 const NOT_DESCRIBING = set(
@@ -349,6 +397,59 @@ function isDescribing(raw: string): boolean {
   return raw.length >= 2 && !NOT_DESCRIBING.has(raw) && !raw.endsWith('ing');
 }
 
+const AUX = set('can do does will should could may');
+const WH = set('where how what who when which');
+const Q_VERBS = set(
+  'get find apply stay qualify access receive use sleep eat go',
+);
+const TAKE_VERBS = set(
+  'take takes accept accepts allow allows house houses serve serves admit admits welcome',
+);
+const NEED_WORDS = set('needs need living lives looking wants struggling');
+
+/** 7. QUESTION: "where can seniors get free meals", "do shelters take men". */
+function questionForm(t: Tok[], i: number, c: Context): boolean {
+  if (hasViolence(t)) return false;
+  let k = i - 1;
+  while (
+    k >= 0 &&
+    i - k <= 3 &&
+    (FILLERS.has(t[k].raw) || c.all.has(t[k].norm))
+  )
+    k--;
+  if (
+    k >= 0 &&
+    AUX.has(t[k].raw) &&
+    (k === 0 || WH.has(t[k - 1].raw)) &&
+    Q_VERBS.has(t[i + 1]?.raw ?? '')
+  ) {
+    return true;
+  }
+  return (
+    TAKE_VERBS.has(t[i - 1]?.raw ?? '') &&
+    isServiceNoun(t[i - 2]?.raw ?? '') &&
+    [t[i - 3]?.raw, t[i - 4]?.raw].some((r) => AUX.has(r ?? ''))
+  );
+}
+
+/** 8. CARE STATEMENT: "my mom is elderly and needs meals", "my husband is a veteran and needs a job". */
+function careStatement(t: Tok[], i: number): boolean {
+  let k = i - 1;
+  while (
+    k >= 0 &&
+    i - k <= 3 &&
+    (ARTICLES.has(t[k].raw) || FILLERS.has(t[k].raw))
+  )
+    k--;
+  if (k < 2 || !['is', 'was'].includes(t[k].raw)) return false;
+  if (!POSSESSIVES.has(t[k - 2].raw) && !POSSESSIVES.has(t[k - 3]?.raw ?? ''))
+    return false;
+  for (let n = i + 1; n < t.length && n <= i + 3; n++) {
+    if (NEED_WORDS.has(t[n].raw)) return true;
+  }
+  return false;
+}
+
 /** 5. WOMEN AND CHILDREN: "women and children shelter", "children and women". */
 function womenAndChildren(t: Tok[], i: number): boolean {
   if (t[i].norm !== 'women') return false;
@@ -387,10 +488,12 @@ function isRequest(t: Tok[], i: number, c: Context): boolean {
     (!c.actorProne && (t[i + 1]?.raw === 'only' || t[i - 1]?.raw === 'only')) ||
     selfDescribed(t, i) ||
     womenAndChildren(t, i) ||
+    questionForm(t, i, c) ||
     (!c.actorProne &&
-      POSSESSIVES.has(t[i - 1]?.raw ?? '') &&
-      !COMPARATIVES.has(t[i].norm) &&
-      !hasViolence(t))
+      !hasViolence(t) &&
+      !actsOnSearcher(t, i) &&
+      ((POSSESSIVES.has(t[i - 1]?.raw ?? '') && !COMPARATIVES.has(t[i].norm)) ||
+        careStatement(t, i)))
   );
 }
 

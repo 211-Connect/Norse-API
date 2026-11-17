@@ -304,6 +304,38 @@ describe('applyPopulationWeight: asking for the group, not mentioning it', () =>
     expect(applyPopulationWeight(men(), q, 'en')[0].score).toBe(0.8);
   });
 
+  it.each([
+    'my elderly mother needs therapy',
+    'rapid food help for my elderly mother',
+    'flu shot for my elderly mother',
+    'my elderly mother needs me to find food',
+  ])('stem matching does not over-fire: keeps Older Adults for "%s"', (q) => {
+    const input = [code('YB-1000.1000', 'Older Adults', 0.8, ['Elderly'])];
+    expect(applyPopulationWeight(input, q, 'en')[0].score).toBe(0.8);
+  });
+
+  it.each([
+    'my elderly dad shoves me',
+    'my elderly father controls my money',
+    'my veteran husband chokes me',
+  ])('shape and stem guards zero Older Adults/Veterans for "%s"', (q) => {
+    const input = [
+      code('YB-1000.1000', 'Older Adults', 0.8, ['Elderly']),
+      code('YN-1000.1000', 'Veterans', 0.8, ['Military']),
+    ];
+    expect(applyPopulationWeight(input, q, 'en').map((p) => p.score)).toEqual([
+      0, 0,
+    ]);
+  });
+
+  it.each(['im a vet', 'vets housing'])(
+    '"vet" counts as Veterans: "%s"',
+    (q) => {
+      const input = [code('YN-1000.1000', 'Veterans')];
+      expect(applyPopulationWeight(input, q, 'en')).toEqual(input);
+    },
+  );
+
   it('"not for women and children" still zeroes Women', () => {
     const women = [code('YS-5000.8000', 'Women')];
     const q = 'not for women and children';

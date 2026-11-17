@@ -39,6 +39,7 @@ const CODES: Record<string, ReturnType<typeof entry>> = {
     'Elderly',
   ]),
   youth: entry('YB-2000.1000', 'Youth', ['Teens']),
+  disab: entry('YB-4000.1000', 'Disabled', ['Disability']),
   cmen: entry('BH-1800.8500 * YS-5000.5000', 'Homeless Shelter * Men', []),
   colder: entry('LH-3000 * YB-1000.1000', 'Housing * Older Adults', []),
 };
