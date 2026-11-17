@@ -27,7 +27,10 @@ import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
-import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import {
+  RequireCdnUrlMirrors,
+  SetCdnCacheTTL,
+} from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ResourceTitlesDto } from './dto/resource-titles.dto';
 import {
@@ -58,6 +61,7 @@ export class ResourceController {
   @Version('1')
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @RequireCdnUrlMirrors()
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({
     name: 'x-tenant-id',
@@ -85,6 +89,7 @@ export class ResourceController {
 
   @Get('original/:id')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @RequireCdnUrlMirrors()
   @Version('1')
   @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
@@ -146,6 +151,7 @@ export class ResourceController {
   @Post('batch')
   @Version('1')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @RequireCdnUrlMirrors()
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({
     name: 'x-tenant-id',
