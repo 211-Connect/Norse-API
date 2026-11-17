@@ -122,6 +122,20 @@ describe('geocoding.mapper', () => {
       expect(mapped.district).toBe('Some County');
     });
 
+    it('prefers county over suburb and neighbourhood when both are present', () => {
+      const mapped = mapOpenCageResultToGeocodeResponse({
+        formatted: 'Chicago, Illinois',
+        geometry: { lat: 41.8781, lng: -87.6298 },
+        components: {
+          suburb: 'The Loop',
+          neighbourhood: 'Downtown Chicago',
+          county: 'Cook County',
+        },
+      });
+
+      expect(mapped.district).toBe('Cook County');
+    });
+
     it('handles missing components and bounds gracefully', () => {
       const result = {
         formatted: 'Unknown place',

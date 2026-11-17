@@ -131,7 +131,7 @@ export class GeocodingService {
     const roundedLat = parseFloat(lat.toFixed(5));
 
     // Generate cache key
-    const cacheKey = `geocode:reverse:${providerKey}:${roundedLng},${roundedLat}:${locale}`;
+    const cacheKey = `geocode:reverse:v2:${providerKey}:${roundedLng},${roundedLat}:${locale}`;
 
     // Try to get from cache
     const cachedResult =

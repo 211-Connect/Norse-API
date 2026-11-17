@@ -8,6 +8,7 @@ import { AnalyticsApiKeyGuard } from './guards/analytics-api-key.guard';
 import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
+import { BlockedTrafficService } from './services/blocked-traffic.service';
 import { CdnCacheControlInterceptor } from '../common/interceptors/cdn-cache-control.interceptor';
 
 /**
@@ -20,6 +21,28 @@ import { CdnCacheControlInterceptor } from '../common/interceptors/cdn-cache-con
  * caching on these routes.
  */
 describe('AnalyticsController response caching', () => {
+  const exportData = {
+    data: [
+      {
+        timestamp: '2026-09-01T00:00:00.000Z',
+        sessionId: null,
+        queryLabel: 'food, "water"\nhelp',
+        queryType: 'text',
+        searchLatitude: 0,
+        searchLongitude: -72,
+        searchCity: 'Hartford',
+        searchZipCode: '06101',
+        searchCounty: 'Hartford County',
+        userLatitude: 42.0451,
+        userLongitude: -87.6877,
+        userCity: 'Evanston',
+        userZipCode: '60201',
+        userCounty: 'Cook County',
+        referralSource: null,
+      },
+    ],
+    totalCount: 1,
+  };
   let app: INestApplication;
 
   beforeAll(async () => {
@@ -33,6 +56,7 @@ describe('AnalyticsController response caching', () => {
           useValue: {
             getStats: jest.fn().mockResolvedValue({}),
             getHeatmap: jest.fn().mockResolvedValue([]),
+            getExportSearchData: jest.fn().mockResolvedValue(exportData),
           },
         },
         {
@@ -42,6 +66,7 @@ describe('AnalyticsController response caching', () => {
           },
         },
         { provide: AnalyticsInfoEnricherService, useValue: {} },
+        { provide: BlockedTrafficService, useValue: {} },
       ],
     })
       .overrideGuard(AnalyticsApiKeyGuard)
@@ -72,5 +97,34 @@ describe('AnalyticsController response caching', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
+  });
+  it('returns JSON by default and CSV when requested', async () => {
+    const json = await request(app.getHttpServer())
+      .get('/analytics/export-search-data')
+      .query({ start: '2026-09-01', end: '2026-09-30' });
+    expect(json.status).toBe(200);
+    expect(json.body).toEqual(exportData);
+    expect(json.headers['cache-control']).toBe('no-store');
+    expect(json.headers.vary).toMatch(/Accept/i);
+
+    const declinedCsv = await request(app.getHttpServer())
+      .get('/analytics/export-search-data')
+      .set('Accept', 'text/csv;q=0, application/json')
+      .query({ start: '2026-09-01', end: '2026-09-30' });
+    expect(declinedCsv.body).toEqual(exportData);
+
+    const csv = await request(app.getHttpServer())
+      .get('/analytics/export-search-data')
+      .set('Accept', 'text/csv')
+      .query({ start: '2026-09-01', end: '2026-09-30' });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toMatch(/^text\/csv/);
+    expect(csv.headers['cache-control']).toBe('no-store');
+    expect(csv.text).toContain('Search County');
+    expect(csv.text).toContain('User County');
+    expect(csv.text).toBe(
+      'Timestamp,Session ID,Query Label,Query Type,Search Latitude,Search Longitude,Search City,Search ZIP Code,Search County,User Latitude,User Longitude,User City,User ZIP Code,User County,Referral Source\r\n' +
+        '2026-09-01T00:00:00.000Z,,"food, ""water""\nhelp",text,0,-72,Hartford,06101,Hartford County,42.0451,-87.6877,Evanston,60201,Cook County,',
+    );
   });
 });
