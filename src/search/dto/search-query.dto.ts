@@ -116,7 +116,7 @@ const queryTextLength = (value: unknown): number => {
 
 /** Max length (UTF-16 units, as Elasticsearch counts; class-validator's `@MaxLength` counts code points) of the query text, whether `query` is a string, an array or an AND/OR object. */
 @ValidatorConstraint({ name: 'isQueryWithinMaxLength', async: false })
-class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
+export class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     return queryTextLength(value) <= MAX_QUERY_LENGTH;
   }
