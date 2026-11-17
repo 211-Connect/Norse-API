@@ -727,11 +727,15 @@ export class HybridSearchService {
     // mode not `top` (pinned services get their own sort tier) and no selected
     // needs (they add a block sort tier and matched_needs fields). Everything
     // else keeps the full request.
+    // The page must also end inside the fused RRF_LIST_SIZE ids (the check
+    // below, pageFrom + pageSize <= fused length); past that the stats
+    // request would be sent and thrown away.
     const fastEligible =
       fuseEligible &&
       !cutoffRequested &&
       pinnedMode !== 'top' &&
-      (options.selectedNeeds ?? []).length === 0;
+      (options.selectedNeeds ?? []).length === 0 &&
+      (page || 1) * (limit || 25) <= RRF_LIST_SIZE;
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
     const statsPromise = fastEligible
       ? this.metrics.observeDownstream(

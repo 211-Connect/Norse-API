@@ -482,6 +482,21 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       expect(response.facets).toBeDefined();
     });
 
+    // The fast path can serve only pages inside the fused RRF_LIST_SIZE (100)
+    // ids; past that the stats request was sent and thrown away, running the
+    // facet aggregations twice (David, PR #279 review).
+    it.each([
+      ['page 5 with limit 25', { page: 5, limit: 25 }],
+      ['page 1 with limit 150', { page: 1, limit: 150 }],
+    ])(
+      'F2b. %s reaches past the fused ids: no stats request',
+      async (_l, q) => {
+        await run(q);
+        expect(statsRequests()).toHaveLength(0);
+        expect(pinnedMain()).toBeDefined();
+      },
+    );
+
     it('F2. page 2 with limit 3 over 4 fused ids: pinned main request', async () => {
       const response = await run({ page: 2, limit: 3 });
 
