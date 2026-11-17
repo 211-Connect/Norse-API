@@ -22,13 +22,18 @@ export function requestedApiVersion(req: Request): string | undefined {
   return (Array.isArray(raw) ? raw.join(',') : raw).trim();
 }
 
+/** `/v<digits>` at the start of the path, then `/`, `?` or the end. */
+const PATH_VERSION = /^\/v(\d+)(?=\/|\?|$)/;
+
 /**
- * True for `/v2` and anything under `/v2/`, ignoring the query string. The app
- * sets no global prefix (main.ts), so the request path starts at `/v2`.
+ * The version in the path (`/v2/search` -> `'2'`), or `undefined` when the
+ * path has none. The one place that reads a version from a path: the version
+ * extractor and the cache interceptor both use it. It only parses; whether a
+ * route exists under that version is the router's answer (no route, 404). The
+ * app sets no global prefix (main.ts), so the request path starts at `/v<N>`.
  */
-export function isV2Path(path: string): boolean {
-  const pathname = path.split('?')[0];
-  return pathname === '/v2' || pathname.startsWith('/v2/');
+export function pathVersionOf(url: string): string | undefined {
+  return PATH_VERSION.exec(url)?.[1];
 }
 
 /**
@@ -39,7 +44,7 @@ export function isV2Path(path: string): boolean {
  * `@Version('1')` route 404'd without the header. A custom extractor applies
  * the default to the request instead.
  *
- * A path under `/v2/` is version 2 whatever the header says, so `GET
+ * A version in the path (`/v2/...`) wins over the header, so `GET
  * /v2/search` needs no header. Every other request keeps the header, else the
  * default.
  */
@@ -47,8 +52,11 @@ export const apiVersioningOptions: VersioningOptions = {
   type: VersioningType.CUSTOM,
   extractor: (req: unknown) => {
     const request = req as Request;
-    if (isV2Path(request.originalUrl ?? request.url ?? '')) return '2';
-    return requestedApiVersion(request) ?? DEFAULT_API_VERSION;
+    return (
+      pathVersionOf(request.originalUrl ?? request.url ?? '') ??
+      requestedApiVersion(request) ??
+      DEFAULT_API_VERSION
+    );
   },
   defaultVersion: DEFAULT_API_VERSION,
 };

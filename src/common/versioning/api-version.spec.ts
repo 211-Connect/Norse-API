@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import {
   apiVersioningOptions,
-  isV2Path,
+  pathVersionOf,
   SUPPORTED_API_VERSIONS,
 } from './api-version';
 
@@ -12,21 +12,32 @@ const extract = (req: Partial<Request>): string =>
     }
   ).extractor(req);
 
-describe('isV2Path', () => {
+describe('pathVersionOf', () => {
   it.each([
-    ['/v2/search', true],
-    ['/v2', true],
-    ['/v2/', true],
-    ['/v2/search?query=a', true],
-    ['/v2?x=1', true],
-    ['/v2search', false],
-    ['/v20/search', false],
-    ['/search', false],
-    ['/search?next=/v2/', false],
-    ['/', false],
-    ['', false],
+    ['/v1/search', '1'],
+    ['/v2/search', '2'],
+    ['/v2', '2'],
+    ['/v2/', '2'],
+    ['/v2?x=1', '2'],
+    ['/v2/search?query=a', '2'],
+    ['/v3/resource/abc', '3'],
+    ['/v10/search', '10'],
   ])('%p -> %p', (path, expected) => {
-    expect(isV2Path(path)).toBe(expected);
+    expect(pathVersionOf(path)).toBe(expected);
+  });
+
+  it.each([
+    '/search',
+    '/search?next=/v2/',
+    '/v2search',
+    '/vv2/search',
+    '/V2/search',
+    '/v/search',
+    '/resource/v2/x',
+    '/',
+    '',
+  ])('%p has no version in the path', (path) => {
+    expect(pathVersionOf(path)).toBeUndefined();
   });
 });
 

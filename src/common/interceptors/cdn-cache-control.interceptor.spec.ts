@@ -120,6 +120,16 @@ describe('CdnCacheControlInterceptor', () => {
       expect(h['cache-control']).toBe(PUBLIC_HOUR);
       expect(h['vary']).toBeUndefined();
     });
+
+    it('treats any /v<N> path the same, not only /v2', async () => {
+      const h = await run({
+        ttl: 3600,
+        url: '/v3/search',
+        apiVersionHeader: '3',
+      });
+      expect(h['cache-control']).toBe(PUBLIC_HOUR);
+      expect(h['vary']).toBeUndefined();
+    });
   });
 
   describe('a response its handler marked not storable', () => {

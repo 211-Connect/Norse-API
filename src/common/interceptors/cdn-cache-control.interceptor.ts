@@ -11,7 +11,7 @@ import type { Request, Response } from 'express';
 import {
   API_VERSION_HEADER,
   DEFAULT_API_VERSION,
-  isV2Path,
+  pathVersionOf,
   requestedApiVersion,
 } from '../versioning/api-version';
 
@@ -84,9 +84,8 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
         if (response.statusCode !== 200) return;
 
         const request = http.getRequest<Request>();
-        const versionInPath = isV2Path(
-          request.originalUrl ?? request.url ?? '',
-        );
+        const versionInPath =
+          pathVersionOf(request.originalUrl ?? request.url ?? '') !== undefined;
         const headerVersion = versionInPath
           ? undefined
           : requestedApiVersion(request);
