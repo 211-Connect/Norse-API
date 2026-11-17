@@ -79,7 +79,7 @@ export class SearchQueryApiDto {
 
   @ApiPropertyOptional({
     description: REGION_PARAM_DESCRIPTION,
-    oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+    type: String,
     example: 'county:53077',
   })
   @IsOptional()
