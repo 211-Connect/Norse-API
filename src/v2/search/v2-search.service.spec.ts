@@ -294,19 +294,6 @@ describe('V2SearchService', () => {
     expect(res).not.toHaveProperty('emergency');
   });
 
-  it.each([
-    ['a string array', ['rent', 'help']],
-    ['a nested AND/OR object', { AND: ['rent', 'help'] }],
-  ])('does not classify %s', async (_label, query) => {
-    const { service, classify } = build({});
-    const res = await service.search({
-      headers,
-      query: dto({ query } as unknown as Partial<V2SearchQueryDto>),
-    });
-    expect(classify).not.toHaveBeenCalled();
-    expect(res.intent.query).toBeNull();
-  });
-
   it('sends exactly 512 characters to classify for a 600-character query and searches with the full query', async () => {
     const { service, classify, searchHybrid } = build({});
     const long = 'a'.repeat(600);

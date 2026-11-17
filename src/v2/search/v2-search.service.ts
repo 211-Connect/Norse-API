@@ -121,9 +121,8 @@ export class V2SearchService {
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
-    // Only a string with text classifies. A string array or an AND/OR object
-    // is a v1 query shape and has no text for the model.
-    const text = typeof dto.query === 'string' ? dto.query : '';
+    // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
+    const text = dto.query;
     const hasText = text.trim().length > 0;
 
     // The embedding starts before classify so the two run in parallel.
