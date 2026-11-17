@@ -7,6 +7,11 @@ import {
   BlockedTrafficHourly,
 } from '../../common/schemas/blocked-traffic-hourly.schema';
 import {
+  CRAWLER_TRAFFIC_ENFORCED_OUTCOMES,
+  CRAWLER_TRAFFIC_NOT_ENFORCED_OUTCOMES,
+  CrawlerTrafficHourly,
+} from '../../common/schemas/crawler-traffic-hourly.schema';
+import {
   BlockedTrafficBucketDto,
   BlockedTrafficClassificationTotalDto,
   BlockedTrafficResponse,
@@ -33,6 +38,8 @@ export class BlockedTrafficService {
   constructor(
     @InjectModel(BlockedTrafficHourly.name)
     private readonly model: Model<BlockedTrafficHourly>,
+    @InjectModel(CrawlerTrafficHourly.name)
+    private readonly crawlerModel: Model<CrawlerTrafficHourly>,
   ) {}
 
   async record(
@@ -89,9 +96,14 @@ export class BlockedTrafficService {
   }
 
   /**
-   * Totals are grouped in MongoDB (at most 6 rows back, whatever the range);
-   * the hourly series is read only when asked for. Both use the
-   * `{ tenantId, hour, ... }` index.
+   * Totals are grouped in MongoDB (a handful of rows back, whatever the
+   * range); the hourly series is read only when asked for. All reads use the
+   * `{ tenantId, hour, ... }` indexes.
+   *
+   * Since Norse switched to per-crawler counters, new denials live in
+   * `crawler_traffic_hourly` (see CrawlerTrafficService); this collection
+   * holds the history from before. Both are read and summed: a bucket is
+   * only ever written to one of them, so nothing is counted twice.
    */
   async getStats(
     tenantId: string,
@@ -106,26 +118,79 @@ export class BlockedTrafficService {
         $lte: new Date(Date.parse(end)),
       },
     };
+    const crawlerMatch = {
+      ...match,
+      outcome: {
+        $in: [
+          ...CRAWLER_TRAFFIC_ENFORCED_OUTCOMES,
+          ...CRAWLER_TRAFFIC_NOT_ENFORCED_OUTCOMES,
+        ],
+      },
+    };
+    const crawlerEnforced = {
+      $in: ['$outcome', [...CRAWLER_TRAFFIC_ENFORCED_OUTCOMES]],
+    };
 
-    const [groups, rows] = await Promise.all([
-      this.model
-        .aggregate<{
-          _id: { classification: string; enforced: boolean };
-          count: number;
-        }>([
-          { $match: match },
-          {
-            $group: {
-              _id: { classification: '$classification', enforced: '$enforced' },
-              count: { $sum: '$count' },
+    type Group = {
+      _id: { classification: string; enforced: boolean };
+      count: number;
+    };
+    type HourlyGroup = {
+      _id: { hour: Date; classification: string; enforced: boolean };
+      count: number;
+    };
+
+    const [legacyGroups, crawlerGroups, legacyRows, crawlerRows] =
+      await Promise.all([
+        this.model
+          .aggregate<Group>([
+            { $match: match },
+            {
+              $group: {
+                _id: {
+                  classification: '$classification',
+                  enforced: '$enforced',
+                },
+                count: { $sum: '$count' },
+              },
             },
-          },
-        ])
-        .exec(),
-      options.hourly
-        ? this.model.find(match).sort({ hour: 1 }).lean().exec()
-        : undefined,
-    ]);
+          ])
+          .exec(),
+        this.crawlerModel
+          .aggregate<Group>([
+            { $match: crawlerMatch },
+            {
+              $group: {
+                _id: {
+                  classification: '$classification',
+                  enforced: crawlerEnforced,
+                },
+                count: { $sum: '$count' },
+              },
+            },
+          ])
+          .exec(),
+        options.hourly
+          ? this.model.find(match).sort({ hour: 1 }).lean().exec()
+          : undefined,
+        options.hourly
+          ? this.crawlerModel
+              .aggregate<HourlyGroup>([
+                { $match: crawlerMatch },
+                {
+                  $group: {
+                    _id: {
+                      hour: '$hour',
+                      classification: '$classification',
+                      enforced: crawlerEnforced,
+                    },
+                    count: { $sum: '$count' },
+                  },
+                },
+              ])
+              .exec()
+          : undefined,
+      ]);
 
     const totals = new Map<string, BlockedTrafficClassificationTotalDto>(
       BLOCKED_TRAFFIC_CLASSIFICATIONS.map((classification) => [
@@ -136,7 +201,7 @@ export class BlockedTrafficService {
 
     let blocked = 0;
     let notEnforced = 0;
-    for (const { _id, count } of groups) {
+    for (const { _id, count } of [...legacyGroups, ...crawlerGroups]) {
       const total = totals.get(_id.classification);
       if (_id.enforced) {
         blocked += count;
@@ -147,18 +212,45 @@ export class BlockedTrafficService {
       }
     }
 
+    let hourly: BlockedTrafficResponse['hourly'];
+    if (legacyRows || crawlerRows) {
+      const buckets = new Map<
+        string,
+        NonNullable<BlockedTrafficResponse['hourly']>[number]
+      >();
+      const add = (
+        hour: Date,
+        classification: string,
+        enforced: boolean,
+        count: number,
+      ) => {
+        const iso = new Date(hour).toISOString();
+        const key = `${iso}|${classification}|${enforced}`;
+        const existing = buckets.get(key);
+        if (existing) existing.count += count;
+        else
+          buckets.set(key, {
+            hour: iso,
+            classification:
+              classification as BlockedTrafficHourly['classification'],
+            enforced,
+            count,
+          });
+      };
+      for (const row of legacyRows ?? [])
+        add(row.hour, row.classification, row.enforced, row.count);
+      for (const { _id, count } of crawlerRows ?? [])
+        add(_id.hour, _id.classification, _id.enforced, count);
+      hourly = [...buckets.values()].sort((a, b) =>
+        a.hour.localeCompare(b.hour),
+      );
+    }
+
     return {
       blocked,
       notEnforced,
       byClassification: [...totals.values()],
-      ...(rows && {
-        hourly: rows.map((row) => ({
-          hour: new Date(row.hour).toISOString(),
-          classification: row.classification,
-          enforced: row.enforced,
-          count: row.count,
-        })),
-      }),
+      ...(hourly && { hourly }),
     };
   }
 }

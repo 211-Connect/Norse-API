@@ -22,3 +22,6 @@ export * from './event-catalog-entry-response.dto';
 export * from './record-blocked-traffic.dto';
 export * from './blocked-traffic-query.dto';
 export * from './blocked-traffic-response.dto';
+export * from './record-crawler-traffic.dto';
+export * from './crawler-traffic-query.dto';
+export * from './crawler-traffic-response.dto';
