@@ -1,3 +1,4 @@
+import { RegionService } from 'src/region/internal';
 // `@arcjet/nest` ships ESM only; the guard decorator only needs the token.
 jest.mock('@arcjet/nest', () => ({ ARCJET: 'ARCJET' }));
 
@@ -71,6 +72,10 @@ describe('SearchController', () => {
         {
           provide: UsageMetricsService,
           useValue: createUsageMetricsServiceMock(),
+        },
+        {
+          provide: RegionService,
+          useValue: { getSummaries: jest.fn(async () => []) },
         },
       ],
     }).compile();

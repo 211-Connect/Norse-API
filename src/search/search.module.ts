@@ -6,11 +6,17 @@ import { HybridSearchService } from './hybrid-search.service';
 import { AiSearchService } from './ai-search.service';
 import { RequestCacheModule } from 'src/common/services/cache/request-cache.module';
 import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.module';
+import { RegionServiceModule } from 'src/region/internal';
 
 @Module({
   controllers: [SearchController],
   providers: [SearchService, HybridSearchService, AiSearchService],
   exports: [SearchService],
-  imports: [CmsConfigModule, RequestCacheModule, SharedElasticsearchModule],
+  imports: [
+    CmsConfigModule,
+    RequestCacheModule,
+    SharedElasticsearchModule,
+    RegionServiceModule,
+  ],
 })
 export class SearchModule {}
