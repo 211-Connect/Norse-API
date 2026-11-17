@@ -40,7 +40,7 @@ const mainResponse = {
   aggregations: {},
 };
 
-type Mode = 'ok' | 'reject-vector' | 'reject-page';
+type Mode = 'ok' | 'reject-vector' | 'reject-page' | 'reject-proximity';
 
 // Lists as Elasticsearch would return them. Hand-worked RRF (k = 60):
 //   b = 1/62 + 1/61 = 0.032522
@@ -52,6 +52,13 @@ const VECTOR = ['b', 'd', 'a'];
 const TAXONOMY = ['c'];
 const FUSED = ['b', 'a', 'c', 'd'];
 const NEED = ['n1'];
+// Proximity hits as Elasticsearch returns them: distance ascending, in meters.
+// b has no point. d and c tie; the service breaks the tie by FUSED order.
+const PROXIMITY_HITS = [
+  { id: 'd', meters: 100 },
+  { id: 'c', meters: 100 },
+  { id: 'a', meters: 5000 },
+];
 
 describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let service: HybridSearchService;
@@ -60,10 +67,13 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let enabled: string | undefined;
   let taxonomyGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
+  let proximity: { id: string; meters: number }[];
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
   });
+  const isProximity = (r: any) =>
+    r._source === false && r.sort?.[0]?._geo_distance !== undefined;
   const isList = (r: any) => r._source === false && r.size === 100;
   const kindOf = (r: any) =>
     r.query.script_score
@@ -88,6 +98,16 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       }
       requests.push(req);
 
+      if (isProximity(req)) {
+        if (mode === 'reject-proximity') {
+          return Promise.reject(new Error('proximity down'));
+        }
+        return Promise.resolve({
+          hits: {
+            hits: proximity.map((p) => ({ _id: p.id, sort: [p.meters] })),
+          },
+        });
+      }
       if (isList(req)) {
         const kind = kindOf(req);
         if (kind === 'vector' && mode === 'reject-vector') {
@@ -232,6 +252,11 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   } as any;
 
   const lists = () => requests.filter(isList);
+  const proximityRequests = () => requests.filter(isProximity);
+  // The fused order the search used: the pinned ids, or the fast-path page.
+  const pinnedIdsOf = () =>
+    requests.find((r) => r.query?.pinned)?.query.pinned.ids;
+  const COORDS = [-93.1, 44.9];
   const mainRequest = () =>
     requests.find((r) => r.size === 25 && r.min_score == null);
   const run = (
@@ -247,6 +272,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
 
   beforeEach(async () => {
     mode = 'ok';
+    proximity = PROXIMITY_HITS;
     enabled = 'false';
     taxonomyGate = undefined;
     searchConfig = {};
@@ -278,6 +304,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     }
 
     expect(main.query.pinned.ids).toEqual(FUSED);
+    expect(proximityRequests()).toHaveLength(0);
 
     // Regression (live check 2026-11-16): taxonomy ties break by cosine.
     const tax = sent.find((r: any) => kindOf(r) === 'taxonomy');
@@ -311,13 +338,73 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(v1.search.hits.hits[0].sort).toEqual([1.7e38, 7]);
   });
 
-  it('3. v2 with coords: no list requests and no pinned query', async () => {
-    const response = await run({ coords: [-93.1, 44.9], distance: 25 });
+  it('3. v2 with coords, relevance: lists and one proximity request, fused order', async () => {
+    mode = 'ok';
+    proximity = []; // proximity changes nothing here; see 3b
+    await build();
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(lists().map(kindOf).sort()).toEqual([
+      'keyword',
+      'taxonomy',
+      'vector',
+    ]);
+    const sent = proximityRequests();
+    expect(sent).toHaveLength(1);
+    const prox = sent[0];
+    const baseFilter = filterOf(lists()[0]);
+    for (const f of baseFilter)
+      expect(prox.query.bool.filter).toContainEqual(f);
+    expect(prox.query.bool.filter).toContainEqual({ ids: { values: FUSED } });
+    expect(prox.query.bool.filter).toContainEqual({
+      exists: { field: 'location.point' },
+    });
+    expect(prox.size).toBe(FUSED.length);
+    expect(prox.sort[0]._geo_distance['location.point']).toEqual({
+      lon: -93.1,
+      lat: 44.9,
+    });
+    expect(prox.sort[0]._geo_distance.order).toBe('asc');
+    expect(pinnedIdsOf()).toEqual(FUSED);
+  });
+
+  // Hand-worked RRF (k = 60), proximity list weight 2. Distances: d 100 m,
+  // c 100 m, a 5000 m, b no point. The d/c tie goes to pool order (FUSED is
+  // b, a, c, d), so the proximity list is [c, d, a].
+  //   b = 1/62 + 1/61                 = 0.032522
+  //   a = 1/61 + 1/63 + 2/63          = 0.064012
+  //   c = 1/63 + 1/61 + 2/61          = 0.065053
+  //   d = 1/62 + 2/62                 = 0.048387
+  it('3b. proximity list joins the fusion: order c, a, d, b', async () => {
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(pinnedIdsOf()).toEqual(['c', 'a', 'd', 'b']);
+  });
+
+  it('3c. proximity returns no hits: order equals the relevance fusion', async () => {
+    proximity = [];
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(proximityRequests()).toHaveLength(1);
+    expect(pinnedIdsOf()).toEqual(FUSED);
+  });
+
+  it('3d. proximity request rejects: no pinned query and the search resolves', async () => {
+    mode = 'reject-proximity';
+    const response = await run({ coords: COORDS, distance: 25 });
+
+    expect(requests.some((r) => r.query?.pinned)).toBe(false);
+    expect(mainRequest().query.pinned).toBeUndefined();
+    expect(response.search.hits.total.value).toBe(1234);
+    expect(response.search.hits.hits[0]._score).toBe(42);
+  });
+
+  it('3e. v2 with coords and sort distance: no list requests, no proximity, no pinned query', async () => {
+    await run({ coords: COORDS, distance: 25, sort: 'distance' });
 
     expect(lists()).toHaveLength(0);
+    expect(proximityRequests()).toHaveLength(0);
     expect(mainRequest().query.pinned).toBeUndefined();
-    expect(response.search.hits.hits[0]._score).toBe(42);
-    expect(response.search.hits.max_score).toBe(42);
   });
 
   it('4. v2 with sort name: no list requests and no pinned query', async () => {
@@ -455,6 +542,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       requests.filter(
         (r) =>
           !isList(r) &&
+          !isProximity(r) &&
           r.min_score == null &&
           r.query?.bool?.filter?.some?.((f: any) => f.ids),
       );

@@ -78,7 +78,15 @@ unconditionally, so it matched every proximity search in the tenant.
 
 ## Ranking (hybrid search only)
 
-Keyword search has no distance score. Hybrid search adds a distance score to
+Keyword search has no distance score.
+
+v2 relevance searches with a query and `coords` are ordered by rank fusion with
+a proximity list. The proximity list takes the top 50 relevance candidates and
+re-ranks them by distance. It has weight 2 in the fusion. A result with no
+point gets no proximity vote. The gauss score below applies to v1, to the order
+after the fused top 100, and to the fallback when fusion fails.
+
+Hybrid search adds a distance score to
 the text and semantic scores (`boost_mode: sum`):
 
 - `25 × gauss(location.point)`, with origin `coords`, offset 0 and decay 0.5

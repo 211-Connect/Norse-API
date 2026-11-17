@@ -188,6 +188,10 @@ const RRF_TAXONOMY_TIE_BREAK = 0.001;
 // Weight of the need list in the fusion. Not measured: IL211 had 0 need-tagged
 // services on 2026-11-16.
 const RRF_NEED_LIST_WEIGHT = 1;
+// How many ids of the relevance-fused order the proximity list re-ranks.
+const RRF_PROXIMITY_POOL = 50;
+// RRF weight of the proximity list.
+const RRF_PROXIMITY_LIST_WEIGHT = 2;
 
 const BM25_NAME_BOOST = 15;
 const BM25_SERVICE_NAME_BOOST = 10;
@@ -725,7 +729,6 @@ export class HybridSearchService {
       rank,
       queryVector,
       queryStr,
-      coords,
       sort,
       boostActive,
     });
@@ -922,6 +925,7 @@ export class HybridSearchService {
         predicted: predictedTaxonomies,
         wordRarity,
         needs: boostActive ? activeNeeds : [],
+        coords,
         earlyLists,
       });
 
@@ -1049,8 +1053,8 @@ export class HybridSearchService {
    * - `queryVector`: the vector list needs the embedding. Without it the
    *   search falls back to lexical-only scoring.
    * - non-empty query: browse mode has no keyword or vector signal.
-   * - no `coords`: the lab measured searches without a location only. With a
-   *   location the geo decay is part of the score and is in no list.
+   * - `coords`: allowed. With a location, a proximity list (relevance-gated
+   *   distance) joins the fusion; see fetchFusedOrder.
    * - `sort` relevance: any other sort decides the order itself.
    * - need boost: not a condition. ADR 0039 Decision 19 (K = 0.1 x top
    *   score) applies to the summed path only; fused searches use the need
@@ -1062,18 +1066,16 @@ export class HybridSearchService {
     rank: boolean;
     queryVector: number[] | undefined;
     queryStr: string;
-    coords: number[] | undefined;
     sort: SearchResourcesQueryDto['sort'];
     boostActive: boolean;
   }): boolean {
-    const { fuse, v2, rank, queryVector, queryStr, coords, sort } = args;
+    const { fuse, v2, rank, queryVector, queryStr, sort } = args;
     return (
       fuse &&
       v2 &&
       rank &&
       queryVector !== undefined &&
       queryStr.trim().length > 0 &&
-      (coords === undefined || coords.length === 0) &&
       (sort ?? 'relevance') === 'relevance'
     );
   }
@@ -1141,6 +1143,9 @@ export class HybridSearchService {
   /**
    * Ranked lists (keyword, vector, taxonomy, and a need list when needs are
    * active), each the top `RRF_LIST_SIZE` ids, fused by reciprocal rank.
+   * With `coords`, the relevance-fused order is fused again with a fifth
+   * list, proximity (`runProximityList`), at `RRF_PROXIMITY_LIST_WEIGHT`.
+   * Order of the lists: keyword, vector, taxonomy, need, proximity.
    * `pinned_resources_mode` `boost` (+5 constant) and the priority function
    * are not in the lists. Mode `top` still works: its sort tiers come before
    * `_score`. `earlyLists` holds the keyword and vector lists when they
@@ -1158,10 +1163,18 @@ export class HybridSearchService {
     predicted: PredictedTaxonomy[];
     wordRarity: WordRarity;
     needs: NeedScore[];
+    coords: number[] | undefined;
     earlyLists?: Promise<string[][]>;
   }): Promise<string[] | undefined> {
-    const { filters, queryStr, queryVector, predicted, needs, earlyLists } =
-      args;
+    const {
+      filters,
+      queryStr,
+      queryVector,
+      predicted,
+      needs,
+      coords,
+      earlyLists,
+    } = args;
 
     const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
 
@@ -1222,10 +1235,24 @@ export class HybridSearchService {
       const weights = lists.map((_, i) =>
         needList && i === lists.length - 1 ? RRF_NEED_LIST_WEIGHT : 1,
       );
-      const fused = reciprocalRankFusion(lists, RRF_K, weights).slice(
-        0,
-        RRF_LIST_SIZE,
-      );
+      const relevance = reciprocalRankFusion(lists, RRF_K, weights);
+      let ordered = relevance;
+      if (coords && coords.length === 2 && relevance.length > 0) {
+        const pool = relevance.slice(0, RRF_PROXIMITY_POOL);
+        const proximity = await this.runProximityList(
+          args,
+          filters,
+          pool,
+          coords,
+        );
+        if (proximity.length > 0) {
+          ordered = reciprocalRankFusion([...lists, proximity], RRF_K, [
+            ...weights,
+            RRF_PROXIMITY_LIST_WEIGHT,
+          ]);
+        }
+      }
+      const fused = ordered.slice(0, RRF_LIST_SIZE);
       return fused.length > 0 ? fused : undefined;
     } catch (error) {
       this.logger.warn(
@@ -1233,6 +1260,59 @@ export class HybridSearchService {
       );
       return undefined;
     }
+  }
+
+  /**
+   * The proximity list: the ids of `pool` ordered by distance to `coords`,
+   * nearest first. The pool is relevance-gated on purpose: a close but
+   * irrelevant service must not win, so only the top `RRF_PROXIMITY_POOL`
+   * relevant candidates compete on distance. Documents with no
+   * `location.point` are absent from the list and get no proximity vote.
+   * Distance ties break by position in `pool` (relevance order), sorted here
+   * because Elasticsearch tie order is not stable. Rejects when the request
+   * fails; `fetchFusedOrder` handles that.
+   */
+  private async runProximityList(
+    args: { index: string; preference: string },
+    filters: QueryDslQueryContainer[],
+    pool: string[],
+    coords: number[],
+  ): Promise<string[]> {
+    const response = await this.metrics.observeDownstream(
+      'elasticsearch',
+      'hybrid_rrf_proximity',
+      () =>
+        this.elasticsearchService.search({
+          index: args.index,
+          preference: args.preference,
+          size: pool.length,
+          _source: false,
+          track_total_hits: false,
+          query: {
+            bool: {
+              filter: [
+                ...filters,
+                { ids: { values: pool } },
+                { exists: { field: 'location.point' } },
+              ],
+            },
+          },
+          sort: [SearchUtilsService.getGeoDistanceSort(coords)],
+        }),
+    );
+    const position = new Map(pool.map((id, i) => [id, i]));
+    return response.hits.hits
+      .filter(
+        (h): h is typeof h & { _id: string } =>
+          h._id !== undefined && typeof h.sort?.[0] === 'number',
+      )
+      .map((h) => ({ id: h._id, meters: h.sort![0] as number }))
+      .sort(
+        (x, y) =>
+          x.meters - y.meters ||
+          (position.get(x.id) ?? 0) - (position.get(y.id) ?? 0),
+      )
+      .map((h) => h.id);
   }
 
   /**
