@@ -215,6 +215,21 @@ describe('SearchService area search (region)', () => {
     );
   });
 
+  it('passes the ranking version to the pins request only when set', async () => {
+    await service.searchPins({
+      headers,
+      query: query({ query_type: 'hybrid' }),
+    });
+    await service.searchPins({
+      headers,
+      query: query({ query_type: 'hybrid' }),
+      rankingVersion: 'v2',
+    });
+
+    expect(buildPinsRequest.mock.calls[0][0].rankingVersion).toBeUndefined();
+    expect(buildPinsRequest.mock.calls[1][0].rankingVersion).toBe('v2');
+  });
+
   it('leaves a search without region untouched', async () => {
     const response = await service.searchResources({
       headers,

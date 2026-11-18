@@ -26,7 +26,7 @@ import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
-import { HybridSearchService } from './hybrid-search.service';
+import { HybridSearchService, RankingVersion } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
@@ -54,6 +54,8 @@ type SearchOptions = {
   body?: SearchResourcesBodyDto;
   /** Set by `withArea`; never by a caller. */
   area?: AreaFilter;
+  /** Set by the v2 routes only; absent means v1 rules. Hybrid pins only. */
+  rankingVersion?: RankingVersion;
 };
 
 @Injectable()
@@ -217,6 +219,7 @@ export class SearchService {
       ...(await this.withArea(options)).options,
       query: { ...q, page: 1, limit: SEARCH_PINS_LIMIT },
     };
+    // v1 never sets rankingVersion, so its request is unchanged.
 
     const isHybrid = q.query_type === 'hybrid';
     const request = isHybrid

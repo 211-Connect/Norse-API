@@ -34,6 +34,7 @@ import {
 } from '../../metrics/usage-metrics.service';
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
+import { SearchPinsResponseDto } from '../../search/dto/search-pins-response.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
@@ -98,6 +99,33 @@ export class V2SearchController {
         query,
       }),
     );
+  }
+
+  @Get('pins')
+  @Version('2')
+  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
+  @ApiOperation({
+    summary: 'Map pins for a v2 search (draft)',
+    description:
+      'The locations of a v2 search independent of list pagination, up to ' +
+      '10,000. Same membership as `GET /v2/search` (child taxonomy codes, ' +
+      '`region`); needs, urgency, clarify and classify are ignored. Matches ' +
+      'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
+  })
+  @ApiResponse({ status: 200, type: SearchPinsResponseDto })
+  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
+  getPins(
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: V2SearchQueryDto,
+  ): Promise<SearchPinsResponseDto> {
+    return this.v2SearchService.pins({ headers, query });
   }
 
   @Post()
