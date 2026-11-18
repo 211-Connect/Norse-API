@@ -1,3 +1,4 @@
+import { withSpan } from 'src/common/tracing/with-span';
 import {
   Injectable,
   Logger,
@@ -422,7 +423,19 @@ export class HybridSearchService {
       lang,
       fused,
       fastPage,
-    } = await this.prepareHybridSearch(options, { rank: true, fuse: true });
+    } = await withSpan('hybrid.prepare', async (span) => {
+      const prepared = await this.prepareHybridSearch(options, {
+        rank: true,
+        fuse: true,
+      });
+      span.setAttributes({
+        'hybrid.fused': prepared.fused,
+        'hybrid.fast_page': prepared.fastPage !== undefined,
+        'hybrid.cutoff': prepared.cutoff !== undefined,
+        'hybrid.need_counts': prepared.countRequest !== undefined,
+      });
+      return prepared;
+    });
 
     const needCountsPromise = countRequest
       ? this.runNeedCounts(countRequest, options.countCodes ?? [])
@@ -675,7 +688,9 @@ export class HybridSearchService {
         this.tenantConfigService.getFacets(tenantId),
         this.tenantConfigService.getSearchConfig(tenantId),
         v2 && wantsVector
-          ? this.getWordRarity(index, tenantId, lang, queryStr, preference)
+          ? withSpan('hybrid.word_rarity', () =>
+              this.getWordRarity(index, tenantId, lang, queryStr, preference),
+            )
           : Promise.resolve(null),
       ]);
 
@@ -842,17 +857,19 @@ export class HybridSearchService {
       });
 
       const runProbe = () =>
-        this.probeRelevanceCutoff({
-          index,
-          preference,
-          queryStr,
-          queryVector,
-          predicted: predictedTaxonomies,
-          filters: baseFilters,
-          pinnedMode,
-          wordRarity,
-          needs: probeNeeds,
-        });
+        withSpan('hybrid.cutoff_probe', () =>
+          this.probeRelevanceCutoff({
+            index,
+            preference,
+            queryStr,
+            queryVector,
+            predicted: predictedTaxonomies,
+            filters: baseFilters,
+            pinnedMode,
+            wordRarity,
+            needs: probeNeeds,
+          }),
+        );
 
       // Cached so pages 2..n of one search reuse a single probe rather than
       // re-running it — and so the kept set cannot drift between pages. A v2
@@ -913,17 +930,19 @@ export class HybridSearchService {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
       // membership from today's scores; fusion only orders.
-      fusedIds = await this.fetchFusedOrder({
-        index,
-        preference,
-        filters: baseFilters,
-        queryStr,
-        queryVector: queryVector!,
-        predicted: predictedTaxonomies,
-        wordRarity,
-        needs: boostActive ? activeNeeds : [],
-        earlyLists,
-      });
+      fusedIds = await withSpan('hybrid.fused_order', () =>
+        this.fetchFusedOrder({
+          index,
+          preference,
+          filters: baseFilters,
+          queryStr,
+          queryVector: queryVector!,
+          predicted: predictedTaxonomies,
+          wordRarity,
+          needs: boostActive ? activeNeeds : [],
+          earlyLists,
+        }),
+      );
 
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
         // Fusion failed after the top-score request was skipped: fall back
@@ -1904,6 +1923,19 @@ export class HybridSearchService {
    * `pinned_resources_mode`, so a tenant's curated resources rank high in the
    * probe and survive the cut.
    */
+  /**
+   * One Elasticsearch search inside a named span (trace only, no metric
+   * series), with the server-side `took` on the span.
+   */
+  private tracedSearch<TDocument>(operation: string, request: SearchRequest) {
+    return withSpan(`elasticsearch ${operation}`, async (span) => {
+      const response =
+        await this.elasticsearchService.search<TDocument>(request);
+      span.setAttribute('downstream.took_ms', response.took);
+      return response;
+    });
+  }
+
   private async probeRelevanceCutoff(args: {
     index: string;
     preference: string;
@@ -2013,7 +2045,7 @@ export class HybridSearchService {
     const fraction = CUTOFF_FRACTION_OF_MAX;
     const minKeep = CUTOFF_MIN_KEEP_SERVICES;
 
-    const head = await this.elasticsearchService.search<SearchSource>({
+    const head = await this.tracedSearch<SearchSource>('hybrid_cutoff_head', {
       index,
       preference,
       size: CUTOFF_TOP_DOCS_FLOOR + 1,
@@ -2057,14 +2089,17 @@ export class HybridSearchService {
       Math.min(f * topScore, s20 ?? Infinity);
 
     const countSurvivors = async (threshold: number): Promise<number> => {
-      const counted = await this.elasticsearchService.search<SearchSource>({
-        index,
-        preference,
-        size: 0,
-        track_total_hits: true,
-        min_score: threshold,
-        query,
-      });
+      const counted = await this.tracedSearch<SearchSource>(
+        'hybrid_cutoff_count',
+        {
+          index,
+          preference,
+          size: 0,
+          track_total_hits: true,
+          min_score: threshold,
+          query,
+        },
+      );
       return typeof counted.hits.total === 'number'
         ? counted.hits.total
         : (counted.hits.total?.value ?? 0);
@@ -2098,7 +2133,7 @@ export class HybridSearchService {
       survivors = ladder.survivors;
     }
 
-    const kept = await this.elasticsearchService.search<ProbeSource>({
+    const kept = await this.tracedSearch<ProbeSource>('hybrid_cutoff_kept', {
       index,
       preference,
       size: Math.max(survivors, 1),
@@ -2118,15 +2153,18 @@ export class HybridSearchService {
     // The floor is denominated in services, not documents: one provider's
     // branches must not fill every slot while other providers are cut.
     if (services.size < minKeep) {
-      const widened = await this.elasticsearchService.search<ProbeSource>({
-        index,
-        preference,
-        size: SERVICE_FLOOR_WINDOW,
-        track_total_hits: false,
-        _source: ['service_id'],
-        sort: ['_score'],
-        query,
-      });
+      const widened = await this.tracedSearch<ProbeSource>(
+        'hybrid_cutoff_widened',
+        {
+          index,
+          preference,
+          size: SERVICE_FLOOR_WINDOW,
+          track_total_hits: false,
+          _source: ['service_id'],
+          sort: ['_score'],
+          query,
+        },
+      );
       const seen = new Set<string>();
       const take: typeof widened.hits.hits = [];
       for (const hit of widened.hits.hits) {
