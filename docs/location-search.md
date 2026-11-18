@@ -86,7 +86,17 @@ the text and semantic scores (`boost_mode: sum`):
   Elasticsearch decay function scores a document that lacks the field as 1,
   the same as one at the origin, so before ISS-2755 a result without a point
   got the full +25.
-- A result without a point usually gets **0** from distance. The exception
+- **v2 only (`/v2/search`): a result without a point scores as if it sat at
+  the scale distance** (5 miles by default, else `distance`;
+  `VIRTUAL_DISTANCE_IN_SCALES` = 1). A second function with filter "no
+  `location.point`" adds a flat +12.5. A service closer than the scale still
+  beats a virtual service of equal relevance. Picked on 2026-11-18 from a
+  sweep of 30 real wa211 queries at 4 WA points, against fixed distances of
+  3, 5, 10 and 15 miles. A fixed 10 miles gave +1.6 at the default scale
+  (almost no change) and +22.4 at `distance=25` (almost the full +25). v1
+  keeps the rules below. `sort=distance` does not change: results without a
+  point still sort last.
+- In v1, a result without a point usually gets **0** from distance. The exception
   follows from one Elasticsearch rule: a document that matches **no** score
   function scores 1. Two functions have no filter and match every document:
   - the semantic function, present whenever the query is embedded;

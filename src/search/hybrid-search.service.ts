@@ -76,12 +76,27 @@ const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+// v2 only. A service with no map point (a virtual service, a hotline) scores
+// as if it sat this many scales from the search point (1 = at the scale:
+// 5 mi by default, else `distance`), so it ranks near the top but below
+// services close by. Chosen from a sweep of real wa211 queries on 2026-11-18
+// against fixed 3, 5, 10 and 15 miles (see docs/location-search.md).
+export const VIRTUAL_DISTANCE_IN_SCALES = 1;
 // Need boost (ISS-2745). Start values from the 2026-11-11 boost test: each need
 // clause adds FRACTION x the top base score x the need score (K = fraction x top
 // base score). The gate (0.97, Lucas's pick) is owned by the v2 rules config. Tier 1 needs boost at a smaller factor.
 const NEED_BOOST_FRACTION = 0.1;
 const NEED_BOOST_GATE = CUTOFFS.needs.use;
 const NEED_BOOST_TIER1_FACTOR = 0.5;
+
+/**
+ * The distance score a service with no map point gets in v2: the gauss value
+ * of a service VIRTUAL_DISTANCE_IN_SCALES scales away, 25 x 0.5^(k^2). With
+ * k = 1 it is 12.5 at every scale.
+ */
+export function virtualDistanceWeight(): number {
+  return GEO_GAUSS_WEIGHT * Math.pow(0.5, VIRTUAL_DISTANCE_IN_SCALES ** 2);
+}
 
 export type NeedScore = {
   code: string;
@@ -804,6 +819,7 @@ export class HybridSearchService {
             distance: distance ?? 0,
             pinnedMode,
             wordRarity,
+            v2,
           })
         : undefined;
     const probeNeeds =
@@ -878,6 +894,7 @@ export class HybridSearchService {
         distance: distance ?? 0,
         pinnedMode,
         wordRarity,
+        v2,
       });
       if (topScore > 0) {
         needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
@@ -915,6 +932,7 @@ export class HybridSearchService {
           distance: distance ?? 0,
           pinnedMode,
           wordRarity,
+          v2,
         });
         if (topScore > 0) {
           needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
@@ -940,6 +958,7 @@ export class HybridSearchService {
       wordRarity,
       fusedIds,
       selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
+      v2,
     });
 
     // The page by id, once the fused order covers the whole requested page.
@@ -1781,6 +1800,7 @@ export class HybridSearchService {
     queryVector: number[] | undefined,
     coords: number[] | undefined,
     distance: number,
+    v2 = false,
   ): QueryDslFunctionScoreContainer[] {
     const functions: QueryDslFunctionScoreContainer[] = [];
 
@@ -1805,8 +1825,8 @@ export class HybridSearchService {
 
     if (coords) {
       const [lon, lat] = coords;
-      const scale =
-        distance > 0 ? `${distance}mi` : `${GEO_DEFAULT_SCALE_MI}mi`;
+      const scaleMi = distance > 0 ? distance : GEO_DEFAULT_SCALE_MI;
+      const scale = `${scaleMi}mi`;
       functions.push({
         // A decay function scores a document that lacks the field as 1, the
         // same as one at the origin. Without this filter a listing with no map
@@ -1826,6 +1846,17 @@ export class HybridSearchService {
         },
         weight: GEO_GAUSS_WEIGHT,
       });
+      if (v2) {
+        // v2: a service with no map point gets the distance score of a
+        // service VIRTUAL_DISTANCE_IN_SCALES scales away, the same gauss
+        // value, as a flat weight. v1 keeps 0 for these services.
+        functions.push({
+          filter: {
+            bool: { must_not: [{ exists: { field: 'location.point' } }] },
+          },
+          weight: virtualDistanceWeight(),
+        });
+      }
     }
 
     return functions;
@@ -2150,6 +2181,7 @@ export class HybridSearchService {
     distance: number;
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    v2: boolean;
   }): Promise<number> {
     const { index, preference, ...queryArgs } = args;
     return this.fetchTopScore('hybrid_need_boost_top_score', {
@@ -2227,6 +2259,7 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     fusedIds?: string[];
     selectedNeeds?: string[];
+    v2: boolean;
   }): SearchRequest {
     const {
       index,
@@ -2246,6 +2279,7 @@ export class HybridSearchService {
       wordRarity,
       fusedIds,
       selectedNeeds,
+      v2,
     } = args;
 
     const sort = this.buildHybridSort(
@@ -2265,6 +2299,7 @@ export class HybridSearchService {
       pinnedMode,
       extraShould,
       wordRarity,
+      v2,
     });
 
     return {
@@ -2303,6 +2338,7 @@ export class HybridSearchService {
     pinnedMode: PinnedResourcesMode;
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    v2: boolean;
   }): QueryDslQueryContainer {
     const {
       queryStr,
@@ -2314,6 +2350,7 @@ export class HybridSearchService {
       pinnedMode,
       extraShould,
       wordRarity,
+      v2,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -2351,6 +2388,7 @@ export class HybridSearchService {
       queryVector,
       coords,
       distance,
+      v2,
     );
 
     if (pinnedMode === 'boost') {
