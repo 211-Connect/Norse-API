@@ -36,10 +36,8 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
-import {
-  SUNE_ENRICHMENT_FIELDS,
-  stripEnrichment,
-} from './internal/enrichment-fields';
+import { stripEnrichment } from './internal/enrichment-fields';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -1268,9 +1266,7 @@ export class HybridSearchService {
       from: (page - 1) * limit,
       size: limit,
       track_total_hits: true,
-      _source: {
-        excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
-      },
+      _source: { excludes: SEARCH_SOURCE_EXCLUDES },
       aggs,
       query: esQuery,
       sort,

@@ -93,6 +93,32 @@ describe('SearchService', () => {
     expect(request.size).toBe(100);
   });
 
+  it('leaves taxonomy descriptions and references out of the hits', async () => {
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+      query: {
+        query: 'housing',
+        query_type: 'text',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      } as SearchResourcesQueryDto,
+    });
+
+    const request = elasticsearchService.search.mock.calls[0][0];
+    expect(request._source_excludes).toEqual(
+      expect.arrayContaining([
+        'service_area',
+        'taxonomies.description',
+        'taxonomies.use_references',
+        'taxonomies.see_also_references',
+      ]),
+    );
+  });
+
   it('accepts complex taxonomy query objects', async () => {
     const query: SearchResourcesQueryDto = {
       query: {
