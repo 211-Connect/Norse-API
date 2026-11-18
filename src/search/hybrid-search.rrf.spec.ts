@@ -247,7 +247,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
 
   beforeEach(async () => {
     mode = 'ok';
-    enabled = undefined;
+    enabled = 'false';
     taxonomyGate = undefined;
     searchConfig = {};
     await build();

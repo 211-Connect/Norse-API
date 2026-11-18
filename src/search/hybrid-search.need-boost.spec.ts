@@ -185,7 +185,7 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
   });
 
   it('1. switch off: no head call and the request ignores needScores', async () => {
-    enabled = undefined;
+    enabled = 'false';
     await build();
     await run();
     const without = mainRequest();
@@ -197,8 +197,26 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
     expect(mainRequest()).toEqual(without);
   });
 
+  // ADR 0039 Decision 79: the boost is on unless NEED_BOOST_ENABLED is `false`.
+  it.each([[undefined], [''], ['true'], ['TRUE']])(
+    '1b. NEED_BOOST_ENABLED=%p: the boost is on (default on)',
+    async (value) => {
+      enabled = 'false';
+      await build();
+      await run(tier2Fod);
+      const off = mainRequest();
+
+      enabled = value;
+      await build();
+      await run(tier2Fod);
+
+      expect(headCalls().length).toBeGreaterThan(0);
+      expect(mainRequest()).not.toEqual(off);
+    },
+  );
+
   it('2. switch on, no needScores: no head call, request unchanged', async () => {
-    enabled = undefined;
+    enabled = 'false';
     await build();
     await run();
     const baseline = mainRequest();

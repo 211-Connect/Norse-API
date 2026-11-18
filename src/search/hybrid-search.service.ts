@@ -358,8 +358,10 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
+    // On by default (ADR 0039 Decision 79, Lucas and David, 2026-11-18).
+    // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
-      this.configService.get<string>('NEED_BOOST_ENABLED') === 'true';
+      this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
   }
 
   /**
