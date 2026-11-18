@@ -20,7 +20,11 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { RegionService } from 'src/region/internal';
-import { AreaFilter, tenantAreaMatch } from './internal/area/area-match';
+import {
+  AreaFilter,
+  tenantAreaMatch,
+  tenantUnlocated,
+} from './internal/area/area-match';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
@@ -123,7 +127,7 @@ export class SearchService {
 
   /**
    * Settles an area search (`region`) once for every search path: checks the
-   * Regions exist (400 otherwise) and fills `area_match`/`include_unlocated`
+   * Regions exist (400 otherwise) and fills `area_match`/`unlocated`
    * from the tenant's CMS search settings when the caller left them out — see
    * docs/area-search.md.
    */
@@ -142,16 +146,14 @@ export class SearchService {
     const area: AreaFilter = {
       regionIds: q.region,
       match: q.area_match ?? tenantAreaMatch(searchConfig),
-      includeUnlocated:
-        q.include_unlocated ??
-        searchConfig.include_unlocated_in_area_search === true,
+      unlocated: q.unlocated ?? tenantUnlocated(searchConfig),
     };
     return {
       options: { ...options, area },
       resolved: {
         regions,
         area_match: area.match,
-        include_unlocated: area.includeUnlocated,
+        unlocated: area.unlocated,
       },
     };
   }

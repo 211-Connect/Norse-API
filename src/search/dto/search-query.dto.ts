@@ -3,7 +3,6 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
-  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -29,7 +28,9 @@ import {
   AREA_MATCH_PARAM_DESCRIPTION,
   AREA_MATCH_VALUES,
   AreaMatch,
-  INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
+  Unlocated,
   MAX_REGION_IDS,
   REGION_PARAM_DESCRIPTION,
 } from '../internal/area/area-match';
@@ -216,13 +217,12 @@ export class SearchResourcesQueryDto {
   area_match?: AreaMatch;
 
   @ApiPropertyOptional({
-    description: INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
-    type: Boolean,
+    description: UNLOCATED_PARAM_DESCRIPTION,
+    enum: UNLOCATED_VALUES,
   })
   @IsOptional()
-  @Transform(({ value }) => toBoolean(value))
-  @IsBoolean()
-  include_unlocated?: boolean;
+  @IsIn(UNLOCATED_VALUES)
+  unlocated?: Unlocated;
 
   @ApiPropertyOptional({
     type: 'object',

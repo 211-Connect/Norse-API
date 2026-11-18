@@ -26,6 +26,41 @@ export function tenantAreaMatch(config: { area_match?: unknown }): AreaMatch {
     : DEFAULT_AREA_MATCH;
 }
 
+/**
+ * Which resources with neither a location (`location.point`) nor a
+ * `service_area` an area search also lists. They can't be placed in any area,
+ * so they are listed in every area search or not at all.
+ *
+ * - `none`: left out.
+ * - `virtual` (default): only virtual services
+ *   (`location.physical_address.type: virtual`), which serve everyone.
+ * - `all`: every one of them, including physical services missing an address.
+ */
+export const UNLOCATED_VALUES = ['none', 'virtual', 'all'] as const;
+export type Unlocated = (typeof UNLOCATED_VALUES)[number];
+
+export const DEFAULT_UNLOCATED: Unlocated = 'virtual';
+
+/**
+ * The tenant's CMS default, or `virtual` when unset or invalid. Reads the
+ * boolean `include_unlocated_in_area_search` a cache written before
+ * `unlocated_in_area_search` existed may still hold (`true` → `all`).
+ */
+export function tenantUnlocated(config: {
+  unlocated_in_area_search?: unknown;
+  include_unlocated_in_area_search?: unknown;
+}): Unlocated {
+  if (
+    (UNLOCATED_VALUES as readonly unknown[]).includes(
+      config.unlocated_in_area_search,
+    )
+  ) {
+    return config.unlocated_in_area_search as Unlocated;
+  }
+  if (config.include_unlocated_in_area_search === true) return 'all';
+  return DEFAULT_UNLOCATED;
+}
+
 /** At most this many Region ids in one `region` param. */
 export const MAX_REGION_IDS = 20;
 
@@ -33,8 +68,8 @@ export const MAX_REGION_IDS = 20;
 export interface AreaFilter {
   regionIds: string[];
   match: AreaMatch;
-  /** Also match resources with neither a location nor a service_area. */
-  includeUnlocated: boolean;
+  /** Which resources with neither a location nor a service_area also match. */
+  unlocated: Unlocated;
 }
 
 export const REGION_PARAM_DESCRIPTION =
@@ -55,7 +90,8 @@ export const AREA_MATCH_PARAM_DESCRIPTION =
   'the area OR its service_area overlaps it. Absent: the tenant default from ' +
   'the CMS, else `located_or_serving`.';
 
-export const INCLUDE_UNLOCATED_PARAM_DESCRIPTION =
-  'Only with `region`. `true` also returns resources with neither a location ' +
-  'nor a service_area, which cannot be placed in any area. Absent: the tenant ' +
-  'default from the CMS, else `false`.';
+export const UNLOCATED_PARAM_DESCRIPTION =
+  'Only with `region`. Which resources with neither a location nor a ' +
+  'service_area, which cannot be placed in any area, are also returned in ' +
+  'every area search: `none`, `virtual` (only virtual services) or `all`. ' +
+  'Absent: the tenant default from the CMS, else `virtual`.';

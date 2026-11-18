@@ -13,12 +13,18 @@ const located = (id: string) => shape('location.point', id);
 const serving = (id: string) => shape('service_area', id);
 const hasLocation = { exists: { field: 'location.point' } };
 const hasServiceArea = { exists: { field: 'service_area' } };
-const unlocated = { bool: { must_not: [hasLocation, hasServiceArea] } };
+const unlocatedAll = { bool: { must_not: [hasLocation, hasServiceArea] } };
+const unlocatedVirtual = {
+  bool: {
+    must_not: [hasLocation, hasServiceArea],
+    filter: [{ term: { 'location.physical_address.type': 'virtual' } }],
+  },
+};
 
 const area = (overrides: Partial<AreaFilter> = {}): AreaFilter => ({
   regionIds: ['county:53033'],
   match: 'located_or_serving',
-  includeUnlocated: false,
+  unlocated: 'none',
   ...overrides,
 });
 
@@ -61,13 +67,25 @@ describe('SearchUtilsService.buildRegionFilter (area search)', () => {
   });
 
   it.each(['located', 'located_or_serving', 'serving'] as const)(
-    '%s with include_unlocated also matches resources with neither field',
+    '%s with unlocated=all also matches resources with neither field',
     (match) => {
       const filter = SearchUtilsService.buildRegionFilter(
-        area({ match, includeUnlocated: true }),
+        area({ match, unlocated: 'all' }),
       ) as { bool: { should: unknown[] } };
       expect(filter.bool.should[filter.bool.should.length - 1]).toEqual(
-        unlocated,
+        unlocatedAll,
+      );
+    },
+  );
+
+  it.each(['located', 'located_or_serving', 'serving'] as const)(
+    '%s with unlocated=virtual also matches virtual services with neither field',
+    (match) => {
+      const filter = SearchUtilsService.buildRegionFilter(
+        area({ match, unlocated: 'virtual' }),
+      ) as { bool: { should: unknown[] } };
+      expect(filter.bool.should[filter.bool.should.length - 1]).toEqual(
+        unlocatedVirtual,
       );
     },
   );
