@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   PublicAppConfigAlert,
   PublicAppConfigCache,
+  PublicAppConfigFacet,
   PublicAppConfigLegalPage,
   PublicAppConfigMenuItem,
 } from '../types';
@@ -149,6 +150,32 @@ export class PublicAppConfigMapDto {
   zoom: number;
 }
 
+export class PublicAppConfigFacetDto implements PublicAppConfigFacet {
+  @ApiProperty({
+    example: 'days',
+    description: 'Facet key, as in the search response `facets`',
+  })
+  facet: string;
+
+  @ApiPropertyOptional({
+    enum: ['count', 'name', 'valueOrder', 'dayOfWeek'],
+    default: 'count',
+  })
+  sortBy?: 'count' | 'name' | 'valueOrder' | 'dayOfWeek';
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Value order when sortBy is valueOrder',
+  })
+  valueOrder?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Values to hide (compared trimmed, ignoring case)',
+  })
+  excludeValues?: string[];
+}
+
 export class PublicAppConfigSearchDto {
   @ApiProperty({ type: PublicAppConfigMapDto })
   map: PublicAppConfigMapDto;
@@ -158,6 +185,13 @@ export class PublicAppConfigSearchDto {
     example: 25,
   })
   defaultRadius?: number;
+
+  @ApiProperty({
+    type: [PublicAppConfigFacetDto],
+    description:
+      "How each search filter's values are shown; the filters themselves come with each search (`facets`)",
+  })
+  facets: PublicAppConfigFacetDto[];
 }
 
 export class PublicAppConfigResponseDto implements PublicAppConfigCache {

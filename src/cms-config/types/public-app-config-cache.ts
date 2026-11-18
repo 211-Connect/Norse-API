@@ -21,6 +21,14 @@ export type PublicAppConfigAlert = {
   variant?: 'destructive' | 'default';
 };
 
+/** How a search filter's values are shown (Payload: search → facets). */
+export type PublicAppConfigFacet = {
+  facet: string;
+  sortBy?: 'count' | 'name' | 'valueOrder' | 'dayOfWeek';
+  valueOrder?: string[];
+  excludeValues?: string[];
+};
+
 export type PublicAppConfigCache = {
   tenantId: string;
   locale: string;
@@ -60,5 +68,7 @@ export type PublicAppConfigCache = {
     /** `[longitude, latitude]`. */
     map: { center: [number, number]; zoom: number };
     defaultRadius?: number;
+    /** Display settings for the filters returned with each search. */
+    facets: PublicAppConfigFacet[];
   };
 };
