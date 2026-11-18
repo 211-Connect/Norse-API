@@ -33,6 +33,13 @@ export interface SortFieldNames {
 
 export type RelevanceMeaning = 'score' | 'proximity';
 
+/**
+ * How ticked values of one facet combine. 'and': every value must match (v1,
+ * v1 hybrid). 'or-within-facet': any value matches, different facets still
+ * AND (v2 search, decision 1A).
+ */
+export type FacetFilterMode = 'and' | 'or-within-facet';
+
 export const STANDARD_SORT_FIELDS: SortFieldNames = {
   id: 'service_at_location_id.raw',
   name: 'name.raw',
@@ -83,6 +90,7 @@ export class SearchUtilsService {
     geometry: SearchResourcesBodyDto['geometry'],
     organizationId?: string,
     area?: AreaFilter,
+    facetMode: FacetFilterMode = 'and',
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
 
@@ -99,15 +107,30 @@ export class SearchUtilsService {
 
       const values = Array.isArray(value) ? value : [value];
 
+      // Each value matches the locale field or the English field.
+      const valueTerms = (item: string): QueryDslQueryContainer[] => [
+        { term: { [localeField]: item } },
+        { term: { [enField]: item } },
+      ];
+
+      if (facetMode === 'or-within-facet') {
+        // One clause per facet: any ticked value matches (OR inside a facet).
+        // Clauses of different facets are still all required (AND across facets).
+        if (values.length > 0) {
+          filters.push({
+            bool: {
+              should: values.flatMap(valueTerms),
+              minimum_should_match: 1,
+            },
+          });
+        }
+        continue;
+      }
+
+      // One clause per value: every ticked value must match (AND).
       for (const item of values) {
         filters.push({
-          bool: {
-            should: [
-              { term: { [localeField]: item } },
-              { term: { [enField]: item } },
-            ],
-            minimum_should_match: 1,
-          },
+          bool: { should: valueTerms(item), minimum_should_match: 1 },
         });
       }
     }
