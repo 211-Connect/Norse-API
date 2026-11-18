@@ -9,6 +9,7 @@ import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
 import { BlockedTrafficService } from './services/blocked-traffic.service';
+import { CrawlerTrafficService } from './services/crawler-traffic.service';
 import { CdnCacheControlInterceptor } from '../common/interceptors/cdn-cache-control.interceptor';
 
 /**
@@ -67,6 +68,7 @@ describe('AnalyticsController response caching', () => {
         },
         { provide: AnalyticsInfoEnricherService, useValue: {} },
         { provide: BlockedTrafficService, useValue: {} },
+        { provide: CrawlerTrafficService, useValue: {} },
       ],
     })
       .overrideGuard(AnalyticsApiKeyGuard)

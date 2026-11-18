@@ -24,6 +24,7 @@ import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
 import { BlockedTrafficService } from './services/blocked-traffic.service';
+import { CrawlerTrafficService } from './services/crawler-traffic.service';
 import { buildSearchExportCSV } from './internal/search-export-csv';
 import {
   AnalyticsApiKeyGuard,
@@ -37,6 +38,8 @@ import {
   BlockedTrafficQueryDto,
   BlockedTrafficResponse,
   CommonAnalyticsQuery,
+  CrawlerTrafficQueryDto,
+  CrawlerTrafficResponse,
   EventCatalogEntryResponse,
   EventValuesQueryDto,
   EventValuesResponse,
@@ -80,6 +83,7 @@ export class AnalyticsController {
     private readonly analyticsConfigService: AnalyticsConfigService,
     private readonly infoEnricher: AnalyticsInfoEnricherService,
     private readonly blockedTrafficService: BlockedTrafficService,
+    private readonly crawlerTrafficService: CrawlerTrafficService,
   ) {}
 
   @Get('info')
@@ -536,6 +540,30 @@ export class AnalyticsController {
       {
         hourly: query.hourly ?? false,
       },
+    );
+  }
+
+  @Get('crawler-traffic')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get per-crawler request counts for the tenant',
+    description:
+      'Requests from identified crawlers (blocked, logged on observe-only hosts, rate-limited, allowed) and load-limit 429s, counted by Norse with 1-hour resolution. Totals, top crawlers, and an hour or day series. Not from Umami.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved crawler traffic',
+    type: CrawlerTrafficResponse,
+  })
+  getCrawlerTraffic(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: CrawlerTrafficQueryDto,
+  ): Promise<CrawlerTrafficResponse> {
+    return this.crawlerTrafficService.getStats(
+      tenantId,
+      query.start,
+      query.end,
+      query.granularity ?? 'day',
     );
   }
 
