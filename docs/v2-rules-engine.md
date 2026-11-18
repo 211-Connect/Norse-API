@@ -14,7 +14,7 @@ Needs never filter results; a used or confirmed need only boosts (`boost_needs`,
 - Tenant: `top_areas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
 
 ## Cutoffs (`config.ts`, `RULES_VERSION`)
-- Emergency, in order: floor hit -> popup at score >= 0.667, else soft; calm context -> soft at >= 0.217, else none; DV shelter below 0.667 -> soft; >= 0.667 popup; >= 0.217 soft; else none. Error -> `unknown`, not cacheable.
+- Emergency, in order: floor hit -> popup at score >= 0.65, else soft; calm context -> soft at >= 0.217, else none; DV shelter below 0.65 -> soft; >= 0.65 popup; >= 0.217 soft; else none. Error -> `unknown`, not cacheable.
 - Urgency: < 0.8 drop (U-X); 0.8 to 0.93 ask; >= 0.93 use the model level.
 - Needs: >= 0.97 use; Tier 2 from 0.12 to 0.97 ask; below 0.12 drop.
 - Area rule: best Tier 1 >= 0.9 and every Tier 2 < 0.5 -> one area question.

@@ -1,9 +1,9 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-16.1';
+export const RULES_VERSION = 'rules-2026-11-18.1';
 
 export const CUTOFFS = {
-  emergency: { popup: 0.667, soft: 0.217 }, // Argus L12 (argus-l12-s0-floor4-2026-11-14) tuned cutoffs
+  emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
   urgency: { drop: 0.8, use: 0.93 }, // score < drop -> drop; drop <= s < use -> ask; s >= use -> use
   needs: { use: 0.97, ask: 0.12 }, // s >= use -> use; ask <= s < use -> ask; else drop
   area: { tier1Min: 0.9, tier2Max: 0.5 },

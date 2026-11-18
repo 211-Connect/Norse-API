@@ -22,15 +22,15 @@ describe('emergencyBand', () => {
     expect(emergencyBand(ok(Infinity))).toBe('unknown');
   });
   it('plain cutoffs', () => {
-    expect(emergencyBand(ok(0.6669))).toBe('soft');
-    expect(emergencyBand(ok(0.667))).toBe('popup');
+    expect(emergencyBand(ok(0.6499))).toBe('soft');
+    expect(emergencyBand(ok(0.65))).toBe('popup');
     expect(emergencyBand(ok(0.2169))).toBe('none');
     expect(emergencyBand(ok(0.217))).toBe('soft');
   });
   it('floor_hit', () => {
     expect(emergencyBand(ok(0.1, { floor_hit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.6669, { floor_hit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.667, { floor_hit: true }))).toBe('popup');
+    expect(emergencyBand(ok(0.6499, { floor_hit: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.65, { floor_hit: true }))).toBe('popup');
   });
   it('calm_context never popup', () => {
     expect(emergencyBand(ok(0.9, { calm_context: true }))).toBe('soft');
