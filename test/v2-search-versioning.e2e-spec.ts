@@ -283,21 +283,53 @@ describe('v2 search versioning (e2e)', () => {
       expect(searchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('a tenant_id that differs from x-tenant-id is a 400', async () => {
+    // ADR 0039 Decision 34: the URL wins; the headers are not read on v2.
+    const bare = (path: string) => request(app.getHttpServer()).get(path);
+
+    it('the URL alone reaches the route, with no tenant or language header', async () => {
+      const res = await bare(`/v2/search?query=rent&${M}`);
+      expect(res.status).toBe(200);
+      expect(searchMock).toHaveBeenCalledTimes(1);
+      const { headers } = searchMock.mock.calls[0][0];
+      expect(headers['x-tenant-id']).toBe(TENANT);
+      expect(headers['accept-language']).toBe('en');
+    });
+
+    it('a tenant_id that differs from x-tenant-id wins: the header is not read', async () => {
       const other = '22222222-2222-4222-8222-222222222222';
       const res = await get(
         `/v2/search?query=rent&tenant_id=${other}&locale=en`,
       );
-      expect(res.status).toBe(400);
-      expect(searchMock).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(searchMock.mock.calls[0][0].headers['x-tenant-id']).toBe(other);
     });
 
-    it('a locale that differs from accept-language is a 400', async () => {
+    it('a locale that differs from accept-language wins: the header is not read', async () => {
       const res = await get(
         `/v2/search?query=rent&tenant_id=${TENANT}&locale=es`,
       );
+      expect(res.status).toBe(200);
+      expect(searchMock.mock.calls[0][0].headers['accept-language']).toBe('es');
+    });
+
+    it('a tenant_id that is not a UUID is a 400 that names it', async () => {
+      refused(
+        await get('/v2/search?query=rent&tenant_id=abc&locale=en'),
+        'tenant_id',
+      );
+    });
+
+    it('a locale that is not one exact supported code is a 400 that names locale', async () => {
+      refused(
+        await get(`/v2/search?query=rent&tenant_id=${TENANT}&locale=en-US`),
+        'locale',
+      );
+    });
+
+    it('v1 /search still reads the headers and still checks a URL copy', async () => {
+      const other = '22222222-2222-4222-8222-222222222222';
+      const res = await get(`/search?query=rent&tenant_id=${other}`);
       expect(res.status).toBe(400);
-      expect(searchMock).not.toHaveBeenCalled();
     });
 
     it('v1 /search is unchanged: no copies needed', async () => {

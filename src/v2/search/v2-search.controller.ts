@@ -15,7 +15,7 @@ import {
 import {
   ApiBody,
   ApiExcludeController,
-  ApiHeader,
+  ApiQuery,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -30,7 +30,6 @@ import { ONE_HOUR } from '../../common/const/one-hour';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
 import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
-import { X_TENANT_ID_HEADER_DESCRIPTION } from '../../common/swagger/header-descriptions';
 import {
   UsageMetricsService,
   searchOutcomeFromHits,
@@ -89,11 +88,18 @@ export class V2SearchController {
       'until the v2 ADR (ISS-2493).',
   })
   @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
-  @ApiHeader({
-    name: 'x-tenant-id',
+  @ApiQuery({
+    name: 'tenant_id',
     required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
   })
   async getResources(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
@@ -121,11 +127,18 @@ export class V2SearchController {
       '(ISS-2493).',
   })
   @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
-  @ApiHeader({
-    name: 'x-tenant-id',
+  @ApiQuery({
+    name: 'tenant_id',
     required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
   })
   @ApiBody({
     schema: {
