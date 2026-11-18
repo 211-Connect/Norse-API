@@ -52,6 +52,7 @@ const VECTOR = ['b', 'd', 'a'];
 const TAXONOMY = ['c'];
 const FUSED = ['b', 'a', 'c', 'd'];
 const NEED = ['n1'];
+const LIST_IDS = ['a', 'b', 'c', 'd', 'n1'];
 
 describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let service: HybridSearchService;
@@ -64,7 +65,9 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
   });
-  const isList = (r: any) => r._source === false && r.size === 100;
+  // Lists after the cut (size 100) and lists started before it (size 300).
+  const isList = (r: any) =>
+    r._source === false && (r.size === 100 || r.size === 300);
   const kindOf = (r: any) =>
     r.query.script_score
       ? r.query.script_score.query.bool.should
@@ -126,7 +129,9 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
         return Promise.resolve({
           hits: {
             hits: Array.from({ length: req.size }, (_, i) => ({
-              _id: `keep-${i}`,
+              // the kept set holds the ids the mocked lists return, so the
+              // pre-cut lists survive the cut's ids filter
+              _id: LIST_IDS[i] ?? `keep-${i}`,
               _score: req.min_score,
               _source: { service_id: `svc-${i}` },
             })),
@@ -426,19 +431,21 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(request.query.pinned).toBeUndefined();
   });
 
-  it('8. v2 with relevance_cutoff on: the lists carry the cutoff ids filter', async () => {
+  it('8. v2 with relevance_cutoff on: the lists start before the cut, deeper, and are cut to the kept ids', async () => {
     await run({ relevance_cutoff: 'on' });
 
     const sent = lists();
     expect(sent).toHaveLength(3);
+    // pre-cut lists: size 300, no ids filter, no second request after the cut
+    for (const req of sent) {
+      expect(req.size).toBe(300);
+      expect(JSON.stringify(filterOf(req))).not.toContain('"ids"');
+    }
     const mainFilter =
       mainRequest().query.pinned.organic.function_score.query.bool.filter;
-    const idsFilter = mainFilter.find((f: any) => f.ids);
-    expect(idsFilter).toBeDefined();
-    for (const req of sent) {
-      const filter = filterOf(req);
-      expect(filter).toContainEqual(idsFilter);
-    }
+    expect(mainFilter.find((f: any) => f.ids)).toBeDefined();
+    // the kept set holds all list ids: the fused order is today's
+    expect(mainRequest().query.pinned).toBeDefined();
   });
 
   describe('fused page fast path', () => {

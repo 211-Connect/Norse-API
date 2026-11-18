@@ -179,7 +179,30 @@ const PRIORITY_SCORE_WEIGHT = 1;
 const RRF_K = 60;
 const RRF_LIST_SIZE = 100;
 
+/**
+ * Depth of the lists started before the relevance cut is known (cutoff on).
+ * The cut then keeps some of each list's documents; a list that still has
+ * RRF_LIST_SIZE kept documents (or all of them) is exact, otherwise it is
+ * sent again with the cut's ids filter. Deeper than RRF_LIST_SIZE so the
+ * common cut (about 20 to 500 kept of thousands) needs no second request.
+ */
+const RRF_PRECUT_LIST_SIZE = 300;
+
 type RankedListKind = 'keyword' | 'vector' | 'taxonomy' | 'need';
+
+/** A ranked list sent before the cut: its query args and its pending ids. */
+type PrecutList = {
+  kind: RankedListKind;
+  listArgs: {
+    filters: QueryDslQueryContainer[];
+    queryStr: string;
+    queryVector: number[];
+    predicted: PredictedTaxonomy[];
+    needs: NeedScore[];
+    wordRarity: WordRarity;
+  };
+  result: Promise<{ ids: string[]; exhausted: boolean }>;
+};
 // Weight of the cosine tie-break inside the taxonomy list (taxonomy scores are 25+).
 const RRF_TAXONOMY_TIE_BREAK = 0.001;
 // Weight of the need list in the fusion. Not measured: IL211 had 0 need-tagged
@@ -744,6 +767,44 @@ export class HybridSearchService {
     // reported as unhandled if the taxonomy lookup throws first.
     earlyLists?.catch(() => undefined);
 
+    // Cutoff on: the lists cannot carry the cut's `ids` filter yet. They start
+    // now with the filters as they are, deeper (RRF_PRECUT_LIST_SIZE), and are
+    // filtered by the kept ids once the cut is known (see resolvePrecutLists).
+    const precutLists: PrecutList[] = [];
+    const startPrecut = (
+      kinds: RankedListKind[],
+      predicted: PredictedTaxonomy[],
+      needs: NeedScore[],
+    ) => {
+      for (const kind of kinds) {
+        const listArgs = {
+          filters: [...baseFilters],
+          queryStr,
+          queryVector: queryVector!,
+          predicted,
+          needs,
+          wordRarity,
+        };
+        const query = this.buildRankedListQuery(kind, listArgs);
+        if (!query) continue;
+        const result = this.runRankedList(
+          { index, preference },
+          `hybrid_rrf_${kind}_precut`,
+          query,
+          RRF_PRECUT_LIST_SIZE,
+        ).then((ids) => ({
+          ids,
+          exhausted: ids.length < RRF_PRECUT_LIST_SIZE,
+        }));
+        // A rejection falls back to today's lists in resolvePrecutLists.
+        result.catch(() => undefined);
+        precutLists.push({ kind, listArgs, result });
+      }
+    };
+    if (fuseEligible && cutoffRequested) {
+      startPrecut(['keyword', 'vector'], [], []);
+    }
+
     // Fused page fast path (ISS-2766). Filters alone decide membership
     // (minimum_should_match is 0, scoring only orders), so the total and the
     // facets of the full request equal those of a plain filter query. The
@@ -790,6 +851,14 @@ export class HybridSearchService {
       ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
       : [];
 
+    if (fuseEligible && cutoffRequested) {
+      startPrecut(
+        ['taxonomy', 'need'],
+        predictedTaxonomies,
+        boostActive ? activeNeeds : [],
+      );
+    }
+
     this.logger.log(
       `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
         .map((t) => t.code)
@@ -802,6 +871,7 @@ export class HybridSearchService {
     // below runs, no extra Elasticsearch call is made, and the request built
     // further down is identical to what it has always been.
     let cutoff: RelevanceCutoffDto | undefined;
+    let keptIdsForLists: string[] | null = null;
 
     // Need boost (ISS-2745). Runs only with the switch on, a ranked request and
     // at least one need at or above the gate; otherwise nothing below runs and
@@ -864,6 +934,7 @@ export class HybridSearchService {
           );
 
       cutoff = probed.cutoff;
+      keptIdsForLists = probed.keptIds;
 
       if (probed.keptIds) {
         // Cut by relevance, then let `sort` order whatever survived. Applying
@@ -873,6 +944,18 @@ export class HybridSearchService {
         baseFilters.push({ ids: { values: probed.keptIds } });
       }
     }
+
+    // The pre-cut lists, cut down to the kept ids (undefined: today's path).
+    const resolvedLists =
+      fuseEligible && cutoffRequested
+        ? this.resolvePrecutLists({
+            index,
+            preference,
+            precutLists,
+            keptIds: keptIdsForLists,
+            finalFilters: baseFilters,
+          })
+        : undefined;
 
     let needShould: QueryDslQueryContainer[] = [];
 
@@ -919,6 +1002,7 @@ export class HybridSearchService {
         wordRarity,
         needs: boostActive ? activeNeeds : [],
         earlyLists,
+        lists: resolvedLists,
       });
 
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
@@ -1205,6 +1289,57 @@ export class HybridSearchService {
   }
 
   /**
+   * The pre-cut lists (started before the cut) as the final lists, in list
+   * order. No cut: the top RRF_LIST_SIZE of each. A cut: the kept ids of each,
+   * in list order (filters do not change scores, so kept documents keep their
+   * relative order). A list is exact when it is exhausted, already holds
+   * RRF_LIST_SIZE kept ids, or holds every kept id; otherwise that one list is
+   * sent again with the cut's ids filter, as before. Resolves undefined when
+   * any list fails: the caller then sends all lists after the cut.
+   */
+  private async resolvePrecutLists(args: {
+    index: string;
+    preference: string;
+    precutLists: PrecutList[];
+    keptIds: string[] | null;
+    finalFilters: QueryDslQueryContainer[];
+  }): Promise<string[][] | undefined> {
+    const { precutLists, keptIds, finalFilters } = args;
+    try {
+      const results = await Promise.all(precutLists.map((l) => l.result));
+      const kept = keptIds ? new Set(keptIds) : null;
+      return await Promise.all(
+        precutLists.map(async (list, i) => {
+          const { ids, exhausted } = results[i];
+          if (!kept || !keptIds) return ids.slice(0, RRF_LIST_SIZE);
+          const filtered = ids
+            .filter((id) => kept.has(id))
+            .slice(0, RRF_LIST_SIZE);
+          if (
+            exhausted ||
+            filtered.length >= RRF_LIST_SIZE ||
+            filtered.length === keptIds.length
+          ) {
+            return filtered;
+          }
+          const query = this.buildRankedListQuery(list.kind, {
+            ...list.listArgs,
+            filters: finalFilters,
+          });
+          return query
+            ? await this.runRankedList(args, `hybrid_rrf_${list.kind}`, query)
+            : filtered;
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Pre-cut RRF lists failed, sending them after the cut: ${(error as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Ranked lists (keyword, vector, taxonomy, and a need list when needs are
    * active), each the top `RRF_LIST_SIZE` ids, fused by reciprocal rank.
    * `pinned_resources_mode` `boost` (+5 constant) and the priority function
@@ -1225,26 +1360,36 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     needs: NeedScore[];
     earlyLists?: Promise<string[][]>;
+    /** All lists in order, already resolved (cutoff on, pre-cut lists). */
+    lists?: Promise<string[][] | undefined>;
   }): Promise<string[] | undefined> {
     const { needs, earlyLists } = args;
 
     try {
-      const requests: Promise<string[]>[] = [];
-      for (const kind of ['taxonomy', 'need'] as const) {
-        const query = this.buildRankedListQuery(kind, args);
-        if (query) {
-          requests.push(this.runRankedList(args, `hybrid_rrf_${kind}`, query));
+      const preResolved = args.lists ? await args.lists : undefined;
+      let lists: string[][];
+      if (preResolved) {
+        // Order: keyword, vector, taxonomy, need (as the lists were started).
+        lists = preResolved;
+      } else {
+        const requests: Promise<string[]>[] = [];
+        for (const kind of ['taxonomy', 'need'] as const) {
+          const query = this.buildRankedListQuery(kind, args);
+          if (query) {
+            requests.push(
+              this.runRankedList(args, `hybrid_rrf_${kind}`, query),
+            );
+          }
         }
+        const early = earlyLists ?? this.fetchKeywordAndVectorLists(args);
+        const [keywordAndVector, ...rest] = await Promise.all([
+          early,
+          ...requests,
+        ]);
+        // Order: keyword, vector, taxonomy, need. The weights follow the lists.
+        lists = [...keywordAndVector, ...rest];
       }
       const needList = needs.length > 0;
-      const early = earlyLists ?? this.fetchKeywordAndVectorLists(args);
-
-      const [keywordAndVector, ...rest] = await Promise.all([
-        early,
-        ...requests,
-      ]);
-      // Order: keyword, vector, taxonomy, need. The weights follow the lists.
-      const lists = [...keywordAndVector, ...rest];
       const weights = lists.map((_, i) =>
         needList && i === lists.length - 1 ? RRF_NEED_LIST_WEIGHT : 1,
       );
