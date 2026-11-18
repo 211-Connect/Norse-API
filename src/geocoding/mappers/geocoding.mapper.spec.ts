@@ -122,6 +122,20 @@ describe('geocoding.mapper', () => {
       expect(mapped.district).toBe('Some County');
     });
 
+    it('prefers county over suburb and neighbourhood when both are present', () => {
+      const mapped = mapOpenCageResultToGeocodeResponse({
+        formatted: 'Chicago, Illinois',
+        geometry: { lat: 41.8781, lng: -87.6298 },
+        components: {
+          suburb: 'The Loop',
+          neighbourhood: 'Downtown Chicago',
+          county: 'Cook County',
+        },
+      });
+
+      expect(mapped.district).toBe('Cook County');
+    });
+
     it('handles missing components and bounds gracefully', () => {
       const result = {
         formatted: 'Unknown place',
@@ -143,5 +157,50 @@ describe('geocoding.mapper', () => {
         bbox: undefined,
       });
     });
+  });
+});
+
+describe('mapMapboxFeatureToGeocodeResponse state_code (area search)', () => {
+  it('reads the state code from the region context', () => {
+    const result = mapMapboxFeatureToGeocodeResponse(
+      {
+        place_name: 'Yakima, Washington, United States',
+        center: [-120.5, 46.6],
+        place_type: ['place'],
+        context: [{ id: 'region.1', text: 'Washington', short_code: 'US-WA' }],
+      },
+      'en',
+    );
+    expect(result.state_code).toBe('WA');
+    expect(result.region).toBe('Washington');
+  });
+
+  it('reads a state hit its own code', () => {
+    const result = mapMapboxFeatureToGeocodeResponse(
+      {
+        place_name: 'Washington, United States',
+        center: [-120, 48],
+        place_type: ['region'],
+        properties: { short_code: 'US-WA' },
+      },
+      'en',
+    );
+    expect(result.state_code).toBe('WA');
+  });
+});
+
+describe('mapMapboxFeatureToGeocodeResponse name (area search)', () => {
+  it("reads the hit's own name in the locale", () => {
+    const result = mapMapboxFeatureToGeocodeResponse(
+      {
+        place_name: 'Seattle, Washington, United States',
+        text: 'Seattle',
+        text_es: 'Seattle',
+        center: [-122.3, 47.6],
+        place_type: ['place'],
+      },
+      'es',
+    );
+    expect(result.name).toBe('Seattle');
   });
 });

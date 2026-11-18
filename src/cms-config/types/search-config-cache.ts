@@ -26,4 +26,22 @@ export interface SearchConfigCache {
    * When false (default), only taxonomy search is performed.
    */
   enable_organization_search?: boolean;
+
+  /**
+   * Default `area_match` for area searches (`region`) when the caller sends
+   * none. Absent or invalid: `located_or_serving`. See docs/area-search.md.
+   */
+  area_match?: 'located' | 'located_or_serving' | 'serving';
+
+  /**
+   * Default `unlocated` for area searches when the caller sends none. Absent
+   * or invalid: `virtual`.
+   */
+  unlocated_in_area_search?: 'none' | 'virtual' | 'all';
+
+  /**
+   * Replaced by `unlocated_in_area_search`; read only when that is absent, so
+   * a cache written before it still works (`true` → `all`).
+   */
+  include_unlocated_in_area_search?: boolean;
 }

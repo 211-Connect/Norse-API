@@ -1,3 +1,4 @@
+import { AreaFilter } from './area/area-match';
 import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { normalizeTaxonomies } from './cache-key/normalize-taxonomies';
 
@@ -19,6 +20,8 @@ export interface SearchIdentity {
   geoType: string | undefined;
   organizationId: string | undefined;
   geometry: unknown;
+  /** Set for an area search only, so other searches keep their fingerprint. */
+  area?: AreaFilter;
 }
 
 export const searchFingerprint = (search: SearchIdentity): string =>
@@ -34,4 +37,5 @@ export const searchFingerprint = (search: SearchIdentity): string =>
     geoType: search.geoType ?? null,
     organizationId: search.organizationId ?? null,
     geometry: search.geometry ?? null,
+    ...(search.area?.regionIds.length ? { area: search.area } : {}),
   });

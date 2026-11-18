@@ -121,6 +121,8 @@ describe('PrintableDirectoryService', () => {
         locationName?: string | null;
         coords?: { latitude: number; longitude: number } | null;
         radius?: number | null;
+        regionId?: string | null;
+        areaMatch?: 'located' | 'located_or_serving' | 'serving' | null;
       } | null;
     }>,
   ) => {
@@ -764,6 +766,67 @@ describe('PrintableDirectoryService', () => {
         }),
       }),
     );
+  });
+
+  it('searches the directory default Region without a radius (area search)', async () => {
+    const directory = createDirectoryDoc({
+      defaultQueryConfig: {
+        locationName: 'King County, WA',
+        coords: { latitude: 47.49, longitude: -121.83 },
+        radius: 15,
+        regionId: 'county:53033',
+        areaMatch: 'located',
+      },
+      sections: [
+        {
+          id: 'section-1',
+          order: 0,
+          headingLocalized: { values: { en: 'Heading' } },
+          descriptionLocalized: { values: {} },
+          maxResources: 10,
+          sources: [
+            {
+              id: 'src-1',
+              order: 0,
+              type: 'query',
+              query: {
+                title: 'q',
+                params: { query: 'housing', query_type: 'text' },
+              },
+              favoritesListId: null,
+              resourceIds: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    mockPrintableDirectoryModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(directory),
+    });
+    mockSearchService.searchResources.mockResolvedValue({
+      search: {
+        took: 10,
+        timed_out: false,
+        _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+        hits: { total: { value: 0, relation: 'eq' }, hits: [] },
+      },
+      facets: [],
+    });
+
+    await service.preview(
+      '6ad0dcb938dccb2e7af9f9c1',
+      'en',
+      { 'x-tenant-id': scope.tenantId, 'accept-language': 'en' },
+      scope,
+    );
+
+    const { query } = mockSearchService.searchResources.mock.calls[0][0];
+    expect(query.region).toEqual(['county:53033']);
+    expect(query.area_match).toBe('located');
+    // coords stay only as the distance-sort origin; no radius with a Region.
+    expect(query.coords).toEqual([-121.83, 47.49]);
+    expect(query.distance).toBe(0);
   });
 
   it('prefers query source coords and distance over directory defaults', async () => {

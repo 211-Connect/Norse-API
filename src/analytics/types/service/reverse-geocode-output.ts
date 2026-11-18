@@ -3,4 +3,5 @@ export interface ReverseGeocodeOutput {
   longitude: number;
   zipCode: string;
   city: string;
+  county: string;
 }

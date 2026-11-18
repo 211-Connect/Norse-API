@@ -1,3 +1,4 @@
+import { RegionService } from 'src/region/internal';
 import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchService } from './search.service';
@@ -71,6 +72,11 @@ describe('SearchService Logic', () => {
         {
           provide: MetricsService,
           useValue: createMetricsServiceMock(),
+        },
+        {
+          // Area searches (`region`) are covered in search.service.area.spec.ts.
+          provide: RegionService,
+          useValue: { getSummaries: jest.fn(async () => []) },
         },
       ],
     }).compile();

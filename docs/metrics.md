@@ -106,6 +106,14 @@ sum by (dependency) (rate(norse_downstream_duration_seconds_sum[5m]))
 The denominator is required: `_sum` alone is absolute seconds, so it only tells you how
 much wall-clock time a dependency consumed, not how much of it failed.
 
+### CSV export location metadata
+
+New search events include search and user city, ZIP code, and county/district
+properties derived when the event is created. The CSV exporter uses those
+properties directly. Historical events missing any of these properties fall
+back to reverse geocoding their coordinates; blank metadata values are kept
+blank when the complete property set is present.
+
 ### Downstream timeouts
 
 The fetch-based calls below has an explicit timeout so slow downstreams surface as
