@@ -11,6 +11,8 @@ import {
   ValidationPipe,
   UseGuards,
   applyDecorators,
+  Header,
+  Logger,
 } from '@nestjs/common';
 import { SearchService } from './search.service';
 import {
@@ -32,6 +34,13 @@ import { ApiTenantIdQuery, ApiLocaleQuery } from '../common/decorators';
 import { ApiQueryForComplexSearch } from './api-query-decorator';
 import { SEARCH_QUERY_TYPES } from './dto/search-query-type';
 import { RELEVANCE_CUTOFF_VALUES } from './internal/relevance-cutoff/types';
+import {
+  AREA_MATCH_PARAM_DESCRIPTION,
+  AREA_MATCH_VALUES,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
+  REGION_PARAM_DESCRIPTION,
+} from './internal/area/area-match';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
 import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
@@ -100,7 +109,7 @@ const ApiSearchParams = () =>
       name: 'distance',
       required: false,
       description:
-        'Radius in miles. Only takes effect when `coords` is also set.',
+        'Radius in miles. Only takes effect when `coords` is also set; ignored with `region`.',
       schema: { default: 0, type: 'integer', minimum: 0 },
     }),
     ApiQuery({ name: 'filters', required: false, schema: { type: 'object' } }),
@@ -111,6 +120,24 @@ const ApiSearchParams = () =>
       schema: {
         example: '-120.740135,47.751076',
       },
+    }),
+    ApiQuery({
+      name: 'region',
+      required: false,
+      description: REGION_PARAM_DESCRIPTION,
+      schema: { type: 'string', example: 'county:53077' },
+    }),
+    ApiQuery({
+      name: 'area_match',
+      required: false,
+      enum: AREA_MATCH_VALUES,
+      description: AREA_MATCH_PARAM_DESCRIPTION,
+    }),
+    ApiQuery({
+      name: 'unlocated',
+      required: false,
+      enum: UNLOCATED_VALUES,
+      description: UNLOCATED_PARAM_DESCRIPTION,
     }),
     ApiQuery({
       name: 'geo_type',
@@ -125,9 +152,10 @@ const ApiSearchParams = () =>
         '`proximity`: a result with a map point must be within `distance` of `coords`, with ' +
         'no service_area check; a result with no map point is returned only if its ' +
         'service_area contains `coords`. With `distance` 0, `proximity` applies no geo ' +
-        'filter. `boundary`: ignores `coords`/`distance` and instead requires a GeoJSON ' +
-        '`geometry` in the POST body — matches any resource whose service_area intersects that ' +
-        'shape; POST only, 400s on GET without a body.',
+        'filter. `boundary` (deprecated, use `region`): ignores `coords`/`distance` and instead ' +
+        'requires a GeoJSON `geometry` in the POST body — matches any resource whose ' +
+        'service_area intersects that shape; POST only, 400s on GET without a body. ' +
+        'Ignored when `region` is set.',
     }),
     ApiQuery({
       name: 'age',
@@ -179,6 +207,8 @@ const ApiSearchParams = () =>
   },
 })
 export class SearchController {
+  private readonly logger = new Logger(SearchController.name);
+
   constructor(
     private readonly searchService: SearchService,
     private readonly aiSearchService: AiSearchService,
@@ -241,6 +271,14 @@ export class SearchController {
   @Version('1')
   @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
+  @Header('Deprecation', 'true')
+  @ApiOperation({
+    deprecated: true,
+    summary: 'Search resources by a GeoJSON shape (deprecated)',
+    description:
+      'Deprecated: search an area with `GET /search?region=…` instead (see ' +
+      'docs/area-search.md). This endpoint will be removed.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Search resources (POST)',
@@ -355,6 +393,11 @@ export class SearchController {
     body: SearchResourcesBodyDto,
     @Req() req: Request,
   ) {
+    // Counted before removal: who still calls it (docs/area-search.md).
+    this.logger.warn(
+      `Deprecated POST /search called (tenant=${headers['x-tenant-id']}, geo_type=${query.geo_type ?? 'none'})`,
+    );
+
     // Validate Content-Type
     const contentType = req.headers['content-type'];
     if (!contentType || !contentType.includes('application/json')) {

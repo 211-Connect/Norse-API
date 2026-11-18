@@ -408,3 +408,164 @@ describe('RegionService', () => {
     });
   });
 });
+
+describe('RegionService area search', () => {
+  const search = jest.fn();
+  const mget = jest.fn();
+  const service = new RegionService({
+    search,
+    mget,
+  } as unknown as ElasticsearchService);
+  const found = (...sources: { id: string }[]) => ({
+    docs: sources.map((s) => ({ _id: s.id, found: true, _source: s })),
+  });
+  const containing = (...sources: object[]) => ({
+    hits: { hits: sources.map((s) => ({ _source: s })) },
+  });
+  const SEATTLE = {
+    id: 'place:5363000',
+    type: 'place',
+    name: 'Seattle',
+    state: 'WA',
+    centroid: [-122.33, 47.62],
+  };
+  const KING = {
+    id: 'county:53033',
+    type: 'county',
+    name: 'King County, WA',
+    state: 'WA',
+  };
+  const hit = (place_type: string, name: string, state_code = 'WA') => ({
+    coordinates: [-122.33, 47.6] as [number, number],
+    place_type: [place_type],
+    name,
+    state_code,
+  });
+
+  beforeEach(() => jest.clearAllMocks());
+
+  describe('getSummaries', () => {
+    it('returns the Regions in the order asked', async () => {
+      mget.mockResolvedValue(found(SEATTLE, KING));
+
+      const regions = await service.getSummaries([KING.id, SEATTLE.id]);
+
+      expect(regions.map((r) => r.id)).toEqual([KING.id, SEATTLE.id]);
+      expect(regions[1].centroid).toEqual({ lat: 47.62, lng: -122.33 });
+    });
+
+    it('400s naming every unknown id', async () => {
+      mget.mockResolvedValue(found(KING));
+
+      await expect(
+        service.getSummaries([KING.id, 'zip:00000']),
+      ).rejects.toThrow('Unknown Region id(s): zip:00000');
+    });
+  });
+
+  describe('regionOf', () => {
+    it('names a state by its code', async () => {
+      mget.mockResolvedValue(found({ id: 'state:WA', type: 'state' } as any));
+
+      const region = await service.regionOf(hit('region', 'Washington'));
+
+      expect(mget.mock.calls[0][0].ids).toEqual(['state:WA']);
+      expect(region?.id).toBe('state:WA');
+    });
+
+    it('names a ZIP by its digits, and is null for a ZIP with no Region (PO box)', async () => {
+      mget.mockResolvedValueOnce(found({ id: 'zip:98101' }));
+      mget.mockResolvedValueOnce({
+        docs: [{ _id: 'zip:21021', found: false }],
+      });
+
+      expect((await service.regionOf(hit('postcode', '98101')))?.id).toBe(
+        'zip:98101',
+      );
+      expect(await service.regionOf(hit('postcode', '21021'))).toBeNull();
+    });
+
+    it('takes the county containing a district hit', async () => {
+      search.mockResolvedValue(containing(KING));
+
+      const region = await service.regionOf(hit('district', 'King County'));
+
+      expect(region?.id).toBe('county:53033');
+      expect(JSON.stringify(search.mock.calls[0][0].query)).toContain(
+        '{"term":{"type":"county"}}',
+      );
+    });
+
+    it('takes the place containing the hit only when its name matches', async () => {
+      const cdp = { ...SEATTLE, id: 'place:5300001', name: 'White Center' };
+      search.mockResolvedValue(containing(cdp, SEATTLE));
+
+      expect((await service.regionOf(hit('place', 'Seattle')))?.id).toBe(
+        'place:5363000',
+      );
+    });
+
+    it('matches a Census alias, ignoring case and accents', async () => {
+      search.mockResolvedValue(
+        containing({
+          ...SEATTLE,
+          name: 'Aberdeen',
+          aliases: ['Aberdeen city'],
+        }),
+      );
+
+      expect(
+        await service.regionOf(hit('place', 'ABERDEEN CITY')),
+      ).not.toBeNull();
+    });
+
+    it('is null for a place with no Region of its name (no county fallback)', async () => {
+      search.mockResolvedValue(
+        containing({ ...SEATTLE, id: 'place:5300001', name: 'White Center' }),
+      );
+
+      expect(await service.regionOf(hit('place', 'Burien'))).toBeNull();
+    });
+
+    it('ignores a Region in another state', async () => {
+      search.mockResolvedValue(containing({ ...KING, state: 'OR' }));
+
+      expect(await service.regionOf(hit('district', 'King County'))).toBeNull();
+    });
+
+    it.each(['address', 'poi', 'neighborhood', 'locality', 'country'])(
+      'is null for a %s',
+      async (placeType) => {
+        expect(await service.regionOf(hit(placeType, 'x'))).toBeNull();
+        expect(search).not.toHaveBeenCalled();
+        expect(mget).not.toHaveBeenCalled();
+      },
+    );
+
+    it('is null without a US state code', async () => {
+      expect(
+        await service.regionOf({
+          ...hit('place', 'Seattle'),
+          state_code: undefined,
+        }),
+      ).toBeNull();
+    });
+  });
+
+  describe('get', () => {
+    it("leaves a place's seed provenance out of attribution", async () => {
+      search.mockResolvedValue(
+        containing({
+          ...SEATTLE,
+          geometry: { type: 'Polygon', coordinates: [] },
+          attribution: { boundary_feature: { big: true }, census: {} },
+        }),
+      );
+
+      const region = await service.get(SEATTLE.id);
+
+      expect(region.attribution).toBeUndefined();
+      expect(region.geometry).toEqual({ type: 'Polygon', coordinates: [] });
+    });
+  });
+});
