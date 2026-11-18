@@ -128,6 +128,17 @@ describe('V2SearchService', () => {
     expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
   });
 
+  // David 2026-11-18: sort is required at the API level. v2 passes the v1
+  // sort parameter to the hybrid query unchanged.
+  it.each(['relevance', 'distance', 'name', 'organization'] as const)(
+    'passes sort=%s to searchHybrid',
+    async (sort) => {
+      const { service, searchHybrid } = build({});
+      await service.search({ headers, query: dto({ query: 'food', sort }) });
+      expect(searchHybrid.mock.calls[0][0].query.sort).toBe(sort);
+    },
+  );
+
   it('starts no embedding when there is no text', async () => {
     const { service, startEmbedding, searchHybrid } = build({});
     await service.search({ headers, query: dto({ query: '' }) });
