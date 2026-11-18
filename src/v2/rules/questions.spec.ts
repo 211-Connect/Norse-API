@@ -1,4 +1,5 @@
-import { decide, finalize } from './engine';
+import { decide, finalize, weakMatchDecision } from './engine';
+import { noMatchQuestion } from './questions';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 const ids = (d: ReturnType<typeof decide>) => d.candidates.map((q) => q.id);
@@ -707,5 +708,110 @@ describe('importance per question type', () => {
       sig({ 'N-SAF-01': 0.24 }),
     );
     expect(imp(late, 'narrow:1')).toBe('low');
+  });
+});
+
+describe('no_match question (weak match, Lucas 2026-11-18)', () => {
+  const codes = (q: ReturnType<typeof noMatchQuestion>) =>
+    q.options.map((o) => o.value);
+  it('options: tenant Tier 1 top areas, then defaults', () => {
+    const q = noMatchQuestion(req(), { top_areas: ['N-LEG', 'N-WRK'] });
+    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-HOU']);
+  });
+  it('no tenant areas: the defaults', () => {
+    expect(codes(noMatchQuestion(req(), {}))).toEqual([
+      'N-HOU',
+      'N-FOD',
+      'N-MON',
+    ]);
+  });
+  it('skips Tier 2 and unknown tenant codes, and duplicates', () => {
+    const q = noMatchQuestion(req(), {
+      top_areas: ['N-FOD-01', 'bogus', 'N-HOU', 'N-HOU'],
+    });
+    expect(codes(q)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+  });
+  it('skips passed and confirmed codes', () => {
+    const q = noMatchQuestion(
+      req({ passed_needs: ['N-HOU'], needs: ['N-FOD'] }),
+      {},
+    );
+    expect(codes(q)).toEqual(['N-MON']);
+  });
+  it('at most 3 options', () => {
+    const q = noMatchQuestion(req(), {
+      top_areas: ['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU'],
+    });
+    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
+  });
+  it('shape: id, type, importance, reason, step, stem, flags, parameter', () => {
+    const q = noMatchQuestion(req(), {});
+    expect(q).toMatchObject({
+      id: 'no_match',
+      type: 'find_need',
+      importance: 'high',
+      reason: 'weak_match',
+      step: 2,
+      stem: 'We could not find a good match. What do you need help with?',
+      multi_select: true,
+      allow_other: true,
+      none_of_these: true,
+      uncertainty: 1,
+    });
+    expect(q.options.every((o) => o.parameter === 'needs')).toBe(true);
+    expect(q.value).toBeGreaterThan(0);
+    expect(q.priority).toBeGreaterThan(1);
+  });
+  it('null when no option is left', () => {
+    expect(
+      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), {}),
+    ).toBeNull();
+  });
+});
+
+describe('weakMatchDecision', () => {
+  const base = () => decide(req(), sig({ 'N-FOD': 0.2 }));
+  it('replaces candidates with the no_match question; count codes and scores follow', () => {
+    const d = weakMatchDecision(base(), req(), {});
+    expect(d.candidates.map((q) => q.id)).toEqual(['no_match']);
+    expect(d.count_codes).toEqual(['N-FOD', 'N-HOU', 'N-MON']);
+    expect(d.option_scores).toEqual({ 'N-FOD': 0, 'N-HOU': 0, 'N-MON': 0 });
+  });
+  it('copies the other fields', () => {
+    const b = base();
+    const d = weakMatchDecision(b, req(), {});
+    expect(d.rules_version).toBe(b.rules_version);
+    expect(d.cacheable).toBe(b.cacheable);
+    expect(d.urgency).toEqual(b.urgency);
+  });
+  it('clarify=never: no candidates, no count codes', () => {
+    const d = weakMatchDecision(base(), req({ clarify: 'never' }), {});
+    expect(d.candidates).toEqual([]);
+    expect(d.count_codes).toEqual([]);
+    expect(d.option_scores).toEqual({});
+  });
+  it('no option left: no candidates', () => {
+    const r = req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] });
+    expect(weakMatchDecision(base(), r, {}).candidates).toEqual([]);
+  });
+  it('keeps the emergency question (soft card) next to no_match', () => {
+    const b = decide(
+      req(),
+      sig({ 'N-FOD': 0.2 }, { emergency: { status: 'ok', score: 0.3 } }),
+    );
+    expect(b.candidates.some((q) => q.type === 'emergency')).toBe(true);
+    const d = weakMatchDecision(b, req(), {});
+    expect(d.candidates.map((q) => q.id)).toEqual(['emergency', 'no_match']);
+    expect(
+      weakMatchDecision(b, req({ clarify: 'never' }), {}).candidates.map(
+        (q) => q.id,
+      ),
+    ).toEqual(['emergency']);
+  });
+  it('does not change the input decision', () => {
+    const b = base();
+    const before = JSON.stringify(b);
+    weakMatchDecision(b, req(), {});
+    expect(JSON.stringify(b)).toBe(before);
   });
 });

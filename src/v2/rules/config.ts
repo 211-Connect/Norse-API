@@ -11,6 +11,10 @@ export const CUTOFFS = {
   area: { tier1Min: 0.8, tier2Max: 0.5 },
   nx: { label: 0.07 },
   start: { modelAreasMin: 0.3 },
+  // Signal D, measured 2026-11-17 (weak-match-2026-11-17/results.md); Lucas 2026-11-18: ship.
+  // Weak match: keyword top score < keywordBelow, best need score < needBelow
+  // and vector top score < vectorBelow.
+  weakMatch: { keywordBelow: 1, needBelow: 0.9, vectorBelow: 0.55 },
   maxQuestions: 3,
   optionsPerQuestion: 3,
 };
@@ -26,6 +30,7 @@ export const STEMS = {
   today: 'Do you need this today?',
   time: 'When do you need this?',
   start: 'What do you need help with most?',
+  noMatch: 'We could not find a good match. What do you need help with?',
   area: 'Which kind of help with {area}?',
   narrow: 'Which of these fits best?',
   narrowAlso: 'Do any of these also fit?',

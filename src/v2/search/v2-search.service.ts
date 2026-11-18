@@ -2,10 +2,11 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
+  HybridSearchResult,
   HybridSearchService,
   NeedScore,
 } from 'src/search/hybrid-search.service';
-import { decide, finalize } from '../rules';
+import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
@@ -47,6 +48,16 @@ const hitsTotal = (response: {
   );
   return null;
 };
+
+/**
+ * Hit total for the clarify counts: `null` ("not counted") when searchHybrid
+ * flagged the total as unreadable (`totalCounted: false`), else `hitsTotal`.
+ */
+const countedTotal = (response: {
+  totalCounted?: false;
+  search?: { hits?: { total?: unknown } };
+}): number | null =>
+  response.totalCounted === false ? null : hitsTotal(response);
 
 // ml-broker rejects classify text longer than 512 characters after stripping
 // (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer
@@ -146,6 +157,28 @@ export function resolveAiClassification(
   return tenant === 'off' || requested === 'off' ? 'off' : 'on';
 }
 
+type HybridCall = Parameters<HybridSearchService['searchHybrid']>[0];
+
+/** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
+function emptyResults<T extends HybridSearchResult>(
+  response: Omit<T, 'needCounts' | 'judges'>,
+): Omit<T, 'needCounts' | 'judges' | 'relevance_cutoff'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { relevance_cutoff, ...rest } = response as Record<string, unknown>;
+  return {
+    ...rest,
+    search: {
+      ...(response as HybridSearchResult).search,
+      hits: {
+        total: { value: 0, relation: 'eq' },
+        max_score: null,
+        hits: [],
+      },
+    },
+    facets: [],
+  } as never;
+}
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -153,6 +186,27 @@ export class V2SearchService {
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
   ) {}
+
+  /**
+   * One hybrid search. The language picks the index; an unknown language has
+   * no index. That was a 500 (break run 2026-11-14) and is a caller error.
+   */
+  private runSearch(
+    call: HybridCall,
+    headers: HeadersDto,
+  ): Promise<HybridSearchResult> {
+    return this.hybridSearch.searchHybrid(call).catch((error: unknown) => {
+      if (isIndexNotFound(error)) {
+        throw new BadRequestException(
+          `no search index for accept-language ${headers['accept-language']}`,
+        );
+      }
+      if (isQueryTooLarge(error)) {
+        throw new BadRequestException('query is too long for search');
+      }
+      throw error;
+    });
+  }
 
   async search({
     headers,
@@ -229,50 +283,131 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
       dto;
-    // The language picks the index. An unknown language has no index; that
-    // was a 500 (break run 2026-11-14) and is a caller error.
-    const { needCounts, totalCounted, ...response } = await this.hybridSearch
-      .searchHybrid({
-        headers,
-        query: {
-          ...v1Fields,
-          query_type: 'hybrid',
-          // On by default with text (DTO); a browse has nothing to trim.
-          ...(!hasText && { relevance_cutoff: 'off' }),
-        } as SearchResourcesQueryDto,
-        rankingVersion: 'v2',
-        ...(queryVector && { queryVector }),
-        needScores,
-        ...(selectedNeeds.length > 0 && { selectedNeeds }),
-        ...(countCodes.length > 0 && { countCodes }),
-        body,
-      })
-      .catch((error: unknown) => {
-        if (isIndexNotFound(error)) {
-          throw new BadRequestException(
-            `no search index for accept-language ${headers['accept-language']}`,
-          );
-        }
-        if (isQueryTooLarge(error)) {
-          throw new BadRequestException('query is too long for search');
-        }
-        throw error;
-      });
+    const lang = headers['accept-language'] || 'en';
+    const tenantContext = { ai_classification: aiClassification };
+    const hybridCall: HybridCall = {
+      headers,
+      query: {
+        ...v1Fields,
+        query_type: 'hybrid',
+        // On by default with text (DTO); a browse has nothing to trim.
+        ...(!hasText && { relevance_cutoff: 'off' }),
+      } as SearchResourcesQueryDto,
+      rankingVersion: 'v2',
+      ...(queryVector && { queryVector }),
+      needScores,
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
+      ...(countCodes.length > 0 && { countCodes }),
+      body,
+    };
+    // The text-free second call (weak match) starts from this call minus the embedding.
+    const { queryVector: _qv, ...withoutVector } = hybridCall;
+    void _qv;
+    const first = await this.runSearch(hybridCall, headers);
+    const {
+      judges,
+      needCounts: firstCounts,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      totalCounted: _tc1,
+      ...firstResponse
+    } = first;
 
-    // by_code null means "not counted" (clarify=never, no codes asked, or the
-    // count failed): every option is kept. An object means "counted"; the
-    // search fills 0 for each requested code the aggregation omits.
+    // Weak match (ISS-2796, Lucas 2026-11-18): the text found nothing the
+    // judges trust. Not weak when the search returned no judges.
+    const weak = isWeakMatch({
+      req: rulesRequest,
+      signals,
+      ai: aiClassification,
+      judges: judges ?? null,
+      has_content_word_raw: contentWords(text, lang).length > 0,
+    });
+
+    // The fields below are what the response builder reads; each branch sets them.
+    let response: Omit<
+      HybridSearchResult,
+      'needCounts' | 'judges' | 'totalCounted'
+    > = firstResponse;
+    let clarifyDecision = decision;
+    let counts: {
+      total: number | null;
+      by_code: Record<string, number> | null;
+    } = {
+      total: countedTotal(first),
+      // by_code null means "not counted" (clarify=never, no codes asked, or
+      // the count failed): every option is kept. An object means "counted";
+      // the search fills 0 for each requested code the aggregation omits.
+      by_code: firstCounts ?? null,
+    };
+
+    if (weak && callerNeeds.length === 0) {
+      // No pick yet: no results, and a no_match question. The counts come
+      // from a text-free call over the question's need codes.
+      clarifyDecision = weakMatchDecision(
+        decision,
+        rulesRequest,
+        tenantContext,
+      );
+      response = emptyResults(firstResponse);
+      counts = { total: 0, by_code: null };
+      if (clarifyDecision.count_codes.length > 0) {
+        const second = await this.runSearch(
+          {
+            ...withoutVector,
+            query: {
+              ...hybridCall.query,
+              query: '',
+              relevance_cutoff: 'off',
+              limit: 1,
+              page: 1,
+            } as SearchResourcesQueryDto,
+            needScores: [],
+            selectedNeeds: undefined,
+            countCodes: clarifyDecision.count_codes,
+          },
+          headers,
+        );
+        counts = {
+          total: countedTotal(second),
+          by_code: second.needCounts ?? null,
+        };
+      }
+    } else if (weak) {
+      // The caller picked needs after a weak match: the text is dropped and
+      // the need tags decide (hard filter).
+      const second = await this.runSearch(
+        {
+          ...withoutVector,
+          query: {
+            ...hybridCall.query,
+            query: '',
+            relevance_cutoff: 'off',
+          } as SearchResourcesQueryDto,
+          needScores: [],
+          needFilter: callerNeeds,
+        },
+        headers,
+      );
+      const {
+        needCounts: secondCounts,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        judges: _j,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        totalCounted: _tc2,
+        ...secondResponse
+      } = second;
+      response = secondResponse;
+      counts = { total: countedTotal(second), by_code: secondCounts ?? null };
+    }
+
     // strong_text_match is still a placeholder: no retrieval signal yet.
-    const clarification = finalize(decision, {
-      counts: {
-        total: totalCounted === false ? null : hitsTotal(response),
-        by_code: needCounts ?? null,
-      },
+    const clarification = finalize(clarifyDecision, {
+      counts,
       strong_text_match: false,
     });
 
     const result: V2SearchResponseDto = {
       ...response,
+      weak_match: weak,
       intent: {
         query: hasText ? text : null,
         ...(dto.taxonomy &&

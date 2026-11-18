@@ -132,6 +132,61 @@ const question = ({
   ...rest,
 });
 
+/**
+ * Tier 1 codes for a question the model cannot rank: the tenant's top areas,
+ * then the defaults; skips codes that are not `eligible`, no duplicates, at
+ * most `optionsPerQuestion`.
+ */
+function fallbackAreas(
+  tenant: TenantContext,
+  eligible: (code: string) => boolean,
+): string[] {
+  const pool = [
+    ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
+    ...DEFAULT_TOP_AREAS,
+  ];
+  const picks: string[] = [];
+  for (const c of pool) {
+    if (eligible(c) && !picks.includes(c)) picks.push(c);
+    if (picks.length === CUTOFFS.optionsPerQuestion) break;
+  }
+  return picks;
+}
+
+/**
+ * The question for a weak match (ISS-2796, Lucas 2026-11-18): the text found
+ * nothing good, so ask what the person needs. Same options as the `start`
+ * fallback. "Other" opens a text box whose text joins `query` (ADR 0039
+ * Decision 7). The model cannot vouch for it: uncertainty is 1. Null when no
+ * option is left.
+ */
+export function noMatchQuestion(
+  req: RulesRequest,
+  tenant: TenantContext,
+): Question | null {
+  const confirmed = confirmedCodes(req);
+  const passed = passedCodes(req);
+  const picks = fallbackAreas(
+    tenant,
+    (c) => !confirmed.includes(c) && !passed.has(c),
+  );
+  if (picks.length === 0) return null;
+  const q = question({
+    id: 'no_match',
+    type: 'find_need',
+    importance: 'high',
+    reason: 'weak_match',
+    step: 2,
+    stem: STEMS.noMatch,
+    options: picks.map(needOption),
+    ...needsFlags,
+  });
+  q.uncertainty = 1;
+  q.value = valueOf(1, effort(q), 1);
+  q.priority = priorityOf('high', q.value);
+  return q;
+}
+
 export function buildCandidates(
   req: RulesRequest,
   signals: RulesSignals,
@@ -277,15 +332,7 @@ export function buildCandidates(
         ) {
           picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
         } else {
-          const pool = [
-            ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
-            ...DEFAULT_TOP_AREAS,
-          ];
-          picks = [];
-          for (const c of pool) {
-            if (eligible(c) && !picks.includes(c)) picks.push(c);
-            if (picks.length === CUTOFFS.optionsPerQuestion) break;
-          }
+          picks = fallbackAreas(tenant, eligible);
         }
         const options = picks.map(needOption);
         if (options.length > 0)

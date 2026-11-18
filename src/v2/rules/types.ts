@@ -70,7 +70,8 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs';
+  | 'unsure_needs'
+  | 'weak_match';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
