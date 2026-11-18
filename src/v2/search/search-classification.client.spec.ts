@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MlBrokerHttpService } from 'src/ml-broker/ml-broker-http.service';
 import { SearchClassificationClient } from './search-classification.client';
 
@@ -47,6 +48,8 @@ describe('SearchClassificationClient', () => {
   let fetchMock: jest.Mock;
   let metrics: ReturnType<typeof createMetricsServiceMock>;
 
+  let store: Map<string, unknown>;
+
   const build = (config: Record<string, string | undefined>) => {
     const configService = {
       get: jest.fn((key: string) => config[key]),
@@ -57,6 +60,17 @@ describe('SearchClassificationClient', () => {
         metrics as unknown as MetricsService,
       ),
       configService,
+      new RequestCacheService(
+        {
+          get: jest.fn((k: string) => Promise.resolve(store.get(k))),
+          set: jest.fn((k: string, v: unknown) => {
+            store.set(k, v);
+            return Promise.resolve();
+          }),
+          mset: jest.fn(() => Promise.resolve()),
+        } as never,
+        metrics as unknown as MetricsService,
+      ),
     );
   };
   const fullConfig = {
@@ -66,6 +80,7 @@ describe('SearchClassificationClient', () => {
 
   beforeEach(() => {
     fetchMock = jest.fn();
+    store = new Map();
     global.fetch = fetchMock as unknown as typeof fetch;
     metrics = createMetricsServiceMock();
   });
@@ -300,6 +315,9 @@ describe('SearchClassificationClient', () => {
         classifySearch: jest.fn().mockRejectedValue('not an Error'),
       } as unknown as MlBrokerHttpService,
       { get: jest.fn() } as unknown as ConfigService,
+      {
+        getOrSet: (_k: string, f: () => Promise<unknown>) => f(),
+      } as unknown as RequestCacheService,
     );
     expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
   });
@@ -310,6 +328,9 @@ describe('SearchClassificationClient', () => {
         classifySearch: jest.fn().mockResolvedValue(null),
       } as unknown as MlBrokerHttpService,
       { get: jest.fn() } as unknown as ConfigService,
+      {
+        getOrSet: (_k: string, f: () => Promise<unknown>) => f(),
+      } as unknown as RequestCacheService,
     );
     expect(await client.classify('q', 't1')).toEqual(ERROR_RESULT);
   });

@@ -121,7 +121,7 @@ search apart: they all post to the same `_search` path.
 | ---- | ---- |
 | `v2.search` | The whole pipeline. Attributes: `v2.has_text`, `v2.ai_classification`, `v2.boost_needs`, `v2.selected_needs`, `v2.count_codes` |
 | `v2.tenant_config` | Tenant search settings read |
-| `v2.classify` | ml-broker classify call and its mapping. `v2.classify.failed` is true when the call gave error signals |
+| `v2.classify` | ml-broker classify call and its mapping. `v2.classify.failed` is true when the call gave error signals. `v2.classify.cache_hit` is true when ml-broker was not called |
 | `v2.rules.decide`, `v2.rules.finalize` | Rules engine |
 | `v2.retrieval` | `HybridSearchService.searchHybrid` |
 | `hybrid.prepare` | Everything before the final request. Attributes: `hybrid.fused`, `hybrid.fast_page`, `hybrid.cutoff`, `hybrid.need_counts` |

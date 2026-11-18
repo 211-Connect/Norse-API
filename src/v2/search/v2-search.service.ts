@@ -19,6 +19,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { normalizeQueryText } from '../../search/internal/query-text';
 import { SearchClassificationClient } from './search-classification.client';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
@@ -204,7 +205,10 @@ export class V2SearchService {
     const classified = hasText
       ? await withSpan('v2.classify', async (classifySpan) => {
           const result = await this.classifier.classify(
-            cutWholeCharacters(text.trim(), CLASSIFY_MAX_TEXT_LENGTH),
+            cutWholeCharacters(
+              normalizeQueryText(text),
+              CLASSIFY_MAX_TEXT_LENGTH,
+            ),
             headers['x-tenant-id'],
             aiClassification,
           );

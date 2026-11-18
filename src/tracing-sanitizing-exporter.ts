@@ -50,6 +50,7 @@ const ALLOWED_ATTRIBUTES = [
   'v2.selected_needs',
   'v2.count_codes',
   'v2.classify.failed',
+  'v2.classify.cache_hit',
   'hybrid.embed_cache_hit',
   'hybrid.typo_clauses',
   'hybrid.fused',

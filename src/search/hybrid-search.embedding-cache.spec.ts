@@ -91,6 +91,14 @@ describe('HybridSearchService query embedding cache', () => {
     expect(sets[0][2]).toBe(24 * 60 * 60 * 1000);
   });
 
+  it('normalizes the text for the key and for the API request', async () => {
+    const service = await build();
+    await service.embedQuery('  food   bank\n');
+    await service.embedQuery('food bank');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).input).toBe('food bank');
+  });
+
   it('hit makes no API call and returns the same numbers', async () => {
     const service = await build();
     const first = await service.embedQuery('food bank');
