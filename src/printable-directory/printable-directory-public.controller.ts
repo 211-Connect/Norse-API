@@ -14,6 +14,7 @@ import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
 import { ZodValidationPipe } from 'src/common/pipes/zod-validation-pipe';
 import { ApiTenantIdQuery, ApiLocaleQuery } from 'src/common/decorators';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 /**
  * Fully public, unauthenticated preview access for sharing a printable
@@ -24,7 +25,7 @@ import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descri
 @ApiTags('Printable Directories (Public)')
 @Controller({
   path: 'printable-directories/public',
-  version: '1',
+  version: V1_AND_LEGACY,
 })
 @ApiTenantIdQuery()
 @ApiLocaleQuery()

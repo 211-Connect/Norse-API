@@ -44,4 +44,16 @@ describe('HealthController versioning (e2e)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'up' });
   });
+
+  // ISS-2496: after the chart sets versionPrefix "", a gateway caller's
+  // /norse-api/v1/health reaches this service as /v1/health.
+  it('GET /v1/health -> 200', async () => {
+    const res = await request(app.getHttpServer()).get('/v1/health');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /v2/health -> 404 (no v2 route is declared)', async () => {
+    const res = await request(app.getHttpServer()).get('/v2/health');
+    expect(res.status).toBe(404);
+  });
 });

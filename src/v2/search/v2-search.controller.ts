@@ -43,17 +43,16 @@ import { V2UrlMirrorsGuard } from './v2-url-mirrors.guard';
 import { V2SearchService } from './v2-search.service';
 
 /**
- * Reached by `GET /v2/search` (the `/v2/` path selects version 2) and by
- * `GET /search` with `x-api-version: 2` (ADR 0039 Decision 9).
+ * Reached by `GET /v2/search` and `POST /v2/search` only: the path picks the
+ * version (ISS-2496; Lucas, 2026-11-17). `x-api-version: 2` is a 400.
  *
  * Cache (Decisions 28 and 59): `GET` declares `V2_SEARCH_CDN_TTL`, and the
  * shared `CdnCacheControlInterceptor` writes the header. The service marks an
  * answer with an emergency question, or a failed check, as not storable
- * (`markNotStorable`), so it gets `no-store`. On `/search` the header picked
- * v2, so the interceptor never lets a shared cache store it there. The body
- * depends on `x-tenant-id` and `accept-language`, and a URL-keyed CDN ignores
- * `Vary`: so every request needs the `tenant_id` and `locale` URL copies
- * (`V2UrlMirrorsGuard`, 400 when missing; the middleware 400s a mismatch).
+ * (`markNotStorable`), so it gets `no-store`. The body depends on the tenant
+ * and the language, and a URL-keyed CDN ignores `Vary`: so every request
+ * needs `tenant_id` and `locale` in the URL (`V2UrlMirrorsGuard`, 400 when
+ * missing), and v2 reads them from the URL only (ADR 0039 Decision 34).
  * `@RequireCdnUrlMirrors()` stays as a second line: no-store without them.
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
@@ -65,7 +64,7 @@ export const V2_SEARCH_CDN_TTL = ONE_HOUR;
 
 @ApiExcludeController()
 @ApiTags('Search v2')
-@Controller(['v2/search', 'search'])
+@Controller('search')
 @ApiTenantIdQuery()
 @ApiLocaleQuery()
 export class V2SearchController {

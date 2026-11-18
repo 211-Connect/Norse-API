@@ -24,6 +24,7 @@ import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
 import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
 import { ServiceSearchService } from './service-search.service';
 import { TaxonomyNameService } from './taxonomy-name.service';
+import { V1_AND_LEGACY } from '../../common/versioning/api-version';
 
 /**
  * ServiceNet's record selector reads services through these routes (ADR 0023).
@@ -43,7 +44,7 @@ export class ServiceSearchController {
   ) {}
 
   @Post('search')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @HttpCode(200)
   @ApiOperation({
     summary:
@@ -71,7 +72,7 @@ export class ServiceSearchController {
   }
 
   @Post('facets')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @HttpCode(200)
   @ApiOperation({
     summary:
@@ -99,7 +100,7 @@ export class ServiceSearchController {
   }
 
   @Post('taxonomy-names')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @HttpCode(200)
   @ApiOperation({
     summary:

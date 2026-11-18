@@ -32,12 +32,13 @@ import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
 import { V2SearchEnabledGuard } from 'src/v2/search/v2-search-enabled.guard';
 import { V2SearchService } from 'src/v2/search/v2-search.service';
+import { V1_AND_LEGACY } from 'src/common/versioning/api-version';
 
 /** Stands in for the v1 SearchController, which has the same path. */
 @Controller('search')
 class V1SearchStubController {
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
   get() {
     return { route: 'v1' };
@@ -139,8 +140,8 @@ describe('v2 search versioning (e2e)', () => {
       expect(searchMock).toHaveBeenCalledTimes(1);
     });
 
-    it('/search with x-api-version: 2 reaches the v2 route', async () => {
-      const res = await get(`/search?query=rent&${M}`, '2');
+    it('/v2/search with x-api-version: 1 ignores the header', async () => {
+      const res = await get(`/v2/search?query=rent&${M}`, '1');
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
     });
@@ -154,18 +155,35 @@ describe('v2 search versioning (e2e)', () => {
       expect(searchMock.mock.calls[0][0].body).toEqual({ geometry });
     });
 
-    it('POST /search with x-api-version: 2 reaches the v2 route', async () => {
-      const res = await post(`/search?query=rent&${M}`, '2').send({});
-      expect(res.status).toBe(200);
-      expect(res.body.route).toBe('v2');
-    });
+    // ISS-2496 (Lucas, decision 3): the header no longer picks v2.
+    it.each([
+      ['GET', '/search?query=rent'],
+      ['GET', `/v2/search?query=rent&${M}`],
+      ['GET', '/v1/search?query=rent'],
+      ['POST', '/search?query=rent'],
+      ['POST', `/v2/search?query=rent&${M}`],
+    ])(
+      '%s %s with x-api-version: 2 is a 400 that names the header',
+      async (method, path) => {
+        const res =
+          method === 'GET'
+            ? await get(path, '2')
+            : await post(path, '2').send({});
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(res.body)).toContain('x-api-version');
+        expect(searchMock).not.toHaveBeenCalled();
+      },
+    );
 
-    it('/search without a header still reaches the v1 route', async () => {
-      const res = await get('/search');
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({ route: 'v1' });
-      expect(searchMock).not.toHaveBeenCalled();
-    });
+    it.each(['/search', '/v1/search'])(
+      '%s without a header reaches the v1 route',
+      async (path) => {
+        const res = await get(path);
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ route: 'v1' });
+        expect(searchMock).not.toHaveBeenCalled();
+      },
+    );
 
     it('/search with x-api-version: 1 reaches the v1 route', async () => {
       const res = await get('/search', '1');
@@ -185,9 +203,8 @@ describe('v2 search versioning (e2e)', () => {
     });
   });
 
-  // ADR 0039 Decisions 9 and 28: /search answers v1 or v2 by header, so a
-  // cache keyed by URL must never hold a v2 body there, and an emergency
-  // answer is never stored anywhere.
+  // ADR 0039 Decision 28 and ISS-2496: one URL answers one version, so
+  // nothing varies on x-api-version, and an emergency answer is never stored.
   describe('cache headers', () => {
     const NO_STORE = 'no-store, no-cache, must-revalidate, private';
     beforeEach(async () => {
@@ -210,18 +227,15 @@ describe('v2 search versioning (e2e)', () => {
       expect(res.body).toEqual({ route: 'v2', search: { hits: { total: 0 } } });
     });
 
-    it('/search with x-api-version: 2 is never stored', async () => {
-      const res = await get(`/search?query=rent&${M}`, '2');
-      expect(res.body.route).toBe('v2');
-      expect(res.headers['cache-control']).toBe(NO_STORE);
-    });
-
-    it('/search for v1 is stored and varies on x-api-version', async () => {
-      const res = await get('/search?query=rent');
-      expect(res.body.route).toBe('v1');
-      expect(res.headers['cache-control']).toMatch(/^public, /);
-      expect(res.headers['vary']).toMatch(/x-api-version/i);
-    });
+    it.each(['/search?query=rent', '/v1/search?query=rent'])(
+      '%s for v1 is stored, with no Vary on the version',
+      async (path) => {
+        const res = await get(path);
+        expect(res.body.route).toBe('v1');
+        expect(res.headers['cache-control']).toMatch(/^public, /);
+        expect(res.headers['vary'] ?? '').not.toMatch(/x-api-version/i);
+      },
+    );
   });
 
   // Lucas 2026-11-18: a URL-keyed CDN ignores Vary, so a v2 search URL must
@@ -271,10 +285,6 @@ describe('v2 search versioning (e2e)', () => {
         await post(`/v2/search?query=rent&tenant_id=${TENANT}`).send({}),
         'locale',
       );
-    });
-
-    it('/search with x-api-version: 2 needs them too', async () => {
-      refused(await get('/search?query=rent', '2'), 'tenant_id');
     });
 
     it('both present and matching reach the route', async () => {

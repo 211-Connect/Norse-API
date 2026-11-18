@@ -34,6 +34,7 @@ import { OrganizationSearchResponseDto } from './dto/search-organization-respons
 import { OrganizationDetailResponseDto } from './dto/organization-detail-response.dto';
 import { OrganizationService } from './organization.service';
 import { OrganizationDetailService } from './organization-detail.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Organization')
 @Controller('organization')
@@ -45,7 +46,7 @@ export class OrganizationController {
   ) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
@@ -82,7 +83,7 @@ export class OrganizationController {
   }
 
   @Get('service-at-location/:salId')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiTenantIdQuery()
@@ -120,7 +121,7 @@ export class OrganizationController {
   }
 
   @Get(':id')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @ApiTenantIdQuery()

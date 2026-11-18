@@ -62,7 +62,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     } else if (
       status === 404 &&
       req?.method === 'GET' &&
-      req.originalUrl.startsWith('/resource/')
+      // ISS-2496: `/resource/...` or `/v1/resource/...`.
+      /^(\/v\d+)?\/resource\//.test(req.originalUrl)
     ) {
       this.logger.debug(`${req?.method} ${path} - ${status} - ${message}`);
     } else {
