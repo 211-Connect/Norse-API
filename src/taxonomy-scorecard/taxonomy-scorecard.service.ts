@@ -19,12 +19,16 @@ import { EnableTaxonomyScorecardDto } from './dto/enable-taxonomy-scorecard.dto'
 import { UpdateTaxonomyScorecardResponseDto } from './dto/update-taxonomy-scorecard-response.dto';
 import { TaxonomyScorecardResponseDto } from './dto/taxonomy-scorecard-response.dto';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { SUNE_TIER1, SUNE_TIER2 } from 'src/v2/rules/sune-v1-needs';
 import {
   buildDocumentId,
   cloneScorecardPayload,
   cloneSource,
   createVersionEntry,
   DEFAULT_SCORECARD_OWNER,
+  SUNE_SCORECARD_OWNER,
+  SUNE_SCORECARD_MODEL,
   deriveNeedMetadata,
   getTaxonomyChildPrefix,
   getTaxonomyParentCode,
@@ -40,6 +44,21 @@ type TaxonomyHitSource = {
 
 const HYBRID_TAXONOMIES_INDEX = 'hybrid_taxonomies';
 
+const SUNE_CODES: ReadonlySet<string> = new Set(
+  [...SUNE_TIER1, ...SUNE_TIER2].map((entry) => entry.code),
+);
+
+/**
+ * Per-tenant storage choice. v2 tenants (Payload flag `enableV2Api`) use the
+ * `sune_scorecard` collection with seed owner `sune-v1`; every other tenant
+ * keeps the old-needs `taxonomy_scorecard` collection with seed owner `default`.
+ */
+type ScorecardContext = {
+  model: Model<TaxonomyScorecardDocument>;
+  isV2: boolean;
+  seedOwner: string;
+};
+
 @Injectable()
 export class TaxonomyScorecardService {
   private readonly logger = new Logger(TaxonomyScorecardService.name);
@@ -47,9 +66,27 @@ export class TaxonomyScorecardService {
   constructor(
     @InjectModel(TaxonomyScorecard.name)
     private readonly taxonomyScorecardModel: Model<TaxonomyScorecardDocument>,
+    @InjectModel(SUNE_SCORECARD_MODEL)
+    private readonly suneScorecardModel: Model<TaxonomyScorecardDocument>,
+    private readonly tenantConfig: TenantConfigService,
     private readonly elasticsearchService: ElasticsearchService,
     private readonly metrics: MetricsService,
   ) {}
+
+  private async contextFor(tenantId: string): Promise<ScorecardContext> {
+    const isV2 = await this.tenantConfig.isV2Tenant(tenantId);
+    return isV2
+      ? {
+          model: this.suneScorecardModel,
+          isV2,
+          seedOwner: SUNE_SCORECARD_OWNER,
+        }
+      : {
+          model: this.taxonomyScorecardModel,
+          isV2,
+          seedOwner: DEFAULT_SCORECARD_OWNER,
+        };
+  }
 
   async searchTaxonomies(
     query: SearchScorecardTaxonomiesQueryDto,
@@ -119,7 +156,9 @@ export class TaxonomyScorecardService {
     tenantId: string,
     hsisCode: string,
   ): Promise<TaxonomyScorecardResponseDto> {
+    const ctx = await this.contextFor(tenantId);
     const { document } = await this.resolveEffectiveDocument(
+      ctx,
       tenantId,
       hsisCode,
     );
@@ -133,6 +172,11 @@ export class TaxonomyScorecardService {
     payload: UpdateTaxonomyScorecardDto,
     draft = false,
   ): Promise<UpdateTaxonomyScorecardResponseDto> {
+    const ctx = await this.contextFor(tenantId);
+    if (ctx.isV2) {
+      this.assertSuneWeightKeys(payload.weights);
+    }
+
     const affectedCodes = await this.resolveAffectedCodes({
       tenantId,
       hsisCode,
@@ -147,9 +191,14 @@ export class TaxonomyScorecardService {
       : (payload.updated_by_email ?? null);
 
     for (const code of uniqueCodes) {
-      const { document } = await this.resolveEffectiveDocument(tenantId, code);
+      const { document } = await this.resolveEffectiveDocument(
+        ctx,
+        tenantId,
+        code,
+      );
 
       const tenantDocument = await this.ensureTenantDocument({
+        ctx,
         tenantId,
         hsisCode: code,
         nowIso,
@@ -171,6 +220,8 @@ export class TaxonomyScorecardService {
         source: tenantDocument.source,
         owner: tenantId,
         publishedAt: nowIso,
+        // v2: a version made by a draft save is not production; publish is.
+        isProduction: ctx.isV2 ? !draft : undefined,
       });
 
       const hasAnyVersion = Object.keys(versions).length > 0;
@@ -234,7 +285,12 @@ export class TaxonomyScorecardService {
     hsisCode: string,
     payload: EnableTaxonomyScorecardDto,
   ): Promise<TaxonomyScorecardResponseDto> {
-    const tenantDocument = await this.findScorecardByOwner(hsisCode, tenantId);
+    const ctx = await this.contextFor(tenantId);
+    const tenantDocument = await this.findScorecardByOwner(
+      ctx,
+      hsisCode,
+      tenantId,
+    );
 
     if (!tenantDocument) {
       throw new NotFoundException(
@@ -256,6 +312,7 @@ export class TaxonomyScorecardService {
       source: tenantDocument.source,
       owner: tenantId,
       publishedAt: nowIso,
+      isProduction: ctx.isV2 ? true : undefined,
     });
     tenantDocument.version_metadata = {
       next_version: getNextVersionId(
@@ -273,21 +330,27 @@ export class TaxonomyScorecardService {
   }
 
   private async resolveEffectiveDocument(
+    ctx: ScorecardContext,
     tenantId: string,
     hsisCode: string,
   ): Promise<{
     document: TaxonomyScorecardDocument;
     resolvedFrom: 'default' | 'tenant';
   }> {
-    const tenantDocument = await this.findScorecardByOwner(hsisCode, tenantId);
+    const tenantDocument = await this.findScorecardByOwner(
+      ctx,
+      hsisCode,
+      tenantId,
+    );
 
     if (tenantDocument) {
       return { document: tenantDocument, resolvedFrom: 'tenant' };
     }
 
     const defaultDocument = await this.findScorecardByOwner(
+      ctx,
       hsisCode,
-      DEFAULT_SCORECARD_OWNER,
+      ctx.seedOwner,
     );
 
     if (!defaultDocument) {
@@ -300,6 +363,7 @@ export class TaxonomyScorecardService {
   }
 
   private async ensureTenantDocument(args: {
+    ctx: ScorecardContext;
     tenantId: string;
     hsisCode: string;
     nowIso: string;
@@ -307,6 +371,7 @@ export class TaxonomyScorecardService {
   }): Promise<TaxonomyScorecardDocument> {
     const tenantDocumentId = buildDocumentId(args.hsisCode, args.tenantId);
     const existingTenantDocument = await this.findScorecardByOwner(
+      args.ctx,
       args.hsisCode,
       args.tenantId,
     );
@@ -318,7 +383,7 @@ export class TaxonomyScorecardService {
     const clonedPayload = cloneScorecardPayload(args.seed.scorecard);
     const clonedSource = cloneSource(args.seed.source);
 
-    const created = new this.taxonomyScorecardModel({
+    const created = new args.ctx.model({
       _id: tenantDocumentId,
       hsis_code: args.hsisCode,
       hsis_name: args.seed.hsis_name,
@@ -330,6 +395,9 @@ export class TaxonomyScorecardService {
         ...clonedSource,
         owner: args.tenantId,
         published_at: args.nowIso,
+        // v2: a new row stays out of the reader's production filter until
+        // published. Non-v2 keeps the seed's value (unchanged behavior).
+        ...(args.ctx.isV2 ? { isProduction: false } : {}),
       },
       versions: {},
       version_metadata: {
@@ -372,10 +440,11 @@ export class TaxonomyScorecardService {
   }
 
   private async findScorecardByOwner(
+    ctx: ScorecardContext,
     hsisCode: string,
     owner: string,
   ): Promise<TaxonomyScorecardDocument | null> {
-    return this.taxonomyScorecardModel.findOne({
+    return ctx.model.findOne({
       _id: buildDocumentId(hsisCode, owner),
     });
   }
@@ -384,12 +453,27 @@ export class TaxonomyScorecardService {
     source?: TaxonomySource | null;
     owner: string;
     publishedAt: string;
+    isProduction?: boolean;
   }): TaxonomySource {
     return {
       ...cloneSource(args.source),
       owner: args.owner,
       published_at: args.publishedAt,
+      ...(args.isProduction === undefined
+        ? {}
+        : { isProduction: args.isProduction }),
     };
+  }
+
+  private assertSuneWeightKeys(weights: Record<string, number>): void {
+    const badKeys = Object.keys(weights)
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0 && !SUNE_CODES.has(key));
+    if (badKeys.length > 0) {
+      throw new BadRequestException(
+        `Weight keys must be SUNE need codes; invalid: ${badKeys.join(', ')}`,
+      );
+    }
   }
 
   private async findStructuralDescendants(
