@@ -28,6 +28,10 @@ export const BLOCKED_TRAFFIC_RETENTION_SECONDS = 2 * 365 * 24 * 60 * 60;
  * classification and enforcement. One document per bucket; Norse instances
  * push per-minute deltas that are `$inc`-upserted into it, so concurrent
  * pushes from several instances add up without a read-modify-write.
+ *
+ * @deprecated No longer written by current Norse: per-crawler counts go to
+ * `crawler_traffic_hourly`. Kept read-only for history, which
+ * `GET /analytics/blocked-traffic` still sums in.
  */
 @Schema({ collection: 'blocked_traffic_hourly', versionKey: false })
 export class BlockedTrafficHourly {

@@ -1,6 +1,10 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
-import { V2_QUERY_MAX_LENGTH, V2SearchQueryDto } from './v2-search-query.dto';
+import { V2SearchQueryDto } from './v2-search-query.dto';
+import {
+  MAX_QUERY_LENGTH,
+  QUERY_TOO_LONG_MESSAGE,
+} from 'src/search/internal/query-log';
 
 const parse = (raw: Record<string, unknown>) => {
   const dto = plainToInstance(V2SearchQueryDto, raw);
@@ -139,14 +143,16 @@ describe('V2SearchQueryDto', () => {
     expect(parse({}).dto.query).toBe('');
   });
 
-  it('caps query at V2_QUERY_MAX_LENGTH characters (David, PR #278 review)', () => {
-    expect(V2_QUERY_MAX_LENGTH).toBe(500);
-    expect(parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH) }).errors).toEqual(
-      [],
-    );
-    const r = parse({ query: 'a'.repeat(V2_QUERY_MAX_LENGTH + 1) });
+  // One rule for v1 and v2: the same limit and the same 400 message, so the
+  // printable directory recognises a v2 rejection too (David, PR #279 review).
+  it('caps query at MAX_QUERY_LENGTH with the v1 message (David, PR #278 review)', () => {
+    expect(MAX_QUERY_LENGTH).toBe(500);
+    expect(parse({ query: 'a'.repeat(MAX_QUERY_LENGTH) }).errors).toEqual([]);
+    const r = parse({ query: 'a'.repeat(MAX_QUERY_LENGTH + 1) });
     expect(r.props).toContain('query');
-    expect(JSON.stringify(r.errors[0].constraints)).toContain('500');
+    expect(Object.values(r.errors[0].constraints ?? {})).toContain(
+      QUERY_TOO_LONG_MESSAGE,
+    );
   });
 
   it('counts an emoji as 2 characters, as Elasticsearch does', () => {

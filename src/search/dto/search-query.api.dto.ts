@@ -1,17 +1,33 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   Validate,
 } from 'class-validator';
 import { SEARCH_QUERY_TYPES, SearchQueryType } from './search-query-type';
-import { ORGANIZATION_ID_DESCRIPTION } from './search-query.dto';
+import { Transform } from 'class-transformer';
+import { ORGANIZATION_ID_DESCRIPTION, toRegionIds } from './search-query.dto';
+import { REGION_ID_PATTERN, regionIdMessage } from 'src/region/internal';
+import {
+  AREA_MATCH_PARAM_DESCRIPTION,
+  AREA_MATCH_VALUES,
+  AreaMatch,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
+  Unlocated,
+  MAX_REGION_IDS,
+  REGION_PARAM_DESCRIPTION,
+} from '../internal/area/area-match';
 import { IsWithinMaxResultWindowConstraint } from 'src/common/dto/es-result-window.validator';
 
 export class SearchQueryApiDto {
@@ -57,6 +73,35 @@ export class SearchQueryApiDto {
   @IsString()
   @MaxLength(128)
   coords?: string;
+
+  @ApiPropertyOptional({
+    description: REGION_PARAM_DESCRIPTION,
+    type: String,
+    example: 'county:53077',
+  })
+  @IsOptional()
+  @Transform(({ value }) => toRegionIds(value))
+  @IsArray()
+  @ArrayMaxSize(MAX_REGION_IDS)
+  @IsString({ each: true })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
+  region?: string[];
+
+  @ApiPropertyOptional({
+    description: AREA_MATCH_PARAM_DESCRIPTION,
+    enum: AREA_MATCH_VALUES,
+  })
+  @IsOptional()
+  @IsIn(AREA_MATCH_VALUES)
+  area_match?: AreaMatch;
+
+  @ApiPropertyOptional({
+    description: UNLOCATED_PARAM_DESCRIPTION,
+    enum: UNLOCATED_VALUES,
+  })
+  @IsOptional()
+  @IsIn(UNLOCATED_VALUES)
+  unlocated?: Unlocated;
 
   @ApiPropertyOptional({
     type: 'object',

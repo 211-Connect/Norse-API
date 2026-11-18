@@ -16,6 +16,7 @@ import {
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
+import { AreaFilter } from './internal/area/area-match';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
   SearchHit,
@@ -130,6 +131,8 @@ export function buildNeedBlockSort(codes: string[]): SortCombinations {
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
   needCounts?: Record<string, number>;
+  /** v2 only, internal (never sent to callers). Present, and false, only when Elasticsearch sent a hits.total that cannot be read; hits.total.value is then 0. */
+  totalCounted?: false;
 };
 
 type HybridSearchOptions = {
@@ -161,6 +164,8 @@ type HybridSearchOptions = {
    * of embedding again. undefined result = lexical-only fallback.
    */
   queryVector?: Promise<number[] | undefined>;
+  /** An area search, as `SearchService` settled it. */
+  area?: AreaFilter;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -500,9 +505,15 @@ export class HybridSearchService {
           ...hit._source,
           facets: normalizedFacets,
         }),
-        // With needs sent, sort[0] is the internal block number. It stays server side.
-        sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
-          number[] | undefined,
+        // With needs sent, sort[0] is the internal block number. It stays server
+        // side. A fused search sorts by the pinned score (~1.7e38), so it has
+        // no sort to show, like the fast-path pages.
+        ...(fused
+          ? {}
+          : {
+              sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+                number[] | undefined,
+            }),
         ...(needsSent
           ? { matched_needs: this.readMatchedNeeds(hit.fields) }
           : {}),
@@ -515,10 +526,24 @@ export class HybridSearchService {
       lang,
     );
 
-    const totalHits =
-      typeof data.hits.total === 'number'
-        ? data.hits.total
-        : (data.hits.total?.value ?? 0);
+    const rawTotal: unknown = data.hits.total;
+    const readTotal: number | null =
+      typeof rawTotal === 'number' && Number.isFinite(rawTotal)
+        ? rawTotal
+        : typeof (rawTotal as { value?: unknown } | null | undefined)?.value ===
+              'number' && Number.isFinite((rawTotal as { value: number }).value)
+          ? (rawTotal as { value: number }).value
+          : null;
+    const totalHits = readTotal ?? 0;
+    // v2 reads 0 as "no results" and drops needs questions, so an unreadable
+    // total is flagged. The shape type is logged, never the value or query.
+    const totalUnreadable =
+      readTotal === null && options.rankingVersion === 'v2';
+    if (totalUnreadable) {
+      this.logger.warn(
+        `hits.total unreadable (${rawTotal === null ? 'null' : typeof rawTotal}); treated as not counted`,
+      );
+    }
 
     const needCounts = await needCountsPromise;
 
@@ -543,6 +568,7 @@ export class HybridSearchService {
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
+      ...(totalUnreadable ? { totalCounted: false as const } : {}),
     };
   }
 
@@ -639,6 +665,7 @@ export class HybridSearchService {
       geoType: geo_type,
       organizationId: organization_id,
       geometry,
+      area: options.area,
     };
     const preference = shardPreference('hybrid', searchFingerprint(identity));
 
@@ -683,6 +710,7 @@ export class HybridSearchService {
       geo_type,
       geometry,
       organization_id,
+      options.area,
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
@@ -742,11 +770,15 @@ export class HybridSearchService {
     // mode not `top` (pinned services get their own sort tier) and no selected
     // needs (they add a block sort tier and matched_needs fields). Everything
     // else keeps the full request.
+    // The page must also end inside the fused RRF_LIST_SIZE ids (the check
+    // below, pageFrom + pageSize <= fused length); past that the stats
+    // request would be sent and thrown away.
     const fastEligible =
       fuseEligible &&
       !cutoffRequested &&
       pinnedMode !== 'top' &&
-      (options.selectedNeeds ?? []).length === 0;
+      (options.selectedNeeds ?? []).length === 0 &&
+      (page || 1) * (limit || 25) <= RRF_LIST_SIZE;
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
     const statsPromise = fastEligible
       ? this.metrics.observeDownstream(
@@ -782,9 +814,6 @@ export class HybridSearchService {
         .map((t) => t.name)
         .join(', ')}]`,
     );
-
-    // Counts run over the filters above, before the relevance cut adds an ids filter.
-    const countFilters = [...baseFilters];
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -995,8 +1024,10 @@ export class HybridSearchService {
             size: 0,
             track_total_hits: false,
             // Filters alone define the matched population (should clauses only
-            // rank), so a plain filter query counts the same set.
-            query: { bool: { filter: countFilters } },
+            // rank), so a plain filter query counts the same set. Built after
+            // the relevance cut, so it counts the cut population: option
+            // results_count and the result total stay comparable in finalize.
+            query: { bool: { filter: [...baseFilters] } },
             aggs: {
               need_counts: {
                 terms: {

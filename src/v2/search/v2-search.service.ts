@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Span } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from 'src/common/tracing/with-span';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -20,6 +20,7 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
+import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
 // means the check did not run (same as the rules engine's own specs).
@@ -28,11 +29,24 @@ const NO_TEXT_SIGNALS: RulesSignals = {
   emergency: null,
 };
 
-const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
+const totalLogger = new Logger('V2SearchService');
+
+/**
+ * Hit total, or `null` ("not counted") when Elasticsearch sent a shape that
+ * cannot be read. 0 would be wrong: finalize drops every needs question at 0.
+ * Logs the shape type only, never the query (David, PR #279 review).
+ */
+const hitsTotal = (response: {
+  search?: { hits?: { total?: unknown } };
+}): number | null => {
   const total = response.search?.hits?.total;
-  if (typeof total === 'number') return total;
-  const value = (total as { value?: number } | undefined)?.value;
-  return typeof value === 'number' ? value : 0;
+  if (typeof total === 'number' && Number.isFinite(total)) return total;
+  const value = (total as { value?: unknown } | null | undefined)?.value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  totalLogger.warn(
+    `hits.total unreadable (${total === null ? 'null' : typeof total}); treated as not counted`,
+  );
+  return null;
 };
 
 // ml-broker rejects classify text longer than 512 characters after stripping
@@ -40,6 +54,18 @@ const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
 // text would turn into error signals and hide the emergency band, so the text
 // sent to classify is cut to this length. The search itself uses the full query.
 export const CLASSIFY_MAX_TEXT_LENGTH = 512;
+
+/**
+ * At most `max` UTF-16 units, never ending on the first half of a surrogate
+ * pair: half an emoji is not valid text for ml-broker, and a failed classify
+ * hides the emergency band (David, PR #279 review).
+ */
+function cutWholeCharacters(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  const splitsPair = last >= 0xd800 && last <= 0xdbff;
+  return text.slice(0, splitsPair ? max - 1 : max);
+}
 
 const TOO_COMPLEX_TYPE = 'too_complex_to_determinize_exception';
 
@@ -134,9 +160,8 @@ export class V2SearchService {
     },
     span: Span,
   ): Promise<V2SearchResponseDto> {
-    // Only a string with text classifies. A string array or an AND/OR object
-    // is a v1 query shape and has no text for the model.
-    const text = typeof dto.query === 'string' ? dto.query : '';
+    // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
+    const text = dto.query;
     const hasText = text.trim().length > 0;
 
     // The embedding starts before classify so the two run in parallel.
@@ -159,7 +184,7 @@ export class V2SearchService {
     const classified = hasText
       ? await withSpan('v2.classify', async (classifySpan) => {
           const result = await this.classifier.classify(
-            text.trim().slice(0, CLASSIFY_MAX_TEXT_LENGTH),
+            cutWholeCharacters(text.trim(), CLASSIFY_MAX_TEXT_LENGTH),
             headers['x-tenant-id'],
             aiClassification,
           );
@@ -217,17 +242,22 @@ export class V2SearchService {
       'v2.count_codes': countCodes.length,
     });
 
-    const { needCounts, ...response } = await withSpan('v2.retrieval', () =>
-      this.hybridSearch.searchHybrid({
-        headers,
-        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
-        rankingVersion: 'v2',
-        ...(queryVector && { queryVector }),
-        needScores,
-        ...(selectedNeeds.length > 0 && { selectedNeeds }),
-        ...(countCodes.length > 0 && { countCodes }),
-        body,
-      }),
+    const { needCounts, totalCounted, ...response } = await withSpan(
+      'v2.retrieval',
+      () =>
+        this.hybridSearch.searchHybrid({
+          headers,
+          query: {
+            ...v1Fields,
+            query_type: 'hybrid',
+          } as SearchResourcesQueryDto,
+          rankingVersion: 'v2',
+          ...(queryVector && { queryVector }),
+          needScores,
+          ...(selectedNeeds.length > 0 && { selectedNeeds }),
+          ...(countCodes.length > 0 && { countCodes }),
+          body,
+        }),
     ).catch((error: unknown) => {
       if (isIndexNotFound(error)) {
         throw new BadRequestException(
@@ -246,12 +276,15 @@ export class V2SearchService {
     // strong_text_match is still a placeholder: no retrieval signal yet.
     const clarification = withSpanSync('v2.rules.finalize', () =>
       finalize(decision, {
-        counts: { total: hitsTotal(response), by_code: needCounts ?? null },
+        counts: {
+          total: totalCounted === false ? null : hitsTotal(response),
+          by_code: needCounts ?? null,
+        },
         strong_text_match: false,
       }),
     );
 
-    return {
+    const result: V2SearchResponseDto = {
       ...response,
       intent: {
         query: hasText ? text : null,
@@ -280,5 +313,8 @@ export class V2SearchService {
       model_version: classified?.modelVersion ?? null,
       rules_version: decision.rules_version,
     };
+    // A shared cache may store only band none with no emergency question
+    // (ADR 0039 Decision 28); the controller's TTL covers the rest.
+    return decision.cacheable ? result : markNotStorable(result);
   }
 }

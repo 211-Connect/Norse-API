@@ -13,6 +13,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
   rows: {
@@ -295,19 +296,6 @@ describe('V2SearchService', () => {
     expect(res).not.toHaveProperty('emergency');
   });
 
-  it.each([
-    ['a string array', ['rent', 'help']],
-    ['a nested AND/OR object', { AND: ['rent', 'help'] }],
-  ])('does not classify %s', async (_label, query) => {
-    const { service, classify } = build({});
-    const res = await service.search({
-      headers,
-      query: dto({ query } as unknown as Partial<V2SearchQueryDto>),
-    });
-    expect(classify).not.toHaveBeenCalled();
-    expect(res.intent.query).toBeNull();
-  });
-
   it('sends exactly 512 characters to classify for a 600-character query and searches with the full query', async () => {
     const { service, classify, searchHybrid } = build({});
     const long = 'a'.repeat(600);
@@ -316,6 +304,34 @@ describe('V2SearchService', () => {
     expect(classify.mock.calls[0][0]).toHaveLength(512);
     expect(classify.mock.calls[0][0]).toBe(long.slice(0, 512));
     expect(searchHybrid.mock.calls[0][0].query.query).toBe(long);
+  });
+
+  // A cut inside a surrogate pair would send ml-broker half an emoji, which
+  // can fail the call and lose the emergency band (David, PR #279 review).
+  describe('the 512 cut never splits a character', () => {
+    const loneSurrogate =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const sent = async (query: string) => {
+      const { service, classify } = build({});
+      await service.search({ headers, query: dto({ query }) });
+      return classify.mock.calls[0][0] as string;
+    };
+
+    it('drops a pair that would straddle the cut', async () => {
+      const text = await sent('a'.repeat(511) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(511));
+      expect(text).not.toMatch(loneSurrogate);
+    });
+
+    it('keeps a pair that ends exactly at the cut', async () => {
+      const text = await sent('a'.repeat(510) + '😀' + 'tail');
+      expect(text).toBe('a'.repeat(510) + '😀');
+      expect(text).toHaveLength(512);
+    });
+
+    it('never sends a lone surrogate for an all-emoji query', async () => {
+      expect(await sent('😀'.repeat(300))).not.toMatch(loneSurrogate);
+    });
   });
 
   it('leaves a 512-character query unchanged', async () => {
@@ -492,6 +508,38 @@ describe('V2SearchService', () => {
     ).toEqual([]);
   });
 
+  it('an unreadable hits.total is not counted (totalCounted false from the hybrid service), keeps needs questions and leaks no totalCounted', async () => {
+    const scores = { 'N-HOU-02': 0.5, 'N-HOU-03': 0.4 };
+    {
+      const unreadable = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(0),
+          totalCounted: false,
+        } as never),
+      });
+      const zero = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest.fn().mockResolvedValue(hybridResponse(0)),
+      });
+      const a = await unreadable.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const b = await zero.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const needsQ = (r: typeof a) =>
+        r.clarification.questions.filter((q) =>
+          ['find_need', 'narrow'].includes(q.type),
+        );
+      expect(needsQ(b)).toEqual([]);
+      expect(needsQ(a).length).toBeGreaterThan(0);
+      expect('totalCounted' in a).toBe(false);
+    }
+  });
+
   it('feeds a golden row through the service: at most 3 questions, snake_case keys', async () => {
     let sawQuestionWithOptions = false;
     for (const r of golden.rows) {
@@ -641,6 +689,52 @@ describe('V2SearchService', () => {
       );
     const emergencyQ = (res: { clarification: { questions: any[] } }) =>
       res.clarification.questions.find((q) => q.id === 'emergency');
+
+    // Decision 28: only band none with no emergency question may be stored by a
+    // shared cache. The mark is invisible to the JSON body (Decision 59).
+    describe('shared-cache rule (Decision 28)', () => {
+      const run = async (classify: jest.Mock, over = {}) => {
+        const { service } = build({ classify });
+        return service.search({ headers, query: dto({ query: 'x', ...over }) });
+      };
+
+      it('a clean band-none answer is storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})));
+        expect(isMarkedNotStorable(res)).toBe(false);
+      });
+
+      it('a popup-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a soft-band answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.3)));
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a failed emergency check is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(errorResult()));
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('a caller U-0 answer is not storable', async () => {
+        const res = await run(jest.fn().mockResolvedValue(okResult({})), {
+          urgency: 'U-0',
+        });
+        expect(emergencyQ(res)).toBeDefined();
+        expect(isMarkedNotStorable(res)).toBe(true);
+      });
+
+      it('the mark adds no key to the response', async () => {
+        const res = await run(jest.fn().mockResolvedValue(withEmergency(0.9)));
+        expect(Object.keys(JSON.parse(JSON.stringify(res))).sort()).toEqual(
+          Object.keys(res).sort(),
+        );
+      });
+    });
 
     it('top-level keys hold no emergency block', async () => {
       const { service } = build({

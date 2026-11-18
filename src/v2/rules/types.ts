@@ -115,7 +115,8 @@ export interface Decision {
   count_codes: string[]; // every need code that is an option in a needs candidate; sorted, unique; never N-X
 }
 export interface SearchCounts {
-  total: number;
+  /** `null`: the total was not counted (unreadable `hits.total`). Needs questions are kept. */
+  total: number | null;
   /**
    * Results per need code, from the search's count over `sune_needs`.
    * - An object: the codes were counted. A code missing from it has 0 results

@@ -57,6 +57,24 @@ const isTimeout = (error: unknown) =>
  * caller's decision. It never logs and never puts a request or response body
  * into an error.
  */
+/** Every need score has a string code, a string tier and a finite number score. */
+function scoresOk(scores: unknown): boolean {
+  return (
+    Array.isArray(scores) &&
+    scores.every((e) => {
+      const entry = e as { code?: unknown; tier?: unknown; score?: unknown };
+      return (
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.code === 'string' &&
+        typeof entry.tier === 'string' &&
+        typeof entry.score === 'number' &&
+        Number.isFinite(entry.score)
+      );
+    })
+  );
+}
+
 @Injectable()
 export class MlBrokerHttpService {
   constructor(
@@ -173,7 +191,7 @@ export class MlBrokerHttpService {
       ((emergencyOnly || needsStatus === 'error') && b?.urgency === null) ||
       (URGENCY_LEVELS.includes(b?.urgency?.level as string) &&
         typeof b?.urgency?.score === 'number');
-    if (!b || !statusOk || !Array.isArray(b.needs?.scores) || !urgencyOk) {
+    if (!b || !statusOk || !scoresOk(b.needs?.scores) || !urgencyOk) {
       throw new MlBrokerError(
         'malformed',
         SEARCH_CLASSIFICATION,

@@ -83,7 +83,7 @@ export function finalize(
       kept.push(q);
       continue;
     }
-    if (total === 0) continue;
+    if (total !== null && total === 0) continue;
     const options = [];
     for (const o of q.options) {
       if (counts.by_code !== null) {
@@ -103,7 +103,11 @@ export function finalize(
       q.uncertainty = needUncertainty(q, decision.option_scores);
     }
     const counted = needOpts.filter((o) => typeof o.results_count === 'number');
-    if (counted.length > 0 && counted.every((o) => o.results_count === total)) {
+    if (
+      total !== null &&
+      counted.length > 0 &&
+      counted.every((o) => o.results_count === total)
+    ) {
       continue;
     }
     kept.push(q);

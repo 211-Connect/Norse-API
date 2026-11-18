@@ -178,6 +178,27 @@ describe('MlBrokerHttpService', () => {
     ['null', null],
     ['needs.scores not an array', wireBody({ needs: { scores: {} } })],
     [
+      'a score entry with a numeric code',
+      wireBody({ needs: { scores: [{ code: 1, tier: 'T1', score: 0.5 }] } }),
+    ],
+    [
+      'a score entry with no tier',
+      wireBody({ needs: { scores: [{ code: 'N-HOU-02', score: 0.5 }] } }),
+    ],
+    [
+      'a score entry with a string score',
+      wireBody({
+        needs: { scores: [{ code: 'N-HOU-02', tier: 'T1', score: '0.5' }] },
+      }),
+    ],
+    [
+      'a score entry with a non-finite score',
+      wireBody({
+        needs: { scores: [{ code: 'N-HOU-02', tier: 'T1', score: null }] },
+      }),
+    ],
+    ['a null score entry', wireBody({ needs: { scores: [null] } })],
+    [
       'an unknown urgency level',
       wireBody({ urgency: { level: 'U-9', score: 1 } }),
     ],
