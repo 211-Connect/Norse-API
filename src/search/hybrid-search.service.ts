@@ -356,8 +356,10 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
+    // On by default (Lucas 2026-11-18): unset means on, only the exact
+    // string `false` turns the need boost off.
     this.needBoostEnabled =
-      this.configService.get<string>('NEED_BOOST_ENABLED') === 'true';
+      this.configService.get<string>('NEED_BOOST_ENABLED') !== 'false';
   }
 
   /**

@@ -8,6 +8,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 - `POST /v2/search` and `POST /search` with `x-api-version: 2` take the v1 POST body (`geometry`) and the same `Content-Type: application/json` check; the body goes to hybrid search unchanged.
 - `V2_SEARCH_ENABLED` must be exactly `true`. Anything else answers `404` before validation (`V2SearchEnabledGuard`).
 - `ML_BROKER_EMERGENCY_ONLY_SUPPORTED`: exact `true` means ml-broker accepts `emergency_only` (ml-broker PR #20). Then a tenant with AI classification off sends `emergency_only: true`: ml-broker skips the needs model and answers `needs.scores: []`, `urgency: null`. The client accepts that shape only when it sent the field, and maps it to need status `ok` with no scores and no urgency (the AI-off "no guess" state). Default off: an older ml-broker may reject the field. The route always calls ml-broker.
+- `NEED_BOOST_ENABLED`: the need boost (need list in rank fusion, summed-ranking fallback) is on by default (Lucas 2026-11-18). Unset means on; only the exact string `false` turns it off. It needs the `sune_need_weights` rank_features mapping on the index.
 - `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 1000 (Lucas 2026-11-13: ml-broker is slow; was 300).
 
 ## Pipeline (`V2SearchService.search`)

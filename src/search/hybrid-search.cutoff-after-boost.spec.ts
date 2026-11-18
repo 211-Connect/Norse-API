@@ -314,14 +314,14 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(ids).not.toContain('untagged'); // 18 < 20
 
     // without the boost the same result is cut
-    enabled = undefined;
+    enabled = 'false';
     await build();
     await run(tier2Fod);
     expect(keptIdsOfMain()).not.toContain('tagged');
   });
 
   it('3. cutoff on and boost inactive: requests equal to the no-needs requests', async () => {
-    enabled = undefined;
+    enabled = 'false';
     await build();
     await run(undefined);
     const baseline = requests.map(withoutPreference);
@@ -380,7 +380,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(new Set(cacheKeys).size).toBe(3);
     expect(cacheKeys[0]).toBe(cacheKeys[3]);
 
-    enabled = undefined;
+    enabled = 'false';
     await build();
     await run(tier2Fod);
     await run(undefined);
