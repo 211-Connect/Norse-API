@@ -2,7 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { HybridSearchService } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  VIRTUAL_DISTANCE_IN_SCALES,
+  virtualDistanceWeight,
+} from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
@@ -318,6 +322,87 @@ describe('HybridSearchService', () => {
       });
 
       expectProximityRuleAndGatedGauss(request);
+    });
+  });
+
+  // Lucas, 2026-11-18: in v2 a service with no map point (virtual, hotline)
+  // scores as if it sat at the scale distance. v1 keeps 0.
+  describe('v2 virtual distance: no-point services score as a fixed distance', () => {
+    const COORDS = [-122.33, 47.61];
+    const mainFunctions = () =>
+      (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+        .function_score.functions;
+    const virtualFns = () =>
+      mainFunctions().filter(
+        (fn: any) =>
+          fn.filter?.bool?.must_not?.[0]?.exists?.field === 'location.point',
+      );
+
+    it('weight is the gauss value of a service one scale away (12.5)', () => {
+      expect(VIRTUAL_DISTANCE_IN_SCALES).toBe(1);
+      expect(virtualDistanceWeight()).toBeCloseTo(12.5, 6);
+    });
+
+    it.each([
+      [0, 5],
+      [10, 10],
+      [25, 25],
+    ])(
+      'v2, distance %p: one flat function on no-point services, scale %p mi',
+      async (distance, scaleMi) => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, distance },
+          rankingVersion: 'v2',
+        });
+
+        const fns = virtualFns();
+        expect(fns).toHaveLength(1);
+        expect(fns[0]).toEqual({
+          filter: {
+            bool: { must_not: [{ exists: { field: 'location.point' } }] },
+          },
+          weight: 12.5,
+        });
+        // The gauss on services with a point is unchanged.
+        const gauss = mainFunctions().filter((fn: any) => fn.gauss);
+        expect(gauss).toHaveLength(1);
+        expect(gauss[0].weight).toBe(25);
+        expect(gauss[0].gauss['location.point'].scale).toBe(`${scaleMi}mi`);
+      },
+    );
+
+    it('v1 with coords: no virtual function (unchanged)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10 },
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+      expect(mainFunctions().filter((fn: any) => fn.gauss)).toHaveLength(1);
+    });
+
+    it('v2 without coords: no virtual function', async () => {
+      await service.searchHybrid({
+        headers,
+        query: baseQuery,
+        rankingVersion: 'v2',
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+    });
+
+    it('v2 sort=distance keeps the distance sort (no-point services last)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10, sort: 'distance' },
+        rankingVersion: 'v2',
+      });
+
+      const geoSort = capturedMainRequest.sort.find(
+        (s: any) => s._geo_distance,
+      );
+      expect(geoSort).toBeDefined();
     });
   });
 
