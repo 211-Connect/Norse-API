@@ -26,8 +26,6 @@ export const V2_URGENCY_CODES = [
   'U-X',
 ] as const;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
-// Only `off` exists: a request can turn AI classification off for itself, never on.
-export const V2_CLASSIFY_VALUES = ['off'] as const;
 
 /** Codes that are neither SUNE Tier 1, Tier 2 nor N-X, in request order. */
 function unknownCodes(value: unknown): string[] {
@@ -120,7 +118,9 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   // `Infinity,0` was a 500 and `200,100` searched an impossible point (break
   // run 2026-11-14). v2 keeps the v1 format and rejects the rest with a 400.
   @ApiPropertyOptional({
-    description: 'Comma-delimited longitude,latitude',
+    type: String,
+    description:
+      'Comma-delimited longitude,latitude. Longitude -180 to 180, latitude -90 to 90. Anything else is a 400.',
     example: '-120.740135,47.751076',
   })
   @IsOptional()
@@ -192,13 +192,4 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsOptional()
   @IsIn(V2_CLARIFY_VALUES)
   clarify: (typeof V2_CLARIFY_VALUES)[number] = 'auto';
-
-  @ApiPropertyOptional({
-    enum: V2_CLASSIFY_VALUES,
-    description:
-      '`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).',
-  })
-  @IsOptional()
-  @IsIn(V2_CLASSIFY_VALUES)
-  classify?: (typeof V2_CLASSIFY_VALUES)[number];
 }

@@ -34,10 +34,17 @@ import {
 } from '../../metrics/usage-metrics.service';
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import { V2SearchResponseDto } from './dto/v2-search-response.dto';
+import { V2ErrorDto, V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
 import { V2SearchService } from './v2-search.service';
+
+const OK_DESCRIPTION =
+  'The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.';
+const BAD_REQUEST =
+  'A header or a query value failed validation, for example a missing or malformed `x-tenant-id`, an `accept-language` that is not exactly one supported code, `limit` under 25, an unknown need code, an unknown `urgency`, or (POST) a Content-Type other than application/json.';
+const NOT_FOUND =
+  'The `V2_SEARCH_ENABLED` flag is not `true`: the route looks absent.';
 
 /**
  * Reached by `GET /v2/search` (the `/v2/` path selects version 2) and by
@@ -79,12 +86,32 @@ export class V2SearchController {
       '`V2_SEARCH_ENABLED` flag; the request and response shapes are a draft ' +
       'until the v2 ADR (ISS-2493).',
   })
-  @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
+  @ApiResponse({
+    status: 200,
+    type: V2SearchResponseDto,
+    description: OK_DESCRIPTION,
+  })
+  @ApiHeader({
+    name: 'accept-language',
+    required: true,
+    description:
+      'Exactly one supported language code, for example `en` or `es`. It picks the search index. A region tag (`en-US`) or a weighted list is a 400.',
+    schema: { type: 'string', default: 'en' },
+  })
+  @ApiHeader({
+    name: 'x-api-version',
+    required: false,
+    description:
+      'Only on `/search`: send `2` to reach this route. `/v2/search` needs no version header.',
+    schema: { type: 'string', enum: ['2'] },
+  })
+  @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
+  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
     description: X_TENANT_ID_HEADER_DESCRIPTION,
+    schema: { type: 'string', format: 'uuid' },
   })
   async getResources(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
@@ -111,12 +138,32 @@ export class V2SearchController {
       '`V2_SEARCH_ENABLED` flag; the shapes are a draft until the v2 ADR ' +
       '(ISS-2493).',
   })
-  @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
+  @ApiResponse({
+    status: 200,
+    type: V2SearchResponseDto,
+    description: OK_DESCRIPTION,
+  })
+  @ApiHeader({
+    name: 'accept-language',
+    required: true,
+    description:
+      'Exactly one supported language code, for example `en` or `es`. It picks the search index. A region tag (`en-US`) or a weighted list is a 400.',
+    schema: { type: 'string', default: 'en' },
+  })
+  @ApiHeader({
+    name: 'x-api-version',
+    required: false,
+    description:
+      'Only on `/search`: send `2` to reach this route. `/v2/search` needs no version header.',
+    schema: { type: 'string', enum: ['2'] },
+  })
+  @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
+  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
     description: X_TENANT_ID_HEADER_DESCRIPTION,
+    schema: { type: 'string', format: 'uuid' },
   })
   @ApiBody({
     schema: {
