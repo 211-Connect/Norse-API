@@ -171,7 +171,31 @@ type HybridSearchOptions = {
   queryVector?: Promise<number[] | undefined>;
   /** An area search, as `SearchService` settled it. */
   area?: AreaFilter;
+  /**
+   * v2 only. The handle from startEarlyRetrieval for these same options.
+   * When present, searchHybrid reuses the work it started instead of starting
+   * it again. Absent: nothing changes.
+   */
+  early?: EarlyRetrieval;
 };
+
+/**
+ * Opaque handle to the classify-independent part of a hybrid search, started
+ * early by startEarlyRetrieval. Pass it back in `HybridSearchOptions.early`.
+ */
+export interface EarlyRetrieval {
+  readonly stage: Promise<unknown>;
+}
+
+/**
+ * The ranked lists stage 1 starts before classify. `undefined` in a promise
+ * means the request is not sent: no lexical clauses, or no taxonomy clauses.
+ */
+export interface EarlyLists {
+  keyword: Promise<string[] | undefined>;
+  vector: Promise<string[]>;
+  taxonomy: Promise<string[] | undefined>;
+}
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
 
@@ -644,15 +668,39 @@ export class HybridSearchService {
     return request;
   }
 
-  private async prepareHybridSearch(
+  /**
+   * Starts everything that does not depend on the classify result: the
+   * embedding, tenant facets and search config, word rarity, the keyword,
+   * vector and taxonomy lists, the stats request and the taxonomy lookup.
+   * Each request starts as soon as its own inputs exist. Call it with the
+   * options `searchHybrid` will get (needScores and countCodes may be left
+   * out), then pass the handle back as `options.early`. Never throws and never
+   * leaves an unhandled rejection: a failure reaches `searchHybrid`.
+   */
+  startEarlyRetrieval(options: HybridSearchOptions): EarlyRetrieval {
+    const stage = withSpan('hybrid.early_start', () =>
+      this.runClassifyIndependentStage(options, { rank: true, fuse: true }),
+    );
+    // The consumer is searchHybrid; this only prevents an unhandled rejection
+    // if the request ends before it gets there.
+    stage.catch(() => undefined);
+    return { stage };
+  }
+
+  /**
+   * Stage 1 of prepareHybridSearch: everything that depends only on the
+   * request and the query vector, never on classify or the rules. The keyword
+   * list starts when word rarity resolves, the vector list and the taxonomy
+   * lookup when the embedding resolves, the taxonomy list when the lookup
+   * resolves, and the stats request once facets and search config are in.
+   */
+  private async runClassifyIndependentStage(
     options: HybridSearchOptions,
     { rank, fuse }: { rank: boolean; fuse: boolean },
   ) {
     const { headers, query: q } = options;
     const {
       query,
-      page,
-      limit,
       filters,
       organization_id,
       coords,
@@ -695,24 +743,6 @@ export class HybridSearchService {
     // scoring is simply omitted for browse.
     const wantsVector = rank && queryStr.trim().length > 0;
 
-    const [embedResult, tenantFacets, searchConfig, wordRarity] =
-      await Promise.all([
-        wantsVector
-          ? (options.queryVector ?? this.startEmbedding(queryStr))
-          : Promise.resolve(undefined),
-        this.tenantConfigService.getFacets(tenantId),
-        this.tenantConfigService.getSearchConfig(tenantId),
-        v2 && wantsVector
-          ? withSpan('hybrid.word_rarity', () =>
-              this.getWordRarity(index, tenantId, lang, queryStr, preference),
-            )
-          : Promise.resolve(null),
-      ]);
-
-    const queryVector = embedResult;
-    const pinnedMode =
-      SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
-
     // buildFilters keeps the existing geo semantics: service_area "contains" AND
     // (within `distance` of location.point OR no location.point). In proximity
     // mode there is no top-level "contains", and a listing with no point needs
@@ -739,44 +769,127 @@ export class HybridSearchService {
       );
     }
 
-    // Cutoff and need switches are known before the taxonomy lookup.
+    // Known before any await. With the cutoff on the lists wait for the cut's
+    // `ids` filter, so nothing starts early.
     const cutoffRequested = (q.relevance_cutoff ?? 'off') === 'on';
-    const activeNeeds = (options.needScores ?? []).filter(
-      (n) =>
-        (n.tier === 'tier1' || n.tier === 'tier2') &&
-        n.code !== 'N-X' &&
-        n.score >= NEED_BOOST_GATE,
-    );
-    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
-
-    const fuseEligible = this.shouldFuse({
+    const fuseArgs = {
       fuse,
       v2,
       rank,
-      queryVector,
       queryStr,
       coords,
       sort,
-      boostActive,
+      // Not a fuse condition (see shouldFuse); needScores are unknown here.
+      boostActive: false,
+    };
+    // Whether the search fuses if the embedding returns a vector.
+    const fuseEligibleWithVector = this.shouldFuse({
+      ...fuseArgs,
+      queryVector: undefined,
+      assumeVector: true,
     });
+    const startLists = fuseEligibleWithVector && !cutoffRequested;
 
-    // With the cutoff off the filters are final here, so the keyword and
-    // vector lists start now, in parallel with the taxonomy lookup. With the
-    // cutoff on the lists wait for the cut's `ids` filter.
-    const earlyLists =
-      fuseEligible && !cutoffRequested
-        ? this.fetchKeywordAndVectorLists({
+    const embedPromise: Promise<number[] | undefined> = wantsVector
+      ? (options.queryVector ?? this.startEmbedding(queryStr))
+      : Promise.resolve(undefined);
+    const facetsPromise = this.tenantConfigService.getFacets(tenantId);
+    const searchConfigPromise =
+      this.tenantConfigService.getSearchConfig(tenantId);
+    const wordRarityPromise: Promise<WordRarity> =
+      v2 && wantsVector
+        ? withSpan('hybrid.word_rarity', () =>
+            this.getWordRarity(index, tenantId, lang, queryStr, preference),
+          )
+        : Promise.resolve(null);
+
+    // The keyword list needs word rarity only, not the embedding.
+    const keywordPromise: Promise<string[] | undefined> | undefined = startLists
+      ? wordRarityPromise.then((wordRarity) =>
+          this.fetchKeywordList({
             index,
             preference,
             filters: [...baseFilters],
             queryStr,
-            queryVector: queryVector!,
             wordRarity,
-          })
+          }),
+        )
+      : undefined;
+    // The vector list needs the embedding only, not word rarity.
+    const vectorPromise: Promise<string[] | undefined> | undefined = startLists
+      ? embedPromise.then((queryVector) =>
+          queryVector
+            ? this.fetchVectorList({
+                index,
+                preference,
+                filters: [...baseFilters],
+                queryVector,
+              })
+            : undefined,
+        )
+      : undefined;
+    // Taxonomy prediction requires a query vector; skip if embedding was
+    // skipped (browse) or failed (lexical fallback). It needs the embedding
+    // only, not facets, search config or word rarity.
+    const taxonomyStart = embedPromise.then(async (queryVector) => ({
+      queryVector,
+      predicted: queryVector
+        ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
+        : [],
+    }));
+    const taxonomyPromise: Promise<string[] | undefined> | undefined =
+      startLists
+        ? taxonomyStart.then(({ queryVector, predicted }) =>
+            queryVector
+              ? this.fetchTaxonomyList({
+                  index,
+                  preference,
+                  filters: [...baseFilters],
+                  queryStr,
+                  queryVector,
+                  predicted,
+                })
+              : undefined,
+          )
         : undefined;
-    // A rejection is handled in fetchFusedOrder. This keeps it from being
-    // reported as unhandled if the taxonomy lookup throws first.
-    earlyLists?.catch(() => undefined);
+    // The stage or fetchFusedOrder handles a rejection. These side branches
+    // only keep a request that nobody awaits from being reported as unhandled,
+    // for example when the embedding fails after the keyword list started.
+    for (const early of [
+      keywordPromise,
+      vectorPromise,
+      taxonomyPromise,
+      taxonomyStart,
+    ]) {
+      early?.catch(() => undefined);
+    }
+
+    const [queryVector, tenantFacets, searchConfig, wordRarity] =
+      await Promise.all([
+        embedPromise,
+        facetsPromise,
+        searchConfigPromise,
+        wordRarityPromise,
+      ]);
+
+    const pinnedMode =
+      SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
+    const fuseEligible = this.shouldFuse({ ...fuseArgs, queryVector });
+
+    // Handed to fetchFusedOrder, which awaits the original promises so a
+    // failed list still falls back to the summed ranking. Dropped when the
+    // embedding failed: the keyword list result is not used then.
+    const earlyLists: EarlyLists | undefined =
+      fuseEligible && !cutoffRequested
+        ? {
+            keyword: keywordPromise!,
+            vector: vectorPromise!.then((ids) => ids!),
+            taxonomy: taxonomyPromise!,
+          }
+        : undefined;
+    if (earlyLists) {
+      earlyLists.vector.catch(() => undefined);
+    }
 
     // Fused page fast path (ISS-2766). Filters alone decide membership
     // (minimum_should_match is 0, scoring only orders), so the total and the
@@ -795,7 +908,7 @@ export class HybridSearchService {
       !cutoffRequested &&
       pinnedMode !== 'top' &&
       (options.selectedNeeds ?? []).length === 0 &&
-      (page || 1) * (limit || 25) <= RRF_LIST_SIZE;
+      (q.page || 1) * (q.limit || 25) <= RRF_LIST_SIZE;
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
     const statsPromise = fastEligible
       ? this.metrics.observeDownstream(
@@ -818,11 +931,7 @@ export class HybridSearchService {
     // The fast path handles a rejection; this only prevents an unhandled one.
     statsPromise?.catch(() => undefined);
 
-    // Taxonomy prediction requires a query vector; skip if embedding was
-    // skipped (browse) or failed (lexical fallback).
-    const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
-      : [];
+    const { predicted: predictedTaxonomies } = await taxonomyStart;
 
     this.logger.log(
       `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
@@ -831,6 +940,70 @@ export class HybridSearchService {
         .map((t) => t.name)
         .join(', ')}]`,
     );
+
+    return {
+      v2,
+      lang,
+      queryStr,
+      index,
+      preference,
+      identity,
+      wantsVector,
+      queryVector,
+      tenantFacets,
+      pinnedMode,
+      wordRarity,
+      cutoffRequested,
+      fuseEligible,
+      baseFilters,
+      earlyLists,
+      statsPromise,
+      aggs,
+      predictedTaxonomies,
+    };
+  }
+
+  private async prepareHybridSearch(
+    options: HybridSearchOptions,
+    { rank, fuse }: { rank: boolean; fuse: boolean },
+  ) {
+    const stage1 = options.early
+      ? ((await options.early.stage) as Awaited<
+          ReturnType<typeof this.runClassifyIndependentStage>
+        >)
+      : await this.runClassifyIndependentStage(options, { rank, fuse });
+    const {
+      v2,
+      lang,
+      queryStr,
+      index,
+      preference,
+      identity,
+      wantsVector,
+      queryVector,
+      tenantFacets,
+      pinnedMode,
+      wordRarity,
+      cutoffRequested,
+      fuseEligible,
+      earlyLists,
+      statsPromise,
+      aggs,
+      predictedTaxonomies,
+    } = stage1;
+    const baseFilters = [...stage1.baseFilters];
+    const { query: q } = options;
+    const { page, limit, coords, distance, sort } = q;
+
+    // Stage 2: everything below depends on needScores, the cutoff probe or the
+    // selected needs.
+    const activeNeeds = (options.needScores ?? []).filter(
+      (n) =>
+        (n.tier === 'tier1' || n.tier === 'tier2') &&
+        n.code !== 'N-X' &&
+        n.score >= NEED_BOOST_GATE,
+    );
+    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -1099,13 +1272,15 @@ export class HybridSearchService {
     coords: number[] | undefined;
     sort: SearchResourcesQueryDto['sort'];
     boostActive: boolean;
+    /** Evaluate every condition except `queryVector`, as if a vector arrives. */
+    assumeVector?: boolean;
   }): boolean {
     const { fuse, v2, rank, queryVector, queryStr, coords, sort } = args;
     return (
       fuse &&
       v2 &&
       rank &&
-      queryVector !== undefined &&
+      (args.assumeVector === true || queryVector !== undefined) &&
       queryStr.trim().length > 0 &&
       (coords === undefined || coords.length === 0) &&
       (sort ?? 'relevance') === 'relevance'
@@ -1113,40 +1288,80 @@ export class HybridSearchService {
   }
 
   /**
-   * The keyword and vector lists, each the top `RRF_LIST_SIZE` ids. The
-   * lists use the same clauses as the main query. Rejects when a request
-   * fails; `fetchFusedOrder` handles that.
+   * The keyword list, the top `RRF_LIST_SIZE` ids, with the same clauses as
+   * the main query. Returns undefined, and sends nothing, when the query has
+   * no lexical clauses. Rejects when the request fails; `fetchFusedOrder`
+   * handles that.
    */
-  private fetchKeywordAndVectorLists(args: {
+  private fetchKeywordList(args: {
+    index: string;
+    preference: string;
+    filters: QueryDslQueryContainer[];
+    queryStr: string;
+    wordRarity: WordRarity;
+  }): Promise<string[]> | undefined {
+    const { filters, queryStr, wordRarity } = args;
+    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
+    if (lexical.length === 0) return undefined;
+    return this.runRankedList(args, 'hybrid_rrf_keyword', {
+      bool: { filter: filters, should: lexical, minimum_should_match: 1 },
+    });
+  }
+
+  /** The vector list: cosine similarity to the query vector. Rejects like the keyword list. */
+  private fetchVectorList(args: {
+    index: string;
+    preference: string;
+    filters: QueryDslQueryContainer[];
+    queryVector: number[];
+  }): Promise<string[]> {
+    const { filters, queryVector } = args;
+    return this.runRankedList(args, 'hybrid_rrf_vector', {
+      script_score: {
+        query: { bool: { filter: filters } },
+        script: {
+          source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+          params: { qv: queryVector },
+        },
+      },
+    });
+  }
+
+  /**
+   * The taxonomy list. Returns undefined, and sends nothing, when the
+   * predicted codes give no boost clauses. Rejects like the keyword list.
+   */
+  private fetchTaxonomyList(args: {
     index: string;
     preference: string;
     filters: QueryDslQueryContainer[];
     queryStr: string;
     queryVector: number[];
-    wordRarity: WordRarity;
-  }): Promise<string[][]> {
-    const { filters, queryStr, queryVector, wordRarity } = args;
-    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
-    const requests: Promise<string[]>[] = [];
-    if (lexical.length > 0) {
-      requests.push(
-        this.runRankedList(args, 'hybrid_rrf_keyword', {
-          bool: { filter: filters, should: lexical, minimum_should_match: 1 },
-        }),
-      );
-    }
-    requests.push(
-      this.runRankedList(args, 'hybrid_rrf_vector', {
-        script_score: {
-          query: { bool: { filter: filters } },
-          script: {
-            source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
-            params: { qv: queryVector },
+    predicted: PredictedTaxonomy[];
+  }): Promise<string[]> | undefined {
+    const { filters, queryStr, queryVector, predicted } = args;
+    const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    if (taxonomy.length === 0) return undefined;
+    // Many services carry the same predicted code and tie on the
+    // taxonomy score, so Elasticsearch would break the tie in index
+    // order. A tiny cosine term breaks it by meaning instead, as the
+    // ranking lab did (live check 2026-11-16: top-10 overlap with the
+    // lab order was 0.71 without it).
+    return this.runRankedList(args, 'hybrid_rrf_taxonomy', {
+      script_score: {
+        query: {
+          bool: {
+            filter: filters,
+            should: taxonomy,
+            minimum_should_match: 1,
           },
         },
-      }),
-    );
-    return Promise.all(requests);
+        script: {
+          source: `_score + ${RRF_TAXONOMY_TIE_BREAK} * Math.max(0, cosineSimilarity(params.qv, 'embedding'))`,
+          params: { qv: queryVector },
+        },
+      },
+    });
   }
 
   private runRankedList(
@@ -1177,8 +1392,9 @@ export class HybridSearchService {
    * active), each the top `RRF_LIST_SIZE` ids, fused by reciprocal rank.
    * `pinned_resources_mode` `boost` (+5 constant) and the priority function
    * are not in the lists. Mode `top` still works: its sort tiers come before
-   * `_score`. `earlyLists` holds the keyword and vector lists when they
-   * already started; otherwise this method sends them.
+   * `_score`. `earlyLists` holds the keyword, vector and taxonomy lists when
+   * stage 1 already started them; then this method sends only the need list.
+   * Otherwise it sends all of them through the same list methods.
    * Plain `search`, not `msearch`: the read-only Elasticsearch guard rejects
    * `_msearch`. Never rejects: on any failure the search keeps today's
    * summed ranking.
@@ -1192,43 +1408,23 @@ export class HybridSearchService {
     predicted: PredictedTaxonomy[];
     wordRarity: WordRarity;
     needs: NeedScore[];
-    earlyLists?: Promise<string[][]>;
+    earlyLists?: EarlyLists;
   }): Promise<string[] | undefined> {
-    const { filters, queryStr, queryVector, predicted, needs, earlyLists } =
-      args;
-
-    const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    const { filters, needs, earlyLists } = args;
 
     try {
-      const requests: Promise<string[]>[] = [];
-      if (taxonomy.length > 0) {
-        // Many services carry the same predicted code and tie on the
-        // taxonomy score, so Elasticsearch would break the tie in index
-        // order. A tiny cosine term breaks it by meaning instead, as the
-        // ranking lab did (live check 2026-11-16: top-10 overlap with the
-        // lab order was 0.71 without it).
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_taxonomy', {
-            script_score: {
-              query: {
-                bool: {
-                  filter: filters,
-                  should: taxonomy,
-                  minimum_should_match: 1,
-                },
-              },
-              script: {
-                source: `_score + ${RRF_TAXONOMY_TIE_BREAK} * Math.max(0, cosineSimilarity(params.qv, 'embedding'))`,
-                params: { qv: queryVector },
-              },
-            },
-          }),
-        );
-      }
+      const keyword = earlyLists
+        ? earlyLists.keyword
+        : this.fetchKeywordList(args);
+      const vector = earlyLists
+        ? earlyLists.vector
+        : this.fetchVectorList(args);
+      const taxonomy = earlyLists
+        ? earlyLists.taxonomy
+        : this.fetchTaxonomyList(args);
       const needList = needs.length > 0;
-      if (needList) {
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_need', {
+      const need = needList
+        ? this.runRankedList(args, 'hybrid_rrf_need', {
             bool: {
               filter: filters,
               should: needs.map((n) => ({
@@ -1242,20 +1438,28 @@ export class HybridSearchService {
               })),
               minimum_should_match: 1,
             },
-          }),
-        );
-      }
-      const early = earlyLists ?? this.fetchKeywordAndVectorLists(args);
+          })
+        : undefined;
 
-      const [keywordAndVector, ...rest] = await Promise.all([
-        early,
-        ...requests,
+      const [keywordIds, vectorIds, taxonomyIds, needIds] = await Promise.all([
+        keyword,
+        vector,
+        taxonomy,
+        need,
       ]);
       // Order: keyword, vector, taxonomy, need. The weights follow the lists.
-      const lists = [...keywordAndVector, ...rest];
-      const weights = lists.map((_, i) =>
-        needList && i === lists.length - 1 ? RRF_NEED_LIST_WEIGHT : 1,
-      );
+      const lists: string[][] = [];
+      const weights: number[] = [];
+      for (const [ids, weight] of [
+        [keywordIds, 1],
+        [vectorIds, 1],
+        [taxonomyIds, 1],
+        [needIds, RRF_NEED_LIST_WEIGHT],
+      ] as const) {
+        if (ids === undefined) continue;
+        lists.push(ids);
+        weights.push(weight);
+      }
       const fused = reciprocalRankFusion(lists, RRF_K, weights).slice(
         0,
         RRF_LIST_SIZE,
