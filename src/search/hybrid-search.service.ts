@@ -54,6 +54,12 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import {
+  PINNED_GATE_MAX_HITS,
+  PINNED_GATE_TIER_BOOST,
+  pinnedGateUsesQuery,
+  selectGatedPinnedIds,
+} from './internal/ranking/pinned-gate';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -697,6 +703,16 @@ export class HybridSearchService {
     const queryVector = embedResult;
     const pinnedMode =
       SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
+    // v2 with a query: no pinned bonus anywhere in the ranking; the gate below
+    // decides which pinned services lead (Lucas 2026-11-18). v1 and browse keep pinnedMode.
+    const gateByQuery = pinnedGateUsesQuery({ v2, rank, queryStr });
+    const rankingPinnedMode: PinnedResourcesMode = gateByQuery
+      ? 'ignore'
+      : pinnedMode;
+    const gateActive =
+      gateByQuery &&
+      pinnedMode !== 'ignore' &&
+      (sort ?? 'relevance') === 'relevance';
 
     // buildFilters keeps the existing geo semantics: service_area "contains" AND
     // (within `distance` of location.point OR no location.point). In proximity
@@ -769,7 +785,7 @@ export class HybridSearchService {
     // stats request therefore starts now, in parallel with the lists, and the
     // page is fetched later by id. Only when nothing else changes order or
     // membership after fusion: the cutoff off (it adds an ids filter), pinned
-    // mode not `top` (pinned services get their own sort tier) and no selected
+    // mode not `top` (pinned services get their own sort tier; v2 with a query uses the gate instead) and no selected
     // needs (they add a block sort tier and matched_needs fields). Everything
     // else keeps the full request.
     // The page must also end inside the fused RRF_LIST_SIZE ids (the check
@@ -778,7 +794,7 @@ export class HybridSearchService {
     const fastEligible =
       fuseEligible &&
       !cutoffRequested &&
-      pinnedMode !== 'top' &&
+      rankingPinnedMode !== 'top' &&
       (options.selectedNeeds ?? []).length === 0 &&
       (page || 1) * (limit || 25) <= RRF_LIST_SIZE;
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
@@ -841,7 +857,7 @@ export class HybridSearchService {
             filters: [...baseFilters],
             coords,
             distance: distance ?? 0,
-            pinnedMode,
+            pinnedMode: rankingPinnedMode,
             wordRarity,
             v2,
           })
@@ -894,6 +910,20 @@ export class HybridSearchService {
       }
     }
 
+    // v2 pinned gate: starts here, after the cut's ids filter, and runs in
+    // parallel with the need-boost top score and the fused order.
+    const gatePromise: Promise<string[]> = gateActive
+      ? this.fetchPinnedGate({
+          index,
+          preference,
+          queryStr,
+          queryVector,
+          predicted: predictedTaxonomies,
+          filters: [...baseFilters],
+          wordRarity,
+        })
+      : Promise.resolve([]);
+
     let needShould: QueryDslQueryContainer[] = [];
 
     if (boostTopScorePromise) {
@@ -916,7 +946,7 @@ export class HybridSearchService {
         filters: baseFilters,
         coords,
         distance: distance ?? 0,
-        pinnedMode,
+        pinnedMode: rankingPinnedMode,
         wordRarity,
         v2,
       });
@@ -954,7 +984,7 @@ export class HybridSearchService {
           filters: baseFilters,
           coords,
           distance: distance ?? 0,
-          pinnedMode,
+          pinnedMode: rankingPinnedMode,
           wordRarity,
           v2,
         });
@@ -962,6 +992,15 @@ export class HybridSearchService {
           needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
         }
       }
+    }
+
+    const gatedPinnedIds = await gatePromise;
+    if (gatedPinnedIds.length > 0 && fusedIds !== undefined) {
+      const gated = new Set(gatedPinnedIds);
+      fusedIds = [
+        ...gatedPinnedIds,
+        ...fusedIds.filter((id) => !gated.has(id)),
+      ].slice(0, RRF_LIST_SIZE);
     }
 
     const request = this.buildHybridQuery({
@@ -976,11 +1015,12 @@ export class HybridSearchService {
       page,
       limit: limit || 25,
       aggs,
-      pinnedMode,
+      pinnedMode: rankingPinnedMode,
       sort,
       extraShould: needShould,
       wordRarity,
       fusedIds,
+      gatedPinnedIds: fusedIds === undefined ? gatedPinnedIds : [],
       selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
       v2,
     });
@@ -1888,7 +1928,8 @@ export class HybridSearchService {
 
   /**
    * `sort` picks the order, the query still decides membership (ISS-1367).
-   * pinned/priority lead only when `pinned_resources_mode` is `top`.
+   * pinned/priority lead only when `pinned_resources_mode` is `top`; v2 with
+   * a query passes `ignore` here and the pinned gate decides the lead.
    */
   private buildHybridSort(
     sortOption: SearchResourcesQueryDto['sort'],
@@ -2215,6 +2256,108 @@ export class HybridSearchService {
     });
   }
 
+  /**
+   * v2 pinned gate (Lucas 2026-11-18). One request, size 0: relevance only
+   * (lexical, taxonomy, vector; no geography, no pinned bonus), the same query
+   * the cutoff probe uses minus its pinned clause. Returns pinned ids whose
+   * relevance reaches PINNED_GATE_FRACTION x the best non-pinned relevance.
+   * Never rejects: on error [] (no pinned bonus).
+   */
+  private async fetchPinnedGate(args: {
+    index: string;
+    preference: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    wordRarity: WordRarity;
+  }): Promise<string[]> {
+    const {
+      index,
+      preference,
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      wordRarity,
+    } = args;
+    try {
+      const innerBool: QueryDslQueryContainer = {
+        bool: {
+          minimum_should_match: 0,
+          filter: filters,
+          should: [
+            ...(queryStr
+              ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+              : []),
+            ...this.buildTaxonomyBoostClauses(predicted, queryStr),
+          ],
+        },
+      };
+      const scoreFunctions = this.buildScoreFunctions(
+        queryVector,
+        undefined,
+        0,
+      );
+      const query: QueryDslQueryContainer =
+        scoreFunctions.length > 0
+          ? {
+              function_score: {
+                query: innerBool,
+                functions: scoreFunctions,
+                score_mode: 'sum',
+                boost_mode: 'sum',
+              },
+            }
+          : innerBool;
+
+      const response = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_pinned_gate',
+        () =>
+          this.elasticsearchService.search({
+            index,
+            preference,
+            size: 0,
+            track_total_hits: false,
+            query,
+            aggs: {
+              pinned: {
+                filter: { term: { pinned: true } },
+                aggs: {
+                  top: {
+                    top_hits: { size: PINNED_GATE_MAX_HITS, _source: false },
+                  },
+                },
+              },
+              other: {
+                filter: { bool: { must_not: [{ term: { pinned: true } }] } },
+                aggs: { top: { top_hits: { size: 1, _source: false } } },
+              },
+            },
+          }),
+      );
+
+      type GateAgg = {
+        top?: { hits?: { hits?: { _id?: string; _score?: number | null }[] } };
+      };
+      const aggregations = response.aggregations as
+        { pinned?: GateAgg; other?: GateAgg } | undefined;
+      const pinnedHits = (aggregations?.pinned?.top?.hits?.hits ?? [])
+        .filter((h) => typeof h._id === 'string')
+        .map((h) => ({ id: h._id as string, score: h._score ?? 0 }));
+      const topOther = aggregations?.other?.top?.hits?.hits?.[0]?._score ?? 0;
+      const gated = selectGatedPinnedIds(pinnedHits, topOther);
+      this.logger.debug(
+        `Pinned gate: pinned hits=${pinnedHits.length}, top other=${topOther}, gated=${gated.length}`,
+      );
+      return gated;
+    } catch (error) {
+      this.logger.warn(`Pinned gate skipped: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
   /** Top score of a query (one hit, no source); 0 when absent or on error. */
   private async fetchTopScore(
     operation: string,
@@ -2282,6 +2425,7 @@ export class HybridSearchService {
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
     fusedIds?: string[];
+    gatedPinnedIds?: string[];
     selectedNeeds?: string[];
     v2: boolean;
   }): SearchRequest {
@@ -2302,6 +2446,7 @@ export class HybridSearchService {
       extraShould,
       wordRarity,
       fusedIds,
+      gatedPinnedIds,
       selectedNeeds,
       v2,
     } = args;
@@ -2324,6 +2469,7 @@ export class HybridSearchService {
       extraShould,
       wordRarity,
       v2,
+      gatedPinnedIds,
     });
 
     return {
@@ -2363,6 +2509,8 @@ export class HybridSearchService {
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
     v2: boolean;
+    /** v2 pinned gate: pinned ids that lead on the summed path. */
+    gatedPinnedIds?: string[];
   }): QueryDslQueryContainer {
     const {
       queryStr,
@@ -2375,6 +2523,7 @@ export class HybridSearchService {
       extraShould,
       wordRarity,
       v2,
+      gatedPinnedIds,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -2386,7 +2535,8 @@ export class HybridSearchService {
     // When pinned_resources_mode is `boost`, pinned becomes a small additive
     // score contribution (constant_score) instead of a hard sort tier. When it
     // is `top`, the hard sort tiers handle ordering. When `ignore`, neither is
-    // applied.
+    // applied. v2 with a query passes `ignore` and uses the pinned gate
+    // (gatedPinnedIds) instead.
 
     this.logger.debug(`Pinned resources mode: ${pinnedMode}`);
 
@@ -2406,6 +2556,16 @@ export class HybridSearchService {
       ...taxonomyShould,
       ...pinnedShould,
       ...(extraShould ?? []),
+      ...(gatedPinnedIds && gatedPinnedIds.length > 0
+        ? [
+            {
+              constant_score: {
+                filter: { ids: { values: gatedPinnedIds } },
+                boost: PINNED_GATE_TIER_BOOST,
+              },
+            } as QueryDslQueryContainer,
+          ]
+        : []),
     ];
 
     const scoreFunctions = this.buildScoreFunctions(
