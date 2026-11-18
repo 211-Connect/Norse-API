@@ -5,21 +5,27 @@ import {
   Headers,
   Post,
   Query,
+  Res,
   UseGuards,
   Version,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
+  ApiExtraModels,
   ApiHeader,
   ApiOperation,
   ApiResponse,
   ApiSecurity,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 
 import { AnalyticsConfigService } from './services/analytics-config.service';
 import { AnalyticsInfoEnricherService } from './services/analytics-info-enricher.service';
 import { UmamiAnalyticsService } from './services/umami-analytics.service';
 import { BlockedTrafficService } from './services/blocked-traffic.service';
+import { CrawlerTrafficService } from './services/crawler-traffic.service';
+import { buildSearchExportCSV } from './internal/search-export-csv';
 import {
   AnalyticsApiKeyGuard,
   ANALYTICS_API_KEY_HEADER,
@@ -32,6 +38,8 @@ import {
   BlockedTrafficQueryDto,
   BlockedTrafficResponse,
   CommonAnalyticsQuery,
+  CrawlerTrafficQueryDto,
+  CrawlerTrafficResponse,
   EventCatalogEntryResponse,
   EventValuesQueryDto,
   EventValuesResponse,
@@ -75,6 +83,7 @@ export class AnalyticsController {
     private readonly analyticsConfigService: AnalyticsConfigService,
     private readonly infoEnricher: AnalyticsInfoEnricherService,
     private readonly blockedTrafficService: BlockedTrafficService,
+    private readonly crawlerTrafficService: CrawlerTrafficService,
   ) {}
 
   @Get('info')
@@ -357,29 +366,52 @@ export class AnalyticsController {
   @ApiOperation({
     summary: 'Get detailed search event data for CSV export',
     description:
-      'Returns search events with timestamps, coordinates, ZIP codes, and ' +
-      'anonymized unique user/session identifiers. Includes search_text, ' +
-      'search_taxonomy, and search_hybrid events.',
+      'Returns search events as JSON by default, or synchronously generated CSV ' +
+      'when Accept is text/csv. Includes search_text, search_taxonomy, and ' +
+      'search_hybrid events.',
+  })
+  @ApiExtraModels(ExportSearchDataResponse)
+  @ApiHeader({
+    name: 'Accept',
+    required: false,
+    description: 'Use text/csv to receive a CSV report instead of JSON.',
   })
   @ApiResponse({
     status: 200,
     description: 'Successfully retrieved export data',
-    type: ExportSearchDataResponse,
+    content: {
+      'application/json': {
+        schema: { $ref: getSchemaPath(ExportSearchDataResponse) },
+      },
+      'text/csv': { schema: { type: 'string' } },
+    },
   })
   async getExportSearchData(
     @Headers(TENANT_ID_HEADER) tenantId: string,
     @Query() query: ExportSearchDataQueryDto,
-  ): Promise<ExportSearchDataResponse> {
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<ExportSearchDataResponse | string> {
+    const isCsv =
+      response.req.accepts(['application/json', 'text/csv']) === 'text/csv';
     const websiteIds = await this.analyticsConfigService.getWebsiteIds(
       tenantId,
       query.websiteIds,
     );
-    return this.umamiAnalyticsService.getExportSearchData({
+    const result = await this.umamiAnalyticsService.getExportSearchData({
       tenantId,
       start: query.start,
       end: query.end,
       websiteIds,
     });
+    response.setHeader('Cache-Control', 'no-store');
+    response.vary('Accept');
+
+    if (!isCsv) {
+      return result;
+    }
+
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    return buildSearchExportCSV(result.data);
   }
 
   @Get('heatmap')
@@ -508,6 +540,30 @@ export class AnalyticsController {
       {
         hourly: query.hourly ?? false,
       },
+    );
+  }
+
+  @Get('crawler-traffic')
+  @Version('1')
+  @ApiOperation({
+    summary: 'Get per-crawler request counts for the tenant',
+    description:
+      'Requests from identified crawlers (blocked, logged on observe-only hosts, rate-limited, allowed) and load-limit 429s, counted by Norse with 1-hour resolution. Totals, top crawlers, and an hour or day series. Not from Umami.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved crawler traffic',
+    type: CrawlerTrafficResponse,
+  })
+  getCrawlerTraffic(
+    @Headers(TENANT_ID_HEADER) tenantId: string,
+    @Query() query: CrawlerTrafficQueryDto,
+  ): Promise<CrawlerTrafficResponse> {
+    return this.crawlerTrafficService.getStats(
+      tenantId,
+      query.start,
+      query.end,
+      query.granularity ?? 'day',
     );
   }
 

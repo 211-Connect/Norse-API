@@ -43,6 +43,8 @@ import { SuggestionModule } from './suggestion/suggestion.module';
 import { SuggestionController } from './suggestion/suggestion.controller';
 import { GeocodingModule } from './geocoding/geocoding.module';
 import { RegionInternalModule } from './region/internal/region.module';
+import { RegionPublicModule } from './region/public/region-public.module';
+import { RegionPublicController } from './region/public/region-public.controller';
 import { CmsConfigModule } from './cms-config/cms-config.module';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { GatewayIdentityGuard } from './auth/gateway/gateway-identity.guard';
@@ -54,6 +56,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { BlockedTrafficInternalController } from './analytics/blocked-traffic-internal.controller';
+import { CrawlerTrafficInternalController } from './analytics/crawler-traffic-internal.controller';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
@@ -119,6 +122,7 @@ const arcjetKey = configuration().ARCJET_KEY;
     SuggestionModule,
     GeocodingModule,
     RegionInternalModule,
+    RegionPublicModule,
     AnalyticsModule,
     TaxonomyScorecardModule,
     PrintableDirectoryModule,
@@ -166,7 +170,9 @@ export class AppModule implements NestModule {
       PrintableDirectoryDeliveryController,
       PrintableDirectoryDeliveryInternalController,
       BlockedTrafficInternalController,
+      CrawlerTrafficInternalController,
       OrganizationController,
+      RegionPublicController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
       // CDN-cached route (cache keys on URL, ignoring Vary).
       ServiceController,
