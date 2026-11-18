@@ -46,7 +46,8 @@ export type CacheName =
   | 'analytics-redis' // AnalyticsCacheService L2, app Redis
   | 'tenant-config-lru' // TenantConfigService in-process LRUs
   | 'tenant-config-redis' // TenantConfigService CMS Redis (DB 2, written by PayloadCMS)
-  | 'tenant-config-app-redis'; // TenantConfigService app-Redis fallback (Keycloak realm id only)
+  | 'tenant-config-app-redis' // TenantConfigService app-Redis fallback (Keycloak realm id only)
+  | 'tenant-app-config-lru'; // TenantAppConfigService in-process LRU over Payload's AppConfig
 
 export type CacheResult = 'hit' | 'miss' | 'coalesced' | 'get-error';
 

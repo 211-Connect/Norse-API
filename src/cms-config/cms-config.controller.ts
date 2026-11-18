@@ -1,6 +1,7 @@
 import { Controller, Post, Param, HttpCode, UseGuards } from '@nestjs/common';
 import { OrchestrationConfigService } from './orchestration-config.service';
 import { TenantConfigService } from './tenant-config.service';
+import { TenantAppConfigService } from './tenant-app-config.service';
 import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import { ApiTags, ApiResponse, ApiSecurity, ApiParam } from '@nestjs/swagger';
 
@@ -12,6 +13,7 @@ export class CmsConfigController {
   constructor(
     private readonly orchestrationConfigService: OrchestrationConfigService,
     private readonly tenantConfigService: TenantConfigService,
+    private readonly tenantAppConfigService: TenantAppConfigService,
   ) {}
 
   @Post('cache/clear')
@@ -27,6 +29,7 @@ export class CmsConfigController {
   async clearAllCaches(): Promise<void> {
     this.orchestrationConfigService.clearCache();
     this.tenantConfigService.clearCache();
+    this.tenantAppConfigService.clearCache();
   }
 
   @Post('cache/clear/:tenantId')
@@ -47,5 +50,6 @@ export class CmsConfigController {
   async clearTenantCache(@Param('tenantId') tenantId: string): Promise<void> {
     this.orchestrationConfigService.clearCacheForTenant(tenantId);
     this.tenantConfigService.clearCacheForTenant(tenantId);
+    this.tenantAppConfigService.clearCacheForTenant(tenantId);
   }
 }

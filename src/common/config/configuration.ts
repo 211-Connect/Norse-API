@@ -10,6 +10,8 @@ export default () => ({
   MONGODB_URI: process.env.MONGODB_URI,
   REDIS_URL: process.env.REDIS_URL,
   CMS_REDIS_URL: process.env.CMS_REDIS_URL,
+  PAYLOAD_URL: process.env.PAYLOAD_URL,
+  PAYLOAD_APP_CONFIG_API_KEY: process.env.PAYLOAD_APP_CONFIG_API_KEY,
   rateLimit: {
     ttl: parseInt(process.env.RATE_LIMIT_TTL_SECONDS, 10) || 60, // 60 seconds
     limit: parseInt(process.env.RATE_LIMIT_MAX, 10) || 60, // 60 request per minute

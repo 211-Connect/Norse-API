@@ -5,10 +5,18 @@ import { SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 import { TenantConfigController } from './tenant-config.controller';
 import { TenantConfigService } from './tenant-config.service';
+import { TenantAppConfigService } from './tenant-app-config.service';
 import { buildSwaggerConfig } from '../common/swagger/swagger-config';
 import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
+const TENANT_UUID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+const APP_CONFIG = {
+  tenantId: TENANT_UUID,
+  brand: { theme: { primaryColor: '#123456' } },
+  search: { map: { center: [-122.33, 47.6], zoom: 9 }, defaultRadius: 25 },
+  alerts: [{ text: 'Office closed Monday' }],
+};
 
 describe('TenantConfigController', () => {
   let app: INestApplication;
@@ -20,6 +28,7 @@ describe('TenantConfigController', () => {
     getSearchConfig: jest.Mock;
     getOrchestrationConfig: jest.Mock;
   };
+  let tenantAppConfigService: { getAppConfig: jest.Mock };
 
   beforeEach(async () => {
     tenantConfigService = {
@@ -71,6 +80,10 @@ describe('TenantConfigController', () => {
       }),
     };
 
+    tenantAppConfigService = {
+      getAppConfig: jest.fn().mockResolvedValue(APP_CONFIG),
+    };
+
     const moduleRef: TestingModule = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({
@@ -84,6 +97,10 @@ describe('TenantConfigController', () => {
         {
           provide: TenantConfigService,
           useValue: tenantConfigService,
+        },
+        {
+          provide: TenantAppConfigService,
+          useValue: tenantAppConfigService,
         },
       ],
     }).compile();
@@ -209,6 +226,68 @@ describe('TenantConfigController', () => {
     });
   });
 
+  describe('GET /tenant-config/:tenantId/app-config', () => {
+    it('returns the app config for the x-tenant-id tenant, defaulting to en', async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/tenant-config/${TENANT_UUID}/app-config`)
+        .set('x-tenant-id', TENANT_UUID)
+        .expect(200);
+
+      expect(response.body).toEqual(APP_CONFIG);
+      expect(tenantAppConfigService.getAppConfig).toHaveBeenCalledWith(
+        TENANT_UUID,
+        'en',
+      );
+    });
+
+    it('passes the locale query parameter through', async () => {
+      await request(app.getHttpServer())
+        .get(`/tenant-config/${TENANT_UUID}/app-config?locale=es`)
+        .set('x-tenant-id', TENANT_UUID)
+        .expect(200);
+
+      expect(tenantAppConfigService.getAppConfig).toHaveBeenCalledWith(
+        TENANT_UUID,
+        'es',
+      );
+    });
+
+    it('rejects a path tenant that differs from x-tenant-id', async () => {
+      await request(app.getHttpServer())
+        .get(`/tenant-config/${TENANT_UUID}/app-config`)
+        .set('x-tenant-id', 'aaaaaaaa-5717-4562-b3fc-2c963f66afa6')
+        .expect(400);
+
+      expect(tenantAppConfigService.getAppConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects a request without x-tenant-id', async () => {
+      await request(app.getHttpServer())
+        .get(`/tenant-config/${TENANT_UUID}/app-config`)
+        .expect(400);
+
+      expect(tenantAppConfigService.getAppConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects a tenant id that is not a UUID', async () => {
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1/app-config')
+        .set('x-tenant-id', 'tenant-1')
+        .expect(400);
+
+      expect(tenantAppConfigService.getAppConfig).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed locale', async () => {
+      await request(app.getHttpServer())
+        .get(`/tenant-config/${TENANT_UUID}/app-config?locale=../../x`)
+        .set('x-tenant-id', TENANT_UUID)
+        .expect(400);
+
+      expect(tenantAppConfigService.getAppConfig).not.toHaveBeenCalled();
+    });
+  });
+
   describe('OpenAPI document', () => {
     it('publishes the tenant-config endpoints', async () => {
       const res = await request(app.getHttpServer())
@@ -219,6 +298,10 @@ describe('TenantConfigController', () => {
       expect(paths).toContain('/tenant-config/{tenantId}');
       expect(paths).toContain('/tenant-config/{tenantId}/topics');
       expect(paths).toContain('/tenant-config/{tenantId}/suggestions');
+      expect(paths).toContain('/tenant-config/{tenantId}/app-config');
+      expect(res.body.components.schemas).toHaveProperty(
+        'TenantAppConfigResponseDto',
+      );
       expect(JSON.stringify(res.body)).toContain('Tenant Config');
     });
   });
