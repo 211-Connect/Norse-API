@@ -53,6 +53,7 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import { applyPopulationWeight } from './internal/population-weight/population-weight';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -325,10 +326,27 @@ type WordRarityEntry = {
 
 const MAX_SPLIT_BUCKETS = 60;
 
+// The index may not carry use_references; accept strings or {name|value}
+// objects and anything else as [].
+function parseUseReferences(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') out.push(item);
+    else if (item && typeof item === 'object') {
+      const o = item as { name?: unknown; value?: unknown };
+      if (typeof o.name === 'string') out.push(o.name);
+      else if (typeof o.value === 'string') out.push(o.value);
+    }
+  }
+  return out;
+}
+
 interface PredictedTaxonomy {
   code: string;
   name: string;
   score: number;
+  useReferences?: string[];
 }
 
 @Injectable()
@@ -770,6 +788,12 @@ export class HybridSearchService {
       ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
       : [];
 
+    // v2 only (ISS-2693): a "who it is for" code keeps its boost only when the
+    // query names the group. Only the boost builders read this list.
+    const boostTaxonomies = v2
+      ? applyPopulationWeight(predictedTaxonomies, queryStr, lang)
+      : predictedTaxonomies;
+
     this.logger.log(
       `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
         .map((t) => t.code)
@@ -777,6 +801,14 @@ export class HybridSearchService {
         .map((t) => t.name)
         .join(', ')}]`,
     );
+    const unboosted = boostTaxonomies
+      .filter((t, i) => t.score === 0 && predictedTaxonomies[i].score !== 0)
+      .map((t) => t.code);
+    if (unboosted.length > 0) {
+      this.logger.log(
+        `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | no group boost (query does not name the group): [${unboosted.join(', ')}]`,
+      );
+    }
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -798,7 +830,7 @@ export class HybridSearchService {
             preference,
             queryStr,
             queryVector,
-            predicted: predictedTaxonomies,
+            predicted: boostTaxonomies,
             filters: [...baseFilters],
             coords,
             distance: distance ?? 0,
@@ -823,7 +855,7 @@ export class HybridSearchService {
           preference,
           queryStr,
           queryVector,
-          predicted: predictedTaxonomies,
+          predicted: boostTaxonomies,
           filters: baseFilters,
           pinnedMode,
           wordRarity,
@@ -872,7 +904,7 @@ export class HybridSearchService {
         preference,
         queryStr,
         queryVector,
-        predicted: predictedTaxonomies,
+        predicted: boostTaxonomies,
         filters: baseFilters,
         coords,
         distance: distance ?? 0,
@@ -895,7 +927,7 @@ export class HybridSearchService {
         filters: baseFilters,
         queryStr,
         queryVector: queryVector!,
-        predicted: predictedTaxonomies,
+        predicted: boostTaxonomies,
         wordRarity,
         needs: boostActive ? activeNeeds : [],
         earlyLists,
@@ -909,7 +941,7 @@ export class HybridSearchService {
           preference,
           queryStr,
           queryVector,
-          predicted: predictedTaxonomies,
+          predicted: boostTaxonomies,
           filters: baseFilters,
           coords,
           distance: distance ?? 0,
@@ -927,7 +959,7 @@ export class HybridSearchService {
       preference,
       queryStr,
       queryVector,
-      predicted: predictedTaxonomies,
+      predicted: boostTaxonomies,
       filters: baseFilters,
       coords,
       distance: distance ?? 0,
@@ -1452,12 +1484,13 @@ export class HybridSearchService {
           this.elasticsearchService.search<{
             code: string;
             name: string;
+            use_references?: unknown;
           }>({
             index: 'hybrid_taxonomies',
             preference,
             size: TAXONOMY_K,
             track_total_hits: false,
-            _source: ['code', 'name'],
+            _source: ['code', 'name', 'use_references'],
             ...(exact
               ? {
                   // Exact cosine over the tenant's codes. (1 + cos) / 2 is the
@@ -1494,6 +1527,7 @@ export class HybridSearchService {
           code: h._source!.code,
           name: h._source!.name ?? '',
           score: h._score ?? 0,
+          useReferences: parseUseReferences(h._source!.use_references),
         }));
     } catch (error) {
       this.logger.warn(
@@ -1566,22 +1600,30 @@ export class HybridSearchService {
       TAXONOMY_BOOST_MAX_SCALE,
       Math.max(1, Math.floor(tokens / TAXONOMY_BOOST_TOKENS_PER_UNIT)),
     );
-    return predicted.map((sc, i) => ({
-      nested: {
-        path: 'taxonomies',
-        query: {
-          constant_score: {
-            filter: { term: { 'taxonomies.code': sc.code } },
-            boost:
-              BASE_TAXONOMY_BOOST *
-              lengthScale *
-              sc.score *
-              (1 + 0.5 / (1 + i)),
-          },
-        },
-        score_mode: 'max',
-      },
-    }));
+    // Keep the position index i (rank factor must not shift); a zero score
+    // (population weight) emits no clause.
+    return predicted.flatMap((sc, i) =>
+      sc.score === 0
+        ? []
+        : [
+            {
+              nested: {
+                path: 'taxonomies',
+                query: {
+                  constant_score: {
+                    filter: { term: { 'taxonomies.code': sc.code } },
+                    boost:
+                      BASE_TAXONOMY_BOOST *
+                      lengthScale *
+                      sc.score *
+                      (1 + 0.5 / (1 + i)),
+                  },
+                },
+                score_mode: 'max',
+              },
+            } as QueryDslQueryContainer,
+          ],
+    );
   }
 
   /**
