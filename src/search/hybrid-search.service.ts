@@ -178,6 +178,8 @@ const PRIORITY_SCORE_WEIGHT = 1;
  */
 const RRF_K = 60;
 const RRF_LIST_SIZE = 100;
+
+type RankedListKind = 'keyword' | 'vector' | 'taxonomy' | 'need';
 // Weight of the cosine tie-break inside the taxonomy list (taxonomy scores are 25+).
 const RRF_TAXONOMY_TIE_BREAK = 0.001;
 // Weight of the need list in the fusion. Not measured: IL211 had 0 need-tagged
@@ -1073,9 +1075,88 @@ export class HybridSearchService {
   }
 
   /**
-   * The keyword and vector lists, each the top `RRF_LIST_SIZE` ids. The
-   * lists use the same clauses as the main query. Rejects when a request
-   * fails; `fetchFusedOrder` handles that.
+   * The query of one ranked list, or undefined when the list does not exist
+   * for this request: keyword only with lexical clauses, taxonomy only with
+   * taxonomy clauses, need only with active needs. The lists use the same
+   * clauses as the main query.
+   */
+  private buildRankedListQuery(
+    kind: RankedListKind,
+    args: {
+      filters: QueryDslQueryContainer[];
+      queryStr: string;
+      queryVector: number[];
+      predicted: PredictedTaxonomy[];
+      needs: NeedScore[];
+      wordRarity: WordRarity;
+    },
+  ): QueryDslQueryContainer | undefined {
+    const { filters, queryStr, queryVector, predicted, needs, wordRarity } =
+      args;
+    switch (kind) {
+      case 'keyword': {
+        const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
+        if (lexical.length === 0) return undefined;
+        return {
+          bool: { filter: filters, should: lexical, minimum_should_match: 1 },
+        };
+      }
+      case 'vector':
+        return {
+          script_score: {
+            query: { bool: { filter: filters } },
+            script: {
+              source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+              params: { qv: queryVector },
+            },
+          },
+        };
+      case 'taxonomy': {
+        const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+        if (taxonomy.length === 0) return undefined;
+        // Many services carry the same predicted code and tie on the
+        // taxonomy score, so Elasticsearch would break the tie in index
+        // order. A tiny cosine term breaks it by meaning instead, as the
+        // ranking lab did (live check 2026-11-16: top-10 overlap with the
+        // lab order was 0.71 without it).
+        return {
+          script_score: {
+            query: {
+              bool: {
+                filter: filters,
+                should: taxonomy,
+                minimum_should_match: 1,
+              },
+            },
+            script: {
+              source: `_score + ${RRF_TAXONOMY_TIE_BREAK} * Math.max(0, cosineSimilarity(params.qv, 'embedding'))`,
+              params: { qv: queryVector },
+            },
+          },
+        };
+      }
+      case 'need':
+        if (needs.length === 0) return undefined;
+        return {
+          bool: {
+            filter: filters,
+            should: needs.map((n) => ({
+              rank_feature: {
+                field: `sune_need_weights.${n.code}`,
+                linear: {},
+                boost:
+                  n.score * (n.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
+              },
+            })),
+            minimum_should_match: 1,
+          },
+        };
+    }
+  }
+
+  /**
+   * The keyword and vector lists, each the top `RRF_LIST_SIZE` ids. Rejects
+   * when a request fails; `fetchFusedOrder` handles that.
    */
   private fetchKeywordAndVectorLists(args: {
     index: string;
@@ -1085,27 +1166,17 @@ export class HybridSearchService {
     queryVector: number[];
     wordRarity: WordRarity;
   }): Promise<string[][]> {
-    const { filters, queryStr, queryVector, wordRarity } = args;
-    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
     const requests: Promise<string[]>[] = [];
-    if (lexical.length > 0) {
-      requests.push(
-        this.runRankedList(args, 'hybrid_rrf_keyword', {
-          bool: { filter: filters, should: lexical, minimum_should_match: 1 },
-        }),
-      );
+    for (const kind of ['keyword', 'vector'] as const) {
+      const query = this.buildRankedListQuery(kind, {
+        ...args,
+        predicted: [],
+        needs: [],
+      });
+      if (query) {
+        requests.push(this.runRankedList(args, `hybrid_rrf_${kind}`, query));
+      }
     }
-    requests.push(
-      this.runRankedList(args, 'hybrid_rrf_vector', {
-        script_score: {
-          query: { bool: { filter: filters } },
-          script: {
-            source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
-            params: { qv: queryVector },
-          },
-        },
-      }),
-    );
     return Promise.all(requests);
   }
 
@@ -1113,13 +1184,14 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
+    size: number = RRF_LIST_SIZE,
   ): Promise<string[]> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
         this.elasticsearchService.search({
           index: args.index,
           preference: args.preference,
-          size: RRF_LIST_SIZE,
+          size,
           _source: false,
           track_total_hits: false,
           query,
@@ -1154,57 +1226,17 @@ export class HybridSearchService {
     needs: NeedScore[];
     earlyLists?: Promise<string[][]>;
   }): Promise<string[] | undefined> {
-    const { filters, queryStr, queryVector, predicted, needs, earlyLists } =
-      args;
-
-    const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    const { needs, earlyLists } = args;
 
     try {
       const requests: Promise<string[]>[] = [];
-      if (taxonomy.length > 0) {
-        // Many services carry the same predicted code and tie on the
-        // taxonomy score, so Elasticsearch would break the tie in index
-        // order. A tiny cosine term breaks it by meaning instead, as the
-        // ranking lab did (live check 2026-11-16: top-10 overlap with the
-        // lab order was 0.71 without it).
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_taxonomy', {
-            script_score: {
-              query: {
-                bool: {
-                  filter: filters,
-                  should: taxonomy,
-                  minimum_should_match: 1,
-                },
-              },
-              script: {
-                source: `_score + ${RRF_TAXONOMY_TIE_BREAK} * Math.max(0, cosineSimilarity(params.qv, 'embedding'))`,
-                params: { qv: queryVector },
-              },
-            },
-          }),
-        );
+      for (const kind of ['taxonomy', 'need'] as const) {
+        const query = this.buildRankedListQuery(kind, args);
+        if (query) {
+          requests.push(this.runRankedList(args, `hybrid_rrf_${kind}`, query));
+        }
       }
       const needList = needs.length > 0;
-      if (needList) {
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_need', {
-            bool: {
-              filter: filters,
-              should: needs.map((n) => ({
-                rank_feature: {
-                  field: `sune_need_weights.${n.code}`,
-                  linear: {},
-                  boost:
-                    n.score *
-                    (n.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
-                },
-              })),
-              minimum_should_match: 1,
-            },
-          }),
-        );
-      }
       const early = earlyLists ?? this.fetchKeywordAndVectorLists(args);
 
       const [keywordAndVector, ...rest] = await Promise.all([
