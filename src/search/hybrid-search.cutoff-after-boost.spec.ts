@@ -352,7 +352,8 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(probeCalls()).toHaveLength(0);
     expect(probeOwnTop()).toHaveLength(0);
     expect(mainTop()).toHaveLength(1);
-    expect(requests).toHaveLength(2);
+    // main top score, pinned gate (v2, default mode boost), main search
+    expect(requests).toHaveLength(3);
   });
 
   it('5. v1 path unchanged: no probe boost, boost top score after the cut with the ids filter', async () => {

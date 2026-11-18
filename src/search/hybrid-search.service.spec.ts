@@ -382,7 +382,9 @@ describe('HybridSearchService', () => {
       .map((c) => c[0])
       .find((req) => req.index === 'hybrid_taxonomies');
     expect(taxonomyCall).toBeUndefined();
-    const functions = capturedMainRequest.query.function_score.functions ?? [];
+    // v2 with a query has no pinned priority function (pinned gate), so a
+    // lexical-only main query can be a plain bool with no function_score.
+    const functions = capturedMainRequest.query.function_score?.functions ?? [];
     expect(functions.find((f: any) => f.script_score)).toBeUndefined();
   });
 
@@ -705,8 +707,9 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      // taxonomy, rarity, three rank-fusion lists, fused-page stats, main search
-      expect(preferences).toHaveLength(7);
+      // taxonomy, rarity, three rank-fusion lists, fused-page stats, pinned
+      // gate, main search
+      expect(preferences).toHaveLength(8);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -726,8 +729,8 @@ describe('HybridSearchService', () => {
 
       // Every search of all three requests, not just the first of each. The
       // relevance searches add three rank-fusion lists and a stats request
-      // each (7 + 7 + 3).
-      expect(preferences).toHaveLength(17);
+      // each, and a pinned gate request each (8 + 8 + 3).
+      expect(preferences).toHaveLength(19);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });
