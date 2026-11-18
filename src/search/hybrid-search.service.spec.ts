@@ -482,6 +482,41 @@ describe('HybridSearchService', () => {
       expect(JSON.stringify(request.query)).not.toContain('cosineSimilarity');
     });
 
+    it('v2 pins match taxonomy child codes; v1 pins match the exact code only', async () => {
+      const v1: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+      });
+      const v2: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+        rankingVersion: 'v2',
+      });
+
+      expect(JSON.stringify(v1.query)).toContain(
+        '"terms":{"taxonomies.code":["BH-1800"]}',
+      );
+      expect(JSON.stringify(v1.query)).not.toContain(
+        '"prefix":{"taxonomies.code"',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800."}',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800-"}',
+      );
+    });
+
+    it('v2 pins still skip the embedding without relevance_cutoff', async () => {
+      const embed = jest.spyOn(service, 'embedQuery');
+      await service.buildPinsRequest({
+        headers,
+        query: pinsQuery,
+        rankingVersion: 'v2',
+      });
+      expect(embed).not.toHaveBeenCalled();
+    });
+
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
       const embed = jest
         .spyOn(service, 'embedQuery')

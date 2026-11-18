@@ -2,6 +2,7 @@
 import { errors } from '@elastic/elasticsearch';
 import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
+import { SearchService } from 'src/search/search.service';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
 import { RULES_VERSION } from '../rules';
@@ -68,6 +69,7 @@ function build(opts: {
   startEmbedding?: jest.Mock;
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
+  searchPins?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -76,13 +78,18 @@ function build(opts: {
     opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const getSummaries = opts.getSummaries ?? jest.fn().mockResolvedValue([]);
+  const searchPins =
+    opts.searchPins ??
+    jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEmbedding } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
+    { searchPins } as unknown as SearchService,
   );
   return {
+    searchPins,
     service,
     classify,
     searchHybrid,
@@ -1185,5 +1192,73 @@ describe('V2SearchService area search (region, PR #313)', () => {
     expect(getSummaries).not.toHaveBeenCalled();
     expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('area');
     expect(result).not.toHaveProperty('resolved_location');
+  });
+});
+
+describe('V2SearchService.pins', () => {
+  const pinsResponse = {
+    total: 1,
+    truncated: false,
+    pins: [
+      {
+        id: 'a',
+        service_at_location_id: 's1',
+        name: 'Food Bank',
+        physical_address: null,
+        coordinates: [-122, 47] as [number, number],
+      },
+    ],
+  };
+
+  it('asks for hybrid pins with v2 rules, the region and no v2-only fields', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, classify, startEmbedding } = build({ searchPins });
+
+    const result = await service.pins({
+      headers,
+      query: dto({
+        query: 'food',
+        taxonomy: ['BH-1800'],
+        region: ['county:53033'],
+        area_match: 'located',
+        unlocated: 'none',
+        needs: ['N-HOU-02'],
+        urgency: 'U-1',
+        clarify: 'never',
+      }),
+    });
+
+    expect(result).toBe(pinsResponse);
+    const sent = searchPins.mock.calls[0][0];
+    expect(sent.rankingVersion).toBe('v2');
+    expect(sent.query).toMatchObject({
+      query: 'food',
+      query_type: 'hybrid',
+      taxonomy: ['BH-1800'],
+      region: ['county:53033'],
+      area_match: 'located',
+      unlocated: 'none',
+    });
+    for (const key of [
+      'needs',
+      'passed_needs',
+      'urgency',
+      'clarify',
+      'classify',
+    ]) {
+      expect(sent.query).not.toHaveProperty(key);
+    }
+    expect(classify).not.toHaveBeenCalled();
+    expect(startEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('turns a missing index into a 400', async () => {
+    const searchPins = jest.fn().mockRejectedValue({
+      meta: { body: { error: { type: 'index_not_found_exception' } } },
+    });
+    const { service } = build({ searchPins });
+    await expect(
+      service.pins({ headers, query: dto({ query: 'x' }) }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

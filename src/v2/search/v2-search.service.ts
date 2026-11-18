@@ -19,6 +19,8 @@ import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
 import { RegionService } from 'src/region/internal';
+import { SearchService } from 'src/search/search.service';
+import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
 import { resolveArea } from 'src/search/internal/area/resolve-area';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
@@ -138,7 +140,43 @@ export class V2SearchService {
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
     private readonly regionService: RegionService,
+    private readonly searchService: SearchService,
   ) {}
+
+  /**
+   * Map pins for a v2 search: the same membership as `search` (child taxonomy
+   * codes, region), the v1 pins shape. No classify call and no embedding unless
+   * `relevance_cutoff=on` needs scores (the v1 pins rule). The region is
+   * resolved by `SearchService.searchPins`, the same `resolveArea` as `search`.
+   */
+  async pins({
+    headers,
+    query: dto,
+  }: {
+    headers: HeadersDto;
+    query: V2SearchQueryDto;
+  }): Promise<SearchPinsResponseDto> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
+      dto;
+    return this.searchService
+      .searchPins({
+        headers,
+        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+        rankingVersion: 'v2',
+      })
+      .catch((error: unknown) => {
+        if (isIndexNotFound(error)) {
+          throw new BadRequestException(
+            `no search index for accept-language ${headers['accept-language']}`,
+          );
+        }
+        if (isQueryTooLarge(error)) {
+          throw new BadRequestException('query is too long for search');
+        }
+        throw error;
+      });
+  }
 
   async search({
     headers,
