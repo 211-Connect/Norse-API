@@ -12,7 +12,7 @@ export const CLASSIFY_CACHE_KEY_VERSION = 'v1';
  * - No language: the ml-broker request has no language field, so the output
  *   cannot depend on it.
  * - No model version: ml-broker reports model_version only in the response, so
- *   it cannot be in a read key. The 1 h TTL bounds staleness after a model
+ *   it cannot be in a read key. The 59 min TTL bounds staleness after a model
  *   deploy; bump CLASSIFY_CACHE_KEY_VERSION to drop all entries at once.
  * - The text is hashed: keys never hold search text.
  */

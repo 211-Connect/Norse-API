@@ -18,7 +18,8 @@ const failed = (): ClassifyResult => ({
 });
 
 // ADR 0039 Decision 40.
-const CLASSIFY_CACHE_TTL_MS = 60 * 60 * 1000;
+// Under 1 h so a cached classification never outlives ADR 0039 Decision 40 (Lucas, 2026-11-18: 59 min).
+const CLASSIFY_CACHE_TTL_MS = 59 * 60 * 1000;
 
 /** A result that may be stored: both signals ok and a scores object. */
 const isCacheable = (r: unknown): r is ClassifyResult => {
@@ -47,7 +48,7 @@ class UncacheableResult extends Error {
  * carry the query text, which can hold personal data.
  *
  * Cache: a result with both signals ok is stored in Redis (RequestCacheService)
- * for 1 h under `classify:v1:{tenant}:{ai}:{sha256 of normalized text}`; see
+ * for 59 min under `classify:v1:{tenant}:{ai}:{sha256 of normalized text}`; see
  * classify-cache-key.ts. Error results are never stored. Off only when
  * CLASSIFY_CACHE_ENABLED is exactly `false`. The hit flag goes on the active
  * span as `v2.classify.cache_hit`.

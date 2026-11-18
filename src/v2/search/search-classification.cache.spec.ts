@@ -33,7 +33,7 @@ const jsonResponse = (body: unknown, status = 200) =>
     text: async () => JSON.stringify(body),
   }) as unknown as Response;
 
-const TTL = 60 * 60 * 1000;
+const TTL = 59 * 60 * 1000;
 
 describe('SearchClassificationClient cache', () => {
   const realFetch = global.fetch;
@@ -104,7 +104,7 @@ describe('SearchClassificationClient cache', () => {
     jest.restoreAllMocks();
   });
 
-  it('miss then hit: one broker call, one write with the 1 h TTL', async () => {
+  it('miss then hit: one broker call, one write with the 59 min TTL', async () => {
     fetchMock.mockResolvedValue(jsonResponse(brokerBody()));
     const client = build();
     const a = await client.classify('rent help', 't1');
