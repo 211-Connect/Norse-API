@@ -27,6 +27,11 @@ import { BlockedTrafficService } from './services/blocked-traffic.service';
  * Service-to-service ingest for Norse's blocked-traffic counters
  * (ISS-2366). Guarded by the internal API key; every push is scoped to the
  * tenant in `x-tenant-id` (validated by TenantMiddleware).
+ *
+ * @deprecated Current Norse pushes per-crawler counts to
+ * `POST /internal/crawler-traffic`. Kept so Norse instances still running
+ * the old version keep working during a deploy; remove once every Norse
+ * deployment has the per-crawler counters.
  */
 @ApiTags('Blocked Traffic (Internal)')
 @UseGuards(InternalApiGuard)
@@ -46,7 +51,8 @@ export class BlockedTrafficInternalController {
   @ApiOperation({
     summary: 'Add blocked-request counts for the tenant',
     description:
-      'Adds per-hour deltas aggregated by a Norse instance. Additive: two pushes for the same bucket are summed.',
+      'Deprecated: use POST /internal/crawler-traffic. Adds per-hour deltas aggregated by a Norse instance. Additive: two pushes for the same bucket are summed.',
+    deprecated: true,
   })
   async record(
     @Body() payload: RecordBlockedTrafficDto,

@@ -54,6 +54,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { BlockedTrafficInternalController } from './analytics/blocked-traffic-internal.controller';
+import { CrawlerTrafficInternalController } from './analytics/crawler-traffic-internal.controller';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
@@ -165,6 +166,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryDeliveryController,
       PrintableDirectoryDeliveryInternalController,
       BlockedTrafficInternalController,
+      CrawlerTrafficInternalController,
       OrganizationController,
       RegionPublicController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
