@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { errors } from '@elastic/elasticsearch';
-import { BadRequestException, Logger } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
@@ -506,17 +506,15 @@ describe('V2SearchService', () => {
     ).toEqual([]);
   });
 
-  it('an unreadable hits.total is not counted (null), warns once with the shape, and keeps needs questions', async () => {
+  it('an unreadable hits.total is not counted (totalCounted false from the hybrid service), keeps needs questions and leaks no totalCounted', async () => {
     const scores = { 'N-HOU-02': 0.5, 'N-HOU-03': 0.4 };
-    const warn = jest
-      .spyOn(Logger.prototype, 'warn')
-      .mockImplementation(() => undefined);
-    try {
+    {
       const unreadable = build({
         classify: jest.fn().mockResolvedValue(okResult(scores)),
-        search: jest
-          .fn()
-          .mockResolvedValue(hybridResponse('secret text' as never)),
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(0),
+          totalCounted: false,
+        } as never),
       });
       const zero = build({
         classify: jest.fn().mockResolvedValue(okResult(scores)),
@@ -536,12 +534,7 @@ describe('V2SearchService', () => {
         );
       expect(needsQ(b)).toEqual([]);
       expect(needsQ(a).length).toBeGreaterThan(0);
-      expect(warn).toHaveBeenCalledTimes(1);
-      const line = String(warn.mock.calls[0][0]);
-      expect(line).toContain('string');
-      expect(line).not.toContain('secret text');
-    } finally {
-      warn.mockRestore();
+      expect('totalCounted' in a).toBe(false);
     }
   });
 

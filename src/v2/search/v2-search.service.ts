@@ -210,7 +210,7 @@ export class V2SearchService {
       dto;
     // The language picks the index. An unknown language has no index; that
     // was a 500 (break run 2026-11-14) and is a caller error.
-    const { needCounts, ...response } = await this.hybridSearch
+    const { needCounts, totalCounted, ...response } = await this.hybridSearch
       .searchHybrid({
         headers,
         query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
@@ -238,7 +238,10 @@ export class V2SearchService {
     // search fills 0 for each requested code the aggregation omits.
     // strong_text_match is still a placeholder: no retrieval signal yet.
     const clarification = finalize(decision, {
-      counts: { total: hitsTotal(response), by_code: needCounts ?? null },
+      counts: {
+        total: totalCounted === false ? null : hitsTotal(response),
+        by_code: needCounts ?? null,
+      },
       strong_text_match: false,
     });
 
