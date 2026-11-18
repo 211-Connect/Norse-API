@@ -193,6 +193,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
           .sort((a, b) => scoreOf(req, b) - scoreOf(req, a));
         return Promise.resolve({
           hits: {
+            total: { value: kept.length, relation: 'eq' },
             hits: kept.slice(0, req.size).map((d) => ({
               _id: d.id,
               _score: scoreOf(req, d),
@@ -294,7 +295,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(hasRankFeature(requests.find(isBaseHead))).toBe(false);
     expect(hasRankFeature(requests.find(isTaggedHead))).toBe(false);
 
-    const head = probeCalls().find((r) => r.size === 0);
+    const head = probeCalls().find((r) => r.size === 1001);
     const clauses: any[] = [];
     const walk = (n: any) => {
       if (!n || typeof n !== 'object') return;
@@ -306,7 +307,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(clauses[0].field).toBe('sune_need_weights.N-FOD-01');
     // 10% of 100 (the probe's own top), not 10% of 200 (the main search's top)
     expect(clauses[0].boost).toBeCloseTo(FRACTION * OWN_TOP * 0.98, 6);
-    // every count and survivor call carries the same boost
+    // every cut and rung call carries the same boost
     for (const call of probeCalls().filter((r) => r.min_score != null)) {
       expect(JSON.stringify(call.query)).toContain(
         'sune_need_weights.N-FOD-01',
@@ -333,7 +334,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     await run(tier2Fod, { coords: [-122.0, 36.9], distance: 60 });
     const second = probeCalls().map(scoring);
 
-    expect(first.length).toBeGreaterThanOrEqual(4);
+    expect(first.length).toBeGreaterThanOrEqual(3);
     expect(second).toEqual(first);
     expect(JSON.stringify(first)).not.toContain('gauss');
     expect(keptIdsOfMain()).toBe(firstIds);
@@ -366,7 +367,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(probeOwnTop()).toHaveLength(0);
     expect(mainTop()).toHaveLength(0);
     expect(requests.some(hasRankFeature)).toBe(false);
-    expect(probeCalls()).toHaveLength(3);
+    expect(probeCalls()).toHaveLength(2);
   });
 
   it('3b. boost on but only sub-gate needs: same requests as no needs', async () => {
@@ -393,14 +394,14 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
 
     expect(probeOwnTop()).toHaveLength(0);
     for (const call of probeCalls()) expect(hasRankFeature(call)).toBe(false);
-    expect(probeCalls()).toHaveLength(3);
+    expect(probeCalls()).toHaveLength(2);
 
     const top = mainTop();
     expect(top).toHaveLength(1);
     expect(JSON.stringify(top[0].query)).toContain('"ids"');
     // the top-score call comes after the probe's last call
     expect(requests.indexOf(top[0])).toBeGreaterThan(
-      requests.indexOf(probeCalls()[2]),
+      requests.indexOf(probeCalls()[1]),
     );
   });
 
@@ -437,7 +438,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
 
     release();
     await pending;
-    expect(probeCalls().length).toBeGreaterThanOrEqual(4);
+    expect(probeCalls().length).toBeGreaterThanOrEqual(3);
   });
 
   it('7b. the tagged head asks for need-tagged documents and only their weights', async () => {
