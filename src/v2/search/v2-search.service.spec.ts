@@ -13,6 +13,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { RegionService, RegionSummaryDto } from 'src/region/internal';
 import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
@@ -66,6 +67,7 @@ function build(opts: {
   search?: jest.Mock;
   startEmbedding?: jest.Mock;
   searchConfig?: SearchConfigCache;
+  getSummaries?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -73,12 +75,21 @@ function build(opts: {
   const startEmbedding =
     opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
+  const getSummaries = opts.getSummaries ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEmbedding } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
+    { getSummaries } as unknown as RegionService,
   );
-  return { service, classify, searchHybrid, startEmbedding, getSearchConfig };
+  return {
+    service,
+    classify,
+    searchHybrid,
+    startEmbedding,
+    getSearchConfig,
+    getSummaries,
+  };
 }
 
 describe('V2SearchService', () => {
@@ -1059,5 +1070,88 @@ describe('V2SearchService with AI classification off', () => {
         'classify',
       );
     });
+  });
+});
+
+describe('V2SearchService area search (region, PR #313)', () => {
+  const king = {
+    id: 'county:53033',
+    type: 'county',
+    name: 'King County',
+    state: 'WA',
+  } as RegionSummaryDto;
+
+  it('passes the area to searchHybrid and returns resolved_location', async () => {
+    const getSummaries = jest.fn().mockResolvedValue([king]);
+    const { service, searchHybrid } = build({
+      getSummaries,
+      searchConfig: { area_match: 'located' },
+    });
+    const result = await service.search({
+      headers,
+      query: dto({ query: 'food', region: ['county:53033'] }),
+    });
+    expect(getSummaries).toHaveBeenCalledWith(['county:53033']);
+    expect(searchHybrid.mock.calls[0][0].area).toEqual({
+      regionIds: ['county:53033'],
+      match: 'located',
+      unlocated: 'virtual',
+    });
+    expect(result.resolved_location).toEqual({
+      regions: [king],
+      area_match: 'located',
+      unlocated: 'virtual',
+    });
+  });
+
+  it('uses the caller area_match and unlocated over the tenant defaults', async () => {
+    const { service, searchHybrid } = build({
+      getSummaries: jest.fn().mockResolvedValue([king]),
+      searchConfig: { area_match: 'located', unlocated_in_area_search: 'all' },
+    });
+    const result = await service.search({
+      headers,
+      query: dto({
+        query: 'food',
+        region: ['county:53033'],
+        area_match: 'serving',
+        unlocated: 'none',
+      }),
+    });
+    expect(searchHybrid.mock.calls[0][0].area).toEqual({
+      regionIds: ['county:53033'],
+      match: 'serving',
+      unlocated: 'none',
+    });
+    expect(result.resolved_location).toMatchObject({
+      area_match: 'serving',
+      unlocated: 'none',
+    });
+  });
+
+  it('rejects an unknown region with a 400 and does not search', async () => {
+    const { service, searchHybrid } = build({
+      getSummaries: jest
+        .fn()
+        .mockRejectedValue(new BadRequestException('unknown region')),
+    });
+    await expect(
+      service.search({
+        headers,
+        query: dto({ query: 'food', region: ['county:99999'] }),
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(searchHybrid).not.toHaveBeenCalled();
+  });
+
+  it('leaves a search with no region unchanged', async () => {
+    const { service, searchHybrid, getSummaries } = build({});
+    const result = await service.search({
+      headers,
+      query: dto({ query: 'food' }),
+    });
+    expect(getSummaries).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('area');
+    expect(result).not.toHaveProperty('resolved_location');
   });
 });

@@ -18,6 +18,8 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
+import { RegionService } from 'src/region/internal';
+import { resolveArea } from 'src/search/internal/area/resolve-area';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -122,6 +124,7 @@ export class V2SearchService {
     private readonly classifier: SearchClassificationClient,
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
+    private readonly regionService: RegionService,
   ) {}
 
   async search({
@@ -192,6 +195,14 @@ export class V2SearchService {
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
+    // An area search (`region`, PR #313): an unknown Region is a 400 before
+    // the search runs. The tenant config read above gives the defaults.
+    const { area, resolved } = await resolveArea(
+      dto,
+      this.regionService,
+      async () => searchConfig,
+    );
+
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
       dto;
@@ -206,6 +217,7 @@ export class V2SearchService {
         needScores,
         ...(selectedNeeds.length > 0 && { selectedNeeds }),
         ...(countCodes.length > 0 && { countCodes }),
+        ...(area && { area }),
         body,
       })
       .catch((error: unknown) => {
@@ -231,6 +243,7 @@ export class V2SearchService {
 
     const result: V2SearchResponseDto = {
       ...response,
+      ...(resolved && { resolved_location: resolved }),
       intent: {
         query: hasText ? text : null,
         ...(dto.taxonomy &&
