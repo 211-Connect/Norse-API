@@ -89,7 +89,7 @@ export const V1_ACCEPT_LANGUAGE_MESSAGE =
   'accept-language must start with a language code such as en, es or zh-Hans';
 
 export const V2_ACCEPT_LANGUAGE_MESSAGE =
-  `accept-language must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); ` +
+  `locale must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); ` +
   'region tags like en-US and weighted lists are not accepted';
 
 /**

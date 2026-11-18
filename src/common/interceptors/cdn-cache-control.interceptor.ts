@@ -16,6 +16,7 @@ import {
 } from '../versioning/api-version';
 
 export const CDN_CACHE_TTL_KEY = 'cdn_cache_ttl';
+export const CDN_REQUIRES_URL_MIRRORS_KEY = 'cdn_requires_url_mirrors';
 
 const NO_STORE = 'no-store, no-cache, must-revalidate, private';
 const NOT_STORABLE = Symbol('cdnNotStorable');
@@ -51,6 +52,16 @@ function appendVary(response: Response, field: string): void {
   response.setHeader('Vary', [...fields, field].join(', '));
 }
 
+function hasUrlMirrors(request: Request): boolean {
+  const { tenant_id: tenantId, locale } = request.query ?? {};
+  return (
+    typeof tenantId === 'string' &&
+    tenantId !== '' &&
+    typeof locale === 'string' &&
+    locale !== ''
+  );
+}
+
 /**
  * Sets Cache-Control for CDN and shared caches. Configure per route with
  * `@SetCdnCacheTTL(seconds)`; a handler can still opt one response out with
@@ -65,6 +76,12 @@ function appendVary(response: Response, field: string): void {
  * - a response whose header picked a version other than the default is never
  *   stored, so it cannot reach a v1 caller of the same URL.
  * A version in the path (`/v2/...`) is part of the URL and needs neither.
+ *
+ * Every stored response also varies on `x-tenant-id` and `accept-language`.
+ * Some edges ignore `Vary`, so a route marked `@RequireCdnUrlMirrors()` is
+ * stored only when the URL carries both `tenant_id` and `locale` (the cache-key
+ * mirrors that the tenant and locale middleware check against the headers);
+ * without them the answer is `no-store`, never an error.
  */
 @Injectable()
 export class CdnCacheControlInterceptor implements NestInterceptor {
@@ -75,6 +92,12 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
       CDN_CACHE_TTL_KEY,
       context.getHandler(),
     );
+
+    const requiresMirrors =
+      this.reflector.get<boolean>(
+        CDN_REQUIRES_URL_MIRRORS_KEY,
+        context.getHandler(),
+      ) === true;
 
     return next.handle().pipe(
       tap((body) => {
@@ -92,7 +115,12 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
         const headerPickedOther =
           headerVersion !== undefined && headerVersion !== DEFAULT_API_VERSION;
 
-        if (ttl === 0 || headerPickedOther || isMarkedNotStorable(body)) {
+        if (
+          ttl === 0 ||
+          headerPickedOther ||
+          isMarkedNotStorable(body) ||
+          (requiresMirrors && !hasUrlMirrors(request))
+        ) {
           response.setHeader('Cache-Control', NO_STORE);
           return;
         }
@@ -101,6 +129,11 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
           `public, max-age=${ttl}, s-maxage=${ttl}`,
         );
         if (!versionInPath) appendVary(response, API_VERSION_HEADER);
+        // The body depends on these two headers. A cache that honors Vary
+        // splits on them; one that ignores it (DigitalOcean App Platform's
+        // Cloudflare, verified 2026-11-17) relies on the URL mirrors instead.
+        appendVary(response, 'x-tenant-id');
+        appendVary(response, 'accept-language');
       }),
     );
   }

@@ -70,7 +70,7 @@ describe('locales', () => {
 
     it('uses the agreed message text, naming every supported code', () => {
       expect(V2_ACCEPT_LANGUAGE_MESSAGE).toBe(
-        `accept-language must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); region tags like en-US and weighted lists are not accepted`,
+        `locale must be exactly one supported code (${SUPPORTED_LANGUAGES.join(', ')}); region tags like en-US and weighted lists are not accepted`,
       );
       for (const c of SUPPORTED_LANGUAGES) {
         expect(V2_ACCEPT_LANGUAGE_MESSAGE).toContain(c);

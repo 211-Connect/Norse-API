@@ -15,19 +15,21 @@ import {
 import {
   ApiBody,
   ApiExcludeController,
-  ApiHeader,
+  ApiQuery,
   ApiOperation,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CustomHeaders } from '../../common/decorators/CustomHeaders';
-import { SetCdnCacheTTL } from '../../common/decorators/cdn-cache-ttl.decorator';
+import {
+  RequireCdnUrlMirrors,
+  SetCdnCacheTTL,
+} from '../../common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from '../../common/const/one-hour';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
 import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
-import { X_TENANT_ID_HEADER_DESCRIPTION } from '../../common/swagger/header-descriptions';
 import {
   UsageMetricsService,
   searchOutcomeFromHits,
@@ -37,6 +39,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
+import { V2UrlMirrorsGuard } from './v2-url-mirrors.guard';
 import { V2SearchService } from './v2-search.service';
 
 /**
@@ -47,7 +50,11 @@ import { V2SearchService } from './v2-search.service';
  * shared `CdnCacheControlInterceptor` writes the header. The service marks an
  * answer with an emergency question, or a failed check, as not storable
  * (`markNotStorable`), so it gets `no-store`. On `/search` the header picked
- * v2, so the interceptor never lets a shared cache store it there.
+ * v2, so the interceptor never lets a shared cache store it there. The body
+ * depends on `x-tenant-id` and `accept-language`, and a URL-keyed CDN ignores
+ * `Vary`: so every request needs the `tenant_id` and `locale` URL copies
+ * (`V2UrlMirrorsGuard`, 400 when missing; the middleware 400s a mismatch).
+ * `@RequireCdnUrlMirrors()` stays as a second line: no-store without them.
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
  * generates the frontend SDK, and a draft must not reach it. Remove
@@ -69,8 +76,9 @@ export class V2SearchController {
 
   @Get()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
+  @RequireCdnUrlMirrors()
   @ApiOperation({
     summary:
       'Search with intent and clarification questions, the emergency question first (draft)',
@@ -80,11 +88,18 @@ export class V2SearchController {
       'until the v2 ADR (ISS-2493).',
   })
   @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
-  @ApiHeader({
-    name: 'x-tenant-id',
+  @ApiQuery({
+    name: 'tenant_id',
     required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
   })
   async getResources(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
@@ -102,7 +117,7 @@ export class V2SearchController {
 
   @Post()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search with a GeoJSON geometry body (draft)',
@@ -112,11 +127,18 @@ export class V2SearchController {
       '(ISS-2493).',
   })
   @ApiResponse({ status: 200, type: V2SearchResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
-  @ApiHeader({
-    name: 'x-tenant-id',
+  @ApiQuery({
+    name: 'tenant_id',
     required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
   })
   @ApiBody({
     schema: {

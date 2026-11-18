@@ -60,3 +60,25 @@ export const apiVersioningOptions: VersioningOptions = {
   },
   defaultVersion: DEFAULT_API_VERSION,
 };
+
+/**
+ * The version a request is routed to: the path version, else the header, else
+ * the default. The same rule as `apiVersioningOptions`, for middleware that
+ * runs before routing.
+ */
+export function effectiveApiVersion(req: Request): string {
+  return (
+    pathVersionOf(req.originalUrl ?? req.url ?? '') ??
+    requestedApiVersion(req) ??
+    DEFAULT_API_VERSION
+  );
+}
+
+/**
+ * ADR 0039 Decision 34 (Lucas, 2026-11-18): on v2 the tenant and the language
+ * travel in the URL only (`tenant_id`, `locale`), so a copied URL reproduces
+ * the exact search and a URL-keyed CDN key holds both.
+ */
+export function readsTenantFromUrlOnly(req: Request): boolean {
+  return effectiveApiVersion(req) === '2';
+}
