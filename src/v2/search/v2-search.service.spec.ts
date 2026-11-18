@@ -11,7 +11,9 @@ import {
   SearchClassificationClient,
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import { V2SearchService } from './v2-search.service';
+import { V2SearchService, tenantHotlines } from './v2-search.service';
+import { TopAreasService } from './top-areas.service';
+import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { RegionService, RegionSummaryDto } from 'src/region/internal';
@@ -70,6 +72,7 @@ function build(opts: {
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
   searchPins?: jest.Mock;
+  topAreas?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -81,12 +84,14 @@ function build(opts: {
   const searchPins =
     opts.searchPins ??
     jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
+  const topAreas = opts.topAreas ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEmbedding } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
     { searchPins } as unknown as SearchService,
+    { topAreas } as unknown as TopAreasService,
   );
   return {
     searchPins,
@@ -96,6 +101,7 @@ function build(opts: {
     startEmbedding,
     getSearchConfig,
     getSummaries,
+    topAreas,
   };
 }
 
@@ -1025,7 +1031,7 @@ describe('V2SearchService with AI classification off', () => {
     expect(arg.selectedNeeds).toEqual(['N-FOD-01']);
   });
 
-  describe('where the setting comes from (tenant setting and classify=off)', () => {
+  describe('where the setting comes from (tenant setting only)', () => {
     const classifyArg = (m: jest.Mock) => m.mock.calls[0][2];
     const guessUsed = (res: { intent: { needs: { source: string }[] } }) =>
       res.intent.needs.some((n) => n.source === 'inferred');
@@ -1061,53 +1067,29 @@ describe('V2SearchService with AI classification off', () => {
       expect(classifyArg(classify)).toBe('off');
       expect(guessUsed(res)).toBe(false);
     });
-    it('classify=off turns it off for one request on a tenant that is on', async () => {
+    it('a classify=off sent by a caller changes nothing: classify stays on', async () => {
       const { service, classify } = build({
         classify: jest.fn().mockResolvedValue(result(0.001)),
         searchConfig: TENANT_ON,
       });
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', classify: 'off' }),
+        query: dto({ query: 'x', classify: 'off' } as never),
       });
-      expect(classifyArg(classify)).toBe('off');
-      expect(guessUsed(res)).toBe(false);
+      expect(classifyArg(classify)).toBe('on');
+      expect(guessUsed(res)).toBe(true);
     });
-    it('classify=off works when the tenant has no setting at all', async () => {
-      const { service, classify } = build({
-        classify: jest.fn().mockResolvedValue(result(0.001)),
-      });
-      await service.search({
-        headers,
-        query: dto({ query: 'x', classify: 'off' }),
-      });
-      expect(classifyArg(classify)).toBe('off');
-    });
-    it('the request cannot turn it on for a tenant that is off', async () => {
+    it('the tenant setting off still turns the need guess off, with no request parameter', async () => {
       const { service, classify } = build({
         classify: jest.fn().mockResolvedValue(result(0.001)),
         searchConfig: TENANT_OFF,
       });
-      // `classify` has only the value `off`; no value can switch it on.
-      for (const value of [undefined, 'on', 'auto'] as never[]) {
-        classify.mockClear();
-        const res = await service.search({
-          headers,
-          query: dto({ query: 'x', classify: value }),
-        });
-        expect(classifyArg(classify)).toBe('off');
-        expect(guessUsed(res)).toBe(false);
-      }
-    });
-    it('keeps classify out of the v1 query', async () => {
-      const { service, searchHybrid } = build({});
-      await service.search({
+      const res = await service.search({
         headers,
-        query: dto({ query: 'x', classify: 'off' }),
+        query: dto({ query: 'x', classify: 'on' } as never),
       });
-      expect(searchHybrid.mock.calls[0][0].query).not.toHaveProperty(
-        'classify',
-      );
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
     });
   });
 });
@@ -1260,5 +1242,106 @@ describe('V2SearchService.pins', () => {
     await expect(
       service.pins({ headers, query: dto({ query: 'x' }) }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('tenant context (hotlines, top areas)', () => {
+  const emergencyScores = {
+    signals: {
+      needs: { status: 'ok', scores: {} },
+      emergency: { status: 'ok', score: 0.99, floor_hit: true },
+    },
+    scores: {},
+    modelVersion: 'mv-1',
+  } as ClassifyResult;
+
+  const emergencyHotlines = async (searchConfig: unknown) => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(emergencyScores),
+      searchConfig: searchConfig as SearchConfigCache,
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'he is hurting me' }),
+    });
+    return res.clarification.questions.find((q) => q.id === 'emergency')
+      ?.hotlines;
+  };
+
+  it('uses the tenant hotlines from the search config', async () => {
+    const hotlines = [{ label: 'Local line', number: '555-0100' }];
+    expect(await emergencyHotlines({ hotlines })).toEqual(hotlines);
+  });
+
+  it.each([
+    ['missing', {}],
+    ['empty', { hotlines: [] }],
+    ['malformed', { hotlines: 'nope' }],
+    ['blank entries', { hotlines: [{ label: ' ', number: '' }] }],
+  ])('falls back to the default hotlines when %s', async (_n, cfg) => {
+    expect(await emergencyHotlines(cfg)).toEqual(DEFAULT_HOTLINES);
+  });
+
+  const startOptions = async (topAreas: string[]) => {
+    const { service } = build({
+      topAreas: jest.fn().mockResolvedValue(topAreas),
+    });
+    const res = await service.search({ headers, query: dto({ query: '' }) });
+    const q = res.clarification.questions.find((x) => x.id === 'start');
+    return q?.options.map((o) => o.value);
+  };
+
+  it('offers the tenant top areas in the start question', async () => {
+    expect(await startOptions(['N-LEG', 'N-WRK', 'N-HLT', 'N-HOU'])).toEqual([
+      'N-LEG',
+      'N-WRK',
+      'N-HLT',
+    ]);
+  });
+
+  it('falls back to the default top areas when TopAreasService gives []', async () => {
+    expect(await startOptions([])).toEqual(DEFAULT_TOP_AREAS);
+  });
+
+  it('passes tenant and language to TopAreasService', async () => {
+    const { service, topAreas } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(topAreas).toHaveBeenCalledWith(headers['x-tenant-id'], 'en');
+  });
+});
+
+describe('tenantHotlines', () => {
+  it('trims, drops blanks, keeps order', () => {
+    expect(
+      tenantHotlines({
+        hotlines: [
+          { label: ' A ', number: ' 1 ' },
+          { label: '', number: '2' },
+          { label: 'B', number: '3' },
+        ],
+      }),
+    ).toEqual([
+      { label: 'A', number: '1' },
+      { label: 'B', number: '3' },
+    ]);
+  });
+  it('keeps at most 4', () => {
+    const hotlines = Array.from({ length: 6 }, (_, i) => ({
+      label: `L${i}`,
+      number: `${i}`,
+    }));
+    expect(tenantHotlines({ hotlines })).toHaveLength(4);
+  });
+  it.each([
+    [null],
+    [undefined],
+    [{}],
+    [{ hotlines: null }],
+    [{ hotlines: 'x' }],
+    [{ hotlines: [1, null, { label: 1, number: 2 }] }],
+  ])('malformed %j gives []', (cfg) => {
+    expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
+      [],
+    );
   });
 });

@@ -116,12 +116,9 @@ describe('V2SearchQueryDto', () => {
     expect(parse({}).dto.taxonomy).toEqual([]);
   });
 
-  it('classify accepts only off; absent stays undefined; any other value is a 400', () => {
-    expect(parse({ classify: 'off' }).errors).toEqual([]);
-    expect(parse({ classify: 'off' }).dto.classify).toBe('off');
-    expect(parse({ query: 'rent' }).dto.classify).toBeUndefined();
-    for (const bad of ['on', 'auto', 'OFF', '', 'false'])
-      expect(parse({ classify: bad }).props).toContain('classify');
+  it('classify is not a request parameter (always on, Lucas 2026-11-18)', () => {
+    expect(parse({ classify: 'off' }).dto).not.toHaveProperty('classify');
+    expect(parse({ query: 'rent' }).dto).not.toHaveProperty('classify');
   });
 
   // Break run 2026-11-14 (HANDOFF-ASSETS/v2-search--eval-data/break-v2-2026-11-14):

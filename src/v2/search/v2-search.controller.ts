@@ -117,8 +117,9 @@ export class V2SearchController {
 
   @Get('pins')
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
+  @RequireCdnUrlMirrors()
   @ApiOperation({
     summary: 'Map pins for a v2 search (draft)',
     description:
@@ -128,11 +129,18 @@ export class V2SearchController {
       'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
   })
   @ApiResponse({ status: 200, type: SearchPinsResponseDto })
-  @ApiHeader({ name: 'accept-language', schema: { default: 'en' } })
-  @ApiHeader({
-    name: 'x-tenant-id',
+  @ApiQuery({
+    name: 'tenant_id',
     required: true,
-    description: X_TENANT_ID_HEADER_DESCRIPTION,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
   })
   getPins(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
