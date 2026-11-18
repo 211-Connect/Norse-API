@@ -43,13 +43,32 @@ class V2SearchDocumentationModule {}
 
 const INTEGER_PARAMETERS = new Set(['page', 'limit', 'distance', 'age']);
 
+// The shared v1 DTO describes `relevance_cutoff` for v1 (hybrid only, a fixed
+// fraction). On v2 the cut uses the dynamic ladder only (ADR 0039 Decision 77).
+const V2_PARAMETER_DESCRIPTIONS: Record<string, string> = {
+  relevance_cutoff:
+    '`on` trims low-relevance results; `off` (default) returns the full matched set. The cut uses the dynamic ladder only: 0.2 of the top score, tightened stepwise up to 0.5 when more than 1,000 results would survive, and never below the top-20 scores. There is no `relevance_cutoff_fraction` parameter (ADR 0039 Decision 77). The cut reads scores after the need boost (Decision 58). When a cutoff applies, `hits.total` reports the kept count and `relevance_cutoff.matched_before_cutoff` keeps the original.',
+};
+
+const V2_DESCRIPTION = [
+  'Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.',
+  '',
+  'Confirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):',
+  '- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.',
+  '- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.',
+  '- The need boost is on by default.',
+  '- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.',
+  '- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on.',
+].join('\n');
+
 /**
- * Two annotations come from the shared v1 query DTO, which also feeds the main
+ * Three annotations come from the shared v1 query DTO, which also feeds the main
  * Swagger document and the frontend SDK, so they cannot change there:
  * - `page`, `limit`, `distance` and `age` read as `number`, while the server
  *   validates integers (`@IsInt`).
  * - `taxonomy` puts `oneOf` beside `schema`, which OpenAPI does not allow.
- * This pass corrects both in the v2 document only.
+ * - `relevance_cutoff` carries the v1 text; v2 has its own (V2_PARAMETER_DESCRIPTIONS).
+ * This pass corrects them in the v2 document only.
  */
 function refineQueryParameters(document: OpenAPIObject): OpenAPIObject {
   for (const pathItem of Object.values(document.paths)) {
@@ -58,6 +77,9 @@ function refineQueryParameters(document: OpenAPIObject): OpenAPIObject {
     }[]) {
       for (const parameter of operation.parameters ?? []) {
         if (parameter.in !== 'query') continue;
+        if (V2_PARAMETER_DESCRIPTIONS[parameter.name]) {
+          parameter.description = V2_PARAMETER_DESCRIPTIONS[parameter.name];
+        }
         if (INTEGER_PARAMETERS.has(parameter.name)) {
           parameter.schema = { ...parameter.schema, type: 'integer' };
         }
@@ -83,9 +105,7 @@ export async function createV2SearchOpenApi(): Promise<OpenAPIObject> {
     app.enableVersioning(apiVersioningOptions);
     const config = new DocumentBuilder()
       .setTitle('Norse API: v2 search (draft)')
-      .setDescription(
-        'Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.',
-      )
+      .setDescription(V2_DESCRIPTION)
       .setVersion('2.0.0-draft')
       .build();
     return refineQueryParameters(SwaggerModule.createDocument(app, config));

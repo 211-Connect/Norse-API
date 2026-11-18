@@ -33,6 +33,18 @@ describe('v2 search OpenAPI', () => {
         'accept-language',
       ]),
     );
+<<<<<<< HEAD
+=======
+    // classify is always on: no request parameter (Lucas 2026-11-18).
+    expect(names).not.toContain('classify');
+    expect(names).not.toContain('relevance_cutoff_fraction');
+    const cutoff = get.parameters.find(
+      (p: unknown) => (p as { name: string }).name === 'relevance_cutoff',
+    ) as { description: string };
+    expect(cutoff.description).toContain('dynamic ladder only');
+    expect(cutoff.description).not.toContain('query_type');
+    expect(doc.info.description).toContain('enableV2Api');
+>>>>>>> 5f5de27 (docs(v2-search): OpenAPI states the 2026-11-18 decisions David confirmed (ADR 0039 Decisions 77-81))
     expect(get.parameters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
