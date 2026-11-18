@@ -16,7 +16,7 @@ import {
 } from 'class-validator';
 import { REGION_ID_PATTERN, regionIdMessage } from '../region.constants';
 
-export const REGION_TYPES = ['state', 'county', 'zip'] as const;
+export const REGION_TYPES = ['state', 'county', 'place', 'zip'] as const;
 export type RegionType = (typeof REGION_TYPES)[number];
 
 export const REGION_SEARCH_DEFAULT_LIMIT = 10;
@@ -53,7 +53,7 @@ export class RegionSearchQueryDto {
   @ApiProperty({
     required: false,
     type: String,
-    example: 'state,county,zip',
+    example: 'state,county,place,zip',
     description: 'Comma-separated Region types to return. Absent means all.',
   })
   @IsOptional()

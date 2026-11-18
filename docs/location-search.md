@@ -3,7 +3,9 @@
 How the public resource search (`GET` / `POST /search`, keyword and hybrid)
 uses a caller's location: which results it filters out, how it ranks the rest,
 and how it sorts. ServiceNet's internal services search has its own rules, in
-[geography-filter.md](geography-filter.md).
+[geography-filter.md](geography-filter.md). Searching an area (state, county,
+city, ZIP) with `region` instead of a point is in [area-search.md](area-search.md);
+with `region` set, nothing on this page applies except the sort origin.
 
 The code is `SearchUtilsService.buildFilters` and `buildSortClause`
 (`src/search/search-utils.service.ts`), shared by keyword and hybrid search, and
@@ -16,24 +18,24 @@ Every resource search path builds its geo filters with the same
 pinned by a test (`search.service.filter.spec.ts`, `hybrid-search.service.spec.ts`,
 "ISS-2755").
 
-| Route (`x-api-version: 1`) | `query_type` | Builder | Distance score |
-| --- | --- | --- | --- |
-| `GET` / `POST /search` | `text` (keyword; empty text = match-all) | `SearchService.buildClassicRequest` | none |
-| `GET` / `POST /search` | `taxonomy` (code list or complex `AND`/`OR` object) | same | none |
-| `GET` / `POST /search` | `more_like_this` | same | none |
-| `GET` / `POST /search` | `hybrid` (with text, browse, or text-only fallback) | `HybridSearchService.searchHybrid` | yes |
-| `GET /search/pins` | any of the above | the same builder as `/search` | same as `/search` |
-| `GET /search/predict`, `/search/re-rank` | — | ML broker only, no Elasticsearch search | n/a |
+| Route (`x-api-version: 1`)               | `query_type`                                        | Builder                                 | Distance score    |
+| ---------------------------------------- | --------------------------------------------------- | --------------------------------------- | ----------------- |
+| `GET` / `POST /search`                   | `text` (keyword; empty text = match-all)            | `SearchService.buildClassicRequest`     | none              |
+| `GET` / `POST /search`                   | `taxonomy` (code list or complex `AND`/`OR` object) | same                                    | none              |
+| `GET` / `POST /search`                   | `more_like_this`                                    | same                                    | none              |
+| `GET` / `POST /search`                   | `hybrid` (with text, browse, or text-only fallback) | `HybridSearchService.searchHybrid`      | yes               |
+| `GET /search/pins`                       | any of the above                                    | the same builder as `/search`           | same as `/search` |
+| `GET /search/predict`, `/search/re-rank` | —                                                   | ML broker only, no Elasticsearch search | n/a               |
 
 ## Inputs
 
-| Param | Meaning |
-| --- | --- |
-| `coords` | `lon,lat` of the searcher. Without it, nothing below applies: no geo filter, no distance ranking, and `sort=distance` falls back to relevance. |
+| Param      | Meaning                                                                                                                                                               |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coords`   | `lon,lat` of the searcher. Without it, nothing below applies: no geo filter, no distance ranking, and `sort=distance` falls back to relevance.                        |
 | `distance` | Radius in whole miles. **`0`, the default, means no radius filter.** Norse sends `0` when the user picks "Any" in the distance dropdown, and when no distance is set. |
-| `geo_type` | Omitted (default), `proximity`, or `boundary`. |
-| `geometry` | GeoJSON shape in the `POST` body, for `boundary` only. |
-| `sort` | `relevance` (default), `distance`, `name`, `organization`. |
+| `geo_type` | Omitted (default), `proximity`, or `boundary`.                                                                                                                        |
+| `geometry` | GeoJSON shape in the `POST` body, for `boundary` only.                                                                                                                |
+| `sort`     | `relevance` (default), `distance`, `name`, `organization`.                                                                                                            |
 
 ## What a result carries
 
@@ -52,13 +54,13 @@ rules that keep that true are in dagster-data-orchestration
 
 With `coords`, a result must pass these. "Point" means `location.point`.
 
-| `geo_type` | `distance` | Result **with** a point | Result **without** a point |
-| --- | --- | --- | --- |
-| omitted | > 0 | service area contains `coords` **and** point within `distance` | service area contains `coords` |
-| omitted | 0 | service area contains `coords` | service area contains `coords` |
-| `proximity` | > 0 | point within `distance` (service area ignored) | service area contains `coords` |
-| `proximity` | 0 | **no geo filter** | **no geo filter** |
-| `boundary` | ignored | service area intersects `geometry` | service area intersects `geometry` |
+| `geo_type`  | `distance` | Result **with** a point                                        | Result **without** a point         |
+| ----------- | ---------- | -------------------------------------------------------------- | ---------------------------------- |
+| omitted     | > 0        | service area contains `coords` **and** point within `distance` | service area contains `coords`     |
+| omitted     | 0          | service area contains `coords`                                 | service area contains `coords`     |
+| `proximity` | > 0        | point within `distance` (service area ignored)                 | service area contains `coords`     |
+| `proximity` | 0          | **no geo filter**                                              | **no geo filter**                  |
+| `boundary`  | ignored    | service area intersects `geometry`                             | service area intersects `geometry` |
 
 Consequences:
 
@@ -101,6 +103,7 @@ the text and semantic scores (`boost_mode: sum`):
   - distance function alone, without the new filter: 25 (the bug);
   - distance function alone, with the filter: 1;
   - with the filter plus the priority function, on results with priority 0: 0.
+
 - The weight (25) and default scale (5 mi) are constants, `GEO_GAUSS_WEIGHT`
   and `GEO_DEFAULT_SCALE_MI`. Payload's hybrid-search config shows geo-boost
   weight and scale fields, but Norse-API doesn't read them: `SearchConfigCache`
