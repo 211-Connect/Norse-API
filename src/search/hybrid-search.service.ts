@@ -54,6 +54,7 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import { normalizeQueryText } from './internal/query-text';
 import { queryEmbeddingCacheKey } from './internal/cache-key/query-embedding-cache-key';
 import { packEmbedding, unpackEmbedding } from './internal/embedding-codec';
 
@@ -1424,17 +1425,18 @@ export class HybridSearchService {
    */
   async embedQuery(query: string): Promise<number[]> {
     return withSpan('hybrid.embed', async (span) => {
+      const text = normalizeQueryText(query);
       if (!this.embeddingCacheEnabled || !this.embeddingModel) {
         span.setAttribute('hybrid.embed_cache_hit', false);
-        return this.fetchEmbedding(query);
+        return this.fetchEmbedding(text);
       }
-      const key = queryEmbeddingCacheKey(this.embeddingModel, query);
+      const key = queryEmbeddingCacheKey(this.embeddingModel, text);
       let called = false;
       const packed = await this.requestCacheService.getOrSet<string>(
         key,
         async () => {
           called = true;
-          return packEmbedding(await this.fetchEmbedding(query));
+          return packEmbedding(await this.fetchEmbedding(text));
         },
         this.embeddingCacheTtlMs,
       );
@@ -1446,7 +1448,7 @@ export class HybridSearchService {
       // A stored value that does not decode counts as a miss: ask the API
       // and overwrite it.
       span.setAttribute('hybrid.embed_cache_hit', false);
-      const fresh = await this.fetchEmbedding(query);
+      const fresh = await this.fetchEmbedding(text);
       await this.requestCacheService.setMany(
         { [key]: packEmbedding(fresh) },
         this.embeddingCacheTtlMs,

@@ -19,6 +19,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { normalizeQueryText } from '../../search/internal/query-text';
 import { SearchClassificationClient } from './search-classification.client';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -159,7 +160,7 @@ export class V2SearchService {
     const classified = hasText
       ? await withSpan('v2.classify', async (classifySpan) => {
           const result = await this.classifier.classify(
-            text.trim().slice(0, CLASSIFY_MAX_TEXT_LENGTH),
+            normalizeQueryText(text).slice(0, CLASSIFY_MAX_TEXT_LENGTH),
             headers['x-tenant-id'],
             aiClassification,
           );

@@ -19,4 +19,11 @@ describe('queryEmbeddingCacheKey', () => {
     expect(queryEmbeddingCacheKey('model-x', 'food banks')).not.toBe(base);
     expect(queryEmbeddingCacheKey('model-x', '  food bank \n')).toBe(base);
   });
+
+  it('treats whitespace runs as one space but keeps case', () => {
+    const base = queryEmbeddingCacheKey('model-x', 'food bank');
+    expect(queryEmbeddingCacheKey('model-x', 'food   bank')).toBe(base);
+    expect(queryEmbeddingCacheKey('model-x', 'food\tbank')).toBe(base);
+    expect(queryEmbeddingCacheKey('model-x', 'Food bank')).not.toBe(base);
+  });
 });
