@@ -140,6 +140,7 @@ export class SearchService {
         this.tenantConfigService
           .getSearchConfig(options.headers['x-tenant-id'])
           .catch((): SearchConfigCache => ({})),
+      { rankingVersion: options.rankingVersion },
     );
     return area ? { options: { ...options, area }, resolved } : { options };
   }
