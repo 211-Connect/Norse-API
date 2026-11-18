@@ -11,6 +11,7 @@ import {
   AiClassificationSetting,
   RulesRequest,
   RulesSignals,
+  Hotline,
 } from '../rules/types';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
@@ -20,6 +21,7 @@ import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
 import { RegionService } from 'src/region/internal';
 import { resolveArea } from 'src/search/internal/area/resolve-area';
+import { TopAreasService } from './top-areas.service';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -118,6 +120,31 @@ export function resolveAiClassification(
   return tenant === 'off' || requested === 'off' ? 'off' : 'on';
 }
 
+const MAX_HOTLINES = 4;
+
+/**
+ * Tenant hotlines from `search_config:<tenant>` (ADR 0039: shown only in the
+ * emergency question). Keeps entries with a non-empty label and number, trimmed,
+ * at most 4, in order. Anything malformed gives [], and the rules engine then
+ * uses its default hotlines (988 and 911).
+ */
+export function tenantHotlines(
+  config: SearchConfigCache | null | undefined,
+): Hotline[] {
+  const raw: unknown = config?.hotlines;
+  if (!Array.isArray(raw)) return [];
+  const out: Hotline[] = [];
+  for (const item of raw) {
+    const { label, number } = (item ?? {}) as Record<string, unknown>;
+    if (typeof label !== 'string' || typeof number !== 'string') continue;
+    const l = label.trim();
+    const n = number.trim();
+    if (l && n) out.push({ label: l, number: n });
+    if (out.length === MAX_HOTLINES) break;
+  }
+  return out;
+}
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -125,6 +152,7 @@ export class V2SearchService {
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
     private readonly regionService: RegionService,
+    private readonly topAreasService: TopAreasService,
   ) {}
 
   async search({
@@ -144,6 +172,13 @@ export class V2SearchService {
     const queryVector = hasText
       ? this.hybridSearch.startEmbedding(text)
       : undefined;
+
+    // Tenant top areas run in parallel with the config read and classify. The
+    // service never throws: a failure is [] (engine default areas).
+    const topAreasPromise = this.topAreasService.topAreas(
+      headers['x-tenant-id'],
+      headers['accept-language'],
+    );
 
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
@@ -175,9 +210,10 @@ export class V2SearchService {
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
-    // Tenant top areas and hotlines: later slice.
     const decision = decide(rulesRequest, signals, {
       ai_classification: aiClassification,
+      hotlines: tenantHotlines(searchConfig),
+      top_areas: await topAreasPromise,
     });
 
     const needScores: NeedScore[] = [];

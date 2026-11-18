@@ -55,4 +55,11 @@ export interface SearchConfigCache {
    * a cache written before it still works (`true` → `all`).
    */
   include_unlocated_in_area_search?: boolean;
+
+  /**
+   * Tenant emergency hotlines, an ordered array written by Payload. Shown only
+   * in the emergency question (ADR 0039). Empty or absent: the rules engine's
+   * default hotlines (988 and 911).
+   */
+  hotlines?: { label: string; number: string }[] | null;
 }

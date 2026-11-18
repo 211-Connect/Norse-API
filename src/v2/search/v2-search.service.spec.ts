@@ -10,7 +10,9 @@ import {
   SearchClassificationClient,
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import { V2SearchService } from './v2-search.service';
+import { V2SearchService, tenantHotlines } from './v2-search.service';
+import { TopAreasService } from './top-areas.service';
+import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { RegionService, RegionSummaryDto } from 'src/region/internal';
@@ -68,6 +70,7 @@ function build(opts: {
   startEmbedding?: jest.Mock;
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
+  topAreas?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -76,11 +79,13 @@ function build(opts: {
     opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const getSummaries = opts.getSummaries ?? jest.fn().mockResolvedValue([]);
+  const topAreas = opts.topAreas ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEmbedding } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
+    { topAreas } as unknown as TopAreasService,
   );
   return {
     service,
@@ -89,6 +94,7 @@ function build(opts: {
     startEmbedding,
     getSearchConfig,
     getSummaries,
+    topAreas,
   };
 }
 
@@ -1153,5 +1159,106 @@ describe('V2SearchService area search (region, PR #313)', () => {
     expect(getSummaries).not.toHaveBeenCalled();
     expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('area');
     expect(result).not.toHaveProperty('resolved_location');
+  });
+});
+
+describe('tenant context (hotlines, top areas)', () => {
+  const emergencyScores = {
+    signals: {
+      needs: { status: 'ok', scores: {} },
+      emergency: { status: 'ok', score: 0.99, floor_hit: true },
+    },
+    scores: {},
+    modelVersion: 'mv-1',
+  } as ClassifyResult;
+
+  const emergencyHotlines = async (searchConfig: unknown) => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(emergencyScores),
+      searchConfig: searchConfig as SearchConfigCache,
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'he is hurting me' }),
+    });
+    return res.clarification.questions.find((q) => q.id === 'emergency')
+      ?.hotlines;
+  };
+
+  it('uses the tenant hotlines from the search config', async () => {
+    const hotlines = [{ label: 'Local line', number: '555-0100' }];
+    expect(await emergencyHotlines({ hotlines })).toEqual(hotlines);
+  });
+
+  it.each([
+    ['missing', {}],
+    ['empty', { hotlines: [] }],
+    ['malformed', { hotlines: 'nope' }],
+    ['blank entries', { hotlines: [{ label: ' ', number: '' }] }],
+  ])('falls back to the default hotlines when %s', async (_n, cfg) => {
+    expect(await emergencyHotlines(cfg)).toEqual(DEFAULT_HOTLINES);
+  });
+
+  const startOptions = async (topAreas: string[]) => {
+    const { service } = build({
+      topAreas: jest.fn().mockResolvedValue(topAreas),
+    });
+    const res = await service.search({ headers, query: dto({ query: '' }) });
+    const q = res.clarification.questions.find((x) => x.id === 'start');
+    return q?.options.map((o) => o.value);
+  };
+
+  it('offers the tenant top areas in the start question', async () => {
+    expect(await startOptions(['N-LEG', 'N-WRK', 'N-HLT', 'N-HOU'])).toEqual([
+      'N-LEG',
+      'N-WRK',
+      'N-HLT',
+    ]);
+  });
+
+  it('falls back to the default top areas when TopAreasService gives []', async () => {
+    expect(await startOptions([])).toEqual(DEFAULT_TOP_AREAS);
+  });
+
+  it('passes tenant and language to TopAreasService', async () => {
+    const { service, topAreas } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(topAreas).toHaveBeenCalledWith(headers['x-tenant-id'], 'en');
+  });
+});
+
+describe('tenantHotlines', () => {
+  it('trims, drops blanks, keeps order', () => {
+    expect(
+      tenantHotlines({
+        hotlines: [
+          { label: ' A ', number: ' 1 ' },
+          { label: '', number: '2' },
+          { label: 'B', number: '3' },
+        ],
+      }),
+    ).toEqual([
+      { label: 'A', number: '1' },
+      { label: 'B', number: '3' },
+    ]);
+  });
+  it('keeps at most 4', () => {
+    const hotlines = Array.from({ length: 6 }, (_, i) => ({
+      label: `L${i}`,
+      number: `${i}`,
+    }));
+    expect(tenantHotlines({ hotlines })).toHaveLength(4);
+  });
+  it.each([
+    [null],
+    [undefined],
+    [{}],
+    [{ hotlines: null }],
+    [{ hotlines: 'x' }],
+    [{ hotlines: [1, null, { label: 1, number: 2 }] }],
+  ])('malformed %j gives []', (cfg) => {
+    expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
+      [],
+    );
   });
 });

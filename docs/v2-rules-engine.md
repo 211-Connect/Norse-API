@@ -12,6 +12,9 @@ Needs never filter results; a used or confirmed need only boosts (`boost_needs`,
 - Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (same rule: an unknown code or `N-X` is a 400 that names it), `urgency` (`U-X` means "not yet known" and counts as absent: the engine behaves as if none was sent), `clarify` (`never` keeps only the emergency question).
 - Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), top-level `urgency` `{level, score}` (beside `needs`, as ml-broker sends it; read only when the needs call succeeded), emergency `{status, score, floor_hit, calm_context, dv_shelter}`; `emergency: null` when there is no typed text.
 - Tenant: `top_areas` (Tier 1 codes by service count, for the starting question) and `hotlines`.
+  - `hotlines` come from the Payload `search_config:<tenant>` Redis value, field `hotlines` (`tenantHotlines`: trimmed, at most 4). Empty or malformed: the engine's `DEFAULT_HOTLINES` (988, 911).
+  - `top_areas` come from `TopAreasService`: an Elasticsearch terms aggregation on `sune_needs` (Tier 1 codes only), filtered to the tenant, on the language index. It is cached 24 h under `topareas:v1:{tenant}:{lang}`.
+  - A failure (Elasticsearch error, timeout, cache error) gives `[]`, is not cached, and the engine uses `DEFAULT_TOP_AREAS`.
 
 ## Cutoffs (`config.ts`, `RULES_VERSION`)
 - Emergency, in order: floor hit -> popup at score >= 0.662, else soft; calm context -> soft at >= 0.221, else none; DV shelter below 0.662 -> soft; >= 0.662 popup; >= 0.221 soft; else none. Error -> `unknown`, not cacheable.
