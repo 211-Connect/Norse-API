@@ -141,6 +141,11 @@ export class V2ClarificationDto {
  * Decision 54).
  */
 export class V2SearchResponseDto extends SearchResponseDto {
+  @ApiProperty({
+    description:
+      'True when the text found no good match (ISS-2796). Without `needs` the results are empty and `clarification` asks what the person needs; with `needs` the results are the services that carry those needs, ranked without the text.',
+  })
+  weak_match: boolean;
   @ApiProperty({ type: V2IntentDto }) intent: V2IntentDto;
   @ApiProperty({ type: V2ClarificationDto }) clarification: V2ClarificationDto;
   @ApiProperty({
