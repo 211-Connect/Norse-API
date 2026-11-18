@@ -306,6 +306,24 @@ const CUTOFF_TOP_DOCS_FLOOR = 20;
 const CUTOFF_FRACTION_LADDER = [0.25, 0.3, 0.4, 0.5] as const;
 
 /**
+ * Size of the need-tagged head the v2 probe sends next to its base head. It
+ * lists the highest-scoring documents that carry at least one active need
+ * weight, so the probe can compute the boosted top-21 itself instead of
+ * waiting for a separate own-top-score call. A tagged document ranked past
+ * this window cannot enter the computed top 21 (a bounded approximation; the
+ * window is far larger than the 21 ranks the cut reads).
+ */
+const CUTOFF_TAGGED_HEAD_SIZE = 100;
+
+/**
+ * Elasticsearch stores a rank_feature value with about 9 significant bits, so
+ * the real boost can differ from the exact one by up to 2^-8 of itself. The
+ * computed boosted score uses this as a lower bound: the clamp guarantees the
+ * top 20 survive only if the computed 21st score never exceeds the real one.
+ */
+const RANK_FEATURE_PRECISION_LOSS = 2 ** -8;
+
+/**
  * Window used only to satisfy the distinct-service floor when a threshold cut
  * lands on too few services. Small, and fetched only in that case.
  */
@@ -2294,11 +2312,12 @@ export class HybridSearchService {
 
     const buildProbeQuery = (
       extraShould: QueryDslQueryContainer[],
+      extraFilter?: QueryDslQueryContainer,
     ): QueryDslQueryContainer => {
       const innerBool: QueryDslQueryContainer = {
         bool: {
           minimum_should_match: 0,
-          filter: filters,
+          filter: extraFilter ? [...filters, extraFilter] : filters,
           should: [...should, ...extraShould],
         },
       };
@@ -2313,20 +2332,6 @@ export class HybridSearchService {
           }
         : innerBool;
     };
-
-    // Option A: with the need boost active the cut is made after the boost,
-    // sized as a fraction of this probe's own unboosted top score (no distance,
-    // so it does not depend on where the person is).
-    let needShould: QueryDslQueryContainer[] = [];
-    if (needs && needs.length > 0) {
-      const ownTop = await this.fetchTopScore('hybrid_cutoff_boost_top_score', {
-        index,
-        preference,
-        query: buildProbeQuery([]),
-      });
-      if (ownTop > 0) needShould = this.buildNeedBoostClauses(needs, ownTop);
-    }
-    const query = buildProbeQuery(needShould);
 
     /**
      * The rule needs three numbers — the top score, the top-20 score, and how
@@ -2359,27 +2364,134 @@ export class HybridSearchService {
     const fraction = CUTOFF_FRACTION_OF_MAX;
     const minKeep = CUTOFF_MIN_KEEP_SERVICES;
 
-    const head = await this.tracedSearch<SearchSource>('hybrid_cutoff_head', {
+    const headRequest = (query: QueryDslQueryContainer) => ({
       index,
       preference,
       size: CUTOFF_TOP_DOCS_FLOOR + 1,
       track_total_hits: true,
-      _source: false,
+      _source: false as const,
       sort: ['_score'],
       query,
     });
+    const totalOf = (res: {
+      hits: { total?: number | { value: number } };
+    }): number =>
+      typeof res.hits.total === 'number'
+        ? res.hits.total
+        : (res.hits.total?.value ?? 0);
 
-    const matched =
-      typeof head.hits.total === 'number'
-        ? head.hits.total
-        : (head.hits.total?.value ?? 0);
-    const topScore = head.hits.hits[0]?._score ?? 0;
+    let query: QueryDslQueryContainer;
+    let matched: number;
+    let topScore: number;
     // Clamp anchor: the score the probe's own top-20 ends at. Absent when the
     // matched set is smaller than the floor window — nothing to protect there.
-    const s20 =
-      head.hits.hits.length > CUTOFF_TOP_DOCS_FLOOR
-        ? head.hits.hits[CUTOFF_TOP_DOCS_FLOOR]?._score
-        : undefined;
+    let s20: number | undefined;
+
+    if (needs && needs.length > 0) {
+      // Option A: with the need boost active the cut is made after the boost,
+      // sized as a fraction of this probe's own unboosted top score (no
+      // distance, so it does not depend on where the person is). The unboosted
+      // head and the need-tagged head start together; the boosted top 21 is
+      // computed here from both, so no separate own-top-score call waits in
+      // front of the head.
+      const taggedFilter: QueryDslQueryContainer = {
+        bool: {
+          should: needs.map((n) => ({
+            exists: { field: `sune_need_weights.${n.code}` },
+          })),
+          minimum_should_match: 1,
+        },
+      };
+      type TaggedSource = { sune_need_weights?: Record<string, unknown> };
+      const [baseHead, taggedHead] = await Promise.all([
+        this.metrics.observeDownstream(
+          'elasticsearch',
+          'hybrid_cutoff_head',
+          () =>
+            this.tracedSearch<SearchSource>(
+              'hybrid_cutoff_head',
+              headRequest(buildProbeQuery([])),
+            ),
+        ),
+        this.metrics
+          .observeDownstream('elasticsearch', 'hybrid_cutoff_tagged_head', () =>
+            this.tracedSearch<TaggedSource>('hybrid_cutoff_tagged_head', {
+              index,
+              preference,
+              size: CUTOFF_TAGGED_HEAD_SIZE,
+              track_total_hits: false,
+              _source: needs.map((n) => `sune_need_weights.${n.code}`),
+              sort: ['_score'],
+              query: buildProbeQuery([], taggedFilter),
+            }),
+          )
+          // A failed tagged head leaves the probe unboosted, as a failed
+          // own-top-score call did.
+          .catch((error: Error) => {
+            this.logger.warn(`Need boost skipped: ${error.message}`);
+            return undefined;
+          }),
+      ]);
+
+      // Membership does not change with should clauses (minimum_should_match
+      // is 0), so the base total is the matched count of the boosted query.
+      matched = totalOf(baseHead);
+      const ownTop = baseHead.hits.hits[0]?._score ?? 0;
+
+      if (ownTop > 0 && taggedHead) {
+        const needShould = this.buildNeedBoostClauses(needs, ownTop);
+        query = buildProbeQuery(needShould);
+        const k = NEED_BOOST_FRACTION * ownTop;
+        const base = new Map<string, number>();
+        const boostOf = new Map<string, number>();
+        for (const h of baseHead.hits.hits) {
+          if (h._id !== undefined) base.set(h._id, h._score ?? 0);
+        }
+        for (const h of taggedHead.hits.hits) {
+          if (h._id === undefined) continue;
+          base.set(h._id, h._score ?? 0);
+          const weights = h._source?.sune_need_weights;
+          let boost = 0;
+          for (const n of needs) {
+            boost +=
+              this.needBoostValue(k, n) * (Number(weights?.[n.code]) || 0);
+          }
+          boostOf.set(h._id, boost);
+        }
+        const scores = [...base.entries()]
+          .map(
+            ([id, score]) =>
+              score +
+              (boostOf.get(id) ?? 0) * (1 - RANK_FEATURE_PRECISION_LOSS),
+          )
+          .sort((a, b) => b - a);
+        topScore = scores[0] ?? 0;
+        s20 =
+          scores.length > CUTOFF_TOP_DOCS_FLOOR
+            ? scores[CUTOFF_TOP_DOCS_FLOOR]
+            : undefined;
+      } else {
+        // ownTop <= 0 (or no tagged head): no boost, the base head stands.
+        query = buildProbeQuery([]);
+        topScore = baseHead.hits.hits[0]?._score ?? 0;
+        s20 =
+          baseHead.hits.hits.length > CUTOFF_TOP_DOCS_FLOOR
+            ? baseHead.hits.hits[CUTOFF_TOP_DOCS_FLOOR]?._score
+            : undefined;
+      }
+    } else {
+      query = buildProbeQuery([]);
+      const head = await this.tracedSearch<SearchSource>(
+        'hybrid_cutoff_head',
+        headRequest(query),
+      );
+      matched = totalOf(head);
+      topScore = head.hits.hits[0]?._score ?? 0;
+      s20 =
+        head.hits.hits.length > CUTOFF_TOP_DOCS_FLOOR
+          ? head.hits.hits[CUTOFF_TOP_DOCS_FLOOR]?._score
+          : undefined;
+    }
 
     const decline = (
       reason: RelevanceCutoffDto['reason'],
@@ -2568,6 +2680,17 @@ export class HybridSearchService {
     }
   }
 
+  /**
+   * The rank_feature boost of one need. The one place that sizes it, used by
+   * the boost clauses and by the probe's client-side top-21 computation, so
+   * the two cannot drift.
+   */
+  private needBoostValue(k: number, need: NeedScore): number {
+    return (
+      k * need.score * (need.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1)
+    );
+  }
+
   private buildNeedBoostClauses(
     needs: NeedScore[],
     topScore: number,
@@ -2577,10 +2700,7 @@ export class HybridSearchService {
       rank_feature: {
         field: `sune_need_weights.${need.code}`,
         linear: {},
-        boost:
-          k *
-          need.score *
-          (need.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
+        boost: this.needBoostValue(k, need),
       },
     }));
   }
