@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
@@ -27,11 +27,24 @@ const NO_TEXT_SIGNALS: RulesSignals = {
   emergency: null,
 };
 
-const hitsTotal = (response: { search?: { hits?: { total?: unknown } } }) => {
+const totalLogger = new Logger('V2SearchService');
+
+/**
+ * Hit total, or `null` ("not counted") when Elasticsearch sent a shape that
+ * cannot be read. 0 would be wrong: finalize drops every needs question at 0.
+ * Logs the shape type only, never the query (David, PR #279 review).
+ */
+const hitsTotal = (response: {
+  search?: { hits?: { total?: unknown } };
+}): number | null => {
   const total = response.search?.hits?.total;
-  if (typeof total === 'number') return total;
-  const value = (total as { value?: number } | undefined)?.value;
-  return typeof value === 'number' ? value : 0;
+  if (typeof total === 'number' && Number.isFinite(total)) return total;
+  const value = (total as { value?: unknown } | null | undefined)?.value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  totalLogger.warn(
+    `hits.total unreadable (${total === null ? 'null' : typeof total}); treated as not counted`,
+  );
+  return null;
 };
 
 // ml-broker rejects classify text longer than 512 characters after stripping

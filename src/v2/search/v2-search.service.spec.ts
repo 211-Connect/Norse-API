@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { errors } from '@elastic/elasticsearch';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
@@ -504,6 +504,45 @@ describe('V2SearchService', () => {
         ['find_need', 'narrow'].includes(q.type),
       ),
     ).toEqual([]);
+  });
+
+  it('an unreadable hits.total is not counted (null), warns once with the shape, and keeps needs questions', async () => {
+    const scores = { 'N-HOU-02': 0.5, 'N-HOU-03': 0.4 };
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      const unreadable = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest
+          .fn()
+          .mockResolvedValue(hybridResponse('secret text' as never)),
+      });
+      const zero = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest.fn().mockResolvedValue(hybridResponse(0)),
+      });
+      const a = await unreadable.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const b = await zero.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const needsQ = (r: typeof a) =>
+        r.clarification.questions.filter((q) =>
+          ['find_need', 'narrow'].includes(q.type),
+        );
+      expect(needsQ(b)).toEqual([]);
+      expect(needsQ(a).length).toBeGreaterThan(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0][0]);
+      expect(line).toContain('string');
+      expect(line).not.toContain('secret text');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('feeds a golden row through the service: at most 3 questions, snake_case keys', async () => {
