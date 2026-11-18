@@ -44,18 +44,12 @@ const expectedClauses = [
       minimum_should_match: 1,
     },
   },
+  // Decision 1A: two values of one facet are one clause (OR inside a facet).
   {
     bool: {
       should: [
         { term: { 'facets.age_group.keyword': 'a' } },
         { term: { 'facets_en.age_group.keyword': 'a' } },
-      ],
-      minimum_should_match: 1,
-    },
-  },
-  {
-    bool: {
-      should: [
         { term: { 'facets.age_group.keyword': 'b' } },
         { term: { 'facets_en.age_group.keyword': 'b' } },
       ],
@@ -261,6 +255,16 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
     const full = await run({ selectedNeeds: ['N-FOD'] });
     expect(full.facets).toEqual(fast.facets);
     expect(full.search.hits.total).toEqual(fast.search.hits.total);
+  });
+
+  it('non-v2 hybrid keeps AND: two values of one facet stay two clauses', async () => {
+    await run({ rankingVersion: 'v1' });
+    // The v1 hybrid request wraps its bool query in function_score.
+    const filters: any[] = requests[0].query.function_score.query.bool.filter;
+    const ageClauses = filters.filter((f: any) =>
+      JSON.stringify(f).includes('facets.age_group.keyword'),
+    );
+    expect(ageClauses).toHaveLength(2);
   });
 
   it('no filters: no facet clause, only the tenant term', async () => {
