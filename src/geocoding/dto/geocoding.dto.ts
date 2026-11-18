@@ -218,6 +218,21 @@ export class GeocodeResponseDto {
   region?: string;
 
   @ApiProperty({
+    description:
+      "The hit's own name, without its context (Mapbox only), e.g. `Seattle`, `King County` or `98101`.",
+    example: 'Seattle',
+    required: false,
+  })
+  name?: string;
+
+  @ApiProperty({
+    description: 'Postal code of the US state (Mapbox only), e.g. `WA`.',
+    example: 'WA',
+    required: false,
+  })
+  state_code?: string;
+
+  @ApiProperty({
     description: 'Country name',
     example: 'United States',
     required: false,
@@ -241,5 +256,17 @@ export class GeocodeResponseDto {
   bbox?: number[];
 }
 
-export class ForwardGeocodeResponseDto extends GeocodeResponseDto {}
+export class ForwardGeocodeResponseDto extends GeocodeResponseDto {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    required: false,
+    example: 'county:53077',
+    description:
+      'Id of the Region this hit is an area of (Mapbox only): `region` → state, `district` → county, `place` → city or CDP of the same name, `postcode` → ZIP. ' +
+      'Pass it to `GET /search` as `region`. `null` for a point (address, POI, neighborhood, locality) and for an area with no Region yet (e.g. a city not seeded, a PO-box ZIP) — search those with `coords` and `distance`. See docs/area-search.md.',
+  })
+  region_id?: string | null;
+}
+
 export class ReverseGeocodeResponseDto extends GeocodeResponseDto {}

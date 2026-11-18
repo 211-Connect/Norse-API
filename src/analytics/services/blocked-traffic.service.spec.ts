@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { BlockedTrafficHourly } from '../../common/schemas/blocked-traffic-hourly.schema';
+import { CrawlerTrafficHourly } from '../../common/schemas/crawler-traffic-hourly.schema';
 import { BlockedTrafficService } from './blocked-traffic.service';
 
 const TENANT = '7f4c2a51-0c7e-4b8e-9d0a-2f8a3b1c9e10';
@@ -26,6 +27,9 @@ describe('BlockedTrafficService', () => {
     find: mockFind,
     aggregate: mockAggregate,
   };
+  const mockCrawlerAggregateExec = jest.fn();
+  const mockCrawlerAggregate = jest.fn();
+  const mockCrawlerModel = { aggregate: mockCrawlerAggregate };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -33,6 +37,8 @@ describe('BlockedTrafficService', () => {
     mockQuery.lean.mockReturnValue(mockQuery);
     mockFind.mockReturnValue(mockQuery);
     mockAggregate.mockReturnValue({ exec: mockAggregateExec });
+    mockCrawlerAggregate.mockReturnValue({ exec: mockCrawlerAggregateExec });
+    mockCrawlerAggregateExec.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -40,6 +46,10 @@ describe('BlockedTrafficService', () => {
         {
           provide: getModelToken(BlockedTrafficHourly.name),
           useValue: mockModel,
+        },
+        {
+          provide: getModelToken(CrawlerTrafficHourly.name),
+          useValue: mockCrawlerModel,
         },
       ],
     }).compile();
@@ -229,6 +239,70 @@ describe('BlockedTrafficService', () => {
           { classification: 'unknown', blocked: 0, notEnforced: 0 },
         ],
       });
+    });
+
+    it('adds the per-crawler counters: blocked and rate_limited as blocked, logged as not enforced', async () => {
+      mockAggregateExec.mockResolvedValue([
+        { _id: { classification: 'seo', enforced: true }, count: 4 },
+      ]);
+      mockCrawlerAggregateExec
+        .mockResolvedValueOnce([
+          { _id: { classification: 'seo', enforced: true }, count: 6 },
+          { _id: { classification: 'nefarious', enforced: false }, count: 3 },
+        ])
+        .mockResolvedValueOnce([
+          {
+            _id: {
+              hour: new Date('2026-10-21T10:00:00.000Z'),
+              classification: 'seo',
+              enforced: true,
+            },
+            count: 6,
+          },
+        ]);
+      mockExec.mockResolvedValue([
+        {
+          hour: new Date('2026-10-21T10:00:00.000Z'),
+          classification: 'seo',
+          enforced: true,
+          count: 4,
+        },
+      ]);
+
+      const result = await service.getStats(
+        TENANT,
+        '2026-10-21T10:30:00Z',
+        '2026-10-21T23:59:59Z',
+        { hourly: true },
+      );
+
+      expect(mockCrawlerAggregate).toHaveBeenCalledWith([
+        {
+          $match: {
+            ...RANGE_MATCH,
+            outcome: { $in: ['blocked', 'rate_limited', 'logged'] },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              classification: '$classification',
+              enforced: { $in: ['$outcome', ['blocked', 'rate_limited']] },
+            },
+            count: { $sum: '$count' },
+          },
+        },
+      ]);
+      expect(result.blocked).toBe(10);
+      expect(result.notEnforced).toBe(3);
+      expect(result.hourly).toEqual([
+        {
+          hour: '2026-10-21T10:00:00.000Z',
+          classification: 'seo',
+          enforced: true,
+          count: 10,
+        },
+      ]);
     });
   });
 });

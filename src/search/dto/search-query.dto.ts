@@ -1,12 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -24,6 +27,34 @@ import {
   MAX_QUERY_LENGTH,
   QUERY_TOO_LONG_MESSAGE,
 } from '../internal/query-log';
+import { REGION_ID_PATTERN, regionIdMessage } from 'src/region/internal';
+import {
+  AREA_MATCH_PARAM_DESCRIPTION,
+  AREA_MATCH_VALUES,
+  AreaMatch,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
+  Unlocated,
+  MAX_REGION_IDS,
+  REGION_PARAM_DESCRIPTION,
+} from '../internal/area/area-match';
+
+/** `a,b` or repeated `?region=a&region=b` → unique trimmed ids, or undefined. */
+export function toRegionIds(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  const ids = (Array.isArray(value) ? value : [value])
+    .flatMap((v) => (typeof v === 'string' ? v.split(',') : [v]))
+    .map((v) => (typeof v === 'string' ? v.trim() : v))
+    .filter((v) => v !== '');
+  return ids.length ? Array.from(new Set(ids)) : undefined;
+}
+
+/** `true`/`false` from a query string; anything else is left to fail validation. */
+export function toBoolean(value: unknown): unknown {
+  if (value === 'true' || value === true) return true;
+  if (value === 'false' || value === false) return false;
+  return value;
+}
 
 interface ComplexQuery {
   OR?: (string | ComplexQuery)[];
@@ -180,6 +211,35 @@ export class SearchResourcesQueryDto {
     return undefined;
   })
   coords?: [number, number];
+
+  @ApiPropertyOptional({
+    description: REGION_PARAM_DESCRIPTION,
+    type: String,
+    example: 'county:53077',
+  })
+  @IsOptional()
+  @Transform(({ value }) => toRegionIds(value))
+  @IsArray()
+  @ArrayMaxSize(MAX_REGION_IDS)
+  @IsString({ each: true })
+  @Matches(REGION_ID_PATTERN, { each: true, message: regionIdMessage })
+  region?: string[];
+
+  @ApiPropertyOptional({
+    description: AREA_MATCH_PARAM_DESCRIPTION,
+    enum: AREA_MATCH_VALUES,
+  })
+  @IsOptional()
+  @IsIn(AREA_MATCH_VALUES)
+  area_match?: AreaMatch;
+
+  @ApiPropertyOptional({
+    description: UNLOCATED_PARAM_DESCRIPTION,
+    enum: UNLOCATED_VALUES,
+  })
+  @IsOptional()
+  @IsIn(UNLOCATED_VALUES)
+  unlocated?: Unlocated;
 
   @ApiPropertyOptional({
     type: 'object',

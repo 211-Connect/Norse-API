@@ -5,7 +5,7 @@ import {
   BadGatewayException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { AiSearchService } from './ai-search.service';
+import { AiSearchService, ML_BROKER_TOP_K } from './ai-search.service';
 import { HybridSearchService } from './hybrid-search.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 
@@ -90,7 +90,7 @@ describe('AiSearchService', () => {
 
     const [, requestOptions] = fetchSpy.mock.calls[0] as [unknown, RequestInit];
     const parsedBody = JSON.parse(String(requestOptions.body));
-    expect(parsedBody.top_k).toBe(150);
+    expect(parsedBody.top_k).toBe(ML_BROKER_TOP_K);
 
     expect(result.scenario).toBe('search');
     expect(result.hsis_taxonomies).toEqual(['L']);
@@ -389,7 +389,7 @@ describe('AiSearchService', () => {
     ];
     expect(String(calledUrl)).toContain('/re-rank');
     const parsedBody = JSON.parse(String(requestOptions.body));
-    expect(parsedBody.top_k).toBe(150);
+    expect(parsedBody.top_k).toBe(ML_BROKER_TOP_K);
     expect(parsedBody.need_weights).toEqual({
       'HO-300': 0.907,
       'IC-330': 0.0817,

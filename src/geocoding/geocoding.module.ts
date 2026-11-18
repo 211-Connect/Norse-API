@@ -9,9 +9,10 @@ import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import { MapboxGeocodingProvider } from './providers/mapbox-geocoding.provider';
 import { OpenCageGeocodingProvider } from './providers/opencage-geocoding.provider';
 import { GeocodingProvider } from './dto/geocoding.dto';
+import { RegionServiceModule } from 'src/region/internal';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, RegionServiceModule],
   controllers: [GeocodingController],
   providers: [
     MapboxGeocodingProvider,

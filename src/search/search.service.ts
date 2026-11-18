@@ -14,7 +14,17 @@ import {
   SearchRequest,
 } from '@elastic/elasticsearch/lib/api/types';
 import { getIndexName } from 'src/common/lib/utils';
-import { SearchResponse, SearchSource } from './dto/search-response.dto';
+import {
+  ResolvedLocationDto,
+  SearchResponse,
+  SearchSource,
+} from './dto/search-response.dto';
+import { RegionService } from 'src/region/internal';
+import {
+  AreaFilter,
+  tenantAreaMatch,
+  tenantUnlocated,
+} from './internal/area/area-match';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
@@ -45,6 +55,8 @@ type SearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
+  /** Set by `withArea`; never by a caller. */
+  area?: AreaFilter;
 };
 
 @Injectable()
@@ -61,6 +73,7 @@ export class SearchService {
     private readonly orchestrationConfigService: OrchestrationConfigService,
     private readonly hybridSearchService: HybridSearchService,
     private readonly metrics: MetricsService,
+    private readonly regionService: RegionService,
   ) {
     this.logger = new Logger(SearchService.name);
   }
@@ -104,9 +117,48 @@ export class SearchService {
     }
   }
 
-  async searchResources(options: SearchOptions): Promise<SearchResponse> {
-    this.assertSearchableQuery(options.query.query);
+  async searchResources(input: SearchOptions): Promise<SearchResponse> {
+    this.assertSearchableQuery(input.query.query);
 
+    const { options, resolved } = await this.withArea(input);
+    const response = await this.searchWithin(options);
+    return resolved ? { ...response, resolved_location: resolved } : response;
+  }
+
+  /**
+   * Settles an area search (`region`) once for every search path: checks the
+   * Regions exist (400 otherwise) and fills `area_match`/`unlocated`
+   * from the tenant's CMS search settings when the caller left them out — see
+   * docs/area-search.md.
+   */
+  private async withArea(
+    options: SearchOptions,
+  ): Promise<{ options: SearchOptions; resolved?: ResolvedLocationDto }> {
+    const { query: q, headers } = options;
+    if (!q.region?.length) return { options };
+
+    const [regions, searchConfig] = await Promise.all([
+      this.regionService.getSummaries(q.region),
+      this.tenantConfigService
+        .getSearchConfig(headers['x-tenant-id'])
+        .catch((): SearchConfigCache => ({})),
+    ]);
+    const area: AreaFilter = {
+      regionIds: q.region,
+      match: q.area_match ?? tenantAreaMatch(searchConfig),
+      unlocated: q.unlocated ?? tenantUnlocated(searchConfig),
+    };
+    return {
+      options: { ...options, area },
+      resolved: {
+        regions,
+        area_match: area.match,
+        unlocated: area.unlocated,
+      },
+    };
+  }
+
+  private async searchWithin(options: SearchOptions): Promise<SearchResponse> {
     if (options.query.query_type === 'hybrid') {
       return this.hybridSearchService.searchHybrid(options);
     }
@@ -178,7 +230,7 @@ export class SearchService {
     this.assertSearchableQuery(q.query);
 
     const pinsOptions = {
-      ...options,
+      ...(await this.withArea(options)).options,
       query: { ...q, page: 1, limit: SEARCH_PINS_LIMIT },
     };
 
@@ -257,6 +309,7 @@ export class SearchService {
       geo_type,
       geometry,
       organization_id,
+      options.area,
     );
 
     const queryType: QueryType = this.getQueryType(query, query_type);
@@ -331,6 +384,7 @@ export class SearchService {
           geoType: geo_type,
           organizationId: organization_id,
           geometry,
+          area: options.area,
         }),
       ),
       ...specificQuery,

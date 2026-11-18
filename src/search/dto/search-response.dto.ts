@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Geometry } from 'geojson';
 import { ShardsInfo } from '../types';
+import { RegionSummaryDto } from 'src/region/internal';
+import {
+  AREA_MATCH_VALUES,
+  AreaMatch,
+  UNLOCATED_VALUES,
+  Unlocated,
+} from '../internal/area/area-match';
 
 export type SearchFacet = {
   key: string;
@@ -261,6 +268,31 @@ export class RelevanceCutoffDto {
   candidates_examined: number;
 }
 
+/**
+ * Where an area search (`region`) was scoped and how it matched. Absent for
+ * `coords` searches and searches with no location. Draw a Region's outline
+ * with `GET /regions/:id`.
+ */
+export class ResolvedLocationDto {
+  @ApiProperty({
+    type: [RegionSummaryDto],
+    description: 'The Regions searched, in the order asked.',
+  })
+  regions: RegionSummaryDto[];
+
+  @ApiProperty({
+    enum: AREA_MATCH_VALUES,
+    description: 'The `area_match` applied: as sent, else the tenant default.',
+  })
+  area_match: AreaMatch;
+
+  @ApiProperty({
+    enum: UNLOCATED_VALUES,
+    description: 'The `unlocated` applied: as sent, else the tenant default.',
+  })
+  unlocated: Unlocated;
+}
+
 export class SearchResponseDto {
   @ApiProperty({ type: SearchHitsContainer })
   search: {
@@ -275,6 +307,9 @@ export class SearchResponseDto {
 
   @ApiProperty({ type: RelevanceCutoffDto, required: false, nullable: true })
   relevance_cutoff?: RelevanceCutoffDto;
+
+  @ApiProperty({ type: ResolvedLocationDto, required: false })
+  resolved_location?: ResolvedLocationDto;
 }
 
 export type SearchResponse = SearchResponseDto;

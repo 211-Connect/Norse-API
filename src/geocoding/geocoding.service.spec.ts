@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ForwardGeocodeQueryDto, GeocodingProvider } from './dto/geocoding.dto';
+import {
+  ForwardGeocodeQueryDto,
+  GeocodingProvider,
+  ReverseGeocodeQueryDto,
+} from './dto/geocoding.dto';
 import { GeocodingService } from './geocoding.service';
 import { IGeocodingProvider } from './providers/geocoding-provider.interface';
 
@@ -49,12 +53,14 @@ describe('GeocodingService.forwardGeocode (ISS-1875)', () => {
     get: jest.fn(async (k: string) => store.get(k)),
     set: jest.fn(async (k: string, v: unknown) => void store.set(k, v)),
   };
+  const regionService = { regionOf: jest.fn(async () => null) };
   const service = new GeocodingService(
     {
       [GeocodingProvider.MAPBOX]: mapbox as IGeocodingProvider,
       [GeocodingProvider.OPENCAGE]: opencage as IGeocodingProvider,
     },
     cache as never,
+    regionService as never,
   );
 
   beforeEach(() => {
@@ -105,5 +111,97 @@ describe('GeocodingService.forwardGeocode (ISS-1875)', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(opencage.forwardGeocode).not.toHaveBeenCalled();
+  });
+
+  it('bypasses reverse-geocode entries cached before the output mapping changed', async () => {
+    store.set('geocode:reverse:opencage:-87.6298,41.8781:en', [
+      {
+        type: 'coordinates',
+        postcode: '60601',
+        place: 'Chicago',
+        district: 'Near West Side',
+      },
+    ]);
+    opencage.reverseGeocode.mockResolvedValue([
+      {
+        type: 'coordinates',
+        postcode: '60601',
+        place: 'Chicago',
+        district: 'Cook County',
+      },
+    ]);
+
+    const result = await service.reverseGeocode(
+      plainToInstance(ReverseGeocodeQueryDto, {
+        coordinates: '-87.6298,41.8781',
+        provider: 'opencage',
+      }),
+    );
+
+    expect(opencage.reverseGeocode).toHaveBeenCalledTimes(1);
+    expect(result[0].district).toBe('Cook County');
+  });
+});
+
+describe('GeocodingService.forwardGeocode region_id (area search)', () => {
+  const mapbox = { forwardGeocode: jest.fn(), reverseGeocode: jest.fn() };
+  const opencage = { forwardGeocode: jest.fn(), reverseGeocode: jest.fn() };
+  const store = new Map<string, unknown>();
+  const cache = {
+    get: jest.fn(async (k: string) => store.get(k)),
+    set: jest.fn(async (k: string, v: unknown) => void store.set(k, v)),
+  };
+  const regionService = { regionOf: jest.fn() };
+  const service = new GeocodingService(
+    {
+      [GeocodingProvider.MAPBOX]: mapbox as IGeocodingProvider,
+      [GeocodingProvider.OPENCAGE]: opencage as IGeocodingProvider,
+    },
+    cache as never,
+    regionService as never,
+  );
+  const hit = (place_type: string[]) => ({
+    type: 'coordinates',
+    address: 'x',
+    coordinates: [-120.5, 46.6],
+    place_type,
+  });
+
+  beforeEach(() => {
+    store.clear();
+    jest.clearAllMocks();
+  });
+
+  it('adds the Region id to each Mapbox hit, null for points, and caches it', async () => {
+    mapbox.forwardGeocode.mockResolvedValue([hit(['place']), hit(['address'])]);
+    regionService.regionOf
+      .mockResolvedValueOnce({ id: 'county:53077' })
+      .mockResolvedValueOnce(null);
+
+    await service.forwardGeocode(dto({ address: 'Yakima' }));
+    const results = await service.forwardGeocode(dto({ address: 'Yakima' }));
+
+    expect(results.map((r) => r.region_id)).toEqual(['county:53077', null]);
+    expect(regionService.regionOf).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves a hit a point when the Region lookup fails', async () => {
+    mapbox.forwardGeocode.mockResolvedValue([hit(['place'])]);
+    regionService.regionOf.mockRejectedValue(new Error('es down'));
+
+    const [result] = await service.forwardGeocode(dto({ address: 'Yakima' }));
+
+    expect(result.region_id).toBeNull();
+  });
+
+  it('does not resolve OpenCage hits', async () => {
+    opencage.forwardGeocode.mockResolvedValue([hit(['city'])]);
+
+    const [result] = await service.forwardGeocode(
+      dto({ address: 'Yakima', provider: 'opencage' }),
+    );
+
+    expect(regionService.regionOf).not.toHaveBeenCalled();
+    expect(result.region_id).toBeUndefined();
   });
 });

@@ -8,7 +8,7 @@ import {
   scoreThenUnique,
   shardPreference,
 } from 'src/common/elasticsearch/shard-preference';
-import { REGIONS_INDEX } from './region.constants';
+import { REGION_GEOMETRY_PATH, REGIONS_INDEX } from './region.constants';
 
 export const REGION_SUMMARY_FIELDS = [
   'id',
@@ -220,7 +220,9 @@ export function buildRegionSearch(
     query: {
       bool: {
         must: [must],
-        filter: input.types ? [{ terms: { type: input.types } }] : [],
+        filter: [
+          { terms: { type: input.types ?? ['state', 'county', 'zip'] } },
+        ],
         should: [
           ...typeBoosts,
           ...(input.states?.length
@@ -240,5 +242,36 @@ export function buildRegionGet(id: string): SearchRequest {
     track_total_hits: false,
     _source: REGION_DETAIL_FIELDS,
     query: { term: { id } },
+  };
+}
+
+/** The Regions of one type whose boundary contains the point (`[lng, lat]`). */
+export function buildRegionsContaining(
+  point: [number, number],
+  type: RegionType,
+): SearchRequest {
+  return {
+    index: REGIONS_INDEX,
+    // One, unless the point sits on a shared border.
+    size: 5,
+    track_total_hits: false,
+    _source: [...REGION_SUMMARY_FIELDS, 'aliases'],
+    // A border point then resolves the same way every time.
+    sort: [{ id: 'asc' }],
+    query: {
+      bool: {
+        filter: [
+          { term: { type } },
+          {
+            geo_shape: {
+              [REGION_GEOMETRY_PATH]: {
+                shape: { type: 'point', coordinates: point },
+                relation: 'intersects',
+              },
+            },
+          },
+        ],
+      },
+    },
   };
 }

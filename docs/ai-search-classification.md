@@ -42,7 +42,7 @@ Required env vars:
 
 Runtime constants:
 
-- `top_k = 150` for predict and re-rank.
+- `top_k = 250` for predict and re-rank.
 - `pre_selected = score > 0.6`.
 - ML Broker timeout: 10s.
 
