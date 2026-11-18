@@ -1193,7 +1193,6 @@ describe('V2SearchService.pins', () => {
         needs: ['N-HOU-02'],
         urgency: 'U-1',
         clarify: 'never',
-        classify: 'off',
       }),
     });
 
