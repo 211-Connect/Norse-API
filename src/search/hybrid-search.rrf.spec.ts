@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { HybridSearchService } from './hybrid-search.service';
+import { HYBRID_SORT_FIELDS } from './search-utils.service';
+
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
@@ -550,6 +552,67 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       );
       expect(pinnedMain()).toBeDefined();
       expect(response.search.hits.total.value).toBe(1234);
+    });
+  });
+
+  describe('v2 sort values (Lucas 2026-11-18)', () => {
+    const F = HYBRID_SORT_FIELDS;
+    const asc = (field: string) => ({ [field]: { order: 'asc' } });
+    const COORDS = [-76.6122, 39.2904];
+    const geoTier = {
+      _geo_distance: {
+        'location.point': { lon: COORDS[0], lat: COORDS[1] },
+        order: 'asc',
+        unit: 'm',
+        mode: 'min',
+      },
+    };
+
+    beforeEach(async () => {
+      searchConfig = { pinned_resources_mode: 'ignore' };
+      await build();
+    });
+
+    it('relevance, no coords: _score then id; the fused path runs', async () => {
+      await run({ sort: 'relevance' });
+
+      expect(lists()).toHaveLength(3);
+      expect(mainRequest().query.pinned).toBeDefined();
+      expect(mainRequest().sort).toEqual(['_score', asc(F.id)]);
+    });
+
+    it('distance with coords: _geo_distance tier then id; no fusion', async () => {
+      await run({ sort: 'distance', coords: COORDS });
+
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().query.pinned).toBeUndefined();
+      expect(mainRequest().sort).toEqual([geoTier, asc(F.id)]);
+    });
+
+    it('distance with no coords: falls back to _score then id (ISS-1367); no fusion', async () => {
+      await run({ sort: 'distance' });
+
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().query.pinned).toBeUndefined();
+      expect(mainRequest().sort).toEqual(['_score', asc(F.id)]);
+    });
+
+    it('name: ascending on the hybrid name field then id; no fusion', async () => {
+      await run({ sort: 'name' });
+
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().sort).toEqual([asc(F.name), asc(F.id)]);
+    });
+
+    it('organization: ascending on organization name, then name, then id; no fusion', async () => {
+      await run({ sort: 'organization' });
+
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().sort).toEqual([
+        asc(F.organizationName),
+        asc(F.name),
+        asc(F.id),
+      ]);
     });
   });
 });

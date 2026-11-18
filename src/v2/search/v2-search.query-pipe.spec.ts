@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import * as qs from 'qs';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 
@@ -75,5 +75,22 @@ describe('GET /v2/search query: filters and v1 fields through the ValidationPipe
   it('query_type is not a v2 parameter: dropped, not forwarded', async () => {
     const dto = await run('query_type=text&query=food');
     expect('query_type' in dto).toBe(false);
+  });
+
+  // Lucas 2026-11-18: v2 accepts every sort value v1 offers. The POST body
+  // (SearchResourcesBodyDto) holds only `geometry`; sort is a query parameter
+  // for GET and POST alike.
+  it.each(['relevance', 'distance', 'name', 'organization'])(
+    'accepts sort=%s',
+    async (sort) => {
+      const dto = await run(`query=food&sort=${sort}`);
+      expect(dto.sort).toBe(sort);
+    },
+  );
+
+  it('rejects sort=nearest with a 400', async () => {
+    await expect(run('query=food&sort=nearest')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });
