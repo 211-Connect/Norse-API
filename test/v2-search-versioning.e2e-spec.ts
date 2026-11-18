@@ -14,6 +14,8 @@ import { ConfigService } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { TenantMiddleware } from 'src/common/middleware/TenantMiddleware';
+import { LocaleMiddleware } from 'src/common/middleware/LocaleMiddleware';
 import { HttpExceptionFilter } from 'src/common/filters/global-exception.filter';
 import {
   ApiVersionMiddleware,
@@ -43,6 +45,8 @@ class V1SearchStubController {
 }
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
+/** The URL copies of the x-tenant-id and accept-language headers. */
+const M = `tenant_id=${TENANT}&locale=en`;
 
 /**
  * The real V2SearchController (its real decorators and guards) behind a fake
@@ -78,6 +82,10 @@ describe('v2 search versioning (e2e)', () => {
         consumer
           .apply(ApiVersionMiddleware)
           .forRoutes(API_VERSION_MIDDLEWARE_ROUTES);
+        // The real header and URL-mirror checks, as in AppModule.
+        consumer
+          .apply(TenantMiddleware, LocaleMiddleware)
+          .forRoutes(V1SearchStubController, V2SearchController);
       }
     }
     const moduleRef = await Test.createTestingModule({
@@ -125,21 +133,21 @@ describe('v2 search versioning (e2e)', () => {
     });
 
     it('/v2/search without a header reaches the v2 route', async () => {
-      const res = await get('/v2/search?query=rent');
+      const res = await get(`/v2/search?query=rent&${M}`);
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
       expect(searchMock).toHaveBeenCalledTimes(1);
     });
 
     it('/search with x-api-version: 2 reaches the v2 route', async () => {
-      const res = await get('/search?query=rent', '2');
+      const res = await get(`/search?query=rent&${M}`, '2');
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
     });
 
     it('POST /v2/search reaches the v2 route with the body', async () => {
       const geometry = { type: 'Point', coordinates: [1, 2] };
-      const res = await post('/v2/search?query=rent').send({ geometry });
+      const res = await post(`/v2/search?query=rent&${M}`).send({ geometry });
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
       expect(searchMock).toHaveBeenCalledTimes(1);
@@ -147,7 +155,7 @@ describe('v2 search versioning (e2e)', () => {
     });
 
     it('POST /search with x-api-version: 2 reaches the v2 route', async () => {
-      const res = await post('/search?query=rent', '2').send({});
+      const res = await post(`/search?query=rent&${M}`, '2').send({});
       expect(res.status).toBe(200);
       expect(res.body.route).toBe('v2');
     });
@@ -171,7 +179,7 @@ describe('v2 search versioning (e2e)', () => {
     });
 
     it('validates the v2 query (bad urgency is a 400)', async () => {
-      const res = await get('/v2/search?urgency=U-9');
+      const res = await get(`/v2/search?urgency=U-9&${M}`);
       expect(res.status).toBe(400);
       expect(searchMock).not.toHaveBeenCalled();
     });
@@ -187,7 +195,7 @@ describe('v2 search versioning (e2e)', () => {
     });
 
     it('/v2/search stores a band-none answer, with no Vary on the version', async () => {
-      const res = await get('/v2/search?query=rent');
+      const res = await get(`/v2/search?query=rent&${M}`);
       expect(res.status).toBe(200);
       expect(res.headers['cache-control']).toMatch(/^public, /);
       expect(res.headers['vary'] ?? '').not.toMatch(/x-api-version/i);
@@ -197,13 +205,13 @@ describe('v2 search versioning (e2e)', () => {
       searchMock.mockResolvedValue(
         markNotStorable({ route: 'v2', search: { hits: { total: 0 } } }),
       );
-      const res = await get('/v2/search?query=rent');
+      const res = await get(`/v2/search?query=rent&${M}`);
       expect(res.headers['cache-control']).toBe(NO_STORE);
       expect(res.body).toEqual({ route: 'v2', search: { hits: { total: 0 } } });
     });
 
     it('/search with x-api-version: 2 is never stored', async () => {
-      const res = await get('/search?query=rent', '2');
+      const res = await get(`/search?query=rent&${M}`, '2');
       expect(res.body.route).toBe('v2');
       expect(res.headers['cache-control']).toBe(NO_STORE);
     });
@@ -216,12 +224,95 @@ describe('v2 search versioning (e2e)', () => {
     });
   });
 
+  // Lucas 2026-11-18: a URL-keyed CDN ignores Vary, so a v2 search URL must
+  // carry the tenant and the language. Missing is a 400, not a private answer.
+  describe('v2 needs the tenant_id and locale URL copies', () => {
+    beforeEach(async () => {
+      app = await boot('true');
+    });
+
+    const refused = (res: request.Response, param: string) => {
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body)).toContain(param);
+      expect(searchMock).not.toHaveBeenCalled();
+    };
+
+    it('GET /v2/search without tenant_id is a 400 that names it', async () => {
+      refused(await get('/v2/search?query=rent&locale=en'), 'tenant_id');
+    });
+
+    it('GET /v2/search without locale is a 400 that names it', async () => {
+      refused(await get(`/v2/search?query=rent&tenant_id=${TENANT}`), 'locale');
+    });
+
+    it('GET /v2/search without either is a 400', async () => {
+      const res = await get('/v2/search?query=rent');
+      expect(res.status).toBe(400);
+      expect(searchMock).not.toHaveBeenCalled();
+    });
+
+    it('an empty tenant_id or locale counts as missing', async () => {
+      refused(
+        await get(`/v2/search?query=rent&tenant_id=&locale=en`),
+        'tenant_id',
+      );
+      refused(
+        await get(`/v2/search?query=rent&tenant_id=${TENANT}&locale=`),
+        'locale',
+      );
+    });
+
+    it('POST /v2/search without tenant_id or locale is a 400', async () => {
+      refused(
+        await post('/v2/search?query=rent&locale=en').send({}),
+        'tenant_id',
+      );
+      refused(
+        await post(`/v2/search?query=rent&tenant_id=${TENANT}`).send({}),
+        'locale',
+      );
+    });
+
+    it('/search with x-api-version: 2 needs them too', async () => {
+      refused(await get('/search?query=rent', '2'), 'tenant_id');
+    });
+
+    it('both present and matching reach the route', async () => {
+      const res = await get(`/v2/search?query=rent&${M}`);
+      expect(res.status).toBe(200);
+      expect(searchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a tenant_id that differs from x-tenant-id is a 400', async () => {
+      const other = '22222222-2222-4222-8222-222222222222';
+      const res = await get(
+        `/v2/search?query=rent&tenant_id=${other}&locale=en`,
+      );
+      expect(res.status).toBe(400);
+      expect(searchMock).not.toHaveBeenCalled();
+    });
+
+    it('a locale that differs from accept-language is a 400', async () => {
+      const res = await get(
+        `/v2/search?query=rent&tenant_id=${TENANT}&locale=es`,
+      );
+      expect(res.status).toBe(400);
+      expect(searchMock).not.toHaveBeenCalled();
+    });
+
+    it('v1 /search is unchanged: no copies needed', async () => {
+      const res = await get('/search?query=rent');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ route: 'v1' });
+    });
+  });
+
   describe('flag off', () => {
     it.each([undefined, '', 'false', 'TRUE'])(
       '/v2/search is a 404 when V2_SEARCH_ENABLED is %p, even for a bad query',
       async (flag) => {
         app = await boot(flag);
-        const res = await get('/v2/search?urgency=U-9');
+        const res = await get(`/v2/search?urgency=U-9&${M}`);
         expect(res.status).toBe(404);
         expect(searchMock).not.toHaveBeenCalled();
       },
@@ -229,7 +320,7 @@ describe('v2 search versioning (e2e)', () => {
 
     it('POST /v2/search is a 404 when the flag is off', async () => {
       app = await boot(undefined);
-      const res = await post('/v2/search?query=rent').send({});
+      const res = await post(`/v2/search?query=rent&${M}`).send({});
       expect(res.status).toBe(404);
       expect(searchMock).not.toHaveBeenCalled();
     });

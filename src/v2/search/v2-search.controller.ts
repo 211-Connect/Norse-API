@@ -40,6 +40,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
+import { V2UrlMirrorsGuard } from './v2-url-mirrors.guard';
 import { V2SearchService } from './v2-search.service';
 
 /**
@@ -52,8 +53,9 @@ import { V2SearchService } from './v2-search.service';
  * (`markNotStorable`), so it gets `no-store`. On `/search` the header picked
  * v2, so the interceptor never lets a shared cache store it there. The body
  * depends on `x-tenant-id` and `accept-language`, and a URL-keyed CDN ignores
- * `Vary`: so the answer is storable only with the `tenant_id` and `locale`
- * URL mirrors; without them it is `private, no-store` (not an error).
+ * `Vary`: so every request needs the `tenant_id` and `locale` URL copies
+ * (`V2UrlMirrorsGuard`, 400 when missing; the middleware 400s a mismatch).
+ * `@RequireCdnUrlMirrors()` stays as a second line: no-store without them.
  *
  * Kept out of the Swagger document while the shapes are a draft: the document
  * generates the frontend SDK, and a draft must not reach it. Remove
@@ -75,7 +77,7 @@ export class V2SearchController {
 
   @Get()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
   @RequireCdnUrlMirrors()
   @ApiOperation({
@@ -109,7 +111,7 @@ export class V2SearchController {
 
   @Post()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, ArcjetGuard)
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search with a GeoJSON geometry body (draft)',
