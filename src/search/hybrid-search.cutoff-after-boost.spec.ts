@@ -356,10 +356,10 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(requests.map(withoutPreference)).toEqual(baseline);
   });
 
-  // v2 relevance with coords now fuses (ISS-2499); sort=distance keeps the
-  // summed path, which this test checks.
+  // v2 relevance and sort=distance with coords fuse (ISS-2499); sort=name
+  // keeps the summed path, which this test checks.
   it('4. cutoff off: no extra call, only the main top-score call and the main search', async () => {
-    await run(tier2Fod, { relevance_cutoff: 'off', sort: 'distance' });
+    await run(tier2Fod, { relevance_cutoff: 'off', sort: 'name' });
 
     expect(probeCalls()).toHaveLength(0);
     expect(probeOwnTop()).toHaveLength(0);
