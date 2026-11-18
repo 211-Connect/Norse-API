@@ -20,11 +20,8 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { RegionService } from 'src/region/internal';
-import {
-  AreaFilter,
-  tenantAreaMatch,
-  tenantUnlocated,
-} from './internal/area/area-match';
+import { AreaFilter } from './internal/area/area-match';
+import { resolveArea } from './internal/area/resolve-area';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
@@ -134,28 +131,15 @@ export class SearchService {
   private async withArea(
     options: SearchOptions,
   ): Promise<{ options: SearchOptions; resolved?: ResolvedLocationDto }> {
-    const { query: q, headers } = options;
-    if (!q.region?.length) return { options };
-
-    const [regions, searchConfig] = await Promise.all([
-      this.regionService.getSummaries(q.region),
-      this.tenantConfigService
-        .getSearchConfig(headers['x-tenant-id'])
-        .catch((): SearchConfigCache => ({})),
-    ]);
-    const area: AreaFilter = {
-      regionIds: q.region,
-      match: q.area_match ?? tenantAreaMatch(searchConfig),
-      unlocated: q.unlocated ?? tenantUnlocated(searchConfig),
-    };
-    return {
-      options: { ...options, area },
-      resolved: {
-        regions,
-        area_match: area.match,
-        unlocated: area.unlocated,
-      },
-    };
+    const { area, resolved } = await resolveArea(
+      options.query,
+      this.regionService,
+      () =>
+        this.tenantConfigService
+          .getSearchConfig(options.headers['x-tenant-id'])
+          .catch((): SearchConfigCache => ({})),
+    );
+    return area ? { options: { ...options, area }, resolved } : { options };
   }
 
   private async searchWithin(options: SearchOptions): Promise<SearchResponse> {

@@ -17,9 +17,9 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 2. Classify: ml-broker `search-classification/predict`, once, only when `query` is a string with text after trim. A string array or an AND/OR object has no text for the model (`hasText` false). A failure or timeout never fails the request: signals become `status: 'error'` and `model_version` is `null`. No text: signals are `{ needs: { status: 'ok', scores: {} }, emergency: null }`.
 3. `decide(...)` with an empty tenant context.
 4. `boostNeeds` become `NeedScore[]` (tier from the SUNE code; score 1 for a caller need, else the classify score).
-5. `HybridSearchService.searchHybrid` with `query_type: 'hybrid'` and `rankingVersion: 'v2'`.
+5. Area search (`region`, `area_match`, `unlocated`; PR #313): `resolveArea` (`src/search/internal/area/resolve-area.ts`, shared with v1 `SearchService`) checks each Region exists (unknown: `400`, before the search runs) and fills `area_match`/`unlocated` from the tenant search config. Then `HybridSearchService.searchHybrid` with `query_type: 'hybrid'`, `rankingVersion: 'v2'` and the `area`, if any.
 6. `finalize(...)` with the hits total and the per-need counts (`by_code`). `by_code` is `null` (not counted) when `clarify=never`, no codes were asked, or the count failed; every option is then kept. `strongTextMatch: false` is still a placeholder.
-7. Response: the v1 hybrid response plus `intent`, `clarification` (snake_case keys), `model_version`, `rules_version`. No top-level `emergency` block (ADR 0039 Decision 54): the emergency is only the emergency question in `clarification` (`importance` `critical` = popup band, `high` = soft band; caller `urgency=U-0` gives a `critical` one with hotlines and no options). Each option is `{label, parameter, value, results_count?}`.
+7. Response: the v1 hybrid response plus `resolved_location` (area searches only, same shape as v1), `intent`, `clarification` (snake_case keys), `model_version`, `rules_version`. No top-level `emergency` block (ADR 0039 Decision 54): the emergency is only the emergency question in `clarification` (`importance` `critical` = popup band, `high` = soft band; caller `urgency=U-0` gives a `critical` one with hotlines and no options). Each option is `{label, parameter, value, results_count?}`.
 
 Usage metric: one `norse_search_requests_total` count per request with `search_type="v2"`.
 
@@ -28,7 +28,7 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 - A `needs=` hard filter: `needs=` never filters. A caller need makes a block and boosts; a model guess only boosts (ADR 0039 Decision 18).
 - `strongTextMatch`: no retrieval signal yet.
 - Tenant context (`topAreas`, `hotlines`).
-- The `region` and `model_version` params.
+- The `model_version` param.
 
 ## `taxonomy` (ISS-2612, ADR 0039 Decision 5)
 
