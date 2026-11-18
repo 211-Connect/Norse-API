@@ -314,6 +314,18 @@ describe('V2SearchService', () => {
     expect(res).not.toHaveProperty('emergency');
   });
 
+  it('sends one normalized text form to the models and keeps the typed text elsewhere', async () => {
+    const { service, classify, startEmbedding, searchHybrid } = build({});
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'FOOD PANTRY?' }),
+    });
+    expect(startEmbedding).toHaveBeenCalledWith('food pantry');
+    expect(classify.mock.calls[0][0]).toBe('food pantry');
+    expect(searchHybrid.mock.calls[0][0].query.query).toBe('food pantry');
+    expect(res.intent.query).toBe('FOOD PANTRY?');
+  });
+
   it('sends exactly 512 characters to classify for a 600-character query and searches with the full query', async () => {
     const { service, classify, searchHybrid } = build({});
     const long = 'a'.repeat(600);

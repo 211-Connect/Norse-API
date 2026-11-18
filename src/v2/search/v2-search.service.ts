@@ -20,6 +20,7 @@ import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
 import { contentWords } from 'src/search/internal/text-matching/word-rarity';
+import { modelText } from './model-text';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -223,7 +224,7 @@ export class V2SearchService {
 
     // The embedding starts before classify so the two run in parallel.
     const queryVector = hasText
-      ? this.hybridSearch.startEmbedding(text)
+      ? this.hybridSearch.startEmbedding(modelText(text))
       : undefined;
 
     // `off`: one classify call still runs for the emergency check; the rules
@@ -240,7 +241,7 @@ export class V2SearchService {
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
       ? await this.classifier.classify(
-          cutWholeCharacters(text.trim(), CLASSIFY_MAX_TEXT_LENGTH),
+          cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
           headers['x-tenant-id'],
           aiClassification,
         )
@@ -289,6 +290,10 @@ export class V2SearchService {
       headers,
       query: {
         ...v1Fields,
+        // The keyword search gets the same text form as the models: extra
+        // spaces and a trailing ? changed the top 10 of 15 of 40 queries
+        // even after the models were normalized (ISS-2797, 2026-11-18).
+        ...(hasText && { query: modelText(text) }),
         query_type: 'hybrid',
         // On by default with text (DTO); a browse has nothing to trim.
         ...(!hasText && { relevance_cutoff: 'off' }),
