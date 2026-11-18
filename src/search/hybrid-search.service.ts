@@ -2334,7 +2334,25 @@ export class HybridSearchService {
     };
 
     let threshold = thresholdFor(fraction);
-    let survivors = await countSurvivors(threshold);
+    // One call returns the survivor count and, when there are at most
+    // MAX_ENUMERATED_CUT, the survivors themselves (`size` is one past the
+    // limit, so a full page proves there are too many). That drops the
+    // separate count that used to wait in front of the kept fetch, the common
+    // case. Same query, threshold and sort as the kept fetch, so the kept ids
+    // are the ones the two-call form returned.
+    const firstCut = await this.elasticsearchService.search<ProbeSource>({
+      index,
+      preference,
+      size: MAX_ENUMERATED_CUT + 1,
+      track_total_hits: true,
+      min_score: threshold,
+      _source: ['service_id'],
+      sort: ['_score'],
+      query,
+    });
+    let survivors = totalOf(firstCut);
+    let preKept: typeof firstCut.hits.hits | undefined =
+      survivors <= MAX_ENUMERATED_CUT ? firstCut.hits.hits : undefined;
 
     // Nothing meaningful scored below the threshold: the distribution is flat
     // and the honest answer is to return everything. This is the case a strict
@@ -2363,20 +2381,25 @@ export class HybridSearchService {
       if (!ladder) return decline('cut_too_large', survivors);
       threshold = ladder.threshold;
       survivors = ladder.survivors;
+      preKept = undefined;
     }
 
-    const kept = await this.elasticsearchService.search<ProbeSource>({
-      index,
-      preference,
-      size: Math.max(survivors, 1),
-      track_total_hits: false,
-      min_score: threshold,
-      _source: ['service_id'],
-      sort: ['_score'],
-      query,
-    });
+    const keptHits =
+      preKept ??
+      (
+        await this.elasticsearchService.search<ProbeSource>({
+          index,
+          preference,
+          size: Math.max(survivors, 1),
+          track_total_hits: false,
+          min_score: threshold,
+          _source: ['service_id'],
+          sort: ['_score'],
+          query,
+        })
+      ).hits.hits;
 
-    let hits = kept.hits.hits;
+    let hits = keptHits;
     let cutoffScore = hits[hits.length - 1]?._score ?? null;
     const services = new Set(
       hits.map((h) => String(h._source?.service_id ?? h._id)),
