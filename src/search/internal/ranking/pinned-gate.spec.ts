@@ -2,6 +2,8 @@ import {
   PINNED_GATE_FRACTION,
   pinnedGateUsesQuery,
   selectGatedPinnedIds,
+  v2PinnedState,
+  v2RankingPinnedMode,
 } from './pinned-gate';
 
 describe('selectGatedPinnedIds', () => {
@@ -84,5 +86,48 @@ describe('pinnedGateUsesQuery', () => {
     expect(
       pinnedGateUsesQuery({ v2: true, rank: false, queryStr: 'food' }),
     ).toBe(false);
+  });
+});
+
+describe('v2PinnedState', () => {
+  it('maps ignore to do_not_care and boost or top to care', () => {
+    expect(v2PinnedState('ignore')).toBe('do_not_care');
+    expect(v2PinnedState('boost')).toBe('care');
+    expect(v2PinnedState('top')).toBe('care');
+  });
+});
+
+describe('v2RankingPinnedMode', () => {
+  it('is ignore when the tenant does not care, whatever the query or sort', () => {
+    expect(
+      v2RankingPinnedMode({ mode: 'ignore', queryStr: '', sort: undefined }),
+    ).toBe('ignore');
+  });
+
+  it('is ignore with a non-empty query (the gate decides the lead)', () => {
+    for (const mode of ['boost', 'top'] as const) {
+      expect(
+        v2RankingPinnedMode({ mode, queryStr: 'food', sort: 'relevance' }),
+      ).toBe('ignore');
+    }
+  });
+
+  it('is top for browse with relevance or no sort, for boost and top alike', () => {
+    for (const mode of ['boost', 'top'] as const) {
+      for (const queryStr of ['', '   ']) {
+        expect(v2RankingPinnedMode({ mode, queryStr, sort: undefined })).toBe(
+          'top',
+        );
+        expect(v2RankingPinnedMode({ mode, queryStr, sort: 'relevance' })).toBe(
+          'top',
+        );
+      }
+    }
+  });
+
+  it('is ignore for browse with an explicit sort', () => {
+    expect(
+      v2RankingPinnedMode({ mode: 'top', queryStr: '', sort: 'name' }),
+    ).toBe('ignore');
   });
 });

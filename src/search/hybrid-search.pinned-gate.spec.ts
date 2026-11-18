@@ -356,20 +356,42 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     expect(gateTier(main)).toBeUndefined();
   });
 
-  it('7. v2 browse (empty query): no gate request; current pinned behaviour kept', async () => {
-    searchConfig = { pinned_resources_mode: 'top' };
-    await build();
-    await run({ query: '', coords: SEA });
-    expect(gates()).toHaveLength(0);
-    expect(mainRequest().sort.slice(0, 2)).toEqual([
-      { pinned: 'desc' },
-      { priority: 'desc' },
-    ]);
-    searchConfig = { pinned_resources_mode: 'boost' };
-    await build();
-    await run({ query: '', coords: SEA });
-    expect(gates()).toHaveLength(0);
-    expect(pinnedBonus(mainRequest())).toBe(true);
+  it('7. v2 browse (empty query): boost and top are one state (care); ignore and an explicit sort drop the tier; v1 is unchanged', async () => {
+    const tierSort = [{ pinned: 'desc' }, { priority: 'desc' }];
+    const browse = async (
+      mode: string,
+      extra: Record<string, unknown> = {},
+      rankingVersion: string | null = 'v2',
+    ) => {
+      searchConfig = { pinned_resources_mode: mode };
+      await build();
+      await run(
+        { query: '', coords: SEA, ...extra },
+        { rankingVersion: rankingVersion ?? undefined },
+      );
+      expect(gates()).toHaveLength(0);
+      return mainRequest();
+    };
+
+    const boost = await browse('boost');
+    expect(boost.sort.slice(0, 2)).toEqual(tierSort);
+    expect(pinnedBonus(boost)).toBe(false);
+    const top = await browse('top');
+    expect(top.sort.slice(0, 2)).toEqual(tierSort);
+    expect(pinnedBonus(top)).toBe(false);
+    expect(top).toEqual(boost);
+
+    const ignore = await browse('ignore');
+    expect(pinnedSortTier(ignore)).toBe(false);
+    expect(pinnedBonus(ignore)).toBe(false);
+
+    const named = await browse('top', { sort: 'name' });
+    expect(pinnedSortTier(named)).toBe(false);
+    expect(pinnedBonus(named)).toBe(false);
+
+    const v1 = await browse('boost', {}, null);
+    expect(pinnedBonus(v1)).toBe(true);
+    expect(pinnedSortTier(v1)).toBe(false);
   });
 
   it('8. v2 sort name with a query: no gate, no pinned tier, no pinned bonus', async () => {

@@ -4,6 +4,8 @@
  * non-pinned relevance. Otherwise it gets no pinned bonus at all.
  */
 
+import type { PinnedResourcesMode } from '../../../cms-config/types';
+
 /** Fraction of the best non-pinned relevance score a pinned service must reach to lead (v2). Lucas 2026-11-18: 0.85 (wa211, 38 queries: 6 queries lift, 7 services). */
 export const PINNED_GATE_FRACTION = 0.85;
 /** Max pinned hits the gate request reads (top_hits size limit is 100). */
@@ -52,4 +54,31 @@ export function pinnedGateUsesQuery(args: {
   queryStr: string;
 }): boolean {
   return args.v2 && args.rank && args.queryStr.trim().length > 0;
+}
+
+/**
+ * In v2 the tenant `pinned_resources_mode` has two states only (Lucas
+ * 2026-11-18): `care` (boost or top) and `do_not_care` (ignore). The boost/top
+ * difference does not change any v2 request.
+ */
+export type V2PinnedState = 'care' | 'do_not_care';
+
+export function v2PinnedState(mode: PinnedResourcesMode): V2PinnedState {
+  return mode === 'ignore' ? 'do_not_care' : 'care';
+}
+
+/**
+ * The pinned mode a v2 ranked request builds with (Lucas 2026-11-18). Do not
+ * care: `ignore`. A non-empty query: `ignore`, because the gate decides the
+ * lead. Browse (empty query): `top` for relevance or no sort, so boost and top
+ * build the same request; an explicit sort wins and gets `ignore`.
+ */
+export function v2RankingPinnedMode(args: {
+  mode: PinnedResourcesMode;
+  queryStr: string;
+  sort: string | undefined;
+}): PinnedResourcesMode {
+  if (v2PinnedState(args.mode) === 'do_not_care') return 'ignore';
+  if (args.queryStr.trim().length > 0) return 'ignore';
+  return (args.sort ?? 'relevance') === 'relevance' ? 'top' : 'ignore';
 }

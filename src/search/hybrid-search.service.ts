@@ -59,6 +59,7 @@ import {
   PINNED_GATE_TIER_BOOST,
   pinnedGateUsesQuery,
   selectGatedPinnedIds,
+  v2RankingPinnedMode,
 } from './internal/ranking/pinned-gate';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
@@ -706,9 +707,13 @@ export class HybridSearchService {
     // v2 with a query: no pinned bonus anywhere in the ranking; the gate below
     // decides which pinned services lead (Lucas 2026-11-18). v1 and browse keep pinnedMode.
     const gateByQuery = pinnedGateUsesQuery({ v2, rank, queryStr });
-    const rankingPinnedMode: PinnedResourcesMode = gateByQuery
-      ? 'ignore'
-      : pinnedMode;
+    // v2 ranked requests treat boost and top as one state (v2RankingPinnedMode).
+    const rankingPinnedMode: PinnedResourcesMode =
+      v2 && rank
+        ? v2RankingPinnedMode({ mode: pinnedMode, queryStr, sort })
+        : gateByQuery
+          ? 'ignore'
+          : pinnedMode;
     const gateActive =
       gateByQuery &&
       pinnedMode !== 'ignore' &&
