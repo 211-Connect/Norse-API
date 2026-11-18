@@ -22,20 +22,20 @@ describe('emergencyBand', () => {
     expect(emergencyBand(ok(Infinity))).toBe('unknown');
   });
   it('plain cutoffs', () => {
-    expect(emergencyBand(ok(0.6619))).toBe('soft');
-    expect(emergencyBand(ok(0.662))).toBe('popup');
-    expect(emergencyBand(ok(0.2209))).toBe('none');
-    expect(emergencyBand(ok(0.221))).toBe('soft');
+    expect(emergencyBand(ok(0.6499))).toBe('soft');
+    expect(emergencyBand(ok(0.65))).toBe('popup');
+    expect(emergencyBand(ok(0.2169))).toBe('none');
+    expect(emergencyBand(ok(0.217))).toBe('soft');
   });
   it('floor_hit', () => {
     expect(emergencyBand(ok(0.1, { floor_hit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.6619, { floor_hit: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.662, { floor_hit: true }))).toBe('popup');
+    expect(emergencyBand(ok(0.6499, { floor_hit: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.65, { floor_hit: true }))).toBe('popup');
   });
   it('calm_context never popup', () => {
     expect(emergencyBand(ok(0.9, { calm_context: true }))).toBe('soft');
-    expect(emergencyBand(ok(0.2209, { calm_context: true }))).toBe('none');
-    expect(emergencyBand(ok(0.221, { calm_context: true }))).toBe('soft');
+    expect(emergencyBand(ok(0.2169, { calm_context: true }))).toBe('none');
+    expect(emergencyBand(ok(0.217, { calm_context: true }))).toBe('soft');
   });
   it('dv_shelter', () => {
     expect(emergencyBand(ok(0.1, { dv_shelter: true }))).toBe('soft');
