@@ -928,7 +928,12 @@ describe('HybridSearchService', () => {
           hits: { total: { value: 29181 } },
           aggregations: {
             df: {
-              buckets: { w0: { doc_count: 0 }, w1: { doc_count: 2 } },
+              buckets: {
+                w0: { doc_count: 0 },
+                w1: { doc_count: 2 },
+                c0: { doc_count: 0 },
+                c1: { doc_count: 0 },
+              },
             },
           },
         });
@@ -1062,7 +1067,11 @@ describe('HybridSearchService', () => {
         rarityImpl = () =>
           Promise.resolve({
             hits: { total: { value: 29181 } },
-            aggregations: { df: { buckets: { w0: { doc_count: 2 } } } },
+            aggregations: {
+              df: {
+                buckets: { w0: { doc_count: 2 }, c0: { doc_count: 0 } },
+              },
+            },
           });
         await service.searchHybrid({
           headers,
@@ -1366,7 +1375,14 @@ describe('HybridSearchService', () => {
         aggregations: {
           df: {
             buckets: Object.fromEntries(
-              Object.entries(counts).map(([k, v]) => [k, { doc_count: v }]),
+              [
+                ...Object.entries(counts),
+                // Document-count buckets for the typo gate: low, so the
+                // clause list keeps its typo clauses as before.
+                ...Object.keys(counts)
+                  .filter((k) => k.startsWith('w'))
+                  .map((k): [string, number] => [`c${k.slice(1)}`, 0]),
+              ].map(([k, v]) => [k, { doc_count: v }]),
             ),
           },
         },

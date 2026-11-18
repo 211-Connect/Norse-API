@@ -9,7 +9,7 @@ describe('wordRarityCacheKey', () => {
 
   it('carries tenant and language in the clear', () => {
     expect(wordRarityCacheKey('t1', 'en', 'shelter')).toMatch(
-      /^search:rarity3:t1:en:/,
+      /^search:rarity4:t1:en:/,
     );
   });
 

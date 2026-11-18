@@ -130,6 +130,7 @@ describe('SanitizingSpanExporter', () => {
       'v2.count_codes': 3,
       'v2.classify.failed': false,
       'hybrid.embed_cache_hit': true,
+      'hybrid.typo_clauses': true,
       'hybrid.fused': true,
       'hybrid.fast_page': true,
       'hybrid.cutoff': false,
