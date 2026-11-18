@@ -19,6 +19,7 @@ describe('TenantConfigController', () => {
     getSuggestions: jest.Mock;
     getSearchConfig: jest.Mock;
     getOrchestrationConfig: jest.Mock;
+    getPublicAppConfig: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -68,6 +69,11 @@ describe('TenantConfigController', () => {
       getOrchestrationConfig: jest.fn().mockResolvedValue({
         tenantId: 'tenant-1',
         schemas: [],
+      }),
+      getPublicAppConfig: jest.fn().mockResolvedValue({
+        tenantId: 'tenant-1',
+        locale: 'en',
+        brand: { name: 'Wyoming 211', theme: { primaryColor: '#005191' } },
       }),
     };
 
@@ -193,7 +199,36 @@ describe('TenantConfigController', () => {
           tenantId: 'tenant-1',
           schemas: [],
         },
+        appConfig: {
+          tenantId: 'tenant-1',
+          locale: 'en',
+          brand: { name: 'Wyoming 211', theme: { primaryColor: '#005191' } },
+        },
       });
+      expect(tenantConfigService.getPublicAppConfig).toHaveBeenCalledWith(
+        'tenant-1',
+        'en',
+      );
+    });
+
+    it('passes ?locale= to the app config only', async () => {
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1?locale=es')
+        .expect(200);
+
+      expect(tenantConfigService.getPublicAppConfig).toHaveBeenCalledWith(
+        'tenant-1',
+        'es',
+      );
+      expect(tenantConfigService.getTopics).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('rejects a malformed locale', async () => {
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1?locale=../x')
+        .expect(400);
+
+      expect(tenantConfigService.getPublicAppConfig).not.toHaveBeenCalled();
     });
 
     it('does not shadow the topics/suggestions sub-routes', async () => {
@@ -220,6 +255,9 @@ describe('TenantConfigController', () => {
       expect(paths).toContain('/tenant-config/{tenantId}/topics');
       expect(paths).toContain('/tenant-config/{tenantId}/suggestions');
       expect(JSON.stringify(res.body)).toContain('Tenant Config');
+      expect(res.body.components.schemas).toHaveProperty(
+        'PublicAppConfigResponseDto',
+      );
     });
   });
 });
