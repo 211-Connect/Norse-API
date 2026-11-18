@@ -202,6 +202,19 @@ describe('finalize', () => {
       }).questions,
     ).toEqual([]);
   });
+  it('a null total means not counted: needs questions are kept, without the total-0 drop', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
+    const r = finalize(d, {
+      counts: { total: null, by_code: { 'N-HOU': 5, 'N-FOD': 3 } },
+      strong_text_match: false,
+    });
+    expect(r.questions).toHaveLength(1);
+    const r2 = finalize(d, {
+      counts: { total: null, by_code: null },
+      strong_text_match: false,
+    });
+    expect(r2.questions).toHaveLength(1);
+  });
   it('drops a question with no option left; total 0 drops needs', () => {
     const d = dec([mk('start', 2, ['N-HOU'])]);
     expect(

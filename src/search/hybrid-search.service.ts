@@ -130,6 +130,8 @@ export function buildNeedBlockSort(codes: string[]): SortCombinations {
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
   needCounts?: Record<string, number>;
+  /** v2 only, internal (never sent to callers). Present, and false, only when Elasticsearch sent a hits.total that cannot be read; hits.total.value is then 0. */
+  totalCounted?: false;
 };
 
 type HybridSearchOptions = {
@@ -511,10 +513,24 @@ export class HybridSearchService {
       lang,
     );
 
-    const totalHits =
-      typeof data.hits.total === 'number'
-        ? data.hits.total
-        : (data.hits.total?.value ?? 0);
+    const rawTotal: unknown = data.hits.total;
+    const readTotal: number | null =
+      typeof rawTotal === 'number' && Number.isFinite(rawTotal)
+        ? rawTotal
+        : typeof (rawTotal as { value?: unknown } | null | undefined)?.value ===
+              'number' && Number.isFinite((rawTotal as { value: number }).value)
+          ? (rawTotal as { value: number }).value
+          : null;
+    const totalHits = readTotal ?? 0;
+    // v2 reads 0 as "no results" and drops needs questions, so an unreadable
+    // total is flagged. The shape type is logged, never the value or query.
+    const totalUnreadable =
+      readTotal === null && options.rankingVersion === 'v2';
+    if (totalUnreadable) {
+      this.logger.warn(
+        `hits.total unreadable (${rawTotal === null ? 'null' : typeof rawTotal}); treated as not counted`,
+      );
+    }
 
     const needCounts = await needCountsPromise;
 
@@ -539,6 +555,7 @@ export class HybridSearchService {
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
+      ...(totalUnreadable ? { totalCounted: false as const } : {}),
     };
   }
 

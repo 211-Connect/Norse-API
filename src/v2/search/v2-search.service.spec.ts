@@ -517,6 +517,38 @@ describe('V2SearchService', () => {
     ).toEqual([]);
   });
 
+  it('an unreadable hits.total is not counted (totalCounted false from the hybrid service), keeps needs questions and leaks no totalCounted', async () => {
+    const scores = { 'N-HOU-02': 0.5, 'N-HOU-03': 0.4 };
+    {
+      const unreadable = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(0),
+          totalCounted: false,
+        } as never),
+      });
+      const zero = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+        search: jest.fn().mockResolvedValue(hybridResponse(0)),
+      });
+      const a = await unreadable.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const b = await zero.service.search({
+        headers,
+        query: dto({ query: 'x' }),
+      });
+      const needsQ = (r: typeof a) =>
+        r.clarification.questions.filter((q) =>
+          ['find_need', 'narrow'].includes(q.type),
+        );
+      expect(needsQ(b)).toEqual([]);
+      expect(needsQ(a).length).toBeGreaterThan(0);
+      expect('totalCounted' in a).toBe(false);
+    }
+  });
+
   it('feeds a golden row through the service: at most 3 questions, snake_case keys', async () => {
     let sawQuestionWithOptions = false;
     for (const r of golden.rows) {

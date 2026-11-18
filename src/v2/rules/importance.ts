@@ -64,11 +64,11 @@ export function effort(q: Question): number {
   return clamp(1 - 0.05 * (q.options.length - 2), 0.8, 1);
 }
 
-export function splitQuality(q: Question, total: number): number {
+export function splitQuality(q: Question, total: number | null): number {
   const counts = q.options
     .map((o) => o.results_count)
     .filter((n): n is number => typeof n === 'number');
-  if (counts.length === 0 || total <= 0) return 1;
+  if (counts.length === 0 || total === null || total <= 0) return 1;
   if (counts.length === 1) {
     return clamp(1 - 2 * Math.abs(counts[0] / total - 0.5), 0, 1);
   }

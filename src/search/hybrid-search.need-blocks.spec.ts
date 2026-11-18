@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
@@ -33,12 +34,14 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let countMode: 'ok' | 'throw';
   let searchConfig: Record<string, unknown>;
   let mainHits: any[];
+  let mainTotal: unknown;
 
   beforeEach(async () => {
     requests = [];
     countMode = 'ok';
     searchConfig = {};
     mainHits = [];
+    mainTotal = { value: 7, relation: 'eq' };
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve({ hits: { hits: [] } });
@@ -60,7 +63,7 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
       }
       return Promise.resolve({
         ...mainResponse,
-        hits: { ...mainResponse.hits, hits: mainHits },
+        hits: { total: mainTotal, hits: mainHits },
       });
     });
     const module: TestingModule = await Test.createTestingModule({
@@ -365,5 +368,50 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     };
     expect(filtersOf(mainRequest())).toContainEqual(exact);
     expect(filtersOf(countRequest() ?? mainRequest())).toContainEqual(exact);
+  });
+
+  describe('unreadable hits.total (audit C3)', () => {
+    let warn: jest.SpyInstance;
+    beforeEach(() => {
+      warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+    });
+    afterEach(() => warn.mockRestore());
+    const totalWarns = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes('hits.total'));
+
+    it.each([[undefined], ['secret text']])(
+      'v2 with an unreadable total (%s): totalCounted false, total 0, one warn with the type only',
+      async (bad) => {
+        mainTotal = bad;
+        const res = await run({ rankingVersion: 'v2' });
+        expect(res.totalCounted).toBe(false);
+        expect(res.search.hits.total).toEqual({ value: 0, relation: 'eq' });
+        expect(totalWarns()).toHaveLength(1);
+        const line = String(totalWarns()[0][0]);
+        expect(line).toContain(typeof bad);
+        expect(line).not.toContain('secret text');
+      },
+    );
+
+    it('v1 with an unreadable total: same total 0, no totalCounted key, no warn', async () => {
+      mainTotal = 'secret text';
+      const res = await run();
+      expect('totalCounted' in res).toBe(false);
+      expect(res.search.hits.total).toEqual({ value: 0, relation: 'eq' });
+      expect(totalWarns()).toHaveLength(0);
+    });
+
+    it.each([[{ value: 7, relation: 'eq' }], [7]])(
+      'v2 with a readable total (%j): value 7, no totalCounted key, no warn',
+      async (good) => {
+        mainTotal = good;
+        const res = await run({ rankingVersion: 'v2' });
+        expect('totalCounted' in res).toBe(false);
+        expect(res.search.hits.total).toEqual({ value: 7, relation: 'eq' });
+        expect(totalWarns()).toHaveLength(0);
+      },
+    );
   });
 });
