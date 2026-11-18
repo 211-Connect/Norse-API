@@ -34,8 +34,14 @@ export interface SearchConfigCache {
   area_match?: 'located' | 'located_or_serving' | 'serving';
 
   /**
-   * Default `include_unlocated` for area searches when the caller sends none.
-   * Absent: false.
+   * Default `unlocated` for area searches when the caller sends none. Absent
+   * or invalid: `virtual`.
+   */
+  unlocated_in_area_search?: 'none' | 'virtual' | 'all';
+
+  /**
+   * Replaced by `unlocated_in_area_search`; read only when that is absent, so
+   * a cache written before it still works (`true` → `all`).
    */
   include_unlocated_in_area_search?: boolean;
 }

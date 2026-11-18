@@ -37,7 +37,8 @@ import { RELEVANCE_CUTOFF_VALUES } from './internal/relevance-cutoff/types';
 import {
   AREA_MATCH_PARAM_DESCRIPTION,
   AREA_MATCH_VALUES,
-  INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
   REGION_PARAM_DESCRIPTION,
 } from './internal/area/area-match';
 import { HttpException, HttpStatus } from '@nestjs/common';
@@ -133,10 +134,10 @@ const ApiSearchParams = () =>
       description: AREA_MATCH_PARAM_DESCRIPTION,
     }),
     ApiQuery({
-      name: 'include_unlocated',
+      name: 'unlocated',
       required: false,
-      description: INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
-      schema: { type: 'boolean' },
+      enum: UNLOCATED_VALUES,
+      description: UNLOCATED_PARAM_DESCRIPTION,
     }),
     ApiQuery({
       name: 'geo_type',

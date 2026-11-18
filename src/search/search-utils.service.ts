@@ -278,8 +278,15 @@ export class SearchUtilsService {
       });
     }
 
-    if (area.includeUnlocated) {
-      should.push({ bool: { must_not: [hasLocation, hasServiceArea] } });
+    if (area.unlocated !== 'none') {
+      should.push({
+        bool: {
+          must_not: [hasLocation, hasServiceArea],
+          ...(area.unlocated === 'virtual' && {
+            filter: [{ term: { 'location.physical_address.type': 'virtual' } }],
+          }),
+        },
+      });
     }
 
     return { bool: { should, minimum_should_match: 1 } };

@@ -89,20 +89,20 @@ describe('SearchService area search (region)', () => {
       SearchUtilsService.buildRegionFilter({
         regionIds: ['county:53033'],
         match: 'located_or_serving',
-        includeUnlocated: false,
+        unlocated: 'virtual',
       }),
     );
     expect(response.resolved_location).toEqual({
       regions: [KING],
       area_match: 'located_or_serving',
-      include_unlocated: false,
+      unlocated: 'virtual',
     });
   });
 
   it('takes the tenant CMS defaults when the caller sends none', async () => {
     getSearchConfig.mockResolvedValue({
       area_match: 'serving',
-      include_unlocated_in_area_search: true,
+      unlocated_in_area_search: 'none',
     });
 
     const response = await service.searchResources({
@@ -112,14 +112,38 @@ describe('SearchService area search (region)', () => {
 
     expect(response.resolved_location).toMatchObject({
       area_match: 'serving',
-      include_unlocated: true,
+      unlocated: 'none',
     });
+  });
+
+  it('reads a cache written before unlocated_in_area_search existed', async () => {
+    getSearchConfig.mockResolvedValue({
+      include_unlocated_in_area_search: true,
+    });
+
+    const response = await service.searchResources({
+      headers,
+      query: query({ region: ['county:53033'] }),
+    });
+
+    expect(response.resolved_location?.unlocated).toBe('all');
+  });
+
+  it('falls back to virtual for an invalid tenant value', async () => {
+    getSearchConfig.mockResolvedValue({ unlocated_in_area_search: 'some' });
+
+    const response = await service.searchResources({
+      headers,
+      query: query({ region: ['county:53033'] }),
+    });
+
+    expect(response.resolved_location?.unlocated).toBe('virtual');
   });
 
   it('prefers the params the caller sends over the tenant defaults', async () => {
     getSearchConfig.mockResolvedValue({
       area_match: 'serving',
-      include_unlocated_in_area_search: true,
+      unlocated_in_area_search: 'all',
     });
 
     const response = await service.searchResources({
@@ -127,13 +151,13 @@ describe('SearchService area search (region)', () => {
       query: query({
         region: ['county:53033'],
         area_match: 'located',
-        include_unlocated: false,
+        unlocated: 'none',
       }),
     });
 
     expect(response.resolved_location).toMatchObject({
       area_match: 'located',
-      include_unlocated: false,
+      unlocated: 'none',
     });
   });
 
@@ -169,7 +193,7 @@ describe('SearchService area search (region)', () => {
     expect(searchHybrid.mock.calls[0][0].area).toEqual({
       regionIds: ['county:53033'],
       match: 'located_or_serving',
-      includeUnlocated: false,
+      unlocated: 'virtual',
     });
   });
 
@@ -185,7 +209,7 @@ describe('SearchService area search (region)', () => {
         SearchUtilsService.buildRegionFilter({
           regionIds: ['county:53033'],
           match: 'located',
-          includeUnlocated: false,
+          unlocated: 'virtual',
         }),
       ),
     );

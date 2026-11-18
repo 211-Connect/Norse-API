@@ -2,7 +2,12 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Geometry } from 'geojson';
 import { ShardsInfo } from '../types';
 import { RegionSummaryDto } from 'src/region/internal';
-import { AREA_MATCH_VALUES, AreaMatch } from '../internal/area/area-match';
+import {
+  AREA_MATCH_VALUES,
+  AreaMatch,
+  UNLOCATED_VALUES,
+  Unlocated,
+} from '../internal/area/area-match';
 
 export type SearchFacet = {
   key: string;
@@ -282,10 +287,10 @@ export class ResolvedLocationDto {
   area_match: AreaMatch;
 
   @ApiProperty({
-    description:
-      'The `include_unlocated` applied: as sent, else the tenant default.',
+    enum: UNLOCATED_VALUES,
+    description: 'The `unlocated` applied: as sent, else the tenant default.',
   })
-  include_unlocated: boolean;
+  unlocated: Unlocated;
 }
 
 export class SearchResponseDto {
