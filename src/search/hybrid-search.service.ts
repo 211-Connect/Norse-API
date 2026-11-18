@@ -2170,15 +2170,19 @@ export class HybridSearchService {
     // binds at the base fraction, survivors <= 20 + ties and the ladder never
     // runs.
     if (survivors > MAX_ENUMERATED_CUT) {
-      let ladder: { threshold: number; survivors: number } | null = null;
-      for (const f of CUTOFF_FRACTION_LADDER) {
-        const rungThreshold = thresholdFor(f);
-        const rungSurvivors = await countSurvivors(rungThreshold);
-        if (rungSurvivors <= MAX_ENUMERATED_CUT) {
-          ladder = { threshold: rungThreshold, survivors: rungSurvivors };
-          break;
-        }
-      }
+      // Every rung count goes out at once; the first rung in ladder order
+      // that enumerates wins, the same one the sequential loop picked.
+      const rungs = await Promise.all(
+        CUTOFF_FRACTION_LADDER.map(async (f) => {
+          const rungThreshold = thresholdFor(f);
+          return {
+            threshold: rungThreshold,
+            survivors: await countSurvivors(rungThreshold),
+          };
+        }),
+      );
+      const ladder =
+        rungs.find((r) => r.survivors <= MAX_ENUMERATED_CUT) ?? null;
       if (!ladder) return decline('cut_too_large', survivors);
       threshold = ladder.threshold;
       survivors = ladder.survivors;

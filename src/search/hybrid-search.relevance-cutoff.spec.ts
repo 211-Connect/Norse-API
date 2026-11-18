@@ -61,9 +61,26 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   let service: HybridSearchService;
   let requests: any[];
   let plan: Plan;
+  // Holds the count answers of the ladder rungs (everything above the base 20).
+  let ladderGate: Promise<void> | undefined;
 
   const build = async () => {
     requests = [];
+    const countAnswer = (req: any) => {
+      // Tolerance lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
+      const entry = Object.entries(plan.countsByMinScore ?? {}).find(
+        ([k]) => Math.abs(Number(k) - req.min_score) < 1e-6,
+      );
+      return {
+        hits: {
+          total: {
+            value: entry ? entry[1] : plan.survivors,
+            relation: 'eq',
+          },
+          hits: [],
+        },
+      };
+    };
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
@@ -108,18 +125,10 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       //    several of these; countsByMinScore answers per threshold. Tolerance
       //    lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
       if (req.size === 0 && req.min_score != null) {
-        const entry = Object.entries(plan.countsByMinScore ?? {}).find(
-          ([k]) => Math.abs(Number(k) - req.min_score) < 1e-6,
-        );
-        return Promise.resolve({
-          hits: {
-            total: {
-              value: entry ? entry[1] : plan.survivors,
-              relation: 'eq',
-            },
-            hits: [],
-          },
-        });
+        if (ladderGate && req.min_score > 21) {
+          return ladderGate.then(() => countAnswer(req));
+        }
+        return Promise.resolve(countAnswer(req));
       }
       // 3. the survivors themselves — the last kept doc's score is the
       //    threshold, so cutoff_score stays meaningful for every rung
@@ -223,6 +232,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   };
 
   beforeEach(async () => {
+    ladderGate = undefined;
     // 1,234 matched, 18 of them above a fifth of the top score.
     plan = { matched: 1234, topScore: 100, survivors: 18 };
     await build();
@@ -568,6 +578,40 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       expect(response.relevance_cutoff.cutoff_score).toBeCloseTo(50, 6);
     });
 
+    it('sends every rung count at once and picks the first rung that enumerates', async () => {
+      plan = {
+        matched: 15700,
+        topScore: 100,
+        rank20Score: 60,
+        survivors: 5524,
+        countsByMinScore: { 20: 5524, 25: 3504, 30: 2788, 40: 1064, 50: 490 },
+      };
+      let release!: () => void;
+      ladderGate = new Promise<void>((r) => (release = r));
+      await build();
+      const pending: Promise<any> = service.searchHybrid({
+        headers,
+        query: { ...baseQuery, relevance_cutoff: 'on' },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      // all four rung counts are out while none has answered
+      const rungs = requests
+        .filter((r) => r.size === 0 && r.min_score != null && r.min_score > 21)
+        .map((r) => Math.round(r.min_score));
+      expect(rungs).toEqual([25, 30, 40, 50]);
+
+      release();
+      const response = await pending;
+      ladderGate = undefined;
+      // the first rung in ladder order with survivors <= MAX_ENUMERATED_CUT
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 490,
+      });
+      expect(response.relevance_cutoff.cutoff_score).toBeCloseTo(50, 6);
+    });
+
     it('clamps a ladder rung to the top-20 score as well', async () => {
       // The clamp cannot bind at the base fraction here (0.2 x 100 = 20 < 22),
       // but the 0.25 rung computes 25 and must clamp to 22 before counting.
@@ -583,7 +627,8 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       const countScores = requests
         .filter((r) => r.size === 0 && r.min_score != null)
         .map((r) => r.min_score);
-      expect(countScores).toEqual([20, 22]);
+      // every rung is counted now (in parallel); each clamps to 22
+      expect(countScores).toEqual([20, 22, 22, 22, 22]);
       expect(response.relevance_cutoff.applied).toBe(true);
       expect(response.relevance_cutoff.kept).toBe(900);
       expect(response.relevance_cutoff.cutoff_score).toBe(22);
