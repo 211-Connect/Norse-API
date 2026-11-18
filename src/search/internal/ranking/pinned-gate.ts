@@ -4,8 +4,8 @@
  * non-pinned relevance. Otherwise it gets no pinned bonus at all.
  */
 
-/** Fraction of the best non-pinned relevance score a pinned service must reach to lead (v2). Measured value set later; keep it a named export. */
-export const PINNED_GATE_FRACTION = 0.8;
+/** Fraction of the best non-pinned relevance score a pinned service must reach to lead (v2). Lucas 2026-11-18: 0.85 (wa211, 38 queries: 6 queries lift, 7 services). */
+export const PINNED_GATE_FRACTION = 0.85;
 /** Max pinned hits the gate request reads (top_hits size limit is 100). */
 export const PINNED_GATE_MAX_HITS = 100;
 /** Constant added to gated pinned services on the summed path so they lead; real hybrid scores stay far below it. */

@@ -55,8 +55,9 @@ describe('selectGatedPinnedIds', () => {
   });
 
   it('uses the default fraction', () => {
-    expect(PINNED_GATE_FRACTION).toBe(0.8);
-    expect(selectGatedPinnedIds([{ id: 'a', score: 8 }], 10)).toEqual(['a']);
+    expect(PINNED_GATE_FRACTION).toBe(0.85);
+    expect(selectGatedPinnedIds([{ id: 'a', score: 8.5 }], 10)).toEqual(['a']);
+    expect(selectGatedPinnedIds([{ id: 'a', score: 8.4 }], 10)).toEqual([]);
   });
 
   it('honours a custom fraction', () => {
