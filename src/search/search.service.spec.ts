@@ -93,7 +93,7 @@ describe('SearchService', () => {
     expect(request.size).toBe(100);
   });
 
-  it('leaves taxonomy descriptions and references out of the hits', async () => {
+  it('leaves taxonomy curated references out of the hits, but keeps descriptions', async () => {
     await service.searchResources({
       headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
       query: {
@@ -112,11 +112,11 @@ describe('SearchService', () => {
     expect(request._source_excludes).toEqual(
       expect.arrayContaining([
         'service_area',
-        'taxonomies.description',
         'taxonomies.use_references',
         'taxonomies.see_also_references',
       ]),
     );
+    expect(request._source_excludes).not.toContain('taxonomies.description');
   });
 
   it('accepts complex taxonomy query objects', async () => {

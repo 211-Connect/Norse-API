@@ -2,12 +2,11 @@ import { SUNE_ENRICHMENT_FIELDS } from './enrichment-fields';
 
 /**
  * Taxonomy text that search results don't need: cards show only a
- * taxonomy's code and name. Descriptions and curated references are long
- * and repeated on every hit, so leaving them out shrinks a /search
- * response a lot. The resource endpoint still returns them.
+ * taxonomy's code, name and description. Curated references are long and
+ * repeated on every hit, so leaving them out shrinks a /search response a
+ * lot. The resource endpoint still returns them.
  */
 export const SEARCH_EXCLUDED_TAXONOMY_FIELDS = [
-  'taxonomies.description',
   'taxonomies.use_references',
   'taxonomies.see_also_references',
 ] as const;

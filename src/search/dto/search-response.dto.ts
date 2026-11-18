@@ -109,13 +109,7 @@ export class TaxonomyDto {
   @ApiProperty()
   name: string;
 
-  /** @deprecated No longer returned by /search (see SEARCH_EXCLUDED_TAXONOMY_FIELDS). */
-  @ApiProperty({
-    nullable: true,
-    required: false,
-    deprecated: true,
-    description: 'Deprecated: no longer returned by /search.',
-  })
+  @ApiProperty({ nullable: true })
   description?: string | null;
 }
 
