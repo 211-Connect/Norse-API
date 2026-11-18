@@ -208,18 +208,6 @@
             }
           },
           {
-            "name": "classify",
-            "required": false,
-            "in": "query",
-            "description": "`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).",
-            "schema": {
-              "enum": [
-                "off"
-              ],
-              "type": "string"
-            }
-          },
-          {
             "name": "x-tenant-id",
             "in": "header",
             "description": "NORSE Tenant UUID. On the legacy path it is validated by TenantMiddleware; on gateway-routed requests the same value is also the target-tenant selector checked against the caller's permission slugs by TenantScopeGuard.",
@@ -500,18 +488,6 @@
               "enum": [
                 "auto",
                 "never"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "name": "classify",
-            "required": false,
-            "in": "query",
-            "description": "`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).",
-            "schema": {
-              "enum": [
-                "off"
               ],
               "type": "string"
             }
@@ -820,18 +796,6 @@
             }
           },
           {
-            "name": "classify",
-            "required": false,
-            "in": "query",
-            "description": "`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).",
-            "schema": {
-              "enum": [
-                "off"
-              ],
-              "type": "string"
-            }
-          },
-          {
             "name": "x-tenant-id",
             "in": "header",
             "description": "NORSE Tenant UUID. On the legacy path it is validated by TenantMiddleware; on gateway-routed requests the same value is also the target-tenant selector checked against the caller's permission slugs by TenantScopeGuard.",
@@ -1112,18 +1076,6 @@
               "enum": [
                 "auto",
                 "never"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "name": "classify",
-            "required": false,
-            "in": "query",
-            "description": "`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).",
-            "schema": {
-              "enum": [
-                "off"
               ],
               "type": "string"
             }

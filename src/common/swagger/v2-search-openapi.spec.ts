@@ -28,11 +28,12 @@ describe('v2 search OpenAPI', () => {
         'passed_needs',
         'urgency',
         'clarify',
-        'classify',
         'x-tenant-id',
         'accept-language',
       ]),
     );
+    // classify is always on: no request parameter (Lucas 2026-11-18).
+    expect(names).not.toContain('classify');
     expect(get.parameters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

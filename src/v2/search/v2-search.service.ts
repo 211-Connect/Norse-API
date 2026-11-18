@@ -92,17 +92,6 @@ export function tenantAiClassification(
   return engine === 'classic' || engine === 'hybrid' ? 'off' : 'on';
 }
 
-/**
- * Off when the tenant setting is off OR the request says `classify=off`.
- * A request can never turn it on.
- */
-export function resolveAiClassification(
-  tenant: AiClassificationSetting,
-  requested: 'off' | undefined,
-): AiClassificationSetting {
-  return tenant === 'off' || requested === 'off' ? 'off' : 'on';
-}
-
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -136,10 +125,9 @@ export class V2SearchService {
     const searchConfig = await this.tenantConfig.getSearchConfig(
       headers['x-tenant-id'],
     );
-    const aiClassification = resolveAiClassification(
-      tenantAiClassification(searchConfig),
-      dto.classify,
-    );
+    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
+    // setting can turn the need guess off.
+    const aiClassification = tenantAiClassification(searchConfig);
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
@@ -181,8 +169,7 @@ export class V2SearchService {
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
-      dto;
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     // The language picks the index. An unknown language has no index; that
     // was a 500 (break run 2026-11-14) and is a caller error.
     const { needCounts, ...response } = await this.hybridSearch
