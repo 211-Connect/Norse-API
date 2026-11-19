@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { Resource } from 'src/common/schemas/resource.schema';
-import { Model, FilterQuery } from 'mongoose';
+import { Model, FilterQuery, Types } from 'mongoose';
 import { Redirect } from 'src/common/schemas/redirect.schema';
 import {
   TransformedResource,
@@ -16,6 +16,22 @@ import {
 } from './types/resource-response.types';
 
 type LookupPath = 'primary' | 'fallback' | 'fallback_no_tenant';
+
+const OBJECT_ID_PATTERN = /^[0-9a-f]{24}$/i;
+
+/**
+ * Values to match a requested id against `_id` in the tenant-scoped fallback.
+ * Some tenants' resources (e.g. UWGKC, SCC) are stored with a Mongo ObjectId
+ * `_id` rather than a string; aggregate `$match` doesn't cast, so a 24-hex id
+ * is matched both as the string and as an ObjectId.
+ */
+function mongoIdMatch(ids: string[]): { $in: (string | Types.ObjectId)[] } {
+  return {
+    $in: ids.flatMap((id) =>
+      OBJECT_ID_PATTERN.test(id) ? [id, new Types.ObjectId(id)] : [id],
+    ),
+  };
+}
 
 interface FallbackLookupLogContext {
   tenantId?: string;
@@ -92,22 +108,23 @@ export class ResourceService {
     if (missingIds.length > 0) {
       const fallbackResults = await this.resourceModel
         .find(
-          { tenant_id: tenantId, _id: { $in: missingIds } },
+          { tenant_id: tenantId, _id: mongoIdMatch(missingIds) },
           { _id: 1, displayName: 1 },
         )
         .lean()
         .exec();
 
       for (const resource of fallbackResults) {
+        const mongoId = String(resource._id);
         this.logFallbackLookup({
           tenantId,
-          serviceAtLocationId: resource._id,
-          mongoId: resource._id,
+          serviceAtLocationId: mongoId,
+          mongoId,
           handler: 'findTitlesByIds',
           lookupPath: 'fallback',
         });
         titles.push({
-          id: resource._id,
+          id: mongoId,
           displayName: resource.displayName,
         });
       }
@@ -156,15 +173,16 @@ export class ResourceService {
     const missingIdsAfterPrimary = uniqueIds.filter((id) => !foundIds.has(id));
     if (missingIdsAfterPrimary.length > 0) {
       const fallbackResults = await this.aggregateResources(
-        { tenant_id: tenantId, _id: { $in: missingIdsAfterPrimary } },
+        { tenant_id: tenantId, _id: mongoIdMatch(missingIdsAfterPrimary) },
         locale,
       );
 
       for (const resource of fallbackResults) {
+        const mongoId = String(resource._id);
         this.logFallbackLookup({
           tenantId,
-          serviceAtLocationId: resource._id,
-          mongoId: resource._id,
+          serviceAtLocationId: mongoId,
+          mongoId,
           handler: 'findManyByIds',
           lookupPath: 'fallback',
         });
@@ -176,7 +194,7 @@ export class ResourceService {
         data,
         errors,
         foundIds,
-        (resource) => resource._id,
+        (resource) => String(resource._id),
       );
     }
 
@@ -266,7 +284,7 @@ export class ResourceService {
 
     if (!results[0]) {
       results = await this.aggregateResources(
-        { tenant_id: tenantId, _id: urlId },
+        { tenant_id: tenantId, _id: mongoIdMatch([urlId]) },
         locale,
       );
       lookupPath = 'fallback';
@@ -293,7 +311,7 @@ export class ResourceService {
         this.logFallbackLookup({
           tenantId,
           serviceAtLocationId: urlId,
-          mongoId: resource._id,
+          mongoId: String(resource._id),
           handler,
           lookupPath,
         });

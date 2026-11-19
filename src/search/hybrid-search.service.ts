@@ -38,10 +38,7 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
-import {
-  SUNE_ENRICHMENT_FIELDS,
-  stripEnrichment,
-} from './internal/enrichment-fields';
+import { stripEnrichment } from './internal/enrichment-fields';
 import { languageIndexSuffix } from 'src/common/locales';
 import {
   contentWords,
@@ -54,6 +51,7 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -1037,7 +1035,7 @@ export class HybridSearchService {
 
   private hybridSourceExcludes() {
     return {
-      excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
+      excludes: SEARCH_SOURCE_EXCLUDES,
     };
   }
 

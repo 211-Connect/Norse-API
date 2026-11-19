@@ -7,6 +7,7 @@ import { V2SearchController } from './v2-search.controller';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
+import { CDN_CACHE_TTL_KEY } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const headers = { 'x-tenant-id': 't', 'accept-language': 'en' } as HeadersDto;
 const req = {
@@ -15,6 +16,14 @@ const req = {
 } as unknown as Request;
 
 describe('V2SearchController', () => {
+  it('declares a 30 minute CDN TTL (s-maxage=1800) on GET', () => {
+    const ttl = Reflect.getMetadata(
+      CDN_CACHE_TTL_KEY,
+      V2SearchController.prototype.getResources,
+    );
+    expect(ttl).toBe(1800);
+  });
+
   const build = (search: jest.Mock) => {
     const recordSearchRequest = jest.fn();
     const controller = new V2SearchController(
