@@ -11,6 +11,7 @@ const orUndefined = <T>(value: T | null | undefined): T | undefined =>
   value ?? undefined;
 
 /**
+ * Failure states: see classify-outcome.ts.
  * Maps an ml-broker `search-classification` body (already shape-checked by
  * MlBrokerHttpService) to rules-engine signals: need scores list to a map,
  * null to undefined. Field names and the top-level urgency already match the engine.

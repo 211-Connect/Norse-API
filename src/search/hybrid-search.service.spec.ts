@@ -810,8 +810,11 @@ describe('HybridSearchService', () => {
         'sune_needs',
         'sune_need_weights',
         'sune_scorecard_version',
+        'taxonomies.use_references',
+        'taxonomies.see_also_references',
       ]),
     );
+    expect(excludes).not.toContain('taxonomies.description');
   });
 
   it('never returns SUNE enrichment fields even if ES sends them (ISS-2754)', async () => {
