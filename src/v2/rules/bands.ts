@@ -145,31 +145,38 @@ export function needStates(
   return { needs: states, boostNeeds: boost, nx, inferredAsk };
 }
 
-export function areaRuleTarget(
+/**
+ * The Tier 1 needs to ask "which kind" about (Lucas 2026-11-19), best score
+ * first, ties in vocabulary order. A query can name several ("food and
+ * housing"): `decide` builds one question each and `finalize` keeps the one
+ * with the most uncertain answer. Once the caller answers a need (a child in
+ * `needs`) or passes it (`passed_needs`), it leaves this list.
+ */
+export function areaRuleTargets(
   req: RulesRequest,
   signals: RulesSignals,
   states: NeedStatesResult,
-): string | null {
-  if (signals.needs.status !== 'ok') return null;
+): string[] {
+  if (signals.needs.status !== 'ok') return [];
   const scores = signals.needs.scores ?? {};
-  let best: string | null = null;
-  let bestScore = -1;
-  for (const code of TIER1_CODES) {
-    const s = scoreOf(scores, code);
-    if (s > bestScore || (s === bestScore && code < best)) {
-      best = code;
-      bestScore = s;
-    }
-  }
-  if (best === null || bestScore < CUTOFFS.area.tier1Min) return null;
   const maxT2 = Math.max(0, ...TIER2_CODES.map((c) => scoreOf(scores, c)));
-  if (maxT2 >= CUTOFFS.area.tier2Max) return null;
+  if (maxT2 >= CUTOFFS.area.tier2Max) return [];
+  if (
+    states.needs.some(
+      (s) => s.state === 'use' && s.source === 'inferred' && isTier2(s.code),
+    )
+  ) {
+    return [];
+  }
   const locked = new Set(confirmedCodes(req));
-  for (const c of locked) {
-    if (isTier2(c) && tier1Of(c) === best) return null;
-  }
-  if (states.needs.some((s) => s.state === 'use' && isTier2(s.code))) {
-    return null;
-  }
-  return best;
+  const passed = passedCodes(req);
+  const lockedAreas = new Set(
+    [...locked].filter(isTier2).map((c) => tier1Of(c)),
+  );
+  return TIER1_CODES.filter(
+    (code) =>
+      !passed.has(code) &&
+      !lockedAreas.has(code) &&
+      scoreOf(scores, code) >= CUTOFFS.area.tier1Min,
+  ).sort((a, b) => scoreOf(scores, b) - scoreOf(scores, a));
 }

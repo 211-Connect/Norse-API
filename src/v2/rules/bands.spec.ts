@@ -1,5 +1,5 @@
 import {
-  areaRuleTarget,
+  areaRuleTargets,
   emergencyBand,
   needStates,
   urgencyState,
@@ -198,29 +198,41 @@ describe('needStates', () => {
   });
 });
 
-describe('areaRuleTarget', () => {
+describe('areaRuleTargets', () => {
   const t = (scores: Record<string, number>, r = req()) => {
     const s = sig(scores);
-    return areaRuleTarget(r, s, needStates(r, s));
+    return areaRuleTargets(r, s, needStates(r, s));
   };
   it('fires at T1 0.9 and max T2 0.4999', () => {
-    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.4999 })).toBe('N-MHS');
+    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.4999 })).toEqual(['N-MHS']);
   });
   it('fires at T1 0.8 (the Tier 1 area minimum)', () => {
-    expect(t({ 'N-MHS': 0.8, 'N-MHS-01': 0.1 })).toBe('N-MHS');
+    expect(t({ 'N-MHS': 0.8, 'N-MHS-01': 0.1 })).toEqual(['N-MHS']);
   });
   it('not at T2 0.5', () => {
-    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.5 })).toBeNull();
+    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.5 })).toEqual([]);
   });
   it('not at T1 0.7999', () => {
-    expect(t({ 'N-MHS': 0.7999, 'N-MHS-01': 0.1 })).toBeNull();
+    expect(t({ 'N-MHS': 0.7999, 'N-MHS-01': 0.1 })).toEqual([]);
   });
   it('not when area has confirmed Tier 2', () => {
-    expect(t({ 'N-MHS': 0.95 }, req({ needs: ['N-MHS-01'] }))).toBeNull();
+    expect(t({ 'N-MHS': 0.95 }, req({ needs: ['N-MHS-01'] }))).toEqual([]);
+  });
+  it('lists every Tier 1 need at the minimum, best score first, ties in vocabulary order', () => {
+    expect(t({ 'N-FOD': 0.85, 'N-HOU': 0.9, 'N-MHS': 0.85 })).toEqual([
+      'N-HOU',
+      'N-FOD',
+      'N-MHS',
+    ]);
+  });
+  it('a passed Tier 1 need leaves the list', () => {
+    expect(
+      t({ 'N-FOD': 0.9, 'N-HOU': 0.85 }, req({ passed_needs: ['N-FOD'] })),
+    ).toEqual(['N-HOU']);
   });
   it('not when status error', () => {
     const r = req();
     const s = { needs: { status: 'error' as const }, emergency: null };
-    expect(areaRuleTarget(r, s, needStates(r, s))).toBeNull();
+    expect(areaRuleTargets(r, s, needStates(r, s))).toEqual([]);
   });
 });

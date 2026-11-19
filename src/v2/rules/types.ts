@@ -79,7 +79,7 @@ export interface QuestionOption {
   value: string | null;
   /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
   results_count?: number | null;
-  /** Need options only: classifier confidence of the need (0..1) x availability (results_count > 0 or null: 1, 0: 0.5). The build sets the confidence; finalize applies the factor and sorts high to low. */
+  /** Need options only: classifier confidence of the need (0..1). The build sets it; finalize adds 0.3 * log(1+count)/log(1+max count of the question) (null or 0 count adds 0) and sorts high to low. */
   score?: number;
 }
 export interface Question {
