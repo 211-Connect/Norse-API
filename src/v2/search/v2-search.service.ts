@@ -98,7 +98,9 @@ function isQueryTooLarge(error: unknown): boolean {
   return causes.some(
     (c) =>
       c?.type === TOO_COMPLEX_TYPE ||
-      // Fallback: the prefix-length error has only a generic type.
+      // Message match kept on purpose: Elasticsearch gives the prefix-length
+      // and automaton-size errors only the generic `query_shard_exception`
+      // type, which also covers unrelated query errors. No narrower type exists.
       (typeof c?.reason === 'string' &&
         (c.reason.includes('automaton is too large') ||
           c.reason.includes('has exceeded the allowed maximum'))),
