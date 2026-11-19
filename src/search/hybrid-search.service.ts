@@ -1063,8 +1063,8 @@ export class HybridSearchService {
    * - `queryVector`: the vector list needs the embedding. Without it the
    *   search falls back to lexical-only scoring.
    * - non-empty query: browse mode has no keyword or vector signal.
-   * - `coords`: needed only for `sort` distance (see below). Sort relevance
-   *   with a location fuses without a distance list.
+   * - `coords`: needed for `sort` distance (see below). Sort relevance with a
+   *   location adds a low-weight proximity list.
    * - `sort`: relevance fuses. Distance fuses too, when `coords` has a
    *   point: a proximity list (relevance-gated distance) joins the fusion;
    *   see fetchFusedOrder. Distance without `coords` does not fuse. Sort name

@@ -80,16 +80,17 @@ unconditionally, so it matched every proximity search in the tenant.
 
 Keyword search has no distance score.
 
-v2 searches with a query are ordered by rank fusion. Distance joins the fusion
-only when the caller sorts by distance (`sort=distance` with `coords`): a
-proximity list takes the top 50 relevance candidates and re-ranks them by
-distance, with weight 2. A virtual service (no point) ranks as if at the scale
-distance (`distance` miles, or 5 miles when `distance` is 0), the same rule as
-the gauss score below. With `sort=relevance` and `coords`, the search fuses the
-relevance lists without distance. The relevance cutoff applies in both modes.
-If the proximity request fails or returns nothing, there is no fusion and the
-request falls back to the plain distance sort. The gauss score below applies to
-v1, to the order after the fused top 100, and to that fallback.
+v2 searches with a query are ordered by rank fusion. With `coords`, distance
+joins the fusion as a proximity list: it takes the top 50 relevance candidates
+and re-ranks them by distance. Under `sort=distance` the list has weight 2, and
+a virtual service (no point) ranks as if at the scale distance (`distance`
+miles, or 5 miles when `distance` is 0), the same rule as the gauss score
+below. Under `sort=relevance` the list has weight 0.5 and a service with no
+point gets no vote. The relevance cutoff applies in both modes. If the
+proximity request fails or returns nothing, `sort=relevance` keeps the
+relevance fusion and `sort=distance` falls back to the plain distance sort. The
+gauss score below applies to v1, to the order after the fused top 100, and to
+the distance fallback.
 
 Hybrid search adds a distance score to
 the text and semantic scores (`boost_mode: sum`):
