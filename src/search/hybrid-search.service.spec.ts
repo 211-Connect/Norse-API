@@ -110,6 +110,8 @@ describe('HybridSearchService', () => {
               if (key === 'EMBEDDING_BASE_URL') return 'https://embed.example';
               if (key === 'EMBEDDING_MODEL') return 'model-x';
               if (key === 'RUNPOD_API_KEY') return 'key';
+              // These tests describe the summed v2 path (switch off, ISS-2499).
+              if (key === 'V2_FUSION_ONLY') return 'false';
               return undefined;
             }),
           },

@@ -212,6 +212,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
               if (key === 'EMBEDDING_MODEL') return 'model-x';
               if (key === 'RUNPOD_API_KEY') return 'key';
               if (key === 'NEED_BOOST_ENABLED') return enabled;
+              if (key === 'V2_FUSION_ONLY') return 'false';
               return undefined;
             }),
           },

@@ -182,7 +182,11 @@ const PRIORITY_SCORE_WEIGHT = 1;
  * 100 is also the Elasticsearch `pinned` query limit on ids.
  */
 const RRF_K = 60;
-const RRF_LIST_SIZE = 100;
+// The list depth cap. Lists sized to the relevance cut (the kept count) would
+// need ordering past the pinned query limit; that is measured separately and
+// not built here. Equal to RRF_LIST_SIZE for now.
+const RRF_MAX_LIST_SIZE = 100;
+const RRF_LIST_SIZE = RRF_MAX_LIST_SIZE;
 // Weight of the cosine tie-break inside the taxonomy list (taxonomy scores are 25+).
 const RRF_TAXONOMY_TIE_BREAK = 0.001;
 // Weight of the need list in the fusion. Not measured: IL211 had 0 need-tagged
@@ -340,6 +344,12 @@ type WordRarityEntry = {
 
 const MAX_SPLIT_BUCKETS = 60;
 
+/** One ranked list of the fusion. `name` is also the metric `list` label. */
+interface RankedList {
+  name: 'keyword' | 'vector' | 'taxonomy' | 'need';
+  ids: string[];
+}
+
 interface PredictedTaxonomy {
   code: string;
   name: string;
@@ -353,6 +363,7 @@ export class HybridSearchService {
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
   private readonly needBoostEnabled: boolean;
+  private readonly fusionOnly: boolean;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
@@ -372,6 +383,10 @@ export class HybridSearchService {
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
       this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
+    // v2 ranking is the fused order only, never the summed score (ISS-2499,
+    // Lucas 2026-11-19). On by default; only `false` turns it off. v1 ignores it.
+    this.fusionOnly =
+      this.configService.get<string>('V2_FUSION_ONLY')?.trim() !== 'false';
   }
 
   /**
@@ -646,6 +661,9 @@ export class HybridSearchService {
     const { geometry } = options.body || {};
     const tenantId = headers['x-tenant-id'];
     const v2 = options.rankingVersion === 'v2';
+    // The ranked search page of v2 with the switch on. The pins request
+    // (fuse false) and v1 never take these paths.
+    const fusionOnly = v2 && this.fusionOnly && fuse && rank;
     const lang = headers['accept-language'] || 'en';
     const queryStr = typeof query === 'string' ? query : String(query);
     assertQueryLength(queryStr);
@@ -738,6 +756,7 @@ export class HybridSearchService {
       sort,
       coords,
       boostActive,
+      fusionOnly,
     });
 
     // With the cutoff off the filters are final here, so the keyword and
@@ -750,8 +769,9 @@ export class HybridSearchService {
             preference,
             filters: [...baseFilters],
             queryStr,
-            queryVector: queryVector!,
+            queryVector,
             wordRarity,
+            fusionOnly,
           })
         : undefined;
     // A rejection is handled in fetchFusedOrder. This keeps it from being
@@ -777,26 +797,30 @@ export class HybridSearchService {
       (options.selectedNeeds ?? []).length === 0 &&
       (page || 1) * (limit || 25) <= RRF_LIST_SIZE;
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
-    const statsPromise = fastEligible
-      ? this.metrics.observeDownstream(
-          'elasticsearch',
-          'hybrid_search_stats',
-          () =>
-            this.elasticsearchService.search<
-              SearchSource,
-              Record<string, AggregationsStringTermsAggregate>
-            >({
-              index,
-              preference,
-              size: 0,
-              track_total_hits: true,
-              query: { bool: { filter: [...baseFilters] } },
-              aggs,
-            }),
-        )
-      : undefined;
-    // The fast path handles a rejection; this only prevents an unhandled one.
-    statsPromise?.catch(() => undefined);
+    const startStats = () => {
+      const started = this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_search_stats',
+        () =>
+          this.elasticsearchService.search<
+            SearchSource,
+            Record<string, AggregationsStringTermsAggregate>
+          >({
+            index,
+            preference,
+            size: 0,
+            track_total_hits: true,
+            query: { bool: { filter: [...baseFilters] } },
+            aggs,
+          }),
+      );
+      // The fast path handles a rejection; this only prevents an unhandled one.
+      started.catch(() => undefined);
+      return started;
+    };
+    // With fusionOnly the stats request waits for the fused ids filter (its
+    // total and facets must count the fused set, not the whole population).
+    let statsPromise = fastEligible && !fusionOnly ? startStats() : undefined;
 
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
@@ -928,7 +952,7 @@ export class HybridSearchService {
         preference,
         filters: baseFilters,
         queryStr,
-        queryVector: queryVector!,
+        queryVector,
         predicted: predictedTaxonomies,
         wordRarity,
         needs: boostActive ? activeNeeds : [],
@@ -936,9 +960,21 @@ export class HybridSearchService {
         proximity: sort === 'distance' ? 'distance' : 'relevance',
         distance: distance ?? 0,
         earlyLists,
+        fusionOnly,
       });
 
-      if (fusedIds === undefined && boostActive && !cutoffRequested) {
+      if (fusedIds === undefined && fusionOnly) {
+        // Never the summed order: the caller sorts by the browse order.
+        this.logger.warn('RRF all lists failed, using browse order');
+        this.metrics.recordRankFallback('all_lists_failed');
+      }
+
+      if (
+        fusedIds === undefined &&
+        boostActive &&
+        !cutoffRequested &&
+        !fusionOnly
+      ) {
         // Fusion failed after the top-score request was skipped: fall back
         // to today's summed ranking, need boost included.
         const topScore = await this.fetchNeedBoostTopScore({
@@ -959,6 +995,27 @@ export class HybridSearchService {
       }
     }
 
+    const pageSize = limit || 25;
+    const pageFrom = (page - 1) * pageSize;
+    if (fusionOnly && fusedIds !== undefined) {
+      // Membership is the fused set: total, facets, need counts and paging all
+      // describe the same services, and a page past the set is empty.
+      baseFilters.push({ ids: { values: fusedIds } });
+      if (fastEligible && pageFrom + pageSize <= fusedIds.length) {
+        statsPromise = startStats();
+      }
+    }
+
+    // Empty query, or fusion with no list to fuse: the browse order, never the
+    // summed score. Sort name and organization decide their own order.
+    const relevanceLikeSort =
+      (sort ?? 'relevance') === 'relevance' || sort === 'distance';
+    const browseOrder =
+      fusionOnly &&
+      fusedIds === undefined &&
+      relevanceLikeSort &&
+      (queryStr.trim().length === 0 || fuseEligible);
+
     const request = this.buildHybridQuery({
       index,
       preference,
@@ -969,11 +1026,12 @@ export class HybridSearchService {
       coords,
       distance: distance ?? 0,
       page,
-      limit: limit || 25,
+      limit: pageSize,
       aggs,
       pinnedMode,
       // A fused order is pinned; a geo sort would override it.
       sort: fusedIds !== undefined ? 'relevance' : sort,
+      browseOrder,
       extraShould: needShould,
       wordRarity,
       fusedIds,
@@ -981,8 +1039,6 @@ export class HybridSearchService {
     });
 
     // The page by id, once the fused order covers the whole requested page.
-    const pageSize = limit || 25;
-    const pageFrom = (page - 1) * pageSize;
     let fastPage:
       | {
           statsPromise: NonNullable<typeof statsPromise>;
@@ -1061,7 +1117,8 @@ export class HybridSearchService {
    * - `v2`: v1 must not change at all.
    * - `rank`: an unranked request has no scores to order.
    * - `queryVector`: the vector list needs the embedding. Without it the
-   *   search falls back to lexical-only scoring.
+   *   search falls back to lexical-only scoring. With `fusionOnly` it is not
+   *   required: a missing embedding drops the vector and taxonomy lists.
    * - non-empty query: browse mode has no keyword or vector signal.
    * - `coords`: needed for `sort` distance (see below). Sort relevance with a
    *   location adds a low-weight proximity list.
@@ -1082,16 +1139,19 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     coords: number[] | undefined;
     boostActive: boolean;
+    /** v2 with V2_FUSION_ONLY: no vector needed, distance fuses without coords. */
+    fusionOnly: boolean;
   }): boolean {
-    const { fuse, v2, rank, queryVector, queryStr, sort, coords } = args;
+    const { fuse, v2, rank, queryVector, queryStr, sort, coords, fusionOnly } =
+      args;
     const sortFuses =
       (sort ?? 'relevance') === 'relevance' ||
-      (sort === 'distance' && coords?.length === 2);
+      (sort === 'distance' && (fusionOnly || coords?.length === 2));
     return (
       fuse &&
       v2 &&
       rank &&
-      queryVector !== undefined &&
+      (fusionOnly || queryVector !== undefined) &&
       queryStr.trim().length > 0 &&
       sortFuses
     );
@@ -1107,31 +1167,68 @@ export class HybridSearchService {
     preference: string;
     filters: QueryDslQueryContainer[];
     queryStr: string;
-    queryVector: number[];
+    queryVector: number[] | undefined;
     wordRarity: WordRarity;
-  }): Promise<string[][]> {
-    const { filters, queryStr, queryVector, wordRarity } = args;
+    fusionOnly: boolean;
+  }): Promise<RankedList[]> {
+    const { filters, queryStr, queryVector, wordRarity, fusionOnly } = args;
     const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
-    const requests: Promise<string[]>[] = [];
+    const requests: { name: RankedList['name']; promise: Promise<string[]> }[] =
+      [];
     if (lexical.length > 0) {
-      requests.push(
-        this.runRankedList(args, 'hybrid_rrf_keyword', {
+      requests.push({
+        name: 'keyword',
+        promise: this.runRankedList(args, 'hybrid_rrf_keyword', {
           bool: { filter: filters, should: lexical, minimum_should_match: 1 },
         }),
+      });
+    }
+    // Without a vector (fusionOnly only) there is no vector list.
+    if (queryVector) {
+      requests.push({
+        name: 'vector',
+        promise: this.runRankedList(args, 'hybrid_rrf_vector', {
+          script_score: {
+            query: { bool: { filter: filters } },
+            script: {
+              source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+              params: { qv: queryVector },
+            },
+          },
+        }),
+      });
+    }
+    return this.collectLists(requests, fusionOnly);
+  }
+
+  /**
+   * Waits for the list requests. Without `fusionOnly` one rejection rejects
+   * the whole call (`fetchFusedOrder` then keeps the summed ranking). With it
+   * each list settles on its own: a rejected list is dropped, logged and
+   * counted, and the others fuse.
+   */
+  private collectLists(
+    requests: { name: RankedList['name']; promise: Promise<string[]> }[],
+    fusionOnly: boolean,
+  ): Promise<RankedList[]> {
+    if (!fusionOnly) {
+      return Promise.all(
+        requests.map(({ name, promise }) =>
+          promise.then((ids) => ({ name, ids })),
+        ),
       );
     }
-    requests.push(
-      this.runRankedList(args, 'hybrid_rrf_vector', {
-        script_score: {
-          query: { bool: { filter: filters } },
-          script: {
-            source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
-            params: { qv: queryVector },
-          },
-        },
+    return Promise.allSettled(requests.map((r) => r.promise)).then((results) =>
+      results.flatMap((result, i) => {
+        const { name } = requests[i];
+        if (result.status === 'fulfilled') return [{ name, ids: result.value }];
+        this.logger.warn(
+          `RRF list ${name} failed, fusing the other lists: ${(result.reason as Error).message}`,
+        );
+        this.metrics.recordRankFallback('list_failed', name);
+        return [];
       }),
     );
-    return Promise.all(requests);
   }
 
   private runRankedList(
@@ -1173,21 +1270,24 @@ export class HybridSearchService {
    * already started; otherwise this method sends them.
    * Plain `search`, not `msearch`: the read-only Elasticsearch guard rejects
    * `_msearch`. Never rejects: on any failure the search keeps today's
-   * summed ranking.
+   * summed ranking. With `fusionOnly` the failure unit is one list (see
+   * `collectLists`) and undefined means no list gave an id: the caller uses
+   * the browse order, never the summed ranking.
    */
   private async fetchFusedOrder(args: {
     index: string;
     preference: string;
     filters: QueryDslQueryContainer[];
     queryStr: string;
-    queryVector: number[];
+    queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
     wordRarity: WordRarity;
     needs: NeedScore[];
     coords: number[] | undefined;
     proximity: 'distance' | 'relevance';
     distance: number;
-    earlyLists?: Promise<string[][]>;
+    earlyLists?: Promise<RankedList[]>;
+    fusionOnly: boolean;
   }): Promise<string[] | undefined> {
     const {
       filters,
@@ -1199,20 +1299,31 @@ export class HybridSearchService {
       proximity: proximityMode,
       distance,
       earlyLists,
+      fusionOnly,
     } = args;
 
-    const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
+    // No embedding: no vector list and no taxonomy list (it needs the vector).
+    if (fusionOnly && !queryVector) {
+      this.metrics.recordRankFallback('embedding_missing');
+    }
+    const taxonomy = queryVector
+      ? this.buildTaxonomyBoostClauses(predicted, queryStr)
+      : [];
 
     try {
-      const requests: Promise<string[]>[] = [];
-      if (taxonomy.length > 0) {
+      const requests: {
+        name: RankedList['name'];
+        promise: Promise<string[]>;
+      }[] = [];
+      if (queryVector && taxonomy.length > 0) {
         // Many services carry the same predicted code and tie on the
         // taxonomy score, so Elasticsearch would break the tie in index
         // order. A tiny cosine term breaks it by meaning instead, as the
         // ranking lab did (live check 2026-11-16: top-10 overlap with the
         // lab order was 0.71 without it).
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_taxonomy', {
+        requests.push({
+          name: 'taxonomy',
+          promise: this.runRankedList(args, 'hybrid_rrf_taxonomy', {
             script_score: {
               query: {
                 bool: {
@@ -1227,12 +1338,13 @@ export class HybridSearchService {
               },
             },
           }),
-        );
+        });
       }
       const needList = needs.length > 0;
       if (needList) {
-        requests.push(
-          this.runRankedList(args, 'hybrid_rrf_need', {
+        requests.push({
+          name: 'need',
+          promise: this.runRankedList(args, 'hybrid_rrf_need', {
             bool: {
               filter: filters,
               should: needs.map((n) => ({
@@ -1247,25 +1359,30 @@ export class HybridSearchService {
               minimum_should_match: 1,
             },
           }),
-        );
+        });
       }
       const early = earlyLists ?? this.fetchKeywordAndVectorLists(args);
 
-      const [keywordAndVector, ...rest] = await Promise.all([
+      const [keywordAndVector, rest] = await Promise.all([
         early,
-        ...requests,
+        this.collectLists(requests, fusionOnly),
       ]);
-      // Order: keyword, vector, taxonomy, need. The weights follow the lists.
-      const lists = [...keywordAndVector, ...rest];
-      const weights = lists.map((_, i) =>
-        needList && i === lists.length - 1 ? RRF_NEED_LIST_WEIGHT : 1,
+      // Order: keyword, vector, taxonomy, need. A dropped list leaves the
+      // others in place, and each weight stays with its own list.
+      const ranked = [...keywordAndVector, ...rest];
+      if (fusionOnly && ranked.every((l) => l.ids.length === 0)) {
+        return undefined;
+      }
+      const lists = ranked.map((l) => l.ids);
+      const weights = ranked.map((l) =>
+        l.name === 'need' ? RRF_NEED_LIST_WEIGHT : 1,
       );
       const relevance = reciprocalRankFusion(lists, RRF_K, weights);
       let ordered = relevance;
       if (coords?.length === 2 && relevance.length > 0) {
         const pool = relevance.slice(0, RRF_PROXIMITY_POOL);
         if (proximityMode === 'distance') {
-          const proximity = await this.runProximityList(
+          const run = this.runProximityList(
             args,
             filters,
             pool,
@@ -1273,12 +1390,18 @@ export class HybridSearchService {
             distance,
             true,
           );
+          const proximity = fusionOnly
+            ? await run.catch((error: Error) => this.dropProximity(error))
+            : await run;
           // Distance mode without a distance vote is the plain distance sort.
-          if (proximity.length === 0) return undefined;
-          ordered = reciprocalRankFusion([...lists, proximity], RRF_K, [
-            ...weights,
-            RRF_PROXIMITY_LIST_WEIGHT,
-          ]);
+          // With fusionOnly it keeps the relevance-fused order instead.
+          if (proximity.length === 0 && !fusionOnly) return undefined;
+          if (proximity.length > 0) {
+            ordered = reciprocalRankFusion([...lists, proximity], RRF_K, [
+              ...weights,
+              RRF_PROXIMITY_LIST_WEIGHT,
+            ]);
+          }
         } else {
           // Relevance mode: a failed or empty proximity list keeps the
           // relevance-fused order. A service with no point gets no vote.
@@ -1293,6 +1416,9 @@ export class HybridSearchService {
             this.logger.warn(
               `RRF proximity list failed, using relevance fusion: ${error.message}`,
             );
+            if (fusionOnly) {
+              this.metrics.recordRankFallback('list_failed', 'proximity');
+            }
             return [] as string[];
           });
           if (proximity.length > 0) {
@@ -1307,10 +1433,19 @@ export class HybridSearchService {
       return fused.length > 0 ? fused : undefined;
     } catch (error) {
       this.logger.warn(
-        `RRF lists failed, using summed ranking: ${(error as Error).message}`,
+        `RRF lists failed, using ${fusionOnly ? 'browse order' : 'summed ranking'}: ${(error as Error).message}`,
       );
       return undefined;
     }
+  }
+
+  /** A failed proximity list under fusionOnly: log, count, fuse without it. */
+  private dropProximity(error: Error): string[] {
+    this.logger.warn(
+      `RRF list proximity failed, fusing the other lists: ${error.message}`,
+    );
+    this.metrics.recordRankFallback('list_failed', 'proximity');
+    return [];
   }
 
   /**
@@ -2007,6 +2142,7 @@ export class HybridSearchService {
     coords: number[] | undefined,
     pinnedMode: PinnedResourcesMode,
     selectedNeeds: string[] = [],
+    pinnedFirst = pinnedMode === 'top',
   ): Sort {
     return SearchUtilsService.buildSortClause({
       fields: HYBRID_SORT_FIELDS,
@@ -2016,7 +2152,7 @@ export class HybridSearchService {
         ...(selectedNeeds.length > 0
           ? [buildNeedBlockSort(selectedNeeds)]
           : []),
-        ...(pinnedMode === 'top'
+        ...(pinnedFirst
           ? [
               { pinned: 'desc' } as SortCombinations,
               { priority: 'desc' } as SortCombinations,
@@ -2390,6 +2526,8 @@ export class HybridSearchService {
     aggs: Aggregations;
     pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
+    /** fusionOnly browse order: distance (coords) or name, pins first. */
+    browseOrder?: boolean;
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
     fusedIds?: string[];
@@ -2409,18 +2547,22 @@ export class HybridSearchService {
       aggs,
       pinnedMode,
       sort: sortOption,
+      browseOrder,
       extraShould,
       wordRarity,
       fusedIds,
       selectedNeeds,
     } = args;
 
-    const sort = this.buildHybridSort(
-      sortOption,
-      coords,
-      pinnedMode,
-      selectedNeeds,
-    );
+    const sort = browseOrder
+      ? this.buildHybridSort(
+          coords?.length === 2 ? 'distance' : 'name',
+          coords,
+          pinnedMode,
+          selectedNeeds,
+          pinnedMode !== 'ignore',
+        )
+      : this.buildHybridSort(sortOption, coords, pinnedMode, selectedNeeds);
 
     const esQuery = this.buildHybridScoredQuery({
       queryStr,
