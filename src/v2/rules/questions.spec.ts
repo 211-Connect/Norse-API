@@ -356,13 +356,20 @@ describe('emergency question', () => {
 });
 
 describe('option shape (Decision 55)', () => {
-  it('need options are {label, parameter: needs, value, score}', () => {
+  it('need options are {label, description, parameter: needs, value, score}', () => {
     const d = decide(req(), sig({ 'N-HOU': 0.95 }));
     const q = d.candidates.find((c) => c.type === 'find_need');
     expect(q).toBeDefined();
     for (const o of q.options) {
-      expect(Object.keys(o)).toEqual(['label', 'parameter', 'value', 'score']);
+      expect(Object.keys(o)).toEqual([
+        'label',
+        'description',
+        'parameter',
+        'value',
+        'score',
+      ]);
       expect(o.parameter).toBe('needs');
+      expect(o.description.length).toBeGreaterThan(0);
     }
   });
   it('urgency options are {label, parameter: urgency, value}', () => {

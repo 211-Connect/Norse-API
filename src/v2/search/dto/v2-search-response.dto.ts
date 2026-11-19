@@ -16,6 +16,12 @@ export class V2IntentNeedDto {
 
   @ApiPropertyOptional({ description: 'Model score; inferred needs only.' })
   confidence?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'The spoken description of the need (ADR 0039 Decision 31), same text as `description` on a question option.',
+  })
+  description?: string;
 }
 
 export class V2IntentUrgencyDto {
@@ -63,6 +69,13 @@ export class V2IntentDto {
 export class V2QuestionOptionDto {
   @ApiProperty({ example: 'Help paying rent' })
   label: string;
+
+  @ApiPropertyOptional({
+    example: 'You may be behind on rent, or you got an eviction notice.',
+    description:
+      'Need options only: the spoken description of the need (ADR 0039 Decision 31), for the tenant and language of the request. Absent on urgency and emergency options.',
+  })
+  description?: string;
 
   @ApiProperty({
     enum: ['needs', 'passed_needs', 'urgency'],
