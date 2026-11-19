@@ -3,18 +3,17 @@ import { ConfigService } from '@nestjs/config';
 import { AiClassificationSetting } from '../rules/types';
 import { MlBrokerHttpService } from 'src/ml-broker/ml-broker-http.service';
 import { MlBrokerError } from 'src/ml-broker/ml-broker.errors';
+import {
+  classifyOutcomeOf,
+  failedClassifyResult,
+  failureKindOf,
+} from './classify-outcome';
 import { ClassifyResult, toRulesSignals } from './to-rules-signals';
 
 export type { ClassifyResult } from './to-rules-signals';
 
-const failed = (): ClassifyResult => ({
-  signals: { needs: { status: 'error' }, emergency: { status: 'error' } },
-  scores: {},
-  modelVersion: null,
-});
-
 /**
- * `/v2/search`'s failure policy over ml-broker `search-classification`. It
+ * `/v2/search`'s failure policy (states: classify-outcome.ts) over ml-broker `search-classification`. It
  * never throws: every failure becomes `status: 'error'` signals, so search
  * results still return. Transport lives in MlBrokerHttpService. Warnings never
  * carry the query text, which can hold personal data.
@@ -48,15 +47,24 @@ export class SearchClassificationClient {
         tenant_id: tenantId,
         ...(emergencyOnly && { emergency_only: true }),
       });
-      return toRulesSignals(body);
+      const result = toRulesSignals(body);
+      const outcome = classifyOutcomeOf(result.signals);
+      if (outcome !== 'ok') {
+        this.logger.warn(`search classification partial, outcome=${outcome}`);
+      }
+      return result;
     } catch (error) {
       // MlBrokerError messages hold no request or response body.
-      const reason =
+      const detail =
         error instanceof MlBrokerError
-          ? `kind=${error.kind}: ${error.message}`
-          : `kind=unexpected: ${error instanceof Error ? error.name : 'Error'}`;
-      this.logger.warn(`search classification failed, ${reason}`);
-      return failed();
+          ? error.message
+          : error instanceof Error
+            ? error.name
+            : 'Error';
+      this.logger.warn(
+        `search classification failed, outcome=failed kind=${failureKindOf(error)}: ${detail}`,
+      );
+      return failedClassifyResult();
     }
   }
 }
