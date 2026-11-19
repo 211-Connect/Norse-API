@@ -285,4 +285,16 @@ describe('MetricsService', () => {
       outcome: 'error',
     });
   });
+
+  it('records rank fallbacks with reason and list labels', async () => {
+    service.recordRankFallback('list_failed', 'vector');
+    service.recordRankFallback('embedding_missing');
+
+    const values = (await getMetric('norse_v2_rank_fallback_total').get())
+      .values;
+    expect(values.map((v) => v.labels)).toEqual([
+      { reason: 'list_failed', list: 'vector' },
+      { reason: 'embedding_missing', list: 'none' },
+    ]);
+  });
 });

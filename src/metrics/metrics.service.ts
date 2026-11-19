@@ -50,6 +50,9 @@ export type CacheName =
 
 export type CacheResult = 'hit' | 'miss' | 'coalesced' | 'get-error';
 
+export type RankFallbackReason =
+  'list_failed' | 'embedding_missing' | 'all_lists_failed';
+
 @Injectable()
 export class MetricsService {
   private readonly httpRequestsCounter: Counter<string>;
@@ -57,6 +60,7 @@ export class MetricsService {
   private readonly downstreamRequestsCounter: Counter<string>;
   private readonly downstreamDurationHistogram: Histogram<string>;
   private readonly cacheRequestsCounter: Counter<string>;
+  private readonly rankFallbackCounter: Counter<string>;
 
   constructor() {
     collectDefaultMetrics({ register });
@@ -97,6 +101,13 @@ export class MetricsService {
       name: 'norse_cache_requests_total',
       help: 'Total cache accesses by result',
       labelNames: ['cache', 'result'],
+      registers: [register],
+    });
+
+    this.rankFallbackCounter = this.createOrGetCounter({
+      name: 'norse_v2_rank_fallback_total',
+      help: 'v2 rank fusion fallbacks (fusion only)',
+      labelNames: ['reason', 'list'],
       registers: [register],
     });
   }
@@ -183,6 +194,14 @@ export class MetricsService {
    */
   recordCacheAccess(cache: CacheName, result: CacheResult): void {
     this.cacheRequestsCounter.inc({ cache, result });
+  }
+
+  /**
+   * Records one v2 rank fusion fallback (V2_FUSION_ONLY). `list` names the
+   * dropped list (keyword, vector, taxonomy, need, proximity) or is `none`.
+   */
+  recordRankFallback(reason: RankFallbackReason, list = 'none'): void {
+    this.rankFallbackCounter.inc({ reason, list });
   }
 
   private recordDownstream(
