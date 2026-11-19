@@ -3,7 +3,7 @@ import { CUTOFFS, RULES_VERSION } from './config';
 import {
   asksNeeds,
   MIN_OPTIONS,
-  ZERO_COUNT_FACTOR,
+  COUNT_BONUS_WEIGHT,
   buildCandidates,
   countCodesOf,
   noMatchQuestion,
@@ -95,6 +95,48 @@ export function weakMatchDecision(
   };
 }
 
+/** Shannon entropy of the option scores normalized to sum 1; 0 when they sum to 0. */
+export function scoreEntropy(options: { score?: number }[]): number {
+  const total = options.reduce((t, o) => t + (o.score ?? 0), 0);
+  if (!(total > 0)) return 0;
+  let h = 0;
+  for (const o of options) {
+    const p = (o.score ?? 0) / total;
+    if (p > 0) h -= p * Math.log(p);
+  }
+  return h;
+}
+
+/**
+ * A query with several Tier 1 needs gets one `area_only` question: the need
+ * whose answer is most uncertain (highest entropy of its option scores). On a
+ * tie: more results across its options, then the higher Tier 1 confidence,
+ * then vocabulary order (Lucas 2026-11-19).
+ */
+function keepMostUncertainAreaOnly(
+  kept: Question[],
+  decision: Decision,
+): Question[] {
+  const areas = kept.filter((q) => q.reason === 'area_only');
+  if (areas.length < 2) return kept;
+  const conf = (q: Question) =>
+    decision.needs.find((n) => `area:${n.code}` === q.id)?.confidence ?? 0;
+  const results = (q: Question) =>
+    q.options.reduce((t, o) => t + (o.results_count ?? 0), 0);
+  const eq = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  let best = areas[0];
+  for (const q of areas.slice(1)) {
+    const dh = scoreEntropy(q.options) - scoreEntropy(best.options);
+    const win = !eq(dh, 0)
+      ? dh > 0
+      : results(q) !== results(best)
+        ? results(q) > results(best)
+        : conf(q) > conf(best);
+    if (win) best = q;
+  }
+  return kept.filter((q) => q.reason !== 'area_only' || q === best);
+}
+
 export function finalize(
   decision: Decision,
   input: FinalizeInput,
@@ -107,7 +149,7 @@ export function finalize(
     questions = questions.filter((q) => !asksNeeds(q));
   }
 
-  const kept: Question[] = [];
+  let kept: Question[] = [];
   for (const q of questions) {
     if (!asksNeeds(q)) {
       kept.push(q);
@@ -122,11 +164,17 @@ export function finalize(
       }
       options.push(o);
     }
-    // Option score = classifier confidence x availability: count > 0 or not
-    // counted (null) -> 1, count 0 -> 0.5. Sorted high to low (Lucas 2026-11-19).
+    // Option score = classifier confidence + 0.3 * log(1+count) / log(1+max
+    // count among this question's options). A null or 0 count adds 0; a 0
+    // count stays listed. Sorted high to low (Lucas 2026-11-19).
+    const maxCount = Math.max(0, ...options.map((o) => o.results_count ?? 0));
     for (const o of options) {
-      const factor = o.results_count === 0 ? ZERO_COUNT_FACTOR : 1;
-      o.score = round3((o.score ?? 0) * factor);
+      const bonus =
+        maxCount > 0 && o.results_count
+          ? (COUNT_BONUS_WEIGHT * Math.log(1 + o.results_count)) /
+            Math.log(1 + maxCount)
+          : 0;
+      o.score = round3((o.score ?? 0) + bonus);
     }
     options.sort((a, b) => b.score - a.score); // stable: ties keep build order
     q.options = options;
@@ -142,6 +190,8 @@ export function finalize(
     }
     kept.push(q);
   }
+
+  kept = keepMostUncertainAreaOnly(kept, decision);
 
   for (const q of kept) {
     for (const o of q.options) o.results_count ??= null;

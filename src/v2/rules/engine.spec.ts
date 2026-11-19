@@ -91,7 +91,7 @@ describe('finalize', () => {
     expect(
       r.questions[0].options.map((o) => [o.value, o.results_count, o.score]),
     ).toEqual([
-      ['N-HOU', 4, 0],
+      ['N-HOU', 4, 0.3],
       ['N-FOD', 0, 0],
       ['N-MON', 0, 0],
     ]);
@@ -116,7 +116,7 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 6 }),
       strong_text_match: false,
     }).questions;
-    expect(q.options.map((o) => o.results_count)).toEqual([4, 6]);
+    expect(q.options.map((o) => o.results_count)).toEqual([6, 4]); // sorted by score: the larger count first
     expect(q).not.toHaveProperty('level');
   });
   it('keeps the decide-time uncertainty when an option has 0 results', () => {
@@ -129,7 +129,7 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
       strong_text_match: false,
     }).questions;
-    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON', 'N-FOD']);
     expect(q.uncertainty).toBe(0.8);
   });
   it('keeps the decide-time uncertainty when no option was dropped', () => {

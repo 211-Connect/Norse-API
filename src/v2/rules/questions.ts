@@ -1,5 +1,5 @@
 import {
-  areaRuleTarget,
+  areaRuleTargets,
   confirmedCodes,
   NeedStatesResult,
   passedCodes,
@@ -53,8 +53,8 @@ const EMERGENCY_OPTIONS: QuestionOption[] = [
 /** A question never has fewer options than this (Lucas 2026-11-19: no 1-option questions). */
 export const MIN_OPTIONS = 2;
 
-/** Option score of a 0-count option is halved (finalize): still listed, sorted lower. */
-export const ZERO_COUNT_FACTOR = 0.5;
+/** Weight of the count bonus in the option score (finalize), Lucas 2026-11-19. */
+export const COUNT_BONUS_WEIGHT = 0.3;
 
 /** `score` is the classifier score of the need, 0..1 (0 when the model gave none). */
 const needOption = (code: string, score: number): QuestionOption => ({
@@ -268,7 +268,8 @@ export function buildCandidates(
     }
     const eligible = (c: string) =>
       !confirmed.includes(c) && !passed.has(c) && !lockedAreas.has(tier1Of(c));
-    const byScore = (a: string, b: string) => sc(b) - sc(a) || cmp(a, b);
+    // Stable sort: ties keep vocabulary order.
+    const byScore = (a: string, b: string) => sc(b) - sc(a);
     // Every eligible Tier 2 need of the area, best score first. The page
     // shows the top ones and puts the rest under "Show more".
     const topChildren = (t1: string) =>
@@ -306,10 +307,10 @@ export function buildCandidates(
       }
     }
 
-    // 4. area rule
-    const target = areaRuleTarget(req, signals, states);
+    // 4. area rule: one question per open Tier 1 need; finalize keeps one
     let areaRuleFired = false;
-    if (target && !lockedAreas.has(target) && !areaConfirmed.includes(target)) {
+    for (const target of areaRuleTargets(req, signals, states)) {
+      if (areaConfirmed.includes(target)) continue;
       const q = areaQuestion(target, 'area_only');
       if (q) {
         out.push(q);
@@ -326,14 +327,21 @@ export function buildCandidates(
         areaQuestionCount === 0
       ) {
         const eligibleT1 = TIER1_CODES.filter(eligible).sort(byScore);
+        // Every eligible Tier 1 need (Lucas 2026-11-19), best score first.
+        // When the model cannot rank, the tenant's top areas come first,
+        // then the rest in vocabulary order.
         let picks: string[];
         if (
           eligibleT1.length > 0 &&
           sc(eligibleT1[0]) >= CUTOFFS.start.modelAreasMin
         ) {
-          picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
+          picks = eligibleT1;
         } else {
-          picks = fallbackAreas(tenant, eligible);
+          const top = fallbackAreas(tenant, eligible);
+          picks = [
+            ...top,
+            ...TIER1_CODES.filter((c) => eligible(c) && !top.includes(c)),
+          ];
         }
         const options = picks.map((c) => needOption(c, sc(c)));
         if (options.length >= MIN_OPTIONS)

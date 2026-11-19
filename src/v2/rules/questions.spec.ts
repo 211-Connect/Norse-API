@@ -1,5 +1,6 @@
 import { decide, finalize, weakMatchDecision } from './engine';
 import { noMatchQuestion } from './questions';
+import { TIER1_CODES } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 const ids = (d: ReturnType<typeof decide>) => d.candidates.map((q) => q.id);
@@ -62,9 +63,15 @@ describe('emergency question', () => {
     // Soft score 0.5 gives uncertainty 1 -> value 1 is capped; use 0.25 so the
     // emergency value is low and needs questions (high, value near 0.95) outrank it by number.
     const d = decide(
-      req(),
+      req({ needs: ['N-HOU'] }),
       sig(
-        { 'N-HOU': 0.34, 'N-FOD': 0.33, 'N-MON': 0.33 },
+        {
+          'N-HOU-01': 0.2,
+          'N-HOU-02': 0.2,
+          'N-HOU-03': 0.2,
+          'N-HOU-04': 0.2,
+          'N-HOU-05': 0.2,
+        },
         { emergency: { status: 'ok', score: 0.222, floor_hit: false } },
       ),
     );
@@ -428,22 +435,42 @@ describe('time questions', () => {
 });
 
 describe('start question', () => {
-  it('tiny scores -> tenant top_areas', () => {
+  it('tiny scores -> every Tier 1, tenant top_areas first', () => {
     const d = decide(req(), sig({ 'N-FOD': 0.01 }), {
       top_areas: ['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU'],
     });
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
+    expect(opts(d, 'start').slice(0, 4)).toEqual([
+      'N-LEG',
+      'N-WRK',
+      'N-LRN',
+      'N-HOU',
+    ]);
+    expect([...opts(d, 'start')].sort()).toEqual([...TIER1_CODES].sort());
   });
-  it('tenant top_areas filled with defaults', () => {
+  it('tenant top_areas then the rest in vocabulary order', () => {
     const d = decide(req(), sig(), { top_areas: ['N-LEG', 'bogus'] });
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-HOU', 'N-FOD']);
+    const o = opts(d, 'start');
+    expect(o[0]).toBe('N-LEG');
+    expect(o.slice(1)).toEqual(TIER1_CODES.filter((c) => c !== 'N-LEG'));
   });
-  it('best T1 0.35 -> model areas', () => {
+  it('best T1 0.35 -> every Tier 1, sorted by score, ties in vocabulary order', () => {
     const d = decide(
       req(),
       sig({ 'N-LEG': 0.35, 'N-WRK': 0.2, 'N-LRN': 0.1, 'N-HOU': 0.05 }),
     );
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
+    const o = opts(d, 'start');
+    expect(o.slice(0, 4)).toEqual(['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU']);
+    expect(o).toHaveLength(TIER1_CODES.length);
+    expect(o.slice(4)).toEqual(
+      TIER1_CODES.filter((c) => !o.slice(0, 4).includes(c)),
+    );
+  });
+  it('start option count equals the number of Tier 1 needs', () => {
+    const d = decide(req(), sig({ 'N-LEG': 0.35 }));
+    // eslint-disable-next-line no-console
+    console.log(`START_OPTION_COUNT=${opts(d, 'start').length}`);
+    expect(opts(d, 'start')).toHaveLength(TIER1_CODES.length);
+    expect(TIER1_CODES.length).toBeGreaterThan(3);
   });
   it('N-X is never an option on start, at any score (ISS-2499)', () => {
     for (const x of [0.06, 0.07, 0.9]) {
@@ -454,10 +481,10 @@ describe('start question', () => {
   });
   it('passed Tier 1 never offered', () => {
     const d = decide(req({ passed_needs: ['N-HOU'] }), sig());
-    expect(opts(d, 'start')).toEqual(['N-FOD', 'N-MON']);
+    expect(opts(d, 'start')).toEqual(TIER1_CODES.filter((c) => c !== 'N-HOU'));
   });
   it('not built when every area is passed (no zero-option question)', () => {
-    const d = decide(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), sig());
+    const d = decide(req({ passed_needs: [...TIER1_CODES] }), sig());
     expect(ids(d)).not.toContain('start');
   });
   it('not built when text has an inferred ask', () => {
@@ -479,6 +506,68 @@ describe('one-word Tier 1 query: food (Lucas 2026-11-17)', () => {
   it('a clear Tier 1 below the new gate (0.79) asks no area question', () => {
     const d = decide(req(), sig({ 'N-FOD': 0.79 }));
     expect(ids(d)).not.toContain('area:N-FOD');
+  });
+});
+
+describe('two Tier 1 needs in the text: one which-kind question, the most uncertain first (Lucas 2026-11-19)', () => {
+  const both = { 'N-FOD': 0.9, 'N-HOU': 0.85 };
+  const fin = (r: ReturnType<typeof req>, s: ReturnType<typeof sig>, by = {}) =>
+    finalize(decide(r, s), {
+      counts: { total: 10, by_code: by },
+      strong_text_match: false,
+    }).questions.map((q) => q.id);
+  it('decide builds a question for each need, best score first', () => {
+    expect(ids(decide(req(), sig(both)))).toEqual(['area:N-FOD', 'area:N-HOU']);
+  });
+  it('finalize keeps the need with the higher entropy: the second named need goes first', () => {
+    // Food: one clear kind (0.9 vs 0.01). Housing: three close kinds. Housing asks first.
+    const s = sig({
+      ...both,
+      'N-FOD-01': 0.4,
+      'N-FOD-02': 0.01,
+      'N-FOD-03': 0.01,
+      'N-HOU-01': 0.3,
+      'N-HOU-02': 0.3,
+      'N-HOU-03': 0.3,
+    });
+    expect(fin(req(), s)).toEqual(['area:N-HOU']);
+  });
+  it('all entropies equal (scores 0): more results across the options goes first', () => {
+    const food = Object.fromEntries([1, 2, 3].map((i) => [`N-FOD-0${i}`, 0]));
+    const hou = Object.fromEntries([1, 2, 3].map((i) => [`N-HOU-0${i}`, 5]));
+    // counts add a bonus, so use equal single-count shapes: housing counts are larger.
+    expect(fin(req(), sig(both), { ...food, ...hou })).toEqual(['area:N-HOU']);
+  });
+  it('all entropies and results equal: the higher Tier 1 confidence goes first', () => {
+    expect(fin(req(), sig(both))).toEqual(['area:N-FOD']);
+  });
+  it('live "i need food and housing": food leans to a kind (0.67), so housing is asked', () => {
+    const s = sig({
+      'N-HOU': 0.98,
+      'N-FOD': 0.98,
+      'N-FOD-01': 0.67,
+      'N-ESS-01': 0.14,
+    });
+    expect(fin(req(), s)).toEqual(['area:N-HOU']);
+  });
+  it('live "baby formula and somewhere to live": housing has a kind in use, so food is asked', () => {
+    const s = sig({ 'N-HOU': 0.98, 'N-HOU-04': 0.97, 'N-FOD': 0.9 });
+    expect(fin(req(), s)).toEqual(['area:N-FOD']);
+  });
+  it('after the caller answers (needs set), the next need is asked', () => {
+    expect(ids(decide(req({ needs: ['N-FOD-01'] }), sig(both)))).toEqual([
+      'area:N-HOU',
+    ]);
+  });
+  it('after the caller passes the first need (passed_needs), the next need is asked', () => {
+    expect(ids(decide(req({ passed_needs: ['N-FOD'] }), sig(both)))).toEqual([
+      'area:N-HOU',
+    ]);
+  });
+  it('both answered -> no which-kind question', () => {
+    expect(
+      ids(decide(req({ needs: ['N-FOD-01', 'N-HOU-02'] }), sig(both))),
+    ).toEqual([]);
   });
 });
 
@@ -558,11 +647,9 @@ describe('no narrow question (Lucas 2026-11-19)', () => {
     );
   });
   it('count_codes excludes N-X', () => {
-    expect(decide(req(), sig({ 'N-X': 0.3 })).count_codes).toEqual([
-      'N-FOD',
-      'N-HOU',
-      'N-MON',
-    ]);
+    const codes = decide(req(), sig({ 'N-X': 0.3 })).count_codes;
+    expect(codes).not.toContain('N-X');
+    expect(codes).toEqual([...TIER1_CODES].sort());
   });
 });
 
@@ -740,12 +827,10 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     expect(q.options.length).toBeGreaterThan(3);
     expect(q.options.every((o) => o.value.startsWith('N-HOU-'))).toBe(true);
   });
-  it('each option has a score in 0..1 (the classifier need score), sorted high to low', () => {
+  it('each option has a score (classifier confidence), sorted high to low', () => {
     const q = area('N-HOU', housing);
     const sc = q.options.map((o) => o.score);
-    expect(sc.every((x) => typeof x === 'number' && x >= 0 && x <= 1)).toBe(
-      true,
-    );
+    expect(sc.every((x) => typeof x === 'number' && x >= 0)).toBe(true);
     expect([...sc].sort((a, b) => b - a)).toEqual(sc);
     expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
     expect(q.options.find((o) => o.value === 'N-HOU-01').score).toBe(0.11);
@@ -787,31 +872,67 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     });
     expect(r.questions.find((x) => x.id === 'area:N-HOU')).toBeUndefined();
   });
-  it('finalize: score = confidence x availability (0 count halves it), sorted high to low', () => {
+  const fin = (by_code: Record<string, number> | null, total = 10) => {
     const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
-    const by: Record<string, number> = {};
-    for (const o of d.candidates[0].options) by[o.value] = 3;
-    by['N-HOU-02'] = 0; // confidence 0.5 -> 0.25, now below N-HOU-04 (0.3)
     const r = finalize(d, {
-      counts: { total: 10, by_code: by },
+      counts: { total: by_code ? total : null, by_code },
       strong_text_match: false,
     });
-    const q = r.questions.find((x) => x.id === 'area:N-HOU');
-    expect(q.options.map((o) => o.value).slice(0, 3)).toEqual([
+    return r.questions.find((x) => x.id === 'area:N-HOU');
+  };
+  const bonus = (count: number, max: number) =>
+    (0.3 * Math.log(1 + count)) / Math.log(1 + max);
+  it('finalize: score = confidence + 0.3 * log(1+count)/log(1+max count)', () => {
+    const q = fin({
+      'N-HOU-01': 0,
+      'N-HOU-02': 10,
+      'N-HOU-03': 99,
+      'N-HOU-04': 3,
+      'N-HOU-05': 0,
+    });
+    const sc = (v: string) => q.options.find((o) => o.value === v).score;
+    expect(sc('N-HOU-03')).toBeCloseTo(0.09 + 0.3, 3);
+    expect(sc('N-HOU-02')).toBeCloseTo(0.5 + bonus(10, 99), 3);
+    expect(sc('N-HOU-04')).toBeCloseTo(0.3 + bonus(3, 99), 3);
+    // 0 count: no bonus, still listed
+    expect(sc('N-HOU-01')).toBe(0.11);
+    expect(sc('N-HOU-05')).toBe(0.2);
+    const s = q.options.map((o) => o.score);
+    expect([...s].sort((a, b) => b - a)).toEqual(s);
+  });
+  it('finalize: a big count can lift a lower-confidence option above a higher one', () => {
+    const q = fin({
+      'N-HOU-01': 0,
+      'N-HOU-02': 0,
+      'N-HOU-03': 0,
+      'N-HOU-04': 100,
+      'N-HOU-05': 0,
+    });
+    expect(q.options.map((o) => o.value).slice(0, 2)).toEqual([
       'N-HOU-04',
       'N-HOU-02',
-      'N-HOU-05',
     ]);
-    expect(q.options[1].score).toBe(0.25);
-    expect(q.options[0].score).toBe(0.3);
+    expect(q.options[0].score).toBeCloseTo(0.6, 3);
   });
-  it('finalize: count null (not counted) keeps the confidence as the score', () => {
-    const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
+  it('finalize: all counts 0 -> score is the confidence, no divide by zero', () => {
+    const q = fin({});
+    expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
+    expect(q.options.every((o) => Number.isFinite(o.score))).toBe(true);
+  });
+  it('finalize: ties keep vocabulary order', () => {
+    const d = decide(req({ needs: ['N-HOU'] }), sig({}));
     const r = finalize(d, {
-      counts: { total: null, by_code: null },
+      counts: { total: 10, by_code: { 'N-HOU-01': 5, 'N-HOU-02': 5 } },
       strong_text_match: false,
     });
     const q = r.questions.find((x) => x.id === 'area:N-HOU');
+    expect(q.options.slice(0, 2).map((o) => o.value)).toEqual([
+      'N-HOU-01',
+      'N-HOU-02',
+    ]);
+  });
+  it('finalize: count null (not counted) contributes 0, the score is the confidence', () => {
+    const q = fin(null);
     expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
   });
   it('finalize keeps option order and score', () => {

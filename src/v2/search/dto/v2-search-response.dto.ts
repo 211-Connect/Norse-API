@@ -92,9 +92,9 @@ export class V2QuestionOptionDto {
   @ApiPropertyOptional({
     type: Number,
     minimum: 0,
-    maximum: 1,
+    maximum: 1.3,
     description:
-      'Need options only, 0 to 1. Formula: the classifier confidence for the need (0 when the model gave none) times an availability factor from results_count: count > 0 -> 1.0, count == 0 -> 0.5 (still listed, sorted lower), count null (not counted) -> 1.0. Options are sorted by it, high to low. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
+      'Need options only. Formula: classifier confidence for the need (0 when the model gave none) + 0.3 * log(1 + count) / log(1 + max count among this question\'s options). A null count adds 0; a count of 0 adds 0 and the option stays listed. The score can pass 1 (up to confidence + 0.3). Options are sorted by it, high to low; ties keep vocabulary order. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
   })
   score?: number;
 }
