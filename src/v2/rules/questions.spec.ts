@@ -541,6 +541,19 @@ describe('two Tier 1 needs in the text: one which-kind question, the most uncert
   it('all entropies and results equal: the higher Tier 1 confidence goes first', () => {
     expect(fin(req(), sig(both))).toEqual(['area:N-FOD']);
   });
+  it('live "i need food and housing": food leans to a kind (0.67), so housing is asked', () => {
+    const s = sig({
+      'N-HOU': 0.98,
+      'N-FOD': 0.98,
+      'N-FOD-01': 0.67,
+      'N-ESS-01': 0.14,
+    });
+    expect(fin(req(), s)).toEqual(['area:N-HOU']);
+  });
+  it('live "baby formula and somewhere to live": housing has a kind in use, so food is asked', () => {
+    const s = sig({ 'N-HOU': 0.98, 'N-HOU-04': 0.97, 'N-FOD': 0.9 });
+    expect(fin(req(), s)).toEqual(['area:N-FOD']);
+  });
   it('after the caller answers (needs set), the next need is asked', () => {
     expect(ids(decide(req({ needs: ['N-FOD-01'] }), sig(both)))).toEqual([
       'area:N-HOU',

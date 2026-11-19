@@ -159,15 +159,21 @@ export function areaRuleTargets(
 ): string[] {
   if (signals.needs.status !== 'ok') return [];
   const scores = signals.needs.scores ?? {};
-  const maxT2 = Math.max(0, ...TIER2_CODES.map((c) => scoreOf(scores, c)));
-  if (maxT2 >= CUTOFFS.area.tier2Max) return [];
-  if (
-    states.needs.some(
-      (s) => s.state === 'use' && s.source === 'inferred' && isTier2(s.code),
-    )
-  ) {
-    return [];
-  }
+  // The model already leans to a kind inside this area (a Tier 2 score at the
+  // gate or more, or a Tier 2 in use): no which-kind question for that area.
+  // Per area, so one named need does not hide the others (live bug PR #350).
+  const inUse = new Set(
+    states.needs
+      .filter(
+        (n) => n.state === 'use' && n.source === 'inferred' && isTier2(n.code),
+      )
+      .map((n) => tier1Of(n.code)),
+  );
+  const areaLeansToKind = (t1: string) =>
+    inUse.has(t1) ||
+    TIER2_CODES.some(
+      (c) => tier1Of(c) === t1 && scoreOf(scores, c) >= CUTOFFS.area.tier2Max,
+    );
   const locked = new Set(confirmedCodes(req));
   const passed = passedCodes(req);
   const lockedAreas = new Set(
@@ -177,6 +183,7 @@ export function areaRuleTargets(
     (code) =>
       !passed.has(code) &&
       !lockedAreas.has(code) &&
-      scoreOf(scores, code) >= CUTOFFS.area.tier1Min,
+      scoreOf(scores, code) >= CUTOFFS.area.tier1Min &&
+      !areaLeansToKind(code),
   ).sort((a, b) => scoreOf(scores, b) - scoreOf(scores, a));
 }

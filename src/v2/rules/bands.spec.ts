@@ -230,6 +230,19 @@ describe('areaRuleTargets', () => {
       t({ 'N-FOD': 0.9, 'N-HOU': 0.85 }, req({ passed_needs: ['N-FOD'] })),
     ).toEqual(['N-HOU']);
   });
+  it('live intent "i need food and housing": food has a Tier 2 at 0.67, housing has none -> housing', () => {
+    expect(
+      t({ 'N-HOU': 0.98, 'N-FOD': 0.98, 'N-FOD-01': 0.67, 'N-ESS-01': 0.14 }),
+    ).toEqual(['N-HOU']);
+  });
+  it('live intent "baby formula and somewhere to live": housing has a Tier 2 in use -> food', () => {
+    expect(t({ 'N-HOU': 0.98, 'N-HOU-04': 0.97, 'N-FOD': 0.9 })).toEqual([
+      'N-FOD',
+    ]);
+  });
+  it('a Tier 2 in use in the only named area still gives no target', () => {
+    expect(t({ 'N-HOU': 0.98, 'N-HOU-04': 0.97 })).toEqual([]);
+  });
   it('not when status error', () => {
     const r = req();
     const s = { needs: { status: 'error' as const }, emergency: null };
