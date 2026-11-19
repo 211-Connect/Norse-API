@@ -25,10 +25,7 @@ const q = (
   stem: 's',
   options: values.map((v, i) => ({
     label: v,
-    parameter:
-      type === 'find_need' || type === 'narrow'
-        ? ('needs' as const)
-        : ('urgency' as const),
+    parameter: type === 'find_need' ? ('needs' as const) : ('urgency' as const),
     value: v,
     ...(counts[i] === undefined ? {} : { results_count: counts[i] }),
   })),
@@ -165,12 +162,5 @@ describe('uncertainty', () => {
     expect(
       uncertainty(q('start', 'find_need', ['N-HOU', 'N-FOD']), low),
     ).toBeLessThan(0.3);
-  });
-  it('narrow uses the mean yes/no, N-X excluded, 0 when empty', () => {
-    const s = sig({ 'N-HOU-01': 0.5, 'N-HOU-02': 0.9, 'N-X': 0.5 });
-    expect(
-      uncertainty(q('narrow:1', 'narrow', ['N-HOU-01', 'N-HOU-02', 'N-X']), s),
-    ).toBeCloseTo((1 + 0.36) / 2);
-    expect(uncertainty(q('narrow:1', 'narrow', ['N-X']), s)).toBe(0);
   });
 });

@@ -532,9 +532,7 @@ describe('V2SearchService', () => {
     });
     expect(a.clarification).toEqual(b.clarification);
     expect(
-      a.clarification.questions.filter((q) =>
-        ['find_need', 'narrow'].includes(q.type),
-      ),
+      a.clarification.questions.filter((q) => q.type === 'find_need'),
     ).toEqual([]);
   });
 
@@ -561,9 +559,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'x' }),
       });
       const needsQ = (r: typeof a) =>
-        r.clarification.questions.filter((q) =>
-          ['find_need', 'narrow'].includes(q.type),
-        );
+        r.clarification.questions.filter((q) => q.type === 'find_need');
       expect(needsQ(b)).toEqual([]);
       expect(needsQ(a).length).toBeGreaterThan(0);
       expect('totalCounted' in a).toBe(false);
@@ -699,8 +695,8 @@ describe('V2SearchService', () => {
         headers,
         query: dto({ query: 'food' }),
       });
-      const needQs = res.clarification.questions.filter((q: any) =>
-        ['find_need', 'narrow'].includes(q.type),
+      const needQs = res.clarification.questions.filter(
+        (q: any) => q.type === 'find_need',
       );
       expect(needQs).toHaveLength(1);
       expect(needQs[0].options.map((o: any) => o.results_count)).toEqual([0]);

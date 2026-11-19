@@ -32,8 +32,6 @@ export const STEMS = {
   start: 'What do you need help with most?',
   noMatch: 'We could not find a good match. What do you need help with?',
   area: 'Which kind of help with {area}?',
-  narrow: 'Which of these fits best?',
-  narrowAlso: 'Do any of these also fit?',
 };
 
 export const LABELS = {

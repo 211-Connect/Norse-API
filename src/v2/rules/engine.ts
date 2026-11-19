@@ -2,12 +2,20 @@ import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
 import {
   asksNeeds,
+  MIN_OPTIONS,
+  ZERO_COUNT_FACTOR,
   buildCandidates,
   countCodesOf,
   noMatchQuestion,
 } from './questions';
 import { scoreOf } from './scores';
-import { effort, priorityOf, splitQuality, valueOf } from './importance';
+import {
+  effort,
+  priorityOf,
+  round3,
+  splitQuality,
+  valueOf,
+} from './importance';
 import { needOptions } from './sune';
 import {
   Clarification,
@@ -38,7 +46,7 @@ export function decide(
   const urgency = urgencyState(req, used);
   const states = needStates(req, used);
   const built = buildCandidates(req, used, tenant, band, urgency, states);
-  // Off: no optional question (find_need, narrow, confirm_urgency).
+  // Off: no optional question (find_need, confirm_urgency).
   const candidates = aiOff
     ? built.filter((q) => q.type === 'emergency')
     : built;
@@ -114,9 +122,16 @@ export function finalize(
       }
       options.push(o);
     }
+    // Option score = classifier confidence x availability: count > 0 or not
+    // counted (null) -> 1, count 0 -> 0.5. Sorted high to low (Lucas 2026-11-19).
+    for (const o of options) {
+      const factor = o.results_count === 0 ? ZERO_COUNT_FACTOR : 1;
+      o.score = round3((o.score ?? 0) * factor);
+    }
+    options.sort((a, b) => b.score - a.score); // stable: ties keep build order
     q.options = options;
     const needOpts = needOptions(options);
-    if (needOpts.length === 0) continue;
+    if (needOpts.length < MIN_OPTIONS) continue;
     const counted = needOpts.filter((o) => typeof o.results_count === 'number');
     if (
       total !== null &&

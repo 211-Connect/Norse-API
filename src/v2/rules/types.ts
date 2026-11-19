@@ -61,8 +61,7 @@ export interface UrgencyState {
   state: 'use' | 'ask' | 'drop';
 }
 
-export type QuestionType =
-  'emergency' | 'confirm_urgency' | 'find_need' | 'narrow';
+export type QuestionType = 'emergency' | 'confirm_urgency' | 'find_need';
 export type QuestionImportance = 'critical' | 'high' | 'medium' | 'low';
 export type QuestionReason =
   | 'emergency_band'
@@ -70,7 +69,6 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs'
   | 'weak_match';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
@@ -81,6 +79,8 @@ export interface QuestionOption {
   value: string | null;
   /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
   results_count?: number | null;
+  /** Need options only: classifier confidence of the need (0..1) x availability (results_count > 0 or null: 1, 0: 0.5). The build sets the confidence; finalize applies the factor and sorts high to low. */
+  score?: number;
 }
 export interface Question {
   id: string;

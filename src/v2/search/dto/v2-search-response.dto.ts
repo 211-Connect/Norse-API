@@ -88,6 +88,15 @@ export class V2QuestionOptionDto {
   })
   // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
   results_count?: number | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: 0,
+    maximum: 1,
+    description:
+      'Need options only, 0 to 1. Formula: the classifier confidence for the need (0 when the model gave none) times an availability factor from results_count: count > 0 -> 1.0, count == 0 -> 0.5 (still listed, sorted lower), count null (not counted) -> 1.0. Options are sorted by it, high to low. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
+  })
+  score?: number;
 }
 
 export class V2HotlineDto {
@@ -101,7 +110,7 @@ export class V2HotlineDto {
 export class V2QuestionDto {
   @ApiProperty() id: string;
   @ApiProperty({
-    enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
+    enum: ['emergency', 'confirm_urgency', 'find_need'],
   })
   type: string;
   @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
