@@ -37,7 +37,16 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 **A code matches itself and its child codes (v2 only).** `BD-1800` matches `BD-1800`, `BD-1800.2000` and `BD-1800.8200-250`, and never `BD-18000`. A child starts with `.` or `-` after the parent code, so each code becomes a `bool.should` of an exact `term` plus `prefix` queries on `<code>.` and `<code>-`. Several codes stay an OR. This holds for the results and for the per-need counts. v1 `query_type=hybrid&taxonomy=` stays exact. v1 `query_type=taxonomy` (classic index) is unchanged. A prefix query on a `keyword` field walks the sorted term list from the prefix, so it is cheap for a narrow code; the cost is not measured.
 
 `intent.taxonomy` echoes the codes the request sent, as sent (not expanded to children), each as `{value, source: "caller"}`. It is absent when the request sent none.
-- Response caching: no CDN cache decorator. The rule is the rules engine's internal `decision.cacheable` (band none and no emergency question, ADR 0039 Decision 28); no `Cache-Control` header is written from it yet (numbers open, ADR 0039 Question 11).
+- Response caching: `GET` declares `@SetCdnCacheTTL(V2_SEARCH_CDN_TTL)` (30 minutes, ADR 0039 Question 11), so a calm answer (band `none`, no emergency question, needs ok) gets `public, max-age=1800, s-maxage=1800` (commit 13905bd). The service calls `markNotStorable` on an answer with an emergency question or a failed check (`decision.cacheable` false), so it gets `no-store` (commit c224627, Decisions 28 and 59).
+
+## ml-broker failure states
+
+The states and what search does for each live in `src/v2/search/classify-outcome.ts`. Search results return in every state.
+
+- `ok`: needs ok and emergency ok. Normal. Cacheable when band is `none` and the answer holds no emergency question.
+- `needs_failed`: no need scores, no urgency (U-X drop), no need questions from the model. The emergency band comes from the emergency signal as normal. Not cacheable.
+- `emergency_failed` (emergency missing, unknown status, or error): band `unknown`, needs as normal. Not cacheable.
+- `failed` (any thrown error: `unconfigured`, `timeout`, `http`, `network`, `malformed`, or `unexpected`): both signals error, band `unknown`. Not cacheable.
 
 ## Tests
 
