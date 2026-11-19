@@ -26,7 +26,7 @@ import {
   RequireCdnUrlMirrors,
   SetCdnCacheTTL,
 } from '../../common/decorators/cdn-cache-ttl.decorator';
-import { ONE_HOUR } from '../../common/const/one-hour';
+import { THIRTY_MINUTES } from '../../common/const/thirty-minutes';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
 import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
@@ -59,8 +59,8 @@ import { V2SearchService } from './v2-search.service';
  * generates the frontend SDK, and a draft must not reach it. Remove
  * `@ApiExcludeController()` when the v2 ADR (ISS-2493) is accepted.
  */
-/** ADR 0039 Question 11 leaves the number open; the same hour as v1 /search. */
-export const V2_SEARCH_CDN_TTL = ONE_HOUR;
+/** ADR 0039 Question 11 (Lucas, 2026-11-18): a calm answer is cached 30 minutes, because the index and pins change fast. */
+export const V2_SEARCH_CDN_TTL = THIRTY_MINUTES;
 
 @ApiExcludeController()
 @ApiTags('Search v2')

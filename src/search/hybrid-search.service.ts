@@ -61,6 +61,7 @@ import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
 import { normalizeQueryText } from './internal/query-text';
 import { queryEmbeddingCacheKey } from './internal/cache-key/query-embedding-cache-key';
 import { packEmbedding, unpackEmbedding } from './internal/embedding-codec';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 
 // An embedding of a text never changes, so it can live long in the cache.
 const DEFAULT_EMBEDDING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1265,7 +1266,7 @@ export class HybridSearchService {
 
   private hybridSourceExcludes() {
     return {
-      excludes: ['embedding', 'service_area', ...SUNE_ENRICHMENT_FIELDS],
+      excludes: SEARCH_SOURCE_EXCLUDES,
     };
   }
 

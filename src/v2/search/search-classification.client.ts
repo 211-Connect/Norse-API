@@ -7,15 +7,14 @@ import { classifyCacheKey } from './classify-cache-key';
 import { AiClassificationSetting } from '../rules/types';
 import { MlBrokerHttpService } from 'src/ml-broker/ml-broker-http.service';
 import { MlBrokerError } from 'src/ml-broker/ml-broker.errors';
+import {
+  classifyOutcomeOf,
+  failedClassifyResult,
+  failureKindOf,
+} from './classify-outcome';
 import { ClassifyResult, toRulesSignals } from './to-rules-signals';
 
 export type { ClassifyResult } from './to-rules-signals';
-
-const failed = (): ClassifyResult => ({
-  signals: { needs: { status: 'error' }, emergency: { status: 'error' } },
-  scores: {},
-  modelVersion: null,
-});
 
 // ADR 0039 Decision 40.
 // Lucas, 2026-11-18: 24 h. A model deploy switches the key (see classify-cache-key.ts).
@@ -42,7 +41,7 @@ class UncacheableResult extends Error {
 }
 
 /**
- * `/v2/search`'s failure policy over ml-broker `search-classification`. It
+ * `/v2/search`'s failure policy (states: classify-outcome.ts) over ml-broker `search-classification`. It
  * never throws: every failure becomes `status: 'error'` signals, so search
  * results still return. Transport lives in MlBrokerHttpService. Warnings never
  * carry the query text, which can hold personal data.
@@ -80,14 +79,20 @@ export class SearchClassificationClient {
     const emergencyOnly =
       aiClassification === 'off' &&
       this.config.get('ML_BROKER_EMERGENCY_ONLY_SUPPORTED') === 'true';
-    const callBroker = async (): Promise<ClassifyResult> =>
-      toRulesSignals(
+    const callBroker = async (): Promise<ClassifyResult> => {
+      const result = toRulesSignals(
         await this.mlBroker.classifySearch({
           query: text,
           tenant_id: tenantId,
           ...(emergencyOnly && { emergency_only: true }),
         }),
       );
+      const outcome = classifyOutcomeOf(result.signals);
+      if (outcome !== 'ok') {
+        this.logger.warn(`search classification partial, outcome=${outcome}`);
+      }
+      return result;
+    };
     const setHit = (hit: boolean) =>
       trace.getActiveSpan()?.setAttribute('v2.classify.cache_hit', hit);
     const cacheEnabled = this.config.get('CLASSIFY_CACHE_ENABLED') !== 'false';
@@ -147,13 +152,17 @@ export class SearchClassificationClient {
         return error.result;
       }
       // MlBrokerError messages hold no request or response body.
-      const reason =
+      const detail =
         error instanceof MlBrokerError
-          ? `kind=${error.kind}: ${error.message}`
-          : `kind=unexpected: ${error instanceof Error ? error.name : 'Error'}`;
-      this.logger.warn(`search classification failed, ${reason}`);
+          ? error.message
+          : error instanceof Error
+            ? error.name
+            : 'Error';
+      this.logger.warn(
+        `search classification failed, outcome=failed kind=${failureKindOf(error)}: ${detail}`,
+      );
       setHit(false);
-      return failed();
+      return failedClassifyResult();
     }
   }
 
