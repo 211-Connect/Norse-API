@@ -495,12 +495,18 @@ describe('V2SearchService', () => {
     });
     expect(res.intent.needs).toEqual(
       expect.arrayContaining([
-        { value: 'N-FOD-01', source: 'caller', state: 'use' },
+        {
+          value: 'N-FOD-01',
+          source: 'caller',
+          state: 'use',
+          description: expect.stringMatching(/\S/),
+        },
         expect.objectContaining({
           value: 'N-HOU-02',
           source: 'inferred',
           state: 'use',
           confidence: 0.99,
+          description: expect.stringMatching(/\S/),
         }),
       ]),
     );

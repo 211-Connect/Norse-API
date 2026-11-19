@@ -16,6 +16,12 @@ export class V2IntentNeedDto {
 
   @ApiPropertyOptional({ description: 'Model score; inferred needs only.' })
   confidence?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'The spoken description of the need (ADR 0039 Decision 31), same text as `description` on a question option.',
+  })
+  description?: string;
 }
 
 export class V2IntentUrgencyDto {

@@ -1,3 +1,4 @@
+import { needText } from '../rules/need-text';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
@@ -429,6 +430,10 @@ export class V2SearchService {
           source: n.source,
           state: n.state,
           ...(n.confidence !== undefined && { confidence: n.confidence }),
+          description: needText(n.code, {
+            tenantId: headers['x-tenant-id'],
+            locale: lang,
+          }).description,
         })),
         urgency: {
           value: decision.urgency.value,
