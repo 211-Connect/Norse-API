@@ -31,7 +31,12 @@ const mk = (
   reason: 'no_need' as const,
   step,
   stem: 's',
-  options: values.map((v) => ({ label: v, parameter, value: v })),
+  options: values.map((v) => ({
+    label: v,
+    parameter,
+    value: v,
+    ...(parameter === 'needs' ? { score: 0 } : {}),
+  })),
   multi_select: true,
   allow_other: true,
   none_of_these: true,
@@ -83,10 +88,12 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
       strong_text_match: false,
     });
-    expect(r.questions[0].options).toEqual([
-      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
-      { label: 'N-FOD', parameter: 'needs', value: 'N-FOD', results_count: 0 },
-      { label: 'N-MON', parameter: 'needs', value: 'N-MON', results_count: 0 },
+    expect(
+      r.questions[0].options.map((o) => [o.value, o.results_count, o.score]),
+    ).toEqual([
+      ['N-HOU', 4, 0],
+      ['N-FOD', 0, 0],
+      ['N-MON', 0, 0],
     ]);
   });
   it('an option the server did not count carries results_count null (Lucas 2026-11-13, question 7)', () => {
@@ -145,12 +152,14 @@ describe('finalize', () => {
         parameter: 'needs',
         value: 'N-HOU',
         results_count: null,
+        score: 0,
       },
       {
         label: 'N-FOD',
         parameter: 'needs',
         value: 'N-FOD',
         results_count: null,
+        score: 0,
       },
     ]);
   });
@@ -189,7 +198,7 @@ describe('finalize', () => {
     expect(r2.questions).toHaveLength(1);
   });
   it('keeps a 0-count option; total 0 drops needs', () => {
-    const d = dec([mk('start', 2, ['N-HOU'])]);
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
@@ -203,13 +212,20 @@ describe('finalize', () => {
   });
   it('ranks by priority, caps at 3', () => {
     const d = dec([
-      mk('narrow:1', 4, ['N-FOD-01'], 'needs', 0.1),
-      mk('area:N-HOU', 3, ['N-HOU-01'], 'needs', 0.6),
-      mk('start', 2, ['N-HOU'], 'needs', 0.9),
+      mk('narrow:1', 4, ['N-FOD-01', 'N-FOD-02'], 'needs', 0.1),
+      mk('area:N-HOU', 3, ['N-HOU-01', 'N-HOU-02'], 'needs', 0.6),
+      mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.9),
       mk('urgency_today', 1, ['U-1'], 'urgency', 0.3),
     ]);
     const r = finalize(d, {
-      counts: counts(10, { 'N-FOD-01': 5, 'N-HOU-01': 5, 'N-HOU': 5 }),
+      counts: counts(10, {
+        'N-FOD-01': 5,
+        'N-FOD-02': 5,
+        'N-HOU-01': 5,
+        'N-HOU-02': 5,
+        'N-HOU': 5,
+        'N-FOD': 5,
+      }),
       strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual([
@@ -218,12 +234,19 @@ describe('finalize', () => {
       'urgency_today',
     ]);
     const d2 = dec([
-      mk('area:N-B', 3, ['N-HOU-01']),
-      mk('area:N-A', 3, ['N-FOD-01']),
-      mk('area:N-C', 3, ['N-MON-01']),
+      mk('area:N-B', 3, ['N-HOU-01', 'N-HOU-02']),
+      mk('area:N-A', 3, ['N-FOD-01', 'N-FOD-02']),
+      mk('area:N-C', 3, ['N-MON-01', 'N-MON-02']),
     ]);
     const r2 = finalize(d2, {
-      counts: counts(10, { 'N-HOU-01': 9, 'N-FOD-01': 6, 'N-MON-01': 5 }),
+      counts: counts(10, {
+        'N-HOU-01': 9,
+        'N-HOU-02': 1,
+        'N-FOD-01': 6,
+        'N-FOD-02': 4,
+        'N-MON-01': 5,
+        'N-MON-02': 5,
+      }),
       strong_text_match: false,
     });
     expect(r2.questions.map((q) => q.id)).toEqual([
@@ -295,11 +318,19 @@ describe('numeric order', () => {
   });
   it('the result split changes the order', () => {
     const d = dec([
-      mk('area:N-A', 3, ['N-HOU-01']),
-      mk('area:N-B', 3, ['N-FOD-01']),
+      mk('area:N-A', 3, ['N-HOU-01', 'N-HOU-02']),
+      mk('area:N-B', 3, ['N-FOD-01', 'N-FOD-02']),
     ]);
     const r = finalize(d, {
-      counts: { total: 100, by_code: { 'N-HOU-01': 1, 'N-FOD-01': 50 } },
+      counts: {
+        total: 100,
+        by_code: {
+          'N-HOU-01': 1,
+          'N-HOU-02': 0,
+          'N-FOD-01': 50,
+          'N-FOD-02': 50,
+        },
+      },
       strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual(['area:N-B', 'area:N-A']);
@@ -359,10 +390,6 @@ describe('golden fixture', () => {
       for (const q of d.candidates.filter((c) => asksNeeds(c))) {
         for (const o of q.options) {
           expect(d.boost_needs).not.toContain(o.value);
-          if (q.type === 'narrow') {
-            expect(r.needs[o.value]).toBeGreaterThanOrEqual(0.12);
-            expect(r.needs[o.value]).toBeLessThan(0.97);
-          }
         }
       }
       for (const c of d.boost_needs) {
