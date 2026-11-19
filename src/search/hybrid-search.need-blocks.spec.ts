@@ -243,6 +243,8 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
         excludes: [
           'embedding',
           'service_area',
+          'taxonomies.use_references',
+          'taxonomies.see_also_references',
           'sune_needs',
           'sune_need_weights',
           'sune_scorecard_version',
