@@ -4,12 +4,11 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
-import { SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import { HttpExceptionFilter } from './common/filters/global-exception.filter';
-import { buildSwaggerConfig } from './common/swagger/swagger-config';
+import { setupSwagger } from './common/swagger/setup-swagger';
 import { configureHttp } from './common/http/configure-http';
 import { useInternalServicesBodyLimit } from './service/internal/internal-services-body';
 
@@ -35,19 +34,7 @@ async function bootstrap() {
   app.use(helmet());
   configureHttp(app);
 
-  const document = SwaggerModule.createDocument(app, buildSwaggerConfig());
-  SwaggerModule.setup('swagger', app, document, {
-    jsonDocumentUrl: 'swagger/json',
-    customCss: `
-      .swagger-ui .parameters-col_name {
-        width: 250px;
-        max-width: 250px;
-      }
-      .swagger-ui .parameters-col_description {
-        width: calc(100% - 250px);
-      }
-    `,
-  });
+  setupSwagger(app);
 
   app.enableShutdownHooks();
 

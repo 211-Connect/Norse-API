@@ -34,6 +34,7 @@ import {
   ReportPrintableDirectoryDeliveryResultDto,
 } from './dto';
 import { PrintableDirectoryDeliveryService } from './printable-directory-delivery.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 /**
  * Service-to-service endpoints for Norse's daily scheduled PDF delivery job.
@@ -45,7 +46,7 @@ import { PrintableDirectoryDeliveryService } from './printable-directory-deliver
 @ApiSecurity('x-internal-api-key')
 @Controller({
   path: 'internal/printable-directory-deliveries',
-  version: '1',
+  version: V1_AND_LEGACY,
 })
 @ApiTenantIdQuery()
 @ApiHeader({

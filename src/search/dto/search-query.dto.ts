@@ -123,11 +123,33 @@ class IsSearchQueryExpressionConstraint implements ValidatorConstraintInterface 
   }
 }
 
-/** Max length (UTF-16 units, as Elasticsearch counts; class-validator's `@MaxLength` counts code points) for a `query` that may also be an array or an AND/OR object: only a string is measured. */
+/**
+ * Length of the query text: a string as is, an array joined with ',' (the join
+ * SearchService uses), an AND/OR object as every string in it joined with ','.
+ * A value that is none of these (the shape validator rejects it) counts 0.
+ */
+const queryTextLength = (value: unknown): number => {
+  const parts: string[] = [];
+  const collect = (node: unknown, depth: number): void => {
+    if (typeof node === 'string') {
+      parts.push(node);
+    } else if (Array.isArray(node)) {
+      node.forEach((item) => collect(item, depth + 1));
+    } else if (node && typeof node === 'object' && depth <= 50) {
+      const { OR, AND } = node as ComplexQuery;
+      collect(OR, depth + 1);
+      collect(AND, depth + 1);
+    }
+  };
+  collect(value, 0);
+  return parts.join(',').length;
+};
+
+/** Max length (UTF-16 units, as Elasticsearch counts; class-validator's `@MaxLength` counts code points) of the query text, whether `query` is a string, an array or an AND/OR object. */
 @ValidatorConstraint({ name: 'isQueryWithinMaxLength', async: false })
-class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
+export class IsQueryWithinMaxLengthConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
-    return typeof value !== 'string' || value.length <= MAX_QUERY_LENGTH;
+    return queryTextLength(value) <= MAX_QUERY_LENGTH;
   }
 
   defaultMessage(): string {

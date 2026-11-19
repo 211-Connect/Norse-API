@@ -42,7 +42,8 @@ export function urgencyState(
   req: RulesRequest,
   signals: RulesSignals,
 ): UrgencyState {
-  if (req.urgency) {
+  // U-X (not yet known) is no answer: fall through to the model guess.
+  if (req.urgency && req.urgency !== 'U-X') {
     return { value: req.urgency, source: 'caller', state: 'use' };
   }
   if (signals.needs.status !== 'ok' || !signals.urgency) {

@@ -3,6 +3,11 @@ import { json } from 'body-parser';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 export const INTERNAL_SERVICES_PATH = '/internal/services';
+/** ISS-2496: the same routes under URI versioning (`V1_AND_LEGACY`). */
+const INTERNAL_SERVICES_PATHS = [
+  INTERNAL_SERVICES_PATH,
+  `/v1${INTERNAL_SERVICES_PATH}`,
+];
 export const INTERNAL_SERVICES_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
 
 /**
@@ -15,7 +20,7 @@ export function useInternalServicesBodyLimit(app: INestApplication): void {
   // Nest skips its global JSON parser when a layer is named `jsonParser`.
   const internalServicesJson: RequestHandler = (req, res, next) =>
     parse(req, res, next);
-  app.use(INTERNAL_SERVICES_PATH, internalServicesJson, tooLarge);
+  app.use(INTERNAL_SERVICES_PATHS, internalServicesJson, tooLarge);
 }
 
 function tooLarge(

@@ -179,10 +179,27 @@ describe('logger config', () => {
       expect(out).toEqual({
         method: 'POST',
         url: '/v1/search',
+        api_version: '1',
         id: 'req-1',
         tenant_id: 'tenant-a',
       });
       expect(JSON.stringify(out)).not.toContain('help%20me');
+    });
+
+    // ISS-2496: the path picks the version; the legacy unversioned path is v1.
+    it.each([
+      ['/v2/search?query=a', '2'],
+      ['/v1/resource/x', '1'],
+      ['/search?query=a', '1'],
+      ['/health', '1'],
+    ])('req serializer logs %p as api_version %p', (url, version) => {
+      const options = buildLoggerOptions('log').pinoHttp as pino.LoggerOptions;
+      const serializers = options.serializers as {
+        req: (req: Record<string, unknown>) => Record<string, unknown>;
+      };
+      expect(
+        serializers.req({ method: 'GET', url, headers: {} }),
+      ).toMatchObject({ api_version: version });
     });
 
     it('keeps autoLogging off', () => {

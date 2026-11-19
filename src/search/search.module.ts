@@ -11,7 +11,7 @@ import { RegionServiceModule } from 'src/region/internal';
 @Module({
   controllers: [SearchController],
   providers: [SearchService, HybridSearchService, AiSearchService],
-  exports: [SearchService],
+  exports: [SearchService, HybridSearchService],
   imports: [
     CmsConfigModule,
     RequestCacheModule,
