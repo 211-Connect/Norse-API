@@ -42,6 +42,8 @@ export interface Hotline {
 export type AiClassificationSetting = 'on' | 'off';
 
 export interface TenantContext {
+  tenant_id?: string; // for the need text resolver (ISS-2665 seam)
+  locale?: string; // for the need text resolver
   top_areas?: string[]; // Tier 1 codes by service count, desc
   hotlines?: Hotline[];
   ai_classification?: AiClassificationSetting;
@@ -74,6 +76,8 @@ export type QuestionReason =
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
   label: string;
+  /** Spoken description of the need (ADR 0039 Decision 31); need options only. */
+  description?: string;
   /** null with value null: the option writes nothing to the URL (no option does today). */
   parameter: OptionParameter | null;
   value: string | null;

@@ -264,6 +264,8 @@ export class V2SearchService {
     // Tenant top areas and hotlines: later slice.
     const decision = decide(rulesRequest, signals, {
       ai_classification: aiClassification,
+      tenant_id: headers['x-tenant-id'],
+      locale: headers['accept-language'] || 'en',
     });
 
     const needScores: NeedScore[] = [];

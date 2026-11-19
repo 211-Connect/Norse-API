@@ -12,6 +12,7 @@ import {
   STEMS,
 } from './config';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
+import { needText } from './need-text';
 import { scoreOf } from './scores';
 import {
   childrenOf,
@@ -57,12 +58,23 @@ export const MIN_OPTIONS = 2;
 export const COUNT_BONUS_WEIGHT = 0.3;
 
 /** `score` is the classifier score of the need, 0..1 (0 when the model gave none). */
-const needOption = (code: string, score: number): QuestionOption => ({
-  label: displayOf(code),
-  parameter: 'needs',
-  value: code,
-  score,
-});
+const needOption = (
+  code: string,
+  score: number,
+  tenant: TenantContext,
+): QuestionOption => {
+  const text = needText(code, {
+    tenantId: tenant.tenant_id,
+    locale: tenant.locale,
+  });
+  return {
+    label: text.display,
+    description: text.description,
+    parameter: 'needs',
+    value: code,
+    score,
+  };
+};
 
 /** A question that offers need codes (start, area, no_match). */
 export const asksNeeds = (q: Question): boolean => q.type === 'find_need';
@@ -184,7 +196,7 @@ export function noMatchQuestion(
     reason: 'weak_match',
     step: 2,
     stem: STEMS.noMatch,
-    options: picks.map((c) => needOption(c, 0)),
+    options: picks.map((c) => needOption(c, 0, tenant)),
     ...needsFlags,
   });
   q.uncertainty = 1;
@@ -279,7 +291,7 @@ export function buildCandidates(
       t1: string,
       reason: 'area_confirmed' | 'area_only',
     ): Question | null => {
-      const options = topChildren(t1).map((c) => needOption(c, sc(c)));
+      const options = topChildren(t1).map((c) => needOption(c, sc(c), tenant));
       if (options.length < MIN_OPTIONS) return null;
       return question({
         id: `area:${t1}`,
@@ -343,7 +355,7 @@ export function buildCandidates(
             ...TIER1_CODES.filter((c) => eligible(c) && !top.includes(c)),
           ];
         }
-        const options = picks.map((c) => needOption(c, sc(c)));
+        const options = picks.map((c) => needOption(c, sc(c), tenant));
         if (options.length >= MIN_OPTIONS)
           out.push(
             question({
