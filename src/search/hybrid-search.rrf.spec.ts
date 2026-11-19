@@ -338,7 +338,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(v1.search.hits.hits[0].sort).toEqual([1.7e38, 7]);
   });
 
-  it('3. v2 sort relevance with coords: fuses the relevance lists, sends no proximity request', async () => {
+  it('3. v2 sort relevance with coords: one proximity request over the pool, at the low weight', async () => {
     await run({ coords: COORDS, distance: 25 });
 
     expect(lists().map(kindOf).sort()).toEqual([
@@ -346,6 +346,75 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       'taxonomy',
       'vector',
     ]);
+    const sent = proximityRequests();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].query.bool.filter).toContainEqual({
+      ids: { values: FUSED },
+    });
+    // Default proximity hits: c and d are close, a is far. The low weight
+    // moves c above b but leaves b ahead of d.
+    const ids = pinnedIdsOf();
+    expect(ids).not.toEqual(FUSED);
+    expect(ids.indexOf('c')).toBeLessThan(ids.indexOf('b'));
+  });
+
+  // Hand-worked RRF (k = 60), lists keyword [a,b,c], vector [b,d,a],
+  // taxonomy [c], proximity weight 0.5. Without proximity: b 0.032522,
+  // a 0.032266, c 0.032266, d 0.016129. Proximity [c, a] (b has no point):
+  //   c = 0.032266 + 0.5/61 = 0.040463
+  //   a = 0.032266 + 0.5/62 = 0.040331
+  //   b = 0.032522 (no vote)
+  it('3i. sort relevance: the proximity list re-ranks by distance at weight 0.5', async () => {
+    proximity = [
+      { id: 'c', meters: 100 },
+      { id: 'a', meters: 5000 },
+    ];
+    await build();
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(pinnedIdsOf()).toEqual(['c', 'a', 'b', 'd']);
+  });
+
+  // Proximity [a, c] far away (beyond the 5 mi scale). A no-point doc that
+  // voted at the scale distance would come first and lead the fused order.
+  it.each([
+    ['Infinity', Infinity],
+    ['the Elasticsearch missing-value sentinel', 1.7976931348623157e308],
+  ])(
+    '3j. sort relevance: a service with no point gets no vote (%s)',
+    async (_label, meters) => {
+      proximity = [
+        { id: 'a', meters: 100000 },
+        { id: 'c', meters: 200000 },
+        { id: 'b', meters },
+      ];
+      await build();
+      await run({ coords: COORDS, distance: 0 });
+
+      expect(pinnedIdsOf()).toEqual(['a', 'c', 'b', 'd']);
+    },
+  );
+
+  it('3k. sort relevance: a failed proximity request keeps the relevance fusion', async () => {
+    mode = 'reject-proximity';
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(proximityRequests()).toHaveLength(1);
+    expect(pinnedIdsOf()).toEqual(FUSED);
+  });
+
+  it('3l. sort relevance: an empty proximity list keeps the relevance fusion', async () => {
+    proximity = [];
+    await build();
+    await run({ coords: COORDS, distance: 25 });
+
+    expect(proximityRequests()).toHaveLength(1);
+    expect(pinnedIdsOf()).toEqual(FUSED);
+  });
+
+  it('3m. sort relevance without coords: no proximity request', async () => {
+    await run({});
+
     expect(proximityRequests()).toHaveLength(0);
     expect(pinnedIdsOf()).toEqual(FUSED);
   });
