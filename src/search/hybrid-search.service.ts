@@ -609,6 +609,14 @@ export class HybridSearchService {
             Record<string, AggregationsStringTermsAggregate>
           >(request),
       );
+      const tenantNeeds = data.aggregations?.tenant_needs as unknown as
+        { with_needs?: { doc_count?: number } } | undefined;
+      if (tenantNeeds?.with_needs?.doc_count === 0) {
+        this.logger.warn(
+          'Tenant index has no docs with sune_needs; need counts treated as not counted',
+        );
+        return undefined;
+      }
       const buckets =
         (data.aggregations?.need_counts?.buckets as
           { key: string; doc_count: number }[] | undefined) ?? [];
@@ -1046,6 +1054,25 @@ export class HybridSearchService {
             // results_count and the result total stay comparable in finalize.
             query: { bool: { filter: [...baseFilters] } },
             aggs: {
+              // Tenant-wide, ignoring the search filters (a global agg): does
+              // this tenant's index hold any doc with `sune_needs`? If not,
+              // every count would be a false 0, so runNeedCounts reports
+              // "not counted" instead.
+              tenant_needs: {
+                global: {},
+                aggs: {
+                  with_needs: {
+                    filter: {
+                      bool: {
+                        filter: [
+                          { term: { tenant_id: tenantId } },
+                          { exists: { field: 'sune_needs' } },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
               need_counts: {
                 terms: {
                   field: 'sune_needs',

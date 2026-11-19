@@ -684,7 +684,7 @@ describe('V2SearchService', () => {
       expect(res.clarification).toBeDefined();
     });
 
-    it('counted: a requested code with no count is written as 0 and its option drops', async () => {
+    it('counted: a requested code with no count is written as 0 and its option stays with 0', async () => {
       const search = jest.fn().mockImplementation(async (a: any) => ({
         ...hybridResponse(10),
         needCounts: Object.fromEntries(
@@ -702,7 +702,8 @@ describe('V2SearchService', () => {
       const needQs = res.clarification.questions.filter((q: any) =>
         ['find_need', 'narrow'].includes(q.type),
       );
-      expect(needQs).toHaveLength(0);
+      expect(needQs).toHaveLength(1);
+      expect(needQs[0].options.map((o: any) => o.results_count)).toEqual([0]);
     });
   });
 
@@ -1285,11 +1286,12 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
       expect(res).not.toHaveProperty('judges');
       expect(res).not.toHaveProperty('needCounts');
       expect(questionIds(res)).toEqual(['no_match']);
-      // N-MON has 0 services: dropped. The others keep their counts.
+      // N-MON has 0 services: kept, with 0. The others keep their counts.
       const q = res.clarification.questions[0];
       expect(q.options.map((o) => [o.value, o.results_count])).toEqual([
         ['N-HOU', 10],
         ['N-FOD', 5],
+        ['N-MON', 0],
       ]);
       expect(search).toHaveBeenCalledTimes(2);
       const second = search.mock.calls[1][0];
