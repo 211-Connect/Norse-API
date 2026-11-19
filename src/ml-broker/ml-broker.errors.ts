@@ -1,3 +1,4 @@
+// What search does for each kind: src/v2/search/classify-outcome.ts.
 export type MlBrokerErrorKind =
   'unconfigured' | 'timeout' | 'http' | 'network' | 'malformed';
 
