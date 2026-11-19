@@ -26,6 +26,12 @@ const CUSTOM_CSS = `
  * (`V1_AND_LEGACY`), so the explorer lists it twice with one operationId. Keep
  * the unversioned paths only: the document, and the frontend SDK generated
  * from it, stay as they were before URI versioning.
+ *
+ * Known regression (decided 2026-11-18, option B): the document lists `/search`
+ * while the public URL is `/v1/search`. When the legacy paths retire (no more
+ * `VERSION_NEUTRAL` in `V1_AND_LEGACY`), this filter deletes every v1 path. The
+ * retirement must switch the document to the real `/v1/...` paths in the same
+ * release, together with the Norse `API_URL` change and an SDK regeneration.
  */
 export function withoutV1Duplicates(document: OpenAPIObject): OpenAPIObject {
   for (const path of Object.keys(document.paths)) {

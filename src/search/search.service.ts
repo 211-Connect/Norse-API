@@ -33,6 +33,7 @@ import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import { searchFingerprint } from './internal/search-fingerprint';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 import { SearchPinsResponseDto } from './dto/search-pins-response.dto';
 import {
   SEARCH_PINS_LIMIT,
@@ -349,7 +350,7 @@ export class SearchService {
       index: indexName,
       from: (page - 1) * limit,
       size: limit || 25,
-      _source_excludes: ['service_area'],
+      _source_excludes: SEARCH_SOURCE_EXCLUDES,
       sort: SearchUtilsService.buildSort(
         coords,
         sort,
