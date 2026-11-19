@@ -26,6 +26,18 @@ describe('relevanceCutoffCacheKey', () => {
     );
   });
 
+  // The probe scores differently under v2 ranking, so a v1 probe must never be
+  // served to v2. The v1 string stays exactly as it was before the switch.
+  it('keeps the v1 key unchanged and separates v2', () => {
+    const v1 = relevanceCutoffCacheKey(base);
+
+    expect(relevanceCutoffCacheKey({ ...base, rankingVersion: 'v1' })).toBe(v1);
+    expect(v1).not.toContain(':v2');
+    const v2 = relevanceCutoffCacheKey({ ...base, rankingVersion: 'v2' });
+    expect(v2).not.toBe(v1);
+    expect(v2).toBe(`${v1}:v2`);
+  });
+
   // The probe drops the pinned boost clause entirely under `ignore`, which
   // moves every score and can move the elbow. Keyed together, a tenant that
   // changed its pinned_resources_mode was served a probe decided under the old
