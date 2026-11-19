@@ -161,8 +161,15 @@ export class MetricsService {
     classifyResult?: (result: T) => DownstreamOutcome,
   ): Promise<T> {
     const start = performance.now();
+    // EXPERIMENT (fusion speed 2026-11-19), removed before push.
+    const trace = process.env.V2_TIMING_TRACE === '1';
     try {
       const result = await fn();
+      if (trace) {
+        console.log(
+          `[ds] ${operation} ${start.toFixed(1)} ${(performance.now() - start).toFixed(1)}`,
+        );
+      }
       const outcome: DownstreamOutcome = classifyResult
         ? classifyResult(result)
         : 'ok';

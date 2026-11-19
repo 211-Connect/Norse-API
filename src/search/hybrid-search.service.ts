@@ -54,6 +54,14 @@ import { assertQueryLength, describeQueryForLog } from './internal/query-log';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { wordRarityCacheKey } from './internal/cache-key/word-rarity-cache-key';
 import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
+import {
+  facetCountsFromDocs,
+  facetSourceFields,
+} from './internal/facets/facet-counts-from-docs';
+import { hashCacheKey } from 'src/common/lib/hash-cache-key';
+
+// EXPERIMENT knobs (fusion speed 2026-11-19), removed before push.
+const exp = (name: string) => process.env[name]?.trim() || undefined;
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -762,8 +770,33 @@ export class HybridSearchService {
     // With the cutoff off the filters are final here, so the keyword and
     // vector lists start now, in parallel with the taxonomy lookup. With the
     // cutoff on the lists wait for the cut's `ids` filter.
+    // EXPERIMENT: fused id cache (step 6).
+    const fusedState = { degraded: !queryVector };
+    const fusedCacheKey =
+      fusionOnly &&
+      fuseEligible &&
+      exp('V2_EXP_FUSED_CACHE') === '1' &&
+      !(wantsVector && wordRarity === null)
+        ? `search:fused:${tenantId}:${lang}:${hashCacheKey({
+            search: searchFingerprint(identity),
+            pinnedMode,
+            sort: sort ?? 'relevance',
+            cutoff: cutoffRequested,
+            needs: boostActive
+              ? [...activeNeeds]
+                  .sort((a, b) => a.code.localeCompare(b.code))
+                  .map(({ code, tier, score }) => ({ code, tier, score }))
+              : [],
+          })}:v2`
+        : undefined;
+    const [cachedFused] = fusedCacheKey
+      ? await this.requestCacheService
+          .getMany<string[]>([fusedCacheKey])
+          .catch(() => [undefined])
+      : [undefined];
+
     const earlyLists =
-      fuseEligible && !cutoffRequested
+      fuseEligible && !cutoffRequested && !cachedFused
         ? this.fetchKeywordAndVectorLists({
             index,
             preference,
@@ -772,6 +805,7 @@ export class HybridSearchService {
             queryVector,
             wordRarity,
             fusionOnly,
+            state: fusedState,
           })
         : undefined;
     // A rejection is handled in fetchFusedOrder. This keeps it from being
@@ -818,15 +852,67 @@ export class HybridSearchService {
       started.catch(() => undefined);
       return started;
     };
+    // EXPERIMENT (step 2): total and facets counted in Node from the fused docs.
+    const startNodeStats = (ids: string[], compare: boolean) => {
+      const filter = [...baseFilters];
+      const started = this.metrics
+        .observeDownstream('elasticsearch', 'hybrid_search_stats_docs', () =>
+          this.elasticsearchService.search({
+            index,
+            preference,
+            size: ids.length,
+            track_total_hits: false,
+            _source: facetSourceFields(aggs),
+            query: { bool: { filter } },
+          }),
+        )
+        .then(
+          (r) =>
+            ({
+              took: r.took,
+              timed_out: r.timed_out,
+              _shards: r._shards,
+              hits: {
+                total: { value: r.hits.hits.length, relation: 'eq' },
+                max_score: null,
+                hits: [],
+              },
+              aggregations: facetCountsFromDocs(
+                aggs,
+                r.hits.hits.map((h) => h._source),
+              ),
+            }) as unknown as Awaited<ReturnType<typeof startStats>>,
+        );
+      started.catch(() => undefined);
+      if (compare) {
+        const viaEs = startStats();
+        Promise.all([started, viaEs])
+          .then(([a, b]) => {
+            const ta = (a.hits.total as { value: number }).value;
+            const tb = (b.hits.total as { value: number }).value;
+            const diff = Object.keys(aggs).filter(
+              (k) =>
+                JSON.stringify(a.aggregations?.[k]?.buckets) !==
+                JSON.stringify(b.aggregations?.[k]?.buckets),
+            );
+            console.log(
+              `[stats-compare] total ${ta} ${tb} aggs ${diff.length === 0 ? 'equal' : 'diff ' + diff.join(',')}`,
+            );
+          })
+          .catch(() => undefined);
+      }
+      return started;
+    };
     // With fusionOnly the stats request waits for the fused ids filter (its
     // total and facets must count the fused set, not the whole population).
     let statsPromise = fastEligible && !fusionOnly ? startStats() : undefined;
 
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback).
-    const predictedTaxonomies = queryVector
-      ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
-      : [];
+    const predictedTaxonomies =
+      queryVector && !(cachedFused && !cutoffRequested)
+        ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
+        : [];
 
     this.logger.log(
       `[Hybrid search] - query: ${describeQueryForLog(queryStr)} | predicted codes: [${predictedTaxonomies
@@ -947,21 +1033,34 @@ export class HybridSearchService {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
       // membership from today's scores; fusion only orders.
-      fusedIds = await this.fetchFusedOrder({
-        index,
-        preference,
-        filters: baseFilters,
-        queryStr,
-        queryVector,
-        predicted: predictedTaxonomies,
-        wordRarity,
-        needs: boostActive ? activeNeeds : [],
-        coords,
-        proximity: sort === 'distance' ? 'distance' : 'relevance',
-        distance: distance ?? 0,
-        earlyLists,
-        fusionOnly,
-      });
+      fusedIds =
+        cachedFused ??
+        (await this.fetchFusedOrder({
+          index,
+          preference,
+          filters: baseFilters,
+          queryStr,
+          queryVector,
+          predicted: predictedTaxonomies,
+          wordRarity,
+          needs: boostActive ? activeNeeds : [],
+          coords,
+          proximity: sort === 'distance' ? 'distance' : 'relevance',
+          distance: distance ?? 0,
+          earlyLists,
+          fusionOnly,
+          state: fusedState,
+        }));
+      if (
+        fusedCacheKey &&
+        !cachedFused &&
+        fusedIds !== undefined &&
+        !fusedState.degraded
+      ) {
+        this.requestCacheService
+          .setMany({ [fusedCacheKey]: fusedIds }, CUTOFF_PROBE_TTL_MS)
+          .catch(() => undefined);
+      }
 
       if (fusedIds === undefined && fusionOnly) {
         // Never the summed order: the caller sorts by the browse order.
@@ -1002,7 +1101,10 @@ export class HybridSearchService {
       // describe the same services, and a page past the set is empty.
       baseFilters.push({ ids: { values: fusedIds } });
       if (fastEligible && pageFrom + pageSize <= fusedIds.length) {
-        statsPromise = startStats();
+        const nodeStats = exp('V2_EXP_NODE_STATS');
+        statsPromise = nodeStats
+          ? startNodeStats(fusedIds, nodeStats === 'compare')
+          : startStats();
       }
     }
 
@@ -1170,6 +1272,7 @@ export class HybridSearchService {
     queryVector: number[] | undefined;
     wordRarity: WordRarity;
     fusionOnly: boolean;
+    state?: { degraded: boolean };
   }): Promise<RankedList[]> {
     const { filters, queryStr, queryVector, wordRarity, fusionOnly } = args;
     const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
@@ -1187,18 +1290,30 @@ export class HybridSearchService {
     if (queryVector) {
       requests.push({
         name: 'vector',
-        promise: this.runRankedList(args, 'hybrid_rrf_vector', {
-          script_score: {
-            query: { bool: { filter: filters } },
-            script: {
-              source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
-              params: { qv: queryVector },
+        promise: this.runRankedList(
+          args,
+          'hybrid_rrf_vector',
+          {
+            script_score: {
+              query: { bool: { filter: filters } },
+              script: {
+                source: "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+                params: { qv: queryVector },
+              },
             },
           },
-        }),
+          exp('V2_EXP_KNN_CANDIDATES')
+            ? {
+                field: 'embedding',
+                query_vector: queryVector,
+                num_candidates: Number(exp('V2_EXP_KNN_CANDIDATES')),
+                filter: { bool: { filter: filters } },
+              }
+            : undefined,
+        ),
       });
     }
-    return this.collectLists(requests, fusionOnly);
+    return this.collectLists(requests, fusionOnly, args.state);
   }
 
   /**
@@ -1210,6 +1325,7 @@ export class HybridSearchService {
   private collectLists(
     requests: { name: RankedList['name']; promise: Promise<string[]> }[],
     fusionOnly: boolean,
+    state?: { degraded: boolean },
   ): Promise<RankedList[]> {
     if (!fusionOnly) {
       return Promise.all(
@@ -1226,6 +1342,7 @@ export class HybridSearchService {
           `RRF list ${name} failed, fusing the other lists: ${(result.reason as Error).message}`,
         );
         this.metrics.recordRankFallback('list_failed', name);
+        if (state) state.degraded = true;
         return [];
       }),
     );
@@ -1235,16 +1352,18 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
+    knn?: Record<string, unknown>,
   ): Promise<string[]> {
+    const size = Number(exp('V2_EXP_LIST_SIZE')) || RRF_LIST_SIZE;
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
         this.elasticsearchService.search({
           index: args.index,
           preference: args.preference,
-          size: RRF_LIST_SIZE,
+          size,
           _source: false,
           track_total_hits: false,
-          query,
+          ...(knn ? { knn: { ...knn, k: size } as never } : { query }),
         }),
       )
       .then((response) =>
@@ -1288,6 +1407,7 @@ export class HybridSearchService {
     distance: number;
     earlyLists?: Promise<RankedList[]>;
     fusionOnly: boolean;
+    state?: { degraded: boolean };
   }): Promise<string[] | undefined> {
     const {
       filters,
@@ -1365,7 +1485,7 @@ export class HybridSearchService {
 
       const [keywordAndVector, rest] = await Promise.all([
         early,
-        this.collectLists(requests, fusionOnly),
+        this.collectLists(requests, fusionOnly, args.state),
       ]);
       // Order: keyword, vector, taxonomy, need. A dropped list leaves the
       // others in place, and each weight stays with its own list.
@@ -1391,7 +1511,10 @@ export class HybridSearchService {
             true,
           );
           const proximity = fusionOnly
-            ? await run.catch((error: Error) => this.dropProximity(error))
+            ? await run.catch((error: Error) => {
+                if (args.state) args.state.degraded = true;
+                return this.dropProximity(error);
+              })
             : await run;
           // Distance mode without a distance vote is the plain distance sort.
           // With fusionOnly it keeps the relevance-fused order instead.
@@ -1418,6 +1541,7 @@ export class HybridSearchService {
             );
             if (fusionOnly) {
               this.metrics.recordRankFallback('list_failed', 'proximity');
+              if (args.state) args.state.degraded = true;
             }
             return [] as string[];
           });

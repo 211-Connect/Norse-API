@@ -146,6 +146,10 @@ export class V2SearchService {
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
+    // EXPERIMENT (fusion speed 2026-11-19), removed before push.
+    if (process.env.V2_TIMING_TRACE === '1') {
+      console.log(`[req] begin ${performance.now().toFixed(1)}`);
+    }
     // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
     const text = dto.query;
     const hasText = text.trim().length > 0;
