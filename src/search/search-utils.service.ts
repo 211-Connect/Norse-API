@@ -17,6 +17,8 @@ import {
 import { FacetConfig, PinnedResourcesMode } from '../cms-config/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { QueryType } from './search.service';
+import { REGION_GEOMETRY_PATH, REGIONS_INDEX } from 'src/region/internal';
+import { AreaFilter } from './internal/area/area-match';
 
 /**
  * Sortable field names per index. The two indices are built by separate
@@ -80,6 +82,7 @@ export class SearchUtilsService {
     geoType: string | undefined,
     geometry: SearchResourcesBodyDto['geometry'],
     organizationId?: string,
+    area?: AreaFilter,
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
 
@@ -144,6 +147,12 @@ export class SearchUtilsService {
       });
     }
 
+    // An area search replaces every point/boundary rule below.
+    if (area?.regionIds.length) {
+      filters.push(SearchUtilsService.buildRegionFilter(area));
+      return filters;
+    }
+
     if (geoType === 'boundary') {
       if (!geometry) {
         throw new BadRequestException(
@@ -182,6 +191,28 @@ export class SearchUtilsService {
       }
 
       if (distance > 0) {
+        // A listing with no map point can't be measured against the radius.
+        // Default mode already requires its service area to contain the search
+        // point (above), so it passes here. Proximity mode skips that test, so
+        // the point-less branch carries it itself; otherwise a point-less
+        // listing from anywhere in the tenant matched every proximity search
+        // (ISS-2755).
+        const lackingCoordinates: QueryDslQueryContainer = {
+          bool: {
+            must_not: { exists: { field: 'location.point' } },
+            ...(geoType === 'proximity' && {
+              filter: {
+                geo_shape: {
+                  service_area: {
+                    shape: { type: 'point', coordinates: [lon, lat] },
+                    relation: 'contains',
+                  },
+                },
+              },
+            }),
+          },
+        };
+
         filters.push({
           bool: {
             should: [
@@ -198,11 +229,7 @@ export class SearchUtilsService {
                   ],
                 },
               },
-              {
-                bool: {
-                  must_not: { exists: { field: 'location.point' } },
-                },
-              },
+              lackingCoordinates,
             ],
           },
         });
@@ -210,6 +237,59 @@ export class SearchUtilsService {
     }
 
     return filters;
+  }
+
+  /**
+   * Matches resources in any of the Regions, as `area.match` says — see
+   * docs/area-search.md. ES reads each shape from the `regions` index by id
+   * (`indexed_shape`), so no geometry is sent.
+   */
+  static buildRegionFilter(area: AreaFilter): QueryDslQueryContainer {
+    const inRegions = (field: 'location.point' | 'service_area') =>
+      area.regionIds.map((id): QueryDslQueryContainer => ({
+        geo_shape: {
+          [field]: {
+            indexed_shape: {
+              index: REGIONS_INDEX,
+              id,
+              path: REGION_GEOMETRY_PATH,
+            },
+            relation: 'intersects',
+          },
+        },
+      }));
+    const hasLocation = { exists: { field: 'location.point' } };
+    const hasServiceArea = { exists: { field: 'service_area' } };
+
+    const located = inRegions('location.point');
+    const serving = inRegions('service_area');
+    const should: QueryDslQueryContainer[] = [...located];
+
+    if (area.match === 'serving') {
+      should.push(...serving);
+    } else if (area.match === 'located_or_serving') {
+      // Only a resource with no location is judged by its service area.
+      should.push({
+        bool: {
+          must_not: [hasLocation],
+          should: serving,
+          minimum_should_match: 1,
+        },
+      });
+    }
+
+    if (area.unlocated !== 'none') {
+      should.push({
+        bool: {
+          must_not: [hasLocation, hasServiceArea],
+          ...(area.unlocated === 'virtual' && {
+            filter: [{ term: { 'location.physical_address.type': 'virtual' } }],
+          }),
+        },
+      });
+    }
+
+    return { bool: { should, minimum_should_match: 1 } };
   }
 
   static getGeoDistanceSort(coords: number[]): SortCombinations {

@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "nest build",
+    "openapi:internal-regions": "ts-node -r tsconfig-paths/register src/common/swagger/internal-regions-openapi.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -83,6 +84,7 @@
     "@types/supertest": "^6.0.3",
     "@typescript-eslint/eslint-plugin": "^8.39.0",
     "@typescript-eslint/parser": "^8.39.0",
+    "ajv": "^8.18.0",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-prettier": "^5.5.4",

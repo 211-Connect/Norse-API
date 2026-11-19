@@ -24,6 +24,8 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
+  // Need boost on hybrid search (ISS-2745); on only for the exact string `true`.
+  NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
   ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,

@@ -33,18 +33,28 @@ export class SearchEventExportRow {
   queryType: SearchQueryType;
 
   @ApiProperty({
-    description: 'Search ZIP/postal code from reverse geocoding',
+    description:
+      'Search ZIP/postal code from event metadata; older events are reverse-geocoded.',
     example: '94102',
     nullable: true,
   })
   searchZipCode: string | null;
 
   @ApiProperty({
-    description: 'Search city from reverse geocoding',
+    description:
+      'Search city from event metadata; older events are reverse-geocoded.',
     example: 'San Francisco',
     nullable: true,
   })
   searchCity: string | null;
+
+  @ApiProperty({
+    description:
+      'Search county/district from event metadata or reverse geocoding',
+    example: 'Cook County',
+    nullable: true,
+  })
+  searchCounty: string | null;
 
   @ApiProperty({
     description: 'Search latitude coordinate',
@@ -61,18 +71,28 @@ export class SearchEventExportRow {
   searchLongitude: number | null;
 
   @ApiProperty({
-    description: 'User ZIP/postal code from reverse geocoding',
+    description:
+      'User ZIP/postal code from event metadata; older events are reverse-geocoded.',
     example: '94102',
     nullable: true,
   })
   userZipCode: string | null;
 
   @ApiProperty({
-    description: 'User city from reverse geocoding',
+    description:
+      'User city from event metadata; older events are reverse-geocoded.',
     example: 'San Francisco',
     nullable: true,
   })
   userCity: string | null;
+
+  @ApiProperty({
+    description:
+      'User county/district from event metadata or reverse geocoding',
+    example: 'Cook County',
+    nullable: true,
+  })
+  userCounty: string | null;
 
   @ApiProperty({
     description: 'User latitude coordinate',

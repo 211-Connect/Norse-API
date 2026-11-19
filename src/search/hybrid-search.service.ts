@@ -14,6 +14,7 @@ import {
 } from '@elastic/elasticsearch/lib/api/types';
 import { SearchResourcesQueryDto } from './dto/search-query.dto';
 import { SearchResourcesBodyDto } from './dto/search-body.dto';
+import { AreaFilter } from './internal/area/area-match';
 import { HeadersDto } from '../common/dto/headers.dto';
 import {
   SearchHit,
@@ -35,6 +36,8 @@ import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
+import { stripEnrichment } from './internal/enrichment-fields';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 
 // Vector weight mirrors the old kNN boost; tune to shift lexical vs semantic balance.
 // After switching to Math.max(0, cosine) the effective range is ~0–0.4 vs the old
@@ -58,10 +61,26 @@ const TAXONOMY_BOOST_MAX_SCALE = 5;
 // Additive weight of the proximity signal in the hybrid score. Tuned to 25 (see ISS-1367).
 const GEO_GAUSS_WEIGHT = 25;
 const GEO_DEFAULT_SCALE_MI = 5;
+// Need boost (ISS-2745). Start values from the 2026-11-11 boost test: each need
+// clause adds FRACTION x the top base score x the need score (K = fraction x top
+// base score). The 0.97 gate is Lucas's pick. Tier 1 needs boost at a smaller factor.
+const NEED_BOOST_FRACTION = 0.1;
+const NEED_BOOST_GATE = 0.97;
+const NEED_BOOST_TIER1_FACTOR = 0.5;
+
+export type NeedScore = {
+  code: string;
+  tier: 'tier1' | 'tier2';
+  score: number;
+};
+
 type HybridSearchOptions = {
   headers: HeadersDto;
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
+  needScores?: NeedScore[];
+  /** An area search, as `SearchService` settled it. */
+  area?: AreaFilter;
 };
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -200,6 +219,7 @@ export class HybridSearchService {
   private readonly embeddingBaseUrl: string;
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
+  private readonly needBoostEnabled: boolean;
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -212,6 +232,8 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
+    this.needBoostEnabled =
+      this.configService.get<string>('NEED_BOOST_ENABLED') === 'true';
   }
 
   /**
@@ -284,7 +306,10 @@ export class HybridSearchService {
         _index: hit._index,
         _id: hit._id,
         _score: hit._score ?? null,
-        _source: { ...hit._source, facets: normalizedFacets },
+        _source: stripEnrichment({
+          ...hit._source,
+          facets: normalizedFacets,
+        }),
         sort: hit.sort as number[] | undefined,
       };
     });
@@ -373,6 +398,7 @@ export class HybridSearchService {
       geoType: geo_type,
       organizationId: organization_id,
       geometry,
+      area: options.area,
     };
     const preference = shardPreference('hybrid', searchFingerprint(identity));
 
@@ -417,7 +443,9 @@ export class HybridSearchService {
     );
 
     // buildFilters keeps the existing geo semantics: service_area "contains" AND
-    // (within `distance` of location.point OR no location.point). A true
+    // (within `distance` of location.point OR no location.point). In proximity
+    // mode there is no top-level "contains", and a listing with no point needs
+    // its service_area to contain the search point instead (ISS-2755). A true
     // "service_area OR location-close" would require combining those into a
     // `should` with minimum_should_match: 1 — intentionally NOT changed here.
     const baseFilters = SearchUtilsService.buildFilters(
@@ -428,6 +456,7 @@ export class HybridSearchService {
       geo_type,
       geometry,
       organization_id,
+      options.area,
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 
@@ -474,6 +503,34 @@ export class HybridSearchService {
 
     const aggs = SearchUtilsService.buildFacetAggregations(tenantFacets, lang);
 
+    // Need boost (ISS-2745). Runs only with the switch on, a ranked request and
+    // at least one need at or above the gate; otherwise nothing below runs and
+    // the request is unchanged.
+    const activeNeeds = (options.needScores ?? []).filter(
+      (n) =>
+        (n.tier === 'tier1' || n.tier === 'tier2') &&
+        n.code !== 'N-X' &&
+        n.score >= NEED_BOOST_GATE,
+    );
+    let needShould: QueryDslQueryContainer[] = [];
+
+    if (this.needBoostEnabled && rank && activeNeeds.length > 0) {
+      const topScore = await this.fetchNeedBoostTopScore({
+        index,
+        preference,
+        queryStr,
+        queryVector,
+        predicted: predictedTaxonomies,
+        filters: baseFilters,
+        coords,
+        distance: distance ?? 0,
+        pinnedMode,
+      });
+      if (topScore > 0) {
+        needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+      }
+    }
+
     const request = this.buildHybridQuery({
       index,
       preference,
@@ -488,6 +545,7 @@ export class HybridSearchService {
       aggs,
       pinnedMode,
       sort,
+      extraShould: needShould,
     });
 
     return { request, tenantFacets, cutoff, lang };
@@ -804,6 +862,14 @@ export class HybridSearchService {
       const scale =
         distance > 0 ? `${distance}mi` : `${GEO_DEFAULT_SCALE_MI}mi`;
       functions.push({
+        // A decay function scores a document that lacks the field as 1, the
+        // same as one at the origin. Without this filter a listing with no map
+        // point got the full distance bonus (ISS-2755). With it, the listing
+        // gets 0 from distance, except that a document matching no function
+        // at all scores 1: with no embedding (browse, or the text-only
+        // fallback) and no priority function (pinned mode top/ignore), a
+        // listing with no point gets +1. See docs/location-search.md.
+        filter: { exists: { field: 'location.point' } },
         gauss: {
           'location.point': {
             origin: { lat, lon },
@@ -1088,6 +1154,66 @@ export class HybridSearchService {
     };
   }
 
+  /**
+   * Top base score for the need boost: the same query as the main request,
+   * without the need clauses, asking for one hit.
+   */
+  private async fetchNeedBoostTopScore(args: {
+    index: string;
+    preference: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    coords: number[] | undefined;
+    distance: number;
+    pinnedMode: PinnedResourcesMode;
+  }): Promise<number> {
+    const { index, preference, ...queryArgs } = args;
+    try {
+      const response = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_need_boost_top_score',
+        () =>
+          this.elasticsearchService.search({
+            index,
+            preference,
+            size: 1,
+            _source: false,
+            track_total_hits: false,
+            sort: ['_score'],
+            query: this.buildHybridScoredQuery(queryArgs),
+          }),
+      );
+      const topScore = response.hits.hits[0]?._score ?? 0;
+      if (topScore <= 0) {
+        this.logger.warn('Need boost skipped: no top base score');
+        return 0;
+      }
+      return topScore;
+    } catch (error) {
+      this.logger.warn(`Need boost skipped: ${(error as Error).message}`);
+      return 0;
+    }
+  }
+
+  private buildNeedBoostClauses(
+    needs: NeedScore[],
+    topScore: number,
+  ): QueryDslQueryContainer[] {
+    const k = NEED_BOOST_FRACTION * topScore;
+    return needs.map((need) => ({
+      rank_feature: {
+        field: `sune_need_weights.${need.code}`,
+        linear: {},
+        boost:
+          k *
+          need.score *
+          (need.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
+      },
+    }));
+  }
+
   private buildHybridQuery(args: {
     index: string;
     preference: string;
@@ -1102,6 +1228,7 @@ export class HybridSearchService {
     aggs: Aggregations;
     pinnedMode: PinnedResourcesMode;
     sort: SearchResourcesQueryDto['sort'];
+    extraShould?: QueryDslQueryContainer[];
   }): SearchRequest {
     const {
       index,
@@ -1117,6 +1244,54 @@ export class HybridSearchService {
       aggs,
       pinnedMode,
       sort: sortOption,
+      extraShould,
+    } = args;
+
+    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+
+    const esQuery = this.buildHybridScoredQuery({
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      coords,
+      distance,
+      pinnedMode,
+      extraShould,
+    });
+
+    return {
+      index,
+      preference,
+      from: (page - 1) * limit,
+      size: limit,
+      track_total_hits: true,
+      _source: { excludes: SEARCH_SOURCE_EXCLUDES },
+      aggs,
+      query: esQuery,
+      sort,
+    };
+  }
+
+  private buildHybridScoredQuery(args: {
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    coords: number[] | undefined;
+    distance: number;
+    pinnedMode: PinnedResourcesMode;
+    extraShould?: QueryDslQueryContainer[];
+  }): QueryDslQueryContainer {
+    const {
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      coords,
+      distance,
+      pinnedMode,
+      extraShould,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
@@ -1143,9 +1318,12 @@ export class HybridSearchService {
             },
           ]
         : [];
-    const should = [...lexicalShould, ...taxonomyShould, ...pinnedShould];
-
-    const sort = this.buildHybridSort(sortOption, coords, pinnedMode);
+    const should = [
+      ...lexicalShould,
+      ...taxonomyShould,
+      ...pinnedShould,
+      ...(extraShould ?? []),
+    ];
 
     const scoreFunctions = this.buildScoreFunctions(
       queryVector,
@@ -1189,17 +1367,7 @@ export class HybridSearchService {
           }
         : innerBool;
 
-    return {
-      index,
-      preference,
-      from: (page - 1) * limit,
-      size: limit,
-      track_total_hits: true,
-      _source: { excludes: ['embedding', 'service_area'] },
-      aggs,
-      query: esQuery,
-      sort,
-    };
+    return esQuery;
   }
 
   /**

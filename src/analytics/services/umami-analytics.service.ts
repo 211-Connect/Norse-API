@@ -898,16 +898,31 @@ export class UmamiAnalyticsService {
 
       const userCoords = this.getPivotPropertyValue(row, 'userCoordinates');
       const searchCoords = this.getPivotPropertyValue(row, 'searchCoordinates');
-
+      const searchCity = this.getPivotPropertyValue(row, 'searchCity');
+      const searchZipCode = this.getPivotPropertyValue(row, 'searchZipCode');
+      const searchCounty = this.getPivotPropertyValue(row, 'searchCounty');
+      const userCity = this.getPivotPropertyValue(row, 'userCity');
+      const userZipCode = this.getPivotPropertyValue(row, 'userZipCode');
+      const userCounty = this.getPivotPropertyValue(row, 'userCounty');
       const rawSessionId = this.getPivotPropertyValue(row, 'session_id');
       const rawReferralSource = this.getPivotPropertyValue(row, 'utm_source');
 
-      const searchResult: ReverseGeocodeOutput | null = searchCoords
-        ? await this.reverseGeocode(searchCoords, row.eventId)
-        : null;
-      const userResult: ReverseGeocodeOutput | null = userCoords
-        ? await this.reverseGeocode(userCoords, row.eventId)
-        : null;
+      const needsSearchGeocode =
+        !searchCity?.trim() || !searchZipCode?.trim() || !searchCounty?.trim();
+      const needsUserGeocode =
+        !userCity?.trim() || !userZipCode?.trim() || !userCounty?.trim();
+
+      const searchResult: ReverseGeocodeOutput | null =
+        searchCoords && needsSearchGeocode
+          ? await this.reverseGeocode(searchCoords, row.eventId)
+          : null;
+      const userResult: ReverseGeocodeOutput | null =
+        userCoords && needsUserGeocode
+          ? await this.reverseGeocode(userCoords, row.eventId)
+          : null;
+
+      const searchCoordinateValues = searchCoords?.split(',').map(Number);
+      const userCoordinateValues = userCoords?.split(',').map(Number);
 
       const timestamp = new Date(row.createdAt).toISOString();
 
@@ -916,14 +931,32 @@ export class UmamiAnalyticsService {
         queryLabel,
         queryType,
         sessionId: rawSessionId ?? null,
-        searchZipCode: searchResult?.zipCode ?? null,
-        searchCity: searchResult?.city ?? null,
-        searchLatitude: searchResult?.latitude ?? null,
-        searchLongitude: searchResult?.longitude ?? null,
-        userZipCode: userResult?.zipCode ?? null,
-        userCity: userResult?.city ?? null,
-        userLatitude: userResult?.latitude ?? null,
-        userLongitude: userResult?.longitude ?? null,
+        searchZipCode: searchZipCode?.trim() || searchResult?.zipCode || null,
+        searchCity: searchCity?.trim() || searchResult?.city || null,
+        searchCounty: searchCounty?.trim() || searchResult?.county || null,
+        searchLatitude:
+          searchCoordinateValues?.length === 2 &&
+          Number.isFinite(searchCoordinateValues[1])
+            ? searchCoordinateValues[1]
+            : (searchResult?.latitude ?? null),
+        searchLongitude:
+          searchCoordinateValues?.length === 2 &&
+          Number.isFinite(searchCoordinateValues[0])
+            ? searchCoordinateValues[0]
+            : (searchResult?.longitude ?? null),
+        userZipCode: userZipCode?.trim() || userResult?.zipCode || null,
+        userCity: userCity?.trim() || userResult?.city || null,
+        userCounty: userCounty?.trim() || userResult?.county || null,
+        userLatitude:
+          userCoordinateValues?.length === 2 &&
+          Number.isFinite(userCoordinateValues[1])
+            ? userCoordinateValues[1]
+            : (userResult?.latitude ?? null),
+        userLongitude:
+          userCoordinateValues?.length === 2 &&
+          Number.isFinite(userCoordinateValues[0])
+            ? userCoordinateValues[0]
+            : (userResult?.longitude ?? null),
         referralSource: rawReferralSource ?? null,
       };
     } catch (error) {
@@ -961,12 +994,15 @@ export class UmamiAnalyticsService {
         provider: GeocodingProvider.OPENCAGE,
       });
 
-      if (results && results.length > 0 && results[0].postcode) {
+      const result = results?.[0];
+
+      if (result) {
         return {
           latitude: lat,
           longitude: lng,
-          zipCode: results[0].postcode,
-          city: results[0].place || '',
+          zipCode: result.postcode ?? '',
+          city: result.place ?? '',
+          county: result.district ?? '',
         };
       }
 

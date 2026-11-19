@@ -1,3 +1,4 @@
+import { RegionService } from 'src/region/internal';
 import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { SearchService } from './search.service';
@@ -46,6 +47,11 @@ describe('SearchService', () => {
           provide: MetricsService,
           useValue: createMetricsServiceMock(),
         },
+        {
+          // Area searches (`region`) are covered in search.service.area.spec.ts.
+          provide: RegionService,
+          useValue: { getSummaries: jest.fn(async () => []) },
+        },
       ],
     }).compile();
 
@@ -85,6 +91,32 @@ describe('SearchService', () => {
     const request = elasticsearchService.search.mock.calls[0][0];
     expect(request.from).toBe(200);
     expect(request.size).toBe(100);
+  });
+
+  it('leaves taxonomy curated references out of the hits, but keeps descriptions', async () => {
+    await service.searchResources({
+      headers: { 'x-tenant-id': 'tenant-1', 'accept-language': 'en' } as any,
+      query: {
+        query: 'housing',
+        query_type: 'text',
+        page: 1,
+        limit: 25,
+        filters: {},
+        taxonomy: [],
+        distance: 0,
+        sort: 'relevance',
+      } as SearchResourcesQueryDto,
+    });
+
+    const request = elasticsearchService.search.mock.calls[0][0];
+    expect(request._source_excludes).toEqual(
+      expect.arrayContaining([
+        'service_area',
+        'taxonomies.use_references',
+        'taxonomies.see_also_references',
+      ]),
+    );
+    expect(request._source_excludes).not.toContain('taxonomies.description');
   });
 
   it('accepts complex taxonomy query objects', async () => {
