@@ -33,7 +33,7 @@ const jsonResponse = (body: unknown, status = 200) =>
     text: async () => JSON.stringify(body),
   }) as unknown as Response;
 
-const TTL = 59 * 60 * 1000;
+const TTL = 24 * 60 * 60 * 1000;
 
 describe('SearchClassificationClient cache', () => {
   const realFetch = global.fetch;
@@ -104,16 +104,44 @@ describe('SearchClassificationClient cache', () => {
     jest.restoreAllMocks();
   });
 
-  it('miss then hit: one broker call, one write with the 59 min TTL', async () => {
+  it('miss then hit: one broker call, the 24 h TTL', async () => {
     fetchMock.mockResolvedValue(jsonResponse(brokerBody()));
     const client = build();
     const a = await client.classify('rent help', 't1');
     const b = await client.classify('rent help', 't1');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(b).toEqual(a);
-    expect(sets).toHaveLength(1);
-    expect(sets[0][0]).toBe(classifyCacheKey('t1', 'on', 'rent help'));
-    expect(sets[0][2]).toBe(TTL);
+    // The first answer is stored under the `unknown` key and under the key
+    // for the version it reports.
+    expect(sets.map((x) => x[0]).sort()).toEqual(
+      [
+        classifyCacheKey('t1', 'on', 'rent help'),
+        classifyCacheKey('t1', 'on', 'rent help', 'mv-1'),
+      ].sort(),
+    );
+    expect(sets.every((x) => x[2] === TTL)).toBe(true);
+  });
+
+  it('a new model_version switches the key; the old entry is not read', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(brokerBody()))
+      .mockResolvedValueOnce(
+        jsonResponse(brokerBody({ model_version: 'mv-2' })),
+      )
+      .mockResolvedValue(jsonResponse(brokerBody({ model_version: 'mv-2' })));
+    const client = build();
+    await client.classify('rent help', 't1'); // call 1: sees mv-1
+    await client.classify('rent help', 't1'); // hit on mv-1 key
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await client.classify('other words', 't1'); // call 2: sees mv-2, key switches
+    const after = await client.classify('rent help', 't1'); // mv-2 key: miss
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(after.modelVersion).toBe('mv-2');
+    await client.classify('rent help', 't1'); // now a hit
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.has(classifyCacheKey('t1', 'on', 'rent help', 'mv-2'))).toBe(
+      true,
+    );
   });
 
   it('keeps tenants apart', async () => {
@@ -122,7 +150,9 @@ describe('SearchClassificationClient cache', () => {
     await client.classify('rent help', 't1');
     await client.classify('rent help', 't2');
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(new Set(sets.map((s) => s[0])).size).toBe(2);
+    expect(
+      new Set(sets.map((s) => s[0]).filter((k) => k.includes(':mv-1:'))).size,
+    ).toBe(2);
   });
 
   it('keeps ai on and off apart', async () => {

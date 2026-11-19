@@ -18,8 +18,8 @@ const failed = (): ClassifyResult => ({
 });
 
 // ADR 0039 Decision 40.
-// Under 1 h so a cached classification never outlives ADR 0039 Decision 40 (Lucas, 2026-11-18: 59 min).
-const CLASSIFY_CACHE_TTL_MS = 59 * 60 * 1000;
+// Lucas, 2026-11-18: 24 h. A model deploy switches the key (see classify-cache-key.ts).
+const CLASSIFY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** A result that may be stored: both signals ok and a scores object. */
 const isCacheable = (r: unknown): r is ClassifyResult => {
@@ -48,7 +48,7 @@ class UncacheableResult extends Error {
  * carry the query text, which can hold personal data.
  *
  * Cache: a result with both signals ok is stored in Redis (RequestCacheService)
- * for 59 min under `classify:v1:{tenant}:{ai}:{sha256 of normalized text}`; see
+ * for 24 h under `classify:v2:{tenant}:{ai}:{model version}:{sha256 of normalized text}`; see
  * classify-cache-key.ts. Error results are never stored. Off only when
  * CLASSIFY_CACHE_ENABLED is exactly `false`. The hit flag goes on the active
  * span as `v2.classify.cache_hit`.
@@ -56,6 +56,8 @@ class UncacheableResult extends Error {
 @Injectable()
 export class SearchClassificationClient {
   private readonly logger = new Logger(SearchClassificationClient.name);
+  /** Last ml-broker model_version this pod saw; in memory only. */
+  private lastModelVersion: string | null = null;
 
   constructor(
     private readonly mlBroker: MlBrokerHttpService,
@@ -89,7 +91,12 @@ export class SearchClassificationClient {
     const setHit = (hit: boolean) =>
       trace.getActiveSpan()?.setAttribute('v2.classify.cache_hit', hit);
     const cacheEnabled = this.config.get('CLASSIFY_CACHE_ENABLED') !== 'false';
-    const key = classifyCacheKey(tenantId, aiClassification, text);
+    const key = classifyCacheKey(
+      tenantId,
+      aiClassification,
+      text,
+      this.lastModelVersion,
+    );
     let called = false;
     try {
       if (!cacheEnabled) {
@@ -103,6 +110,12 @@ export class SearchClassificationClient {
           const fresh = await callBroker();
           // Never store an error signal: a missed emergency must not be reused.
           if (!isCacheable(fresh)) throw new UncacheableResult(fresh);
+          await this.switchKeyOnNewVersion(
+            fresh,
+            tenantId,
+            aiClassification,
+            text,
+          );
           return fresh;
         },
         CLASSIFY_CACHE_TTL_MS,
@@ -120,6 +133,12 @@ export class SearchClassificationClient {
           { [key]: fresh },
           CLASSIFY_CACHE_TTL_MS,
         );
+        await this.switchKeyOnNewVersion(
+          fresh,
+          tenantId,
+          aiClassification,
+          text,
+        );
       }
       return fresh;
     } catch (error) {
@@ -136,5 +155,24 @@ export class SearchClassificationClient {
       setHit(false);
       return failed();
     }
+  }
+
+  /**
+   * The first response with a new model_version switches the key for this pod
+   * and is stored under the new key, so the next read is a hit.
+   */
+  private async switchKeyOnNewVersion(
+    fresh: ClassifyResult,
+    tenantId: string,
+    ai: AiClassificationSetting,
+    text: string,
+  ): Promise<void> {
+    const version = fresh.modelVersion;
+    if (!version || version === this.lastModelVersion) return;
+    this.lastModelVersion = version;
+    await this.requestCache.setMany(
+      { [classifyCacheKey(tenantId, ai, text, version)]: fresh },
+      CLASSIFY_CACHE_TTL_MS,
+    );
   }
 }
