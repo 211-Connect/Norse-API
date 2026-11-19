@@ -223,4 +223,67 @@ describe('TenantConfigService cache metrics', () => {
       'tenant-config-lru:hit',
     ]);
   });
+
+  describe('getPublicAppConfig', () => {
+    const appConfig = (locale: string) => ({
+      tenantId: 'tenant-1',
+      locale,
+      brand: { name: 'Wyoming 211', theme: {} },
+    });
+    const redis = (entries: Record<string, unknown>) =>
+      cmsRedisService.get.mockImplementation(async (key: string) =>
+        key in entries ? JSON.stringify(entries[key]) : null,
+      );
+
+    it('reads public_app_config:<tenant>:<locale> and caches it', async () => {
+      redis({ 'public_app_config:tenant-1:es': appConfig('es') });
+
+      await expect(
+        service.getPublicAppConfig('tenant-1', 'es'),
+      ).resolves.toEqual(appConfig('es'));
+      await service.getPublicAppConfig('tenant-1', 'es');
+
+      expect(cmsRedisService.get).toHaveBeenCalledTimes(1);
+      expect(recordCalls()).toEqual([
+        'tenant-config-lru:miss',
+        'tenant-config-redis:hit',
+        'tenant-config-lru:hit',
+      ]);
+    });
+
+    it('falls back to en when the locale has no entry', async () => {
+      redis({ 'public_app_config:tenant-1:en': appConfig('en') });
+
+      await expect(
+        service.getPublicAppConfig('tenant-1', 'fr'),
+      ).resolves.toEqual(appConfig('en'));
+      expect(cmsRedisService.get.mock.calls.map(([key]) => key)).toEqual([
+        'public_app_config:tenant-1:fr',
+        'public_app_config:tenant-1:en',
+      ]);
+    });
+
+    it('returns null and caches the miss when nothing is published', async () => {
+      redis({});
+
+      await expect(service.getPublicAppConfig('tenant-1')).resolves.toBeNull();
+      await expect(service.getPublicAppConfig('tenant-1')).resolves.toBeNull();
+      expect(cmsRedisService.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('clearCacheForTenant drops every locale of that tenant only', async () => {
+      redis({
+        'public_app_config:tenant-1:en': appConfig('en'),
+        'public_app_config:tenant-2:en': appConfig('en'),
+      });
+      await service.getPublicAppConfig('tenant-1');
+      await service.getPublicAppConfig('tenant-2');
+
+      service.clearCacheForTenant('tenant-1');
+      await service.getPublicAppConfig('tenant-1');
+      await service.getPublicAppConfig('tenant-2');
+
+      expect(cmsRedisService.get).toHaveBeenCalledTimes(3);
+    });
+  });
 });

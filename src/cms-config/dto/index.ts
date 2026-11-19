@@ -8,3 +8,5 @@ export {
   TopicSubtopicConfigItemDto,
   TopicsConfigResponseDto,
 } from './topics-config-response.dto';
+export * from './public-app-config-response.dto';
+export { TenantConfigQueryDto } from './tenant-config-query.dto';

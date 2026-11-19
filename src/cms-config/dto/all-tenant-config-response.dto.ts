@@ -4,6 +4,7 @@ import {
   OrchestrationConfigCache,
   SearchConfigCache,
 } from '../types';
+import { PublicAppConfigResponseDto } from './public-app-config-response.dto';
 import { SuggestionsConfigResponseDto } from './suggestions-config-response.dto';
 import { TopicsConfigResponseDto } from './topics-config-response.dto';
 
@@ -46,4 +47,13 @@ export class AllTenantConfigResponseDto {
     description: 'Orchestration configuration',
   })
   orchestrationConfig?: OrchestrationConfigCache | null;
+
+  @ApiProperty({
+    type: PublicAppConfigResponseDto,
+    required: false,
+    nullable: true,
+    description:
+      'Branding, menus, legal page switches, alerts, i18n and map view, as PayloadCMS publishes them for the requested locale (`?locale=`, default en, falling back to en). Null when the tenant has none, e.g. its resource directory is off',
+  })
+  appConfig?: PublicAppConfigResponseDto | null;
 }

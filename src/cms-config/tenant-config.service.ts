@@ -16,6 +16,7 @@ import {
   FacetConfig,
   FacetsConfigCache,
   OrchestrationConfigCache,
+  PublicAppConfigCache,
   SearchConfigCache,
   SuggestionsConfigCache,
   TopicsConfigCache,
@@ -49,6 +50,11 @@ export class TenantConfigService {
   private readonly orchestrationConfigCache = new LRUCache<
     string,
     OrchestrationConfigCache | null
+  >(LRU_CACHE_CONFIG);
+  /** Keyed `${tenantId}:${locale}`. */
+  private readonly publicAppConfigCache = new LRUCache<
+    string,
+    PublicAppConfigCache | null
   >(LRU_CACHE_CONFIG);
 
   constructor(
@@ -408,6 +414,49 @@ export class TenantConfigService {
   }
 
   /**
+   * Reads the tenant's public app config written by PayloadCMS to Redis DB 2
+   * under `public_app_config:${tenantId}:${locale}`, falling back to `en`.
+   * Returns null when missing or on error so the aggregate endpoint can omit
+   * it cleanly.
+   */
+  async getPublicAppConfig(
+    tenantId: string,
+    locale = 'en',
+  ): Promise<PublicAppConfigCache | null> {
+    const cacheKey = `${tenantId}:${locale}`;
+    const inMemoryCached = this.publicAppConfigCache.get(cacheKey);
+    if (inMemoryCached !== undefined) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
+      return inMemoryCached;
+    }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
+
+    const candidates = locale === 'en' ? ['en'] : [locale, 'en'];
+    for (const candidate of candidates) {
+      try {
+        const redisValue = await this.cmsRedisService.get(
+          `public_app_config:${tenantId}:${candidate}`,
+        );
+        if (redisValue && typeof redisValue === 'string') {
+          this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
+          const appConfig = JSON.parse(redisValue) as PublicAppConfigCache;
+          this.publicAppConfigCache.set(cacheKey, appConfig);
+          return appConfig;
+        }
+      } catch (error) {
+        this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
+        this.logger.error(
+          `Error fetching public app config from Redis DB 2 for ${tenantId}:${candidate}: ${error.message}`,
+        );
+      }
+      this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
+    }
+
+    this.publicAppConfigCache.set(cacheKey, null);
+    return null;
+  }
+
+  /**
    *
    * @deprecated This method is only used as a fallback to fetch tenant configuration from Strapi when Redis DB 2 is unavailable or missing data.
    * It is not optimized for performance and should not be used as the primary method for fetching tenant configuration due to potential latency and load on the CMS.
@@ -493,6 +542,7 @@ export class TenantConfigService {
     this.topicsCache.clear();
     this.suggestionsCache.clear();
     this.orchestrationConfigCache.clear();
+    this.publicAppConfigCache.clear();
     this.logger.log('All in-memory cache cleared');
   }
 
@@ -505,6 +555,9 @@ export class TenantConfigService {
     this.topicsCache.delete(tenantId);
     this.suggestionsCache.delete(tenantId);
     this.orchestrationConfigCache.delete(tenantId);
+    for (const key of this.publicAppConfigCache.keys()) {
+      if (key.startsWith(`${tenantId}:`)) this.publicAppConfigCache.delete(key);
+    }
     this.logger.log(`In-memory cache cleared for tenant: ${tenantId}`);
   }
 }

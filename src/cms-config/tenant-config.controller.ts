@@ -1,9 +1,10 @@
-import { Controller, Get, Param, VERSION_NEUTRAL } from '@nestjs/common';
+import { Controller, Get, Param, Query, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiTags, ApiParam, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { TenantConfigService } from './tenant-config.service';
 import {
   AllTenantConfigResponseDto,
   SuggestionsConfigResponseDto,
+  TenantConfigQueryDto,
   TopicsConfigResponseDto,
 } from './dto';
 
@@ -68,7 +69,7 @@ export class TenantConfigController {
     name: 'tenantId',
     required: true,
     description:
-      'Tenant ID to fetch complete configuration for (locales, facets, topics, suggestions, hybrid search, orchestration)',
+      'Tenant ID to fetch complete configuration for (locales, facets, topics, suggestions, hybrid search, orchestration, app config)',
     example: '1',
   })
   @ApiResponse({
@@ -86,6 +87,7 @@ export class TenantConfigController {
   })
   async getAllTenantConfig(
     @Param('tenantId') tenantId: string,
+    @Query() query: TenantConfigQueryDto,
   ): Promise<AllTenantConfigResponseDto> {
     const [
       locales,
@@ -94,6 +96,7 @@ export class TenantConfigController {
       suggestions,
       hybridSearchConfig,
       orchestrationConfig,
+      appConfig,
     ] = await Promise.all([
       this.tenantConfigService.getTenantLocales(tenantId),
       this.tenantConfigService.getFacets(tenantId),
@@ -101,6 +104,10 @@ export class TenantConfigController {
       this.tenantConfigService.getSuggestions(tenantId),
       this.tenantConfigService.getSearchConfig(tenantId),
       this.tenantConfigService.getOrchestrationConfig(tenantId),
+      this.tenantConfigService.getPublicAppConfig(
+        tenantId,
+        query.locale ?? 'en',
+      ),
     ]);
 
     return {
@@ -110,6 +117,7 @@ export class TenantConfigController {
       suggestions,
       hybridSearchConfig,
       orchestrationConfig,
+      appConfig,
     };
   }
 }
