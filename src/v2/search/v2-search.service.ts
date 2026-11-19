@@ -295,7 +295,7 @@ export class V2SearchService {
         // even after the models were normalized (ISS-2797, 2026-11-18).
         ...(hasText && { query: modelText(text) }),
         query_type: 'hybrid',
-        // On by default with text (DTO); a browse has nothing to trim.
+        // Off by default (DTO); a browse has nothing to trim, so it stays off.
         ...(!hasText && { relevance_cutoff: 'off' }),
       } as SearchResourcesQueryDto,
       rankingVersion: 'v2',

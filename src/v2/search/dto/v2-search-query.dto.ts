@@ -145,17 +145,18 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @Max(300)
   limit: number = 25;
 
-  // On by default in v2 (Lucas 2026-11-17); `off` still turns it off. The
-  // service leaves it off for an empty query (browse).
+  // Off by default in v2 until a dev Tempo trace shows the cost (Lucas
+  // 2026-11-19, final); `on` turns it on. The service leaves it off for an
+  // empty query (browse).
   @ApiPropertyOptional({
     enum: RELEVANCE_CUTOFF_VALUES,
-    default: 'on',
+    default: 'off',
     description:
-      'Trims low-relevance results. `on` by default when there is query text; `off` returns the full matched set. Empty query: always off. See v1 for the rule.',
+      'Trims low-relevance results. `off` by default; `on` trims when there is query text. Empty query: always off. See v1 for the rule.',
   })
   @IsOptional()
   @IsEnum(RELEVANCE_CUTOFF_VALUES)
-  relevance_cutoff?: RelevanceCutoffValue = 'on';
+  relevance_cutoff?: RelevanceCutoffValue = 'off';
 
   // v1 also takes a string array or an AND/OR object. v2 has no use for them:
   // they reached the search as "food,rent" or "[object Object]" (break run

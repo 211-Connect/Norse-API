@@ -111,19 +111,19 @@ describe('V2SearchService', () => {
     expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
   });
 
-  describe('relevance_cutoff (on by default with text)', () => {
+  describe('relevance_cutoff (off by default)', () => {
     const cutoffOf = async (query: Partial<V2SearchQueryDto>) => {
       const { service, searchHybrid } = build({});
       await service.search({ headers, query: dto(query) });
       return searchHybrid.mock.calls[0][0].query.relevance_cutoff;
     };
-    it('text: the default on reaches the search', async () => {
-      expect(await cutoffOf({ query: 'rent help' })).toBe('on');
+    it('text: the default off reaches the search', async () => {
+      expect(await cutoffOf({ query: 'rent help' })).toBe('off');
     });
-    it('text: caller off stays off', async () => {
+    it('text: caller on reaches the search', async () => {
       expect(
-        await cutoffOf({ query: 'rent help', relevance_cutoff: 'off' }),
-      ).toBe('off');
+        await cutoffOf({ query: 'rent help', relevance_cutoff: 'on' }),
+      ).toBe('on');
     });
     it('empty query (browse): off', async () => {
       expect(await cutoffOf({ query: '' })).toBe('off');
