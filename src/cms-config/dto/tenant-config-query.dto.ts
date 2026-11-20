@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsOptional, Matches } from 'class-validator';
 
 export class TenantConfigQueryDto {
   @ApiProperty({
@@ -14,14 +14,4 @@ export class TenantConfigQueryDto {
     message: 'locale must be a locale code such as en or es',
   })
   locale?: string;
-
-  @ApiProperty({
-    required: false,
-    example: 'appConfig',
-    description:
-      'Optional extra fields, comma separated. Only `appConfig` is known. Without `include=appConfig` the body has no `appConfig` field and Redis DB 2 is not read for it.',
-  })
-  @IsOptional()
-  @IsString()
-  include?: string;
 }
