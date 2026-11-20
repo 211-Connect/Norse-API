@@ -84,7 +84,12 @@ describe('TenantConfigController', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           ignoreEnvFile: true,
-          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+          load: [
+            () => ({
+              internalApiKey: INTERNAL_API_KEY,
+              TENANT_CONFIG_KEY_ENFORCE: 'true',
+            }),
+          ],
         }),
       ],
       controllers: [TenantConfigController],
@@ -341,7 +346,9 @@ describe('TenantConfigController with INTERNAL_API_KEY unset', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           ignoreEnvFile: true,
-          load: [() => ({ internalApiKey: '' })],
+          load: [
+            () => ({ internalApiKey: '', TENANT_CONFIG_KEY_ENFORCE: 'true' }),
+          ],
         }),
       ],
       controllers: [TenantConfigController],
@@ -435,5 +442,42 @@ describe('Other CmsConfigModule routes are unaffected', () => {
     await request(app.getHttpServer())
       .post('/cms-config/cache/clear/tenant-1')
       .expect(401);
+  });
+});
+
+describe('TenantConfigController with TENANT_CONFIG_KEY_ENFORCE off (default)', () => {
+  it('allows a request without a key and still reaches the service', async () => {
+    const tenantConfigService = {
+      getTopics: jest.fn().mockResolvedValue({ topics: [] }),
+    };
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
+      ],
+      controllers: [TenantConfigController],
+      providers: [
+        { provide: TenantConfigService, useValue: tenantConfigService },
+      ],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    app.enableVersioning(apiVersioningOptions);
+    await app.init();
+
+    try {
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1/topics')
+        .expect(200);
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1/topics')
+        .set('x-internal-api-key', 'wrong')
+        .expect(200);
+      expect(tenantConfigService.getTopics).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
   });
 });
