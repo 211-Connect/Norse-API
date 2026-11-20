@@ -19,10 +19,10 @@ Set only these to run. Everything else has a default.
 | Variable | Default | Meaning |
 |---|---|---|
 | `BASE_URL` | required | For example `http://localhost:8093`. The script adds `/v2/search`. |
-| `TENANT_ID` | required | Sent as header `x-tenant-id`. The route needs no other credential on the direct path. |
+| `TENANT_ID` | required | Sent as query parameter `tenant_id` (and header `x-tenant-id`, which v2 does not read). The route needs no other credential on the direct path. |
 | `PROFILE` | `smoke` | `smoke`, `ramp`, `spike` or `soak`. |
 | `MAX_RPS` | `20` | Hard cap on any arrival rate. Ramp steps above it are dropped. The spike jumps to it. |
-| `ACCEPT_LANGUAGE` | `en` | Header `accept-language`. |
+| `ACCEPT_LANGUAGE` | `en` | Query parameter `locale` (and header `accept-language`). |
 | `QUERIES_FILE` | `queries.sample.json` | Query file (below). Absolute paths work. |
 | `API_KEY`, `API_KEY_HEADER` | unset, `x-api-key` | Only if the target sits behind the gateway. Never logged. See "Auth". |
 | `ALLOW_PROD` | unset | `yes` lets the script run against a production host. |
@@ -30,7 +30,7 @@ Set only these to run. Everything else has a default.
 
 ### Auth
 
-Norse-API reads `x-tenant-id` and nothing else on this route (`TenantMiddleware`; the gateway guards never deny, they classify the request). A deployment behind the Envoy gateway needs a gateway key. The gateway header name is not verified here: set `API_KEY` and `API_KEY_HEADER` to what the gateway expects. The direct App Platform hosts (`docs/geography-filter.md` names `api-dev.c211.io`) need no key for this route. Unverified for the dev deployment: whether Arcjet (`ARCJET_KEY`) is on and would rate limit or block the k6 user agent. A wave of 403 answers at the first step means that.
+v2 reads `tenant_id` and `locale` from the URL only (`v2-url-mirrors.guard.ts`; the gateway guards never deny, they classify the request). A deployment behind the Envoy gateway needs a gateway key. The gateway header name is not verified here: set `API_KEY` and `API_KEY_HEADER` to what the gateway expects. The direct App Platform hosts (`docs/geography-filter.md` names `api-dev.c211.io`) need no key for this route. Unverified for the dev deployment: whether Arcjet (`ARCJET_KEY`) is on and would rate limit or block the k6 user agent. A wave of 403 answers at the first step means that.
 
 ### Query file
 

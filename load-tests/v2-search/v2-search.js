@@ -23,7 +23,7 @@ if (!hostMatch) throw new Error("BASE_URL must be http(s)://host[:port][/path]")
 const HOST = hostMatch[1].toLowerCase().replace(/\.+$/, "");
 
 const TENANT_ID = env("TENANT_ID", "");
-if (!TENANT_ID) throw new Error("TENANT_ID is required (sent as the x-tenant-id header)");
+if (!TENANT_ID) throw new Error("TENANT_ID is required (sent as the tenant_id query parameter)");
 const ACCEPT_LANGUAGE = env("ACCEPT_LANGUAGE", "en");
 
 const PROFILE = env("PROFILE", "smoke");
@@ -337,6 +337,7 @@ const hex = (n) => {
   return s;
 };
 function baseHeaders() {
+  // The headers stay for the gateway and for the header pipe (a missing accept-language is a 400); v2 itself reads the URL.
   const h = { "x-tenant-id": TENANT_ID, "accept-language": ACCEPT_LANGUAGE, accept: "application/json" };
   if (API_KEY) h[API_KEY_HEADER] = API_KEY;
   return h;
@@ -356,7 +357,12 @@ function pickVariant() {
   return "plain";
 }
 function buildUrl(query, variant) {
-  const q = [`query=${encodeURIComponent(query)}`];
+  // v2 reads tenant_id and locale from the URL only (v2-url-mirrors.guard.ts); the headers are not read.
+  const q = [
+    `query=${encodeURIComponent(query)}`,
+    `tenant_id=${encodeURIComponent(TENANT_ID)}`,
+    `locale=${encodeURIComponent(ACCEPT_LANGUAGE)}`,
+  ];
   if (variant === "geo") {
     q.push(`coords=${GEO_POINTS[Math.floor(Math.random() * GEO_POINTS.length)]}`);
     q.push(`distance=${GEO_DISTANCE}`);
