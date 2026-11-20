@@ -1,4 +1,6 @@
+import type { Span } from '@opentelemetry/api';
 import { withSpan } from 'src/common/tracing/with-span';
+import { EmbeddingSide, raceEmbeddings } from './internal/embedding-race';
 import {
   Injectable,
   Logger,
@@ -402,6 +404,7 @@ export class HybridSearchService {
   private readonly embeddingBaseUrl: string;
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
+  private readonly embeddingLocalBaseUrl: string | undefined;
   private readonly needBoostEnabled: boolean;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
@@ -421,6 +424,9 @@ export class HybridSearchService {
       this.configService.get<string>('EMBEDDING_BASE_URL');
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL');
     this.runpodApiKey = this.configService.get<string>('RUNPOD_API_KEY');
+    this.embeddingLocalBaseUrl =
+      this.configService.get<string>('EMBEDDING_LOCAL_BASE_URL')?.trim() ||
+      undefined;
     // On by default (ADR 0039 Decision 79, Lucas and David, 2026-11-18).
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
@@ -1727,14 +1733,16 @@ export class HybridSearchService {
    * Embeds the query text. The vector is cached by model and hashed text
    * (24 h by default), so a repeated query skips the embedding API. A cache
    * failure never fails the search: RequestCacheService treats a Redis error
-   * as a miss, and a thrown factory writes nothing.
+   * as a miss, and a thrown factory writes nothing. With
+   * EMBEDDING_LOCAL_BASE_URL set, a miss asks the own TEI server and
+   * EMBEDDING_BASE_URL at once and takes the first good answer.
    */
   async embedQuery(query: string): Promise<number[]> {
     return withSpan('hybrid.embed', async (span) => {
       const text = normalizeQueryText(query);
       if (!this.embeddingCacheEnabled || !this.embeddingModel) {
         span.setAttribute('hybrid.embed_cache_hit', false);
-        return this.fetchEmbedding(text);
+        return this.fetchEmbedding(text, span);
       }
       const key = queryEmbeddingCacheKey(this.embeddingModel, text);
       let called = false;
@@ -1742,7 +1750,7 @@ export class HybridSearchService {
         key,
         async () => {
           called = true;
-          return packEmbedding(await this.fetchEmbedding(text));
+          return packEmbedding(await this.fetchEmbedding(text, span));
         },
         this.embeddingCacheTtlMs,
       );
@@ -1754,7 +1762,7 @@ export class HybridSearchService {
       // A stored value that does not decode counts as a miss: ask the API
       // and overwrite it.
       span.setAttribute('hybrid.embed_cache_hit', false);
-      const fresh = await this.fetchEmbedding(text);
+      const fresh = await this.fetchEmbedding(text, span);
       await this.requestCacheService.setMany(
         { [key]: packEmbedding(fresh) },
         this.embeddingCacheTtlMs,
@@ -1763,7 +1771,44 @@ export class HybridSearchService {
     });
   }
 
-  private async fetchEmbedding(query: string): Promise<number[]> {
+  private async requestEmbedding(
+    baseUrl: string,
+    // null = send no Authorization header (own TEI server has no key).
+    apiKey: string | undefined | null,
+    operation: 'embed' | 'embed_local',
+    query: string,
+  ): Promise<number[]> {
+    const response = await this.metrics.observeDownstream(
+      'embedding',
+      operation,
+      () =>
+        fetch(`${baseUrl}/embeddings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey === null ? {} : { Authorization: `Bearer ${apiKey}` }),
+          },
+          body: JSON.stringify({ model: this.embeddingModel, input: query }),
+          signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
+        }),
+      (res) => (res.ok ? 'ok' : 'error'),
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Embedding API returned ${response.status}: ${text}`);
+    }
+
+    const data: EmbeddingResponse = await response.json();
+    return data.data[0].embedding;
+  }
+
+  /**
+   * One embedding call to EMBEDDING_BASE_URL. With EMBEDDING_LOCAL_BASE_URL
+   * set, it races the own TEI server against it (same model, same cache key)
+   * and records the winner on the span.
+   */
+  private async fetchEmbedding(query: string, span: Span): Promise<number[]> {
     this.logger.debug(
       `Embedding query: ${describeQueryForLog(query)} using model: ${this.embeddingModel}`,
     );
@@ -1774,34 +1819,54 @@ export class HybridSearchService {
       );
     }
 
+    const localBaseUrl = this.embeddingLocalBaseUrl;
     try {
-      const response = await this.metrics.observeDownstream(
-        'embedding',
-        'embed',
-        () =>
-          fetch(`${this.embeddingBaseUrl}/embeddings`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${this.runpodApiKey}`,
-            },
-            body: JSON.stringify({ model: this.embeddingModel, input: query }),
-            signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
-          }),
-        (res) => (res.ok ? 'ok' : 'error'),
-      );
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Embedding API returned ${response.status}: ${text}`);
+      let embedding: number[];
+      if (localBaseUrl) {
+        const side =
+          (name: EmbeddingSide, call: () => Promise<number[]>) => async () => {
+            try {
+              return await call();
+            } catch (err) {
+              this.logger.warn(
+                `Embedding ${name} side failed: ${(err as Error).message}`,
+              );
+              throw err;
+            }
+          };
+        const result = await raceEmbeddings({
+          local: side('local', () =>
+            this.requestEmbedding(
+              localBaseUrl,
+              null,
+              'embed_local',
+              query,
+            ),
+          ),
+          remote: side('remote', () =>
+            this.requestEmbedding(
+              this.embeddingBaseUrl,
+              this.runpodApiKey,
+              'embed',
+              query,
+            ),
+          ),
+        });
+        span.setAttribute('hybrid.embed_winner', result.winner);
+        embedding = result.embedding;
+      } else {
+        embedding = await this.requestEmbedding(
+          this.embeddingBaseUrl,
+          this.runpodApiKey,
+          'embed',
+          query,
+        );
       }
-
-      const data: EmbeddingResponse = await response.json();
-      const embedding = data.data[0].embedding;
 
       this.logger.debug(`Embedding length: ${embedding.length}`);
       return embedding;
     } catch (error) {
+      if (localBaseUrl) span.setAttribute('hybrid.embed_winner', 'none');
       this.logger.error(`Failed to embed query: ${error.message}`, error.stack);
       throw new InternalServerErrorException(
         `Query embedding failed: ${error.message}`,
