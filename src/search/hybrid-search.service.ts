@@ -412,6 +412,15 @@ const MIN_CUT_REDUCTION = 0.9;
  */
 const CUTOFF_PROBE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * How long an answer to "does this tenant have a hybrid alias" is reused, in ms.
+ *
+ * The alias only appears with a tenant's first hybrid run in a language, and a
+ * publish moves it atomically (one `update_aliases`), so it does not flicker.
+ * A minute keeps the lookup off the hot path without delaying a new tenant much.
+ */
+const HYBRID_ALIAS_EXISTS_TTL_MS = 60 * 1000;
+
 // Word rarity moves slowly (corpus-wide document counts), so a day is fresh enough.
 const WORD_RARITY_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -506,11 +515,12 @@ export class HybridSearchService {
   ): Promise<number> {
     const tenantId = headers['x-tenant-id'];
     const lang = headers['accept-language'] || 'en';
-    const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
 
     if (!taxonomies || taxonomies.length === 0) {
       return 0;
     }
+
+    const index = await this.resolveHybridIndex(tenantId, lang);
 
     const filter: QueryDslQueryContainer[] = [
       { term: { tenant_id: tenantId } },
@@ -813,7 +823,7 @@ export class HybridSearchService {
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
-    const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const index = await this.resolveHybridIndex(tenantId, lang);
     const identity: SearchIdentity = {
       tenantId,
       lang,
@@ -3252,8 +3262,38 @@ export class HybridSearchService {
   }
 
   /**
+   * The index name a tenant's hybrid queries read.
+   *
+   * Dagster keeps every tenant in one shared index per language, and publishes a
+   * tenant by pointing the tenant's alias, `{tenant}-hybrid_search_resources_{lang}`,
+   * at the tenant's complete temp index while it rewrites the shared one. Reading
+   * the alias therefore never sees a half-published tenant; reading the shared
+   * name does. A tenant with no hybrid run in this language has no alias yet, so
+   * it keeps reading the shared name, filtered by tenant, as before.
+   */
+  private async resolveHybridIndex(
+    tenantId: string,
+    lang: string,
+  ): Promise<string> {
+    const shared = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const alias = `${tenantId}-${shared}`;
+    const exists = await this.requestCacheService.getOrSet(
+      `hybrid_alias_exists:${alias}`,
+      () =>
+        this.metrics.observeDownstream(
+          'elasticsearch',
+          'hybrid_alias_exists',
+          () => this.elasticsearchService.indices.existsAlias({ name: alias }),
+        ),
+      HYBRID_ALIAS_EXISTS_TTL_MS,
+    );
+    return exists ? alias : shared;
+  }
+
+  /**
    * Mirrors the logic in src/common/lib/utils.ts getIndexName but only
-   * returns the language portion since hybrid indices are not tenant-prefixed.
+   * returns the language portion; the tenant prefix is added by
+   * `resolveHybridIndex`.
    * The naming lives in src/common/locales.ts, next to the supported list.
    */
   private sanitizeLang(lang: string): string {
