@@ -37,7 +37,6 @@ describe('HybridSearchService query embedding cache', () => {
                 EMBEDDING_BASE_URL: 'https://embed.example',
                 EMBEDDING_MODEL: 'model-x',
                 RUNPOD_API_KEY: 'k',
-                EMBEDDING_CACHE_ENABLED: 'true',
                 ...env,
               })[key],
           },
@@ -141,16 +140,6 @@ describe('HybridSearchService query embedding cache', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('default (env unset) skips the cache', async () => {
-    const service = await build({
-      EMBEDDING_CACHE_ENABLED: undefined as never,
-    });
-    await service.embedQuery('food bank');
-    await service.embedQuery('food bank');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(sets).toHaveLength(0);
-  });
-
   it('EMBEDDING_CACHE_ENABLED=false skips the cache', async () => {
     const service = await build({ EMBEDDING_CACHE_ENABLED: 'false' });
     await service.embedQuery('food bank');
@@ -159,10 +148,10 @@ describe('HybridSearchService query embedding cache', () => {
     expect(sets).toHaveLength(0);
   });
 
-  it('only the exact string true turns the cache on', async () => {
-    const service = await build({ EMBEDDING_CACHE_ENABLED: 'TRUE' });
+  it('only the exact string false turns the cache off', async () => {
+    const service = await build({ EMBEDDING_CACHE_ENABLED: 'FALSE' });
     await service.embedQuery('food bank');
-    expect(sets).toHaveLength(0);
+    expect(sets).toHaveLength(1);
   });
 
   it('EMBEDDING_CACHE_TTL_MS overrides the TTL; bad values give the default', async () => {
