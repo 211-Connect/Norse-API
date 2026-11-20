@@ -7,6 +7,7 @@ import {
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
+import { localizeClarification } from '../rules/localize';
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
@@ -405,10 +406,14 @@ export class V2SearchService {
     }
 
     // strong_text_match is still a placeholder: no retrieval signal yet.
-    const clarification = finalize(clarifyDecision, {
-      counts,
-      strong_text_match: false,
-    });
+    // English passes through unchanged; es vi ru ko am zh-hans get a string table.
+    const clarification = localizeClarification(
+      finalize(clarifyDecision, {
+        counts,
+        strong_text_match: false,
+      }),
+      lang,
+    );
 
     const result: V2SearchResponseDto = {
       ...response,
