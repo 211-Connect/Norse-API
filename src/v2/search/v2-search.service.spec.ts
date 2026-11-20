@@ -135,6 +135,20 @@ describe('V2SearchService', () => {
     expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
   });
 
+  it.each(['distance', 'name', 'organization'] as const)(
+    'sends sort=%s and coords to the hybrid query',
+    async (sort) => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'rent help', sort, coords: [-122.3, 47.6] }),
+      });
+      const q = searchHybrid.mock.calls[0][0].query;
+      expect(q.sort).toBe(sort);
+      expect(q.coords).toEqual([-122.3, 47.6]);
+    },
+  );
+
   it('starts no embedding when there is no text', async () => {
     const { service, startEmbedding, searchHybrid } = build({});
     await service.search({ headers, query: dto({ query: '' }) });
