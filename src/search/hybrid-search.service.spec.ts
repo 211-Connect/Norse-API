@@ -1206,6 +1206,63 @@ describe('HybridSearchService', () => {
 
       expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
     });
+
+    it('searches the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('counts through the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(42);
+      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+    });
+
+    it('does not cache a failed alias check', async () => {
+      // A cache that keeps successes and, like RequestCacheService, drops failures.
+      const store = new Map<string, unknown>();
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        async (key: string, factory: () => Promise<unknown>) => {
+          if (store.has(key)) return store.get(key);
+          const value = await factory();
+          store.set(key, value);
+          return value;
+        },
+      );
+      esExistsAlias
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockResolvedValueOnce(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('serves a cached count without checking the alias', async () => {
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        (key: string, factory: () => Promise<unknown>) =>
+          key.startsWith('hybrid_alias_exists:')
+            ? factory()
+            : Promise.resolve(7),
+      );
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(7);
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
   });
 
   describe('getDocumentsCount', () => {

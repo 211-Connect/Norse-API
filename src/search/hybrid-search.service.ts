@@ -520,8 +520,6 @@ export class HybridSearchService {
       return 0;
     }
 
-    const index = await this.resolveHybridIndex(tenantId, lang);
-
     const filter: QueryDslQueryContainer[] = [
       { term: { tenant_id: tenantId } },
       this.buildHardTaxonomyScopeFilter(taxonomies),
@@ -531,6 +529,8 @@ export class HybridSearchService {
 
     return this.requestCacheService.getOrSet(cacheKey, async () => {
       try {
+        // Resolved on a cache miss only: a cached count needs no index.
+        const index = await this.resolveHybridIndex(tenantId, lang);
         const result = await this.metrics.observeDownstream(
           'elasticsearch',
           'hybrid_documents_count',
@@ -3270,6 +3270,10 @@ export class HybridSearchService {
    * the alias therefore never sees a half-published tenant; reading the shared
    * name does. A tenant with no hybrid run in this language has no alias yet, so
    * it keeps reading the shared name, filtered by tenant, as before.
+   *
+   * A failed alias check (a timeout, a missing privilege) also reads the shared
+   * name, as before this lookup existed, and logs a warning. The failure is not
+   * cached, so the next request checks again.
    */
   private async resolveHybridIndex(
     tenantId: string,
@@ -3277,17 +3281,25 @@ export class HybridSearchService {
   ): Promise<string> {
     const shared = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
     const alias = `${tenantId}-${shared}`;
-    const exists = await this.requestCacheService.getOrSet(
-      `hybrid_alias_exists:${alias}`,
-      () =>
-        this.metrics.observeDownstream(
-          'elasticsearch',
-          'hybrid_alias_exists',
-          () => this.elasticsearchService.indices.existsAlias({ name: alias }),
-        ),
-      HYBRID_ALIAS_EXISTS_TTL_MS,
-    );
-    return exists ? alias : shared;
+    try {
+      const exists = await this.requestCacheService.getOrSet(
+        `hybrid_alias_exists:${alias}`,
+        () =>
+          this.metrics.observeDownstream(
+            'elasticsearch',
+            'hybrid_alias_exists',
+            () =>
+              this.elasticsearchService.indices.existsAlias({ name: alias }),
+          ),
+        HYBRID_ALIAS_EXISTS_TTL_MS,
+      );
+      return exists ? alias : shared;
+    } catch (error) {
+      this.logger.warn(
+        `Hybrid alias check failed for ${alias}, reading ${shared}: ${(error as Error).message}`,
+      );
+      return shared;
+    }
   }
 
   /**
