@@ -24,7 +24,7 @@ export const es: RawTable = {
     safeSoon: 'No, estoy a salvo, necesito ayuda pronto (dentro de una semana)',
   },
   needs: {
-    'N-HOU': 'Alojamiento',
+    'N-HOU': 'Vivienda',
     'N-FOD': 'Comida y agua',
     'N-MON': 'Dinero y beneficios',
     'N-ESS': 'Artículos esenciales del hogar',
@@ -59,7 +59,7 @@ export const es: RawTable = {
     'N-ESS-01': 'Ropa y zapatos',
     'N-ESS-02': 'Muebles, electrodomésticos y artículos para bebés',
     'N-ESS-03': 'Jabón, pañales y productos de higiene menstrual',
-    'N-ESS-04': 'Útiles escolares, ropa de trabajo y regalos de fiestas',
+    'N-ESS-04': 'Útiles escolares, ropa de trabajo y regalos para las fiestas',
     'N-COM-01': 'Un teléfono que funcione',
     'N-COM-02': 'Internet en casa',
     'N-COM-03': 'Una computadora o tableta',
