@@ -7,7 +7,11 @@ import {
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
-import { localizeClarification } from '../rules/localize';
+import {
+  floorOnlyEmergency,
+  isFullV2Locale,
+  localizeClarification,
+} from '../rules/localize';
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
@@ -234,10 +238,17 @@ export class V2SearchService {
     const searchConfig = await this.tenantConfig.getSearchConfig(
       headers['x-tenant-id'],
     );
-    const aiClassification = resolveAiClassification(
-      tenantAiClassification(searchConfig),
-      dto.classify,
-    );
+    // Full v2 features only for en and es (Lucas 2026-11-20). Any other locale
+    // runs with AI classification off (no need or urgency guesses, no need
+    // questions) and shows the danger question only on a keyword-floor hit.
+    const lang = headers['accept-language'] || 'en';
+    const limitedLocale = !isFullV2Locale(lang);
+    const aiClassification = limitedLocale
+      ? 'off'
+      : resolveAiClassification(
+          tenantAiClassification(searchConfig),
+          dto.classify,
+        );
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
@@ -247,7 +258,10 @@ export class V2SearchService {
           aiClassification,
         )
       : null;
-    const signals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const classifiedSignals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const signals = limitedLocale
+      ? floorOnlyEmergency(classifiedSignals)
+      : classifiedSignals;
     const scores = classified?.scores ?? {};
 
     const callerNeeds = dto.needs ?? [];
@@ -285,7 +299,6 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
       dto;
-    const lang = headers['accept-language'] || 'en';
     const tenantContext = { ai_classification: aiClassification };
     const hybridCall: HybridCall = {
       headers,

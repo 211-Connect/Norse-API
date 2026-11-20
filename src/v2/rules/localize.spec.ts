@@ -82,23 +82,33 @@ describe('localizeClarification', () => {
     expect(q.hotlines).toEqual(find(emergency(), 'emergency').hotlines);
   });
 
-  it('zh-hans: area stem, need label and urgency labels are Chinese', () => {
-    const out = localizeClarification(hand(), 'zh-hans');
+  it('es: area stem, need label and urgency labels are Spanish', () => {
+    const out = localizeClarification(hand(), 'es');
     const area = find(out, 'area:N-FOD');
-    expect(area.stem).toBe('关于食物和饮水，需要哪种帮助？');
-    expect(area.options[0]).toEqual({
-      label: '购买食物的资金',
-      parameter: 'needs',
-      value: 'N-FOD-01',
-    });
+    expect(area.stem).toBe('¿Qué tipo de ayuda con Comida y agua?');
+    expect(area.options[0].label).not.toBe('Money for Food');
     const time = find(out, 'urgency');
-    expect(time.stem).toBe('您什么时候需要？');
-    expect(time.options.map((o) => o.label)).toEqual(['今天', '不紧急']);
+    expect(time.stem).not.toBe(find(hand(), 'urgency').stem);
+    expect(time.options.map((o) => o.label)).not.toEqual(
+      find(hand(), 'urgency').options.map((o) => o.label),
+    );
+  });
+
+  it('ko: the danger question is Korean; need and time questions stay English', () => {
+    const out = localizeClarification(
+      { ...hand(), questions: [...emergency().questions, ...hand().questions] },
+      'ko',
+    );
+    expect(find(out, 'emergency').stem).toBe('지금 위험한 상황에 있으신가요?');
+    expect(find(out, 'area:N-FOD')).toEqual(find(hand(), 'area:N-FOD'));
+    expect(find(out, 'urgency')).toEqual(find(hand(), 'urgency'));
   });
 
   it('lowercases the language code', () => {
-    const out = localizeClarification(hand(), 'ZH-Hans');
-    expect(find(out, 'urgency').stem).toBe('您什么时候需要？');
+    const out = localizeClarification(hand(), 'ES');
+    expect(find(out, 'area:N-FOD').stem).toBe(
+      '¿Qué tipo de ayuda con Comida y agua?',
+    );
   });
 
   it('unknown key falls back to English, other keys still translate', () => {
@@ -117,7 +127,7 @@ describe('localizeClarification', () => {
   it('a stem with no key (unknown text) stays as it is', () => {
     const c = hand();
     c.questions[1].stem = 'Something new';
-    expect(find(localizeClarification(c, 'vi'), 'urgency').stem).toBe(
+    expect(find(localizeClarification(c, 'es'), 'urgency').stem).toBe(
       'Something new',
     );
   });
@@ -129,18 +139,28 @@ describe('localizeClarification', () => {
     expect(c).toEqual(before);
   });
 
-  it('every language covers every stem, urgency, emergency answer and need code', () => {
+  it('es covers every stem, urgency, emergency answer and need code', () => {
     const codes = [...TIER1_CODES, ...TIER2_CODES];
-    for (const [lang, t] of Object.entries(LOCALE_TABLES)) {
-      expect(Object.keys(t.stems).sort()).toEqual(Object.keys(STEMS).sort());
-      expect(Object.keys(t.urgency).sort()).toEqual(
-        Object.keys(LABELS.urgency).sort(),
-      );
+    const t = LOCALE_TABLES.es;
+    expect(Object.keys(t.stems).sort()).toEqual(Object.keys(STEMS).sort());
+    expect(Object.keys(t.urgency).sort()).toEqual(
+      Object.keys(LABELS.urgency).sort(),
+    );
+    expect(Object.keys(t.emergency).sort()).toEqual(
+      Object.keys(LABELS.emergency).sort(),
+    );
+    expect(codes.filter((c) => !t.needs[c])).toEqual([]);
+  });
+
+  it('vi ru ko am zh-hans hold the danger question and its answers only', () => {
+    for (const lang of ['vi', 'ru', 'ko', 'am', 'zh-hans']) {
+      const t = LOCALE_TABLES[lang];
+      expect(Object.keys(t.stems)).toEqual(['emergency']);
+      expect(Object.keys(t.urgency)).toEqual([]);
+      expect(Object.keys(t.needs)).toEqual([]);
       expect(Object.keys(t.emergency).sort()).toEqual(
         Object.keys(LABELS.emergency).sort(),
       );
-      expect(codes.filter((c) => !t.needs[c])).toEqual([]);
-      expect(lang).toBe(lang.toLowerCase());
     }
     expect(Object.keys(LOCALE_TABLES).sort()).toEqual(
       ['am', 'es', 'ko', 'ru', 'vi', 'zh-hans'].sort(),
@@ -160,7 +180,7 @@ describe('localizeClarification', () => {
 
   it('the area stem placeholder is kept in every language', () => {
     for (const t of Object.values(LOCALE_TABLES)) {
-      expect(t.stems.area.text).toContain('{area}');
+      if (t.stems.area) expect(t.stems.area.text).toContain('{area}');
     }
   });
 });
