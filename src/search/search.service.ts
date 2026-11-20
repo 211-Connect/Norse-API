@@ -20,16 +20,13 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { RegionService } from 'src/region/internal';
-import {
-  AreaFilter,
-  tenantAreaMatch,
-  tenantUnlocated,
-} from './internal/area/area-match';
+import { AreaFilter } from './internal/area/area-match';
+import { resolveArea } from './internal/area/resolve-area';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
-import { HybridSearchService } from './hybrid-search.service';
+import { HybridSearchService, RankingVersion } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
@@ -58,6 +55,8 @@ type SearchOptions = {
   body?: SearchResourcesBodyDto;
   /** Set by `withArea`; never by a caller. */
   area?: AreaFilter;
+  /** Set by the v2 routes only; absent means v1 rules. Hybrid pins only. */
+  rankingVersion?: RankingVersion;
 };
 
 @Injectable()
@@ -135,28 +134,16 @@ export class SearchService {
   private async withArea(
     options: SearchOptions,
   ): Promise<{ options: SearchOptions; resolved?: ResolvedLocationDto }> {
-    const { query: q, headers } = options;
-    if (!q.region?.length) return { options };
-
-    const [regions, searchConfig] = await Promise.all([
-      this.regionService.getSummaries(q.region),
-      this.tenantConfigService
-        .getSearchConfig(headers['x-tenant-id'])
-        .catch((): SearchConfigCache => ({})),
-    ]);
-    const area: AreaFilter = {
-      regionIds: q.region,
-      match: q.area_match ?? tenantAreaMatch(searchConfig),
-      unlocated: q.unlocated ?? tenantUnlocated(searchConfig),
-    };
-    return {
-      options: { ...options, area },
-      resolved: {
-        regions,
-        area_match: area.match,
-        unlocated: area.unlocated,
-      },
-    };
+    const { area, resolved } = await resolveArea(
+      options.query,
+      this.regionService,
+      () =>
+        this.tenantConfigService
+          .getSearchConfig(options.headers['x-tenant-id'])
+          .catch((): SearchConfigCache => ({})),
+      { rankingVersion: options.rankingVersion },
+    );
+    return area ? { options: { ...options, area }, resolved } : { options };
   }
 
   private async searchWithin(options: SearchOptions): Promise<SearchResponse> {
@@ -234,6 +221,7 @@ export class SearchService {
       ...(await this.withArea(options)).options,
       query: { ...q, page: 1, limit: SEARCH_PINS_LIMIT },
     };
+    // v1 never sets rankingVersion, so its request is unchanged.
 
     const isHybrid = q.query_type === 'hybrid';
     const request = isHybrid

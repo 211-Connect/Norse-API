@@ -13,6 +13,7 @@ import {
   AiClassificationSetting,
   RulesRequest,
   RulesSignals,
+  Hotline,
 } from '../rules/types';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
@@ -21,6 +22,11 @@ import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { normalizeQueryText } from '../../search/internal/query-text';
 import { SearchClassificationClient } from './search-classification.client';
+import { RegionService } from 'src/region/internal';
+import { SearchService } from 'src/search/search.service';
+import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
+import { resolveArea } from 'src/search/internal/area/resolve-area';
+import { TopAreasService } from './top-areas.service';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -121,15 +127,29 @@ export function tenantAiClassification(
   return engine === 'classic' || engine === 'hybrid' ? 'off' : 'on';
 }
 
+const MAX_HOTLINES = 4;
+
 /**
- * Off when the tenant setting is off OR the request says `classify=off`.
- * A request can never turn it on.
+ * Tenant hotlines from `search_config:<tenant>` (ADR 0039: shown only in the
+ * emergency question). Keeps entries with a non-empty label and number, trimmed,
+ * at most 4, in order. Anything malformed gives [], and the rules engine then
+ * uses its default hotlines (988 and 911).
  */
-export function resolveAiClassification(
-  tenant: AiClassificationSetting,
-  requested: 'off' | undefined,
-): AiClassificationSetting {
-  return tenant === 'off' || requested === 'off' ? 'off' : 'on';
+export function tenantHotlines(
+  config: SearchConfigCache | null | undefined,
+): Hotline[] {
+  const raw: unknown = config?.hotlines;
+  if (!Array.isArray(raw)) return [];
+  const out: Hotline[] = [];
+  for (const item of raw) {
+    const { label, number } = (item ?? {}) as Record<string, unknown>;
+    if (typeof label !== 'string' || typeof number !== 'string') continue;
+    const l = label.trim();
+    const n = number.trim();
+    if (l && n) out.push({ label: l, number: n });
+    if (out.length === MAX_HOTLINES) break;
+  }
+  return out;
 }
 
 @Injectable()
@@ -138,7 +158,44 @@ export class V2SearchService {
     private readonly classifier: SearchClassificationClient,
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
+    private readonly regionService: RegionService,
+    private readonly searchService: SearchService,
+    private readonly topAreasService: TopAreasService,
   ) {}
+
+  /**
+   * Map pins for a v2 search: the same membership as `search` (child taxonomy
+   * codes, region), the v1 pins shape. No classify call and no embedding unless
+   * `relevance_cutoff=on` needs scores (the v1 pins rule). The region is
+   * resolved by `SearchService.searchPins`, the same `resolveArea` as `search`.
+   */
+  async pins({
+    headers,
+    query: dto,
+  }: {
+    headers: HeadersDto;
+    query: V2SearchQueryDto;
+  }): Promise<SearchPinsResponseDto> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    return this.searchService
+      .searchPins({
+        headers,
+        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+        rankingVersion: 'v2',
+      })
+      .catch((error: unknown) => {
+        if (isIndexNotFound(error)) {
+          throw new BadRequestException(
+            `no search index for accept-language ${headers['accept-language']}`,
+          );
+        }
+        if (isQueryTooLarge(error)) {
+          throw new BadRequestException('query is too long for search');
+        }
+        throw error;
+      });
+  }
 
   /** One `v2.search` span over the whole pipeline; each step is a child. */
   search(args: {
@@ -171,8 +228,7 @@ export class V2SearchService {
     const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
-      dto;
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -186,9 +242,20 @@ export class V2SearchService {
     // now, in parallel with the tenant config read and classify: the embedding,
     // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
     // failure surfaces inside searchHybrid, where the catch below maps it.
-    const early = hasText
-      ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
-      : undefined;
+    // An area search resolves its Region after the tenant config read, and the
+    // early stage builds its filters without it, so an area search starts
+    // nothing early.
+    const early =
+      hasText && !dto.region
+        ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
+        : undefined;
+
+    // Tenant top areas run in parallel with the config read and classify. The
+    // service never throws: a failure is [] (engine default areas).
+    const topAreasPromise = this.topAreasService.topAreas(
+      headers['x-tenant-id'],
+      headers['accept-language'],
+    );
 
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
@@ -196,10 +263,9 @@ export class V2SearchService {
     const searchConfig = await withSpan('v2.tenant_config', () =>
       this.tenantConfig.getSearchConfig(headers['x-tenant-id']),
     );
-    const aiClassification = resolveAiClassification(
-      tenantAiClassification(searchConfig),
-      dto.classify,
-    );
+    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
+    // setting can turn the need guess off.
+    const aiClassification = tenantAiClassification(searchConfig);
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
@@ -230,10 +296,12 @@ export class V2SearchService {
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
-    // Tenant top areas and hotlines: later slice.
+    const topAreas = await topAreasPromise;
     const decision = withSpanSync('v2.rules.decide', () =>
       decide(rulesRequest, signals, {
         ai_classification: aiClassification,
+        hotlines: tenantHotlines(searchConfig),
+        top_areas: topAreas,
       }),
     );
 
@@ -248,6 +316,15 @@ export class V2SearchService {
 
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
+
+    // An area search (`region`, PR #313): an unknown Region is a 400 before
+    // the search runs. The tenant config read above gives the defaults.
+    const { area, resolved } = await resolveArea(
+      dto,
+      this.regionService,
+      async () => searchConfig,
+      { rankingVersion: 'v2' },
+    );
 
     // The language picks the index. An unknown language has no index; that
     // was a 500 (break run 2026-11-14) and is a caller error.
@@ -265,6 +342,7 @@ export class V2SearchService {
         this.hybridSearch.searchHybrid({
           ...retrievalOptions,
           ...(early && { early }),
+          ...(area && { area }),
           needScores,
           ...(countCodes.length > 0 && { countCodes }),
         }),
@@ -296,6 +374,7 @@ export class V2SearchService {
 
     const result: V2SearchResponseDto = {
       ...response,
+      ...(resolved && { resolved_location: resolved }),
       intent: {
         query: hasText ? text : null,
         ...(dto.taxonomy &&

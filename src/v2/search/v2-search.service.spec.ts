@@ -2,6 +2,7 @@
 import { errors } from '@elastic/elasticsearch';
 import { BadRequestException } from '@nestjs/common';
 import { HeadersDto } from 'src/common/dto/headers.dto';
+import { SearchService } from 'src/search/search.service';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
 import { RULES_VERSION } from '../rules';
@@ -10,9 +11,12 @@ import {
   SearchClassificationClient,
 } from './search-classification.client';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
-import { V2SearchService } from './v2-search.service';
+import { V2SearchService, tenantHotlines } from './v2-search.service';
+import { TopAreasService } from './top-areas.service';
+import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { RegionService, RegionSummaryDto } from 'src/region/internal';
 import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
@@ -66,6 +70,9 @@ function build(opts: {
   search?: jest.Mock;
   startEarlyRetrieval?: jest.Mock;
   searchConfig?: SearchConfigCache;
+  getSummaries?: jest.Mock;
+  searchPins?: jest.Mock;
+  topAreas?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -73,21 +80,121 @@ function build(opts: {
   const startEarlyRetrieval =
     opts.startEarlyRetrieval ?? jest.fn().mockReturnValue({ stage: undefined });
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
+  const getSummaries = opts.getSummaries ?? jest.fn().mockResolvedValue([]);
+  const searchPins =
+    opts.searchPins ??
+    jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
+  const topAreas = opts.topAreas ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEarlyRetrieval } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
+    { getSummaries } as unknown as RegionService,
+    { searchPins } as unknown as SearchService,
+    { topAreas } as unknown as TopAreasService,
   );
   return {
+    searchPins,
     service,
     classify,
     searchHybrid,
     startEarlyRetrieval,
     getSearchConfig,
+    getSummaries,
+    topAreas,
   };
 }
 
 describe('V2SearchService', () => {
+  describe('filters, facets and counts (ISS-2499)', () => {
+    it('passes filters, organization_id, age, geo_type, taxonomy, distance, sort, page and limit to searchHybrid unchanged', async () => {
+      const { service, searchHybrid } = build({});
+      const query = dto({
+        query: 'food',
+        filters: { languages: 'Spanish', age_group: ['a', 'b'] },
+        organization_id: 'org-1',
+        age: 30,
+        geo_type: 'proximity',
+        taxonomy: ['BH-1800'],
+        distance: 10,
+        sort: 'name',
+        page: 2,
+        limit: 50,
+      });
+      await service.search({ headers, query });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg.query).toMatchObject({
+        filters: { languages: 'Spanish', age_group: ['a', 'b'] },
+        organization_id: 'org-1',
+        age: 30,
+        geo_type: 'proximity',
+        taxonomy: ['BH-1800'],
+        distance: 10,
+        sort: 'name',
+        page: 2,
+        limit: 50,
+        query_type: 'hybrid',
+      });
+      expect(arg.rankingVersion).toBe('v2');
+      expect(arg.query).not.toHaveProperty('needs');
+      expect(arg.query).not.toHaveProperty('classify');
+    });
+
+    it('returns the facets from searchHybrid in the v2 response', async () => {
+      const facets = [
+        {
+          key: 'languages',
+          name: { en: 'Languages', locale: 'Languages' },
+          values: [{ en: 'Spanish', locale: 'Spanish', doc_count: 7 }],
+        },
+      ];
+      const { service } = build({
+        search: jest.fn().mockResolvedValue({ ...hybridResponse(7), facets }),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'food', filters: { languages: 'Spanish' } }),
+      });
+      expect(res.facets).toEqual(facets);
+    });
+
+    it('sends needs to searchHybrid as selectedNeeds and countCodes together with the filters; needCounts do not leak into the response', async () => {
+      const { service, searchHybrid } = build({
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(7),
+          needCounts: { 'N-FOD': 5 },
+        }),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({
+          query: 'food',
+          needs: ['N-FOD'],
+          filters: { languages: 'Spanish' },
+        }),
+      });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg.selectedNeeds).toEqual(['N-FOD']);
+      expect(arg.query.filters).toEqual({ languages: 'Spanish' });
+      expect(res).not.toHaveProperty('needCounts');
+    });
+
+    it('clarify=never sends no countCodes, filters still pass', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({
+          query: 'food',
+          clarify: 'never',
+          filters: { languages: 'Spanish' },
+        }),
+      });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg).not.toHaveProperty('countCodes');
+      expect(arg.query.filters).toEqual({ languages: 'Spanish' });
+    });
+  });
+
   it('starts the classify-independent retrieval before classify resolves', async () => {
     let resolveClassify!: (r: ClassifyResult) => void;
     const classify = jest.fn().mockReturnValue(
@@ -133,6 +240,31 @@ describe('V2SearchService', () => {
     expect(final.body).toBe(started.body);
     expect(final.rankingVersion).toBe(started.rankingVersion);
   });
+
+  it.each(['distance', 'name', 'organization'] as const)(
+    'sends sort=%s and coords to the hybrid query',
+    async (sort) => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({ query: 'rent help', sort, coords: [-122.3, 47.6] }),
+      });
+      const q = searchHybrid.mock.calls[0][0].query;
+      expect(q.sort).toBe(sort);
+      expect(q.coords).toEqual([-122.3, 47.6]);
+    },
+  );
+
+  // David 2026-11-18: sort is required at the API level. v2 passes the v1
+  // sort parameter to the hybrid query unchanged.
+  it.each(['relevance', 'distance', 'name', 'organization'] as const)(
+    'passes sort=%s to searchHybrid',
+    async (sort) => {
+      const { service, searchHybrid } = build({});
+      await service.search({ headers, query: dto({ query: 'food', sort }) });
+      expect(searchHybrid.mock.calls[0][0].query.sort).toBe(sort);
+    },
+  );
 
   it('starts no early retrieval when there is no text', async () => {
     const { service, startEarlyRetrieval, searchHybrid } = build({});
@@ -1030,7 +1162,7 @@ describe('V2SearchService with AI classification off', () => {
     expect(arg.selectedNeeds).toEqual(['N-FOD-01']);
   });
 
-  describe('where the setting comes from (tenant setting and classify=off)', () => {
+  describe('where the setting comes from (tenant setting only)', () => {
     const classifyArg = (m: jest.Mock) => m.mock.calls[0][2];
     const guessUsed = (res: { intent: { needs: { source: string }[] } }) =>
       res.intent.needs.some((n) => n.source === 'inferred');
@@ -1066,53 +1198,295 @@ describe('V2SearchService with AI classification off', () => {
       expect(classifyArg(classify)).toBe('off');
       expect(guessUsed(res)).toBe(false);
     });
-    it('classify=off turns it off for one request on a tenant that is on', async () => {
+    it('a classify=off sent by a caller changes nothing: classify stays on', async () => {
       const { service, classify } = build({
         classify: jest.fn().mockResolvedValue(result(0.001)),
         searchConfig: TENANT_ON,
       });
       const res = await service.search({
         headers,
-        query: dto({ query: 'x', classify: 'off' }),
+        query: dto({ query: 'x', classify: 'off' } as never),
       });
-      expect(classifyArg(classify)).toBe('off');
-      expect(guessUsed(res)).toBe(false);
+      expect(classifyArg(classify)).toBe('on');
+      expect(guessUsed(res)).toBe(true);
     });
-    it('classify=off works when the tenant has no setting at all', async () => {
-      const { service, classify } = build({
-        classify: jest.fn().mockResolvedValue(result(0.001)),
-      });
-      await service.search({
-        headers,
-        query: dto({ query: 'x', classify: 'off' }),
-      });
-      expect(classifyArg(classify)).toBe('off');
-    });
-    it('the request cannot turn it on for a tenant that is off', async () => {
+    it('the tenant setting off still turns the need guess off, with no request parameter', async () => {
       const { service, classify } = build({
         classify: jest.fn().mockResolvedValue(result(0.001)),
         searchConfig: TENANT_OFF,
       });
-      // `classify` has only the value `off`; no value can switch it on.
-      for (const value of [undefined, 'on', 'auto'] as never[]) {
-        classify.mockClear();
-        const res = await service.search({
-          headers,
-          query: dto({ query: 'x', classify: value }),
-        });
-        expect(classifyArg(classify)).toBe('off');
-        expect(guessUsed(res)).toBe(false);
-      }
-    });
-    it('keeps classify out of the v1 query', async () => {
-      const { service, searchHybrid } = build({});
-      await service.search({
+      const res = await service.search({
         headers,
-        query: dto({ query: 'x', classify: 'off' }),
+        query: dto({ query: 'x', classify: 'on' } as never),
       });
-      expect(searchHybrid.mock.calls[0][0].query).not.toHaveProperty(
-        'classify',
-      );
+      expect(classifyArg(classify)).toBe('off');
+      expect(guessUsed(res)).toBe(false);
     });
+  });
+});
+
+describe('V2SearchService area search (region, PR #313)', () => {
+  const king = {
+    id: 'county:53033',
+    type: 'county',
+    name: 'King County',
+    state: 'WA',
+  } as RegionSummaryDto;
+
+  it('passes the area to searchHybrid and returns resolved_location', async () => {
+    const getSummaries = jest.fn().mockResolvedValue([king]);
+    const { service, searchHybrid } = build({
+      getSummaries,
+      searchConfig: { area_match: 'located' },
+    });
+    const result = await service.search({
+      headers,
+      query: dto({ query: 'food', region: ['county:53033'] }),
+    });
+    expect(getSummaries).toHaveBeenCalledWith(['county:53033']);
+    expect(searchHybrid.mock.calls[0][0].area).toEqual({
+      regionIds: ['county:53033'],
+      match: 'located',
+      unlocated: 'virtual',
+    });
+    expect(result.resolved_location).toEqual({
+      regions: [king],
+      area_match: 'located',
+      unlocated: 'virtual',
+    });
+  });
+
+  // The early stage builds its filters before the Region is resolved, so an
+  // area search must not start it: its lists would ignore the area.
+  it('starts no early retrieval for an area search and sends no early handle', async () => {
+    const { service, searchHybrid, startEarlyRetrieval } = build({
+      getSummaries: jest.fn().mockResolvedValue([king]),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'food', region: ['county:53033'] }),
+    });
+    expect(startEarlyRetrieval).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('early');
+  });
+
+  it('uses the caller area_match and unlocated over the tenant defaults', async () => {
+    const { service, searchHybrid } = build({
+      getSummaries: jest.fn().mockResolvedValue([king]),
+      searchConfig: { area_match: 'located', unlocated_in_area_search: 'all' },
+    });
+    const result = await service.search({
+      headers,
+      query: dto({
+        query: 'food',
+        region: ['county:53033'],
+        area_match: 'serving',
+        unlocated: 'none',
+      }),
+    });
+    expect(searchHybrid.mock.calls[0][0].area).toEqual({
+      regionIds: ['county:53033'],
+      match: 'serving',
+      unlocated: 'none',
+    });
+    expect(result.resolved_location).toMatchObject({
+      area_match: 'serving',
+      unlocated: 'none',
+    });
+  });
+
+  it('rejects an unknown region with a 400 and does not search', async () => {
+    const { service, searchHybrid } = build({
+      getSummaries: jest
+        .fn()
+        .mockRejectedValue(new BadRequestException('unknown region')),
+    });
+    await expect(
+      service.search({
+        headers,
+        query: dto({ query: 'food', region: ['county:99999'] }),
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(searchHybrid).not.toHaveBeenCalled();
+  });
+
+  it('leaves a search with no region unchanged', async () => {
+    const { service, searchHybrid, getSummaries } = build({});
+    const result = await service.search({
+      headers,
+      query: dto({ query: 'food' }),
+    });
+    expect(getSummaries).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('area');
+    expect(result).not.toHaveProperty('resolved_location');
+  });
+});
+
+describe('V2SearchService.pins', () => {
+  const pinsResponse = {
+    total: 1,
+    truncated: false,
+    pins: [
+      {
+        id: 'a',
+        service_at_location_id: 's1',
+        name: 'Food Bank',
+        physical_address: null,
+        coordinates: [-122, 47] as [number, number],
+      },
+    ],
+  };
+
+  it('asks for hybrid pins with v2 rules, the region and no v2-only fields', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, classify, startEarlyRetrieval } = build({ searchPins });
+
+    const result = await service.pins({
+      headers,
+      query: dto({
+        query: 'food',
+        taxonomy: ['BH-1800'],
+        region: ['county:53033'],
+        area_match: 'located',
+        unlocated: 'none',
+        needs: ['N-HOU-02'],
+        urgency: 'U-1',
+        clarify: 'never',
+      }),
+    });
+
+    expect(result).toBe(pinsResponse);
+    const sent = searchPins.mock.calls[0][0];
+    expect(sent.rankingVersion).toBe('v2');
+    expect(sent.query).toMatchObject({
+      query: 'food',
+      query_type: 'hybrid',
+      taxonomy: ['BH-1800'],
+      region: ['county:53033'],
+      area_match: 'located',
+      unlocated: 'none',
+    });
+    for (const key of [
+      'needs',
+      'passed_needs',
+      'urgency',
+      'clarify',
+      'classify',
+    ]) {
+      expect(sent.query).not.toHaveProperty(key);
+    }
+    expect(classify).not.toHaveBeenCalled();
+    expect(startEarlyRetrieval).not.toHaveBeenCalled();
+  });
+
+  it('turns a missing index into a 400', async () => {
+    const searchPins = jest.fn().mockRejectedValue({
+      meta: { body: { error: { type: 'index_not_found_exception' } } },
+    });
+    const { service } = build({ searchPins });
+    await expect(
+      service.pins({ headers, query: dto({ query: 'x' }) }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('tenant context (hotlines, top areas)', () => {
+  const emergencyScores = {
+    signals: {
+      needs: { status: 'ok', scores: {} },
+      emergency: { status: 'ok', score: 0.99, floor_hit: true },
+    },
+    scores: {},
+    modelVersion: 'mv-1',
+  } as ClassifyResult;
+
+  const emergencyHotlines = async (searchConfig: unknown) => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(emergencyScores),
+      searchConfig: searchConfig as SearchConfigCache,
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'he is hurting me' }),
+    });
+    return res.clarification.questions.find((q) => q.id === 'emergency')
+      ?.hotlines;
+  };
+
+  it('uses the tenant hotlines from the search config', async () => {
+    const hotlines = [{ label: 'Local line', number: '555-0100' }];
+    expect(await emergencyHotlines({ hotlines })).toEqual(hotlines);
+  });
+
+  it.each([
+    ['missing', {}],
+    ['empty', { hotlines: [] }],
+    ['malformed', { hotlines: 'nope' }],
+    ['blank entries', { hotlines: [{ label: ' ', number: '' }] }],
+  ])('falls back to the default hotlines when %s', async (_n, cfg) => {
+    expect(await emergencyHotlines(cfg)).toEqual(DEFAULT_HOTLINES);
+  });
+
+  const startOptions = async (topAreas: string[]) => {
+    const { service } = build({
+      topAreas: jest.fn().mockResolvedValue(topAreas),
+    });
+    const res = await service.search({ headers, query: dto({ query: '' }) });
+    const q = res.clarification.questions.find((x) => x.id === 'start');
+    return q?.options.map((o) => o.value);
+  };
+
+  it('offers the tenant top areas in the start question', async () => {
+    expect(await startOptions(['N-LEG', 'N-WRK', 'N-HLT', 'N-HOU'])).toEqual([
+      'N-LEG',
+      'N-WRK',
+      'N-HLT',
+    ]);
+  });
+
+  it('falls back to the default top areas when TopAreasService gives []', async () => {
+    expect(await startOptions([])).toEqual(DEFAULT_TOP_AREAS);
+  });
+
+  it('passes tenant and language to TopAreasService', async () => {
+    const { service, topAreas } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(topAreas).toHaveBeenCalledWith(headers['x-tenant-id'], 'en');
+  });
+});
+
+describe('tenantHotlines', () => {
+  it('trims, drops blanks, keeps order', () => {
+    expect(
+      tenantHotlines({
+        hotlines: [
+          { label: ' A ', number: ' 1 ' },
+          { label: '', number: '2' },
+          { label: 'B', number: '3' },
+        ],
+      }),
+    ).toEqual([
+      { label: 'A', number: '1' },
+      { label: 'B', number: '3' },
+    ]);
+  });
+  it('keeps at most 4', () => {
+    const hotlines = Array.from({ length: 6 }, (_, i) => ({
+      label: `L${i}`,
+      number: `${i}`,
+    }));
+    expect(tenantHotlines({ hotlines })).toHaveLength(4);
+  });
+  it.each([
+    [null],
+    [undefined],
+    [{}],
+    [{ hotlines: null }],
+    [{ hotlines: 'x' }],
+    [{ hotlines: [1, null, { label: 1, number: 2 }] }],
+  ])('malformed %j gives []', (cfg) => {
+    expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
+      [],
+    );
   });
 });

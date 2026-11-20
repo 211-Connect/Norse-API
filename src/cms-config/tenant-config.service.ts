@@ -242,6 +242,15 @@ export class TenantConfigService {
   }
 
   /**
+   * True when the tenant has the Payload flag `enableV2Api` on (cache field
+   * `enable_v2_api`). Missing, false or a read error means not v2.
+   */
+  async isV2Tenant(tenantId: string): Promise<boolean> {
+    const config = await this.getSearchConfig(tenantId);
+    return config?.enable_v2_api === true;
+  }
+
+  /**
    * Reads tenant topics configuration written by PayloadCMS to Redis DB 2 under
    * `topics:${tenantId}`. Returns a default empty shape when missing or on error.
    */

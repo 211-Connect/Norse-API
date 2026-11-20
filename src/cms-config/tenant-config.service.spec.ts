@@ -223,4 +223,22 @@ describe('TenantConfigService cache metrics', () => {
       'tenant-config-lru:hit',
     ]);
   });
+
+  describe('isV2Tenant', () => {
+    it.each([
+      [JSON.stringify({ enable_v2_api: true }), true],
+      [JSON.stringify({ enable_v2_api: false }), false],
+      [JSON.stringify({}), false],
+      [JSON.stringify({ enable_v2_api: 'true' }), false],
+      [null, false],
+    ])('search config %s gives %s', async (cached, expected) => {
+      cmsRedisService.get.mockResolvedValue(cached);
+      await expect(service.isV2Tenant('tenant-v2')).resolves.toBe(expected);
+    });
+
+    it('is false when Redis fails', async () => {
+      cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+      await expect(service.isV2Tenant('tenant-err')).resolves.toBe(false);
+    });
+  });
 });
