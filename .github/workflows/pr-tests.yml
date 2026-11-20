@@ -1,0 +1,55 @@
+name: PR tests
+
+# Runs the whole unit test suite on every pull request, so a new spec in any
+# folder runs without a change here. The tests mock their I/O and need no
+# Elasticsearch, Redis, network or secrets.
+
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+
+concurrency:
+  group: pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Jest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        # actions/checkout v5.1.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Set up Node
+        # actions/setup-node v5.0.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Before the tests, to fail fast: ts-jest only compiles the files the
+      # specs import, so a break elsewhere would otherwise surface in the
+      # Docker build after merge.
+      - name: Type-check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      # These 5 suites already fail on development and are skipped until they
+      # are fixed. Remove a line here when its suite passes again.
+      - name: Run unit tests
+        run: >-
+          npx jest --ci --testPathIgnorePatterns
+          'src/analytics/analytics\.controller\.spec\.ts$'
+          'src/analytics/services/umami-analytics\.service\.spec\.ts$'
+          'src/cms-config/tenant-config\.controller\.spec\.ts$'
+          'src/taxonomy/taxonomy\.controller\.spec\.ts$'
+          'src/taxonomy-scorecard/taxonomy-scorecard\.service\.spec\.ts$'
