@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Span } from '@opentelemetry/api';
+import { withSpan, withSpanSync } from 'src/common/tracing/with-span';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
@@ -17,6 +19,7 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { normalizeQueryText } from '../../search/internal/query-text';
 import { SearchClassificationClient } from './search-classification.client';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
@@ -137,29 +140,61 @@ export class V2SearchService {
     private readonly tenantConfig: TenantConfigService,
   ) {}
 
-  async search({
-    headers,
-    query: dto,
-    body,
-  }: {
+  /** One `v2.search` span over the whole pipeline; each step is a child. */
+  search(args: {
     headers: HeadersDto;
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
+    return withSpan('v2.search', (span) => this.run(args, span));
+  }
+
+  private async run(
+    {
+      headers,
+      query: dto,
+      body,
+    }: {
+      headers: HeadersDto;
+      query: V2SearchQueryDto;
+      body?: SearchResourcesBodyDto;
+    },
+    span: Span,
+  ): Promise<V2SearchResponseDto> {
     // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
     const text = dto.query;
     const hasText = text.trim().length > 0;
 
-    // The embedding starts before classify so the two run in parallel.
-    const queryVector = hasText
-      ? this.hybridSearch.startEmbedding(text)
+    // Only caller-sent needs make blocks; a model guess never does. N-X never
+    // makes a block. They never filter (Lucas 2026-11-12).
+    const callerNeeds = dto.needs ?? [];
+    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
+      dto;
+    // What retrieval gets that does not depend on classify. It is built once:
+    // the early start and the final call use the same values.
+    const retrievalOptions = {
+      headers,
+      query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+      rankingVersion: 'v2' as const,
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
+      body,
+    };
+    // Everything in retrieval that does not read the classify result starts
+    // now, in parallel with the tenant config read and classify: the embedding,
+    // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
+    // failure surfaces inside searchHybrid, where the catch below maps it.
+    const early = hasText
+      ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
       : undefined;
 
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
     // never throws: a missing or unreadable value is an empty object (on).
-    const searchConfig = await this.tenantConfig.getSearchConfig(
-      headers['x-tenant-id'],
+    const searchConfig = await withSpan('v2.tenant_config', () =>
+      this.tenantConfig.getSearchConfig(headers['x-tenant-id']),
     );
     const aiClassification = resolveAiClassification(
       tenantAiClassification(searchConfig),
@@ -168,16 +203,26 @@ export class V2SearchService {
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
-      ? await this.classifier.classify(
-          cutWholeCharacters(text.trim(), CLASSIFY_MAX_TEXT_LENGTH),
-          headers['x-tenant-id'],
-          aiClassification,
-        )
+      ? await withSpan('v2.classify', async (classifySpan) => {
+          const result = await this.classifier.classify(
+            cutWholeCharacters(
+              normalizeQueryText(text),
+              CLASSIFY_MAX_TEXT_LENGTH,
+            ),
+            headers['x-tenant-id'],
+            aiClassification,
+          );
+          // Classify never throws; error signals mark a failed call.
+          classifySpan.setAttribute(
+            'v2.classify.failed',
+            result.signals.emergency?.status === 'error',
+          );
+          return result;
+        })
       : null;
     const signals = classified?.signals ?? NO_TEXT_SIGNALS;
     const scores = classified?.scores ?? {};
 
-    const callerNeeds = dto.needs ?? [];
     const rulesRequest: RulesRequest = {
       has_text: hasText,
       needs: callerNeeds,
@@ -186,9 +231,11 @@ export class V2SearchService {
       clarify: dto.clarify ?? 'auto',
     };
     // Tenant top areas and hotlines: later slice.
-    const decision = decide(rulesRequest, signals, {
-      ai_classification: aiClassification,
-    });
+    const decision = withSpanSync('v2.rules.decide', () =>
+      decide(rulesRequest, signals, {
+        ai_classification: aiClassification,
+      }),
+    );
 
     const needScores: NeedScore[] = [];
     for (const code of decision.boost_needs) {
@@ -199,51 +246,53 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
-    // Only caller-sent needs make blocks; a model guess never does. N-X never
-    // makes a block. They never filter (Lucas 2026-11-12).
-    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
-      dto;
     // The language picks the index. An unknown language has no index; that
     // was a 500 (break run 2026-11-14) and is a caller error.
-    const { needCounts, totalCounted, ...response } = await this.hybridSearch
-      .searchHybrid({
-        headers,
-        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
-        rankingVersion: 'v2',
-        ...(queryVector && { queryVector }),
-        needScores,
-        ...(selectedNeeds.length > 0 && { selectedNeeds }),
-        ...(countCodes.length > 0 && { countCodes }),
-        body,
-      })
-      .catch((error: unknown) => {
-        if (isIndexNotFound(error)) {
-          throw new BadRequestException(
-            `no search index for accept-language ${headers['accept-language']}`,
-          );
-        }
-        if (isQueryTooLarge(error)) {
-          throw new BadRequestException('query is too long for search');
-        }
-        throw error;
-      });
+    span.setAttributes({
+      'v2.has_text': hasText,
+      'v2.ai_classification': aiClassification,
+      'v2.boost_needs': needScores.length,
+      'v2.selected_needs': selectedNeeds.length,
+      'v2.count_codes': countCodes.length,
+    });
+
+    const { needCounts, totalCounted, ...response } = await withSpan(
+      'v2.retrieval',
+      () =>
+        this.hybridSearch.searchHybrid({
+          ...retrievalOptions,
+          ...(early && { early }),
+          needScores,
+          ...(countCodes.length > 0 && { countCodes }),
+        }),
+    ).catch((error: unknown) => {
+      if (isIndexNotFound(error)) {
+        throw new BadRequestException(
+          `no search index for accept-language ${headers['accept-language']}`,
+        );
+      }
+      if (isQueryTooLarge(error)) {
+        throw new BadRequestException('query is too long for search');
+      }
+      throw error;
+    });
 
     // by_code null means "not counted" (clarify=never, no codes asked, or the
     // count failed): every option is kept. An object means "counted"; the
     // search fills 0 for each requested code the aggregation omits.
     // strong_text_match is still a placeholder: no retrieval signal yet.
-    const clarification = finalize(decision, {
-      counts: {
-        total: totalCounted === false ? null : hitsTotal(response),
-        by_code: needCounts ?? null,
-      },
-      strong_text_match: false,
-    });
+    const clarification = withSpanSync('v2.rules.finalize', () =>
+      finalize(decision, {
+        counts: {
+          total: totalCounted === false ? null : hitsTotal(response),
+          by_code: needCounts ?? null,
+        },
+        strong_text_match: false,
+      }),
+    );
 
     const result: V2SearchResponseDto = {
       ...response,

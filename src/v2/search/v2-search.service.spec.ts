@@ -64,58 +64,81 @@ const errorResult = (): ClassifyResult => ({
 function build(opts: {
   classify?: jest.Mock;
   search?: jest.Mock;
-  startEmbedding?: jest.Mock;
+  startEarlyRetrieval?: jest.Mock;
   searchConfig?: SearchConfigCache;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
     opts.search ?? jest.fn().mockResolvedValue(hybridResponse());
-  const startEmbedding =
-    opts.startEmbedding ?? jest.fn().mockResolvedValue([0.1, 0.2]);
+  const startEarlyRetrieval =
+    opts.startEarlyRetrieval ?? jest.fn().mockReturnValue({ stage: undefined });
   const getSearchConfig = jest.fn().mockResolvedValue(opts.searchConfig ?? {});
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
-    { searchHybrid, startEmbedding } as unknown as HybridSearchService,
+    { searchHybrid, startEarlyRetrieval } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
   );
-  return { service, classify, searchHybrid, startEmbedding, getSearchConfig };
+  return {
+    service,
+    classify,
+    searchHybrid,
+    startEarlyRetrieval,
+    getSearchConfig,
+  };
 }
 
 describe('V2SearchService', () => {
-  it('starts the embedding before classify resolves', async () => {
+  it('starts the classify-independent retrieval before classify resolves', async () => {
     let resolveClassify!: (r: ClassifyResult) => void;
     const classify = jest.fn().mockReturnValue(
       new Promise<ClassifyResult>((r) => {
         resolveClassify = r;
       }),
     );
-    const { service, startEmbedding } = build({ classify });
+    const { service, startEarlyRetrieval, searchHybrid } = build({ classify });
     const pending = service.search({
       headers,
-      query: dto({ query: 'food shelf' }),
+      query: dto({ query: 'food shelf', needs: ['N-01', 'N-X'] }),
     });
-    await Promise.resolve();
+    // Classify starts after the tenant config read; a macrotask later every
+    // microtask before it has run, however many spans wrap the steps.
+    await new Promise((r) => setImmediate(r));
     expect(classify).toHaveBeenCalledTimes(1);
-    expect(startEmbedding).toHaveBeenCalledTimes(1);
-    expect(startEmbedding).toHaveBeenCalledWith('food shelf');
+    expect(startEarlyRetrieval).toHaveBeenCalledTimes(1);
+    expect(searchHybrid).not.toHaveBeenCalled();
+    const early = startEarlyRetrieval.mock.calls[0][0];
+    expect(early.query).toMatchObject({
+      query: 'food shelf',
+      query_type: 'hybrid',
+    });
+    expect(early.rankingVersion).toBe('v2');
+    expect(early.selectedNeeds).toEqual(['N-01']);
+    expect(early).not.toHaveProperty('needScores');
+    expect(early).not.toHaveProperty('countCodes');
     resolveClassify(okResult({}));
     await pending;
   });
 
-  it('passes the started embedding to searchHybrid', async () => {
-    const started = Promise.resolve([0.3, 0.4]);
-    const { service, searchHybrid } = build({
-      startEmbedding: jest.fn().mockReturnValue(started),
+  it('passes the early handle and the same inputs to searchHybrid', async () => {
+    const handle = { stage: Promise.resolve() };
+    const { service, startEarlyRetrieval, searchHybrid } = build({
+      startEarlyRetrieval: jest.fn().mockReturnValue(handle),
     });
     await service.search({ headers, query: dto({ query: 'rent help' }) });
-    expect(searchHybrid.mock.calls[0][0].queryVector).toBe(started);
+    const started = startEarlyRetrieval.mock.calls[0][0];
+    const final = searchHybrid.mock.calls[0][0];
+    expect(final.early).toBe(handle);
+    expect(final.headers).toBe(started.headers);
+    expect(final.query).toBe(started.query);
+    expect(final.body).toBe(started.body);
+    expect(final.rankingVersion).toBe(started.rankingVersion);
   });
 
-  it('starts no embedding when there is no text', async () => {
-    const { service, startEmbedding, searchHybrid } = build({});
+  it('starts no early retrieval when there is no text', async () => {
+    const { service, startEarlyRetrieval, searchHybrid } = build({});
     await service.search({ headers, query: dto({ query: '' }) });
-    expect(startEmbedding).not.toHaveBeenCalled();
-    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('queryVector');
+    expect(startEarlyRetrieval).not.toHaveBeenCalled();
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('early');
   });
 
   // Break run 2026-11-14: accept-language xx-YY was a 500, because the index

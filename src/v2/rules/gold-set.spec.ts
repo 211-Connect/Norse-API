@@ -163,7 +163,7 @@ describe('question-order gold set (459 real queries, saved scores)', () => {
     );
     expect(emergencyRows).toHaveLength(26);
     const bad = results.filter((r) => {
-      const band = r.out.decision.emergency.band;
+      const band = r.out.decision.emergency_band;
       const expected =
         r.row.stratum === 'A_emergency' || band === 'popup' || band === 'soft';
       return expected && r.out.questions[0]?.id !== 'emergency';
