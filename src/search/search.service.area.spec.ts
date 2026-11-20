@@ -230,6 +230,22 @@ describe('SearchService area search (region)', () => {
     expect(buildPinsRequest.mock.calls[1][0].rankingVersion).toBe('v2');
   });
 
+  it('v2 pins ignore the tenant unlocated default; v1 pins keep it', async () => {
+    getSearchConfig.mockResolvedValue({ unlocated_in_area_search: 'none' });
+    await service.searchPins({
+      headers,
+      query: query({ query_type: 'hybrid', region: ['county:53033'] }),
+    });
+    await service.searchPins({
+      headers,
+      query: query({ query_type: 'hybrid', region: ['county:53033'] }),
+      rankingVersion: 'v2',
+    });
+
+    expect(buildPinsRequest.mock.calls[0][0].area.unlocated).toBe('none');
+    expect(buildPinsRequest.mock.calls[1][0].area.unlocated).toBe('virtual');
+  });
+
   it('leaves a search without region untouched', async () => {
     const response = await service.searchResources({
       headers,

@@ -8,6 +8,10 @@ import {
 } from 'src/common/schemas/taxonomy-scorecard.schema';
 
 export const DEFAULT_SCORECARD_OWNER = 'default';
+/** Seed owner in `sune_scorecard` (the v2 SUNE scorecard collection). */
+export const SUNE_SCORECARD_OWNER = 'sune-v1';
+/** Mongoose model name bound to the `sune_scorecard` collection. */
+export const SUNE_SCORECARD_MODEL = 'SuneScorecard';
 
 export function buildDocumentId(hsisCode: string, owner: string): string {
   return `${hsisCode}::${owner}`;

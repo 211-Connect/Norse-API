@@ -320,12 +320,15 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(response.search.hits.max_score).toBe(42);
   });
 
-  it('4. v2 with sort name: no list requests and no pinned query', async () => {
-    await run({ sort: 'name' });
+  it.each(['name', 'organization', 'distance'] as const)(
+    '4. v2 with sort %s (no coords): fusion skipped, no list requests, no pinned query',
+    async (sort) => {
+      await run({ sort });
 
-    expect(lists()).toHaveLength(0);
-    expect(mainRequest().query.pinned).toBeUndefined();
-  });
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().query.pinned).toBeUndefined();
+    },
+  );
 
   const NEEDS = [
     { code: 'N-FOD-01', tier: 'tier2', score: 0.98 },
@@ -521,14 +524,13 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       expect(response.search.hits.total.value).toBe(1234);
     });
 
-    it('F3. pinned mode top: pinned main request, no page request', async () => {
+    it('F3. pinned mode top: v2 uses the pinned gate, not a sort tier, so the fast path runs', async () => {
       searchConfig = { pinned_resources_mode: 'top' };
       await build();
       await run({ limit: 3 });
 
-      expect(statsRequests()).toHaveLength(0);
-      expect(pageRequests()).toHaveLength(0);
-      expect(pinnedMain()).toBeDefined();
+      expect(statsRequests()).toHaveLength(1);
+      expect(pageRequests()).toHaveLength(1);
     });
 
     it('F4. cutoff on: no stats or page request, pinned main request', async () => {

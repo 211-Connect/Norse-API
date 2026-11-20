@@ -275,6 +275,7 @@ export class V2SearchService {
       dto,
       this.regionService,
       async () => searchConfig,
+      { rankingVersion: 'v2' },
     );
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
