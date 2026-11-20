@@ -1,6 +1,13 @@
-import { Controller, Get, Param } from '@nestjs/common';
-import { ApiTags, ApiParam, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiParam,
+  ApiOperation,
+  ApiResponse,
+  ApiSecurity,
+} from '@nestjs/swagger';
 import { TenantConfigService } from './tenant-config.service';
+import { InternalKeyOrGatewayGuard } from '../common/guards/internal-key-or-gateway.guard';
 import {
   AllTenantConfigResponseDto,
   SuggestionsConfigResponseDto,
@@ -10,6 +17,8 @@ import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Tenant Config')
 @Controller({ path: 'tenant-config', version: V1_AND_LEGACY })
+@UseGuards(InternalKeyOrGatewayGuard)
+@ApiSecurity('x-internal-api-key')
 export class TenantConfigController {
   constructor(private readonly tenantConfigService: TenantConfigService) {}
 
@@ -25,6 +34,10 @@ export class TenantConfigController {
     status: 200,
     description: 'Topics configuration for the specified tenant',
     type: TopicsConfigResponseDto,
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Gateway identity or internal API key required',
   })
   @ApiResponse({
     status: 500,
@@ -51,7 +64,7 @@ export class TenantConfigController {
   })
   @ApiResponse({
     status: 401,
-    description: 'Invalid or missing internal API key',
+    description: 'Gateway identity or internal API key required',
   })
   @ApiResponse({
     status: 500,
@@ -79,7 +92,7 @@ export class TenantConfigController {
   })
   @ApiResponse({
     status: 401,
-    description: 'Invalid or missing internal API key',
+    description: 'Gateway identity or internal API key required',
   })
   @ApiResponse({
     status: 500,
