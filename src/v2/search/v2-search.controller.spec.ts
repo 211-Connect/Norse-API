@@ -122,4 +122,21 @@ describe('V2SearchController', () => {
       expect(recordSearchRequest).not.toHaveBeenCalled();
     });
   });
+
+  describe('getPins', () => {
+    it('delegates to the service pins method', async () => {
+      const pins = { total: 0, truncated: false, pins: [] };
+      const search = jest.fn();
+      const pinsFn = jest.fn().mockResolvedValue(pins);
+      const controller = new V2SearchController(
+        { search, pins: pinsFn } as unknown as V2SearchService,
+        {} as unknown as UsageMetricsService,
+      );
+      const query = new V2SearchQueryDto();
+
+      await expect(controller.getPins(headers, query)).resolves.toBe(pins);
+      expect(pinsFn).toHaveBeenCalledWith({ headers, query });
+      expect(search).not.toHaveBeenCalled();
+    });
+  });
 });

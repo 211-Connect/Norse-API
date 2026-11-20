@@ -127,7 +127,7 @@ before `unlocated_in_area_search` existed holds the boolean
 `include_unlocated_in_area_search` instead: `true` reads as `all`. Norse
 sends both params explicitly; the
 defaults matter for other callers (Keeper, agents) so they get the tenant's
-behavior.
+behavior. `/v2/search` ignores the tenant `unlocated_in_area_search` default and uses `virtual` unless the caller sends `unlocated` (Lucas 2026-11-18).
 
 A printable directory can override the mode with
 `defaultQueryConfig.areaMatch` (null: tenant default), applied with its

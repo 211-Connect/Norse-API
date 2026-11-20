@@ -1,4 +1,5 @@
 import { QueryDslQueryContainer } from '@elastic/elasticsearch/lib/api/types';
+import { MAX_RARITY_WORDS } from './word-rarity';
 
 /**
  * Typo tolerance for lexical matching, shared by both search paths.
@@ -110,3 +111,29 @@ export const fuzzyFallbackFor = (
     },
   };
 };
+
+/**
+ * The typo clauses are sent only when a content word of the query matches this
+ * many tenant documents or fewer. A word with more documents is treated as
+ * spelled correctly: a misspelling matches almost nothing, so a word found in
+ * more than this many documents is a real word.
+ *
+ * Measured (ISS-2793, 2026-11-17): on 620 real search texts the gate removes
+ * the typo clauses on 59% and cuts the keyword list p50 from 141 ms to 81 ms.
+ * 0.8% of 600 synthetic typos are missed; nDCG@10 on 134 graded queries goes
+ * 0.697 -> 0.695.
+ */
+export const TYPO_GATE_MAX_DOCS = 5;
+
+/**
+ * Whether the typo clauses go into the keyword list. True when the query has no
+ * content words, when the word list may have been cut (some words uncounted),
+ * or when at least one counted word has TYPO_GATE_MAX_DOCS documents or fewer.
+ */
+export const needsTypoClauses = (
+  docsPerWord: number[],
+  wordCount: number,
+): boolean =>
+  wordCount === 0 ||
+  wordCount >= MAX_RARITY_WORDS ||
+  docsPerWord.some((docs) => docs <= TYPO_GATE_MAX_DOCS);

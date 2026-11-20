@@ -144,15 +144,15 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     expect(sort[2]).toEqual({ priority: 'desc' });
   });
 
-  it('blocks lead the geo distance sort', async () => {
+  it('sort=distance with coords: no block tier, strict geo distance leads (decisions 2026-11-19)', async () => {
     const coords = [-76.6122, 39.2904];
     await run({
       query: { ...baseQuery, sort: 'distance', coords },
       selectedNeeds: ['A'],
     });
     const sort = mainRequest().sort;
-    expect(sort[0]).toEqual(buildNeedBlockSort(['A']));
-    expect(sort[1]).toEqual(SearchUtilsService.getGeoDistanceSort(coords));
+    expect(JSON.stringify(sort)).not.toContain('_script');
+    expect(sort[0]).toEqual(SearchUtilsService.getGeoDistanceSort(coords));
   });
 
   it('no selectedNeeds or an empty list: query and sort equal the no-option request', async () => {

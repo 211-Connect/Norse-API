@@ -47,7 +47,8 @@ type Doc = { id: string; base: number; weight: number };
 
 // 1 top doc, 25 strong docs, the need-tagged doc and an untagged twin just
 // under the threshold (0.2 x 100 = 20), then 40 weak docs.
-const docs: Doc[] = [
+let docs: Doc[];
+const defaultDocs: Doc[] = [
   { id: 'top', base: OWN_TOP, weight: 0 },
   ...Array.from({ length: 25 }, (_, i) => ({
     id: `strong-${i}`,
@@ -74,6 +75,8 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   let enabled: string | undefined;
   let rarityOk = false;
   let gate: Promise<void> | undefined;
+  // Holds the probe's two head responses (base head and tagged head).
+  let headGate: Promise<void> | undefined;
 
   // The simulated index: a probe request scores each document as its base plus
   // the rank_feature boost the request carries (weight 1 for the tagged doc).
@@ -94,8 +97,12 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   const probeOwnTop = () =>
     requests.filter((r) => isTopCall(r) && !hasGauss(r));
   const mainTop = () => requests.filter((r) => isTopCall(r) && hasGauss(r));
+  const isTaggedHead = (r: any) =>
+    r.size === 100 && Array.isArray(r._source) && r.min_score == null;
+  const isBaseHead = (r: any) => r._source === false && r.size === 21;
   const isProbeCall = (r: any) =>
-    (r._source === false && r.size === 21) ||
+    isBaseHead(r) ||
+    isTaggedHead(r) ||
     (r.size === 0 && r.min_score != null) ||
     (r.min_score != null && Array.isArray(r._source));
   const probeCalls = () => requests.filter(isProbeCall);
@@ -112,6 +119,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     requests = [];
     cacheKeys = [];
     rarityOk = false;
+    docs = defaultDocs;
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
@@ -139,16 +147,39 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
           Promise.resolve({ hits: { hits: [{ _id: 'top', _score: top }] } });
         return gate ? gate.then(respond) : respond();
       }
-      if (req._source === false && req.size === 21) {
+      if (isTaggedHead(req)) {
+        // the need-tagged head: documents with a weight, base score, weights
+        const sorted = docs
+          .filter((d) => d.weight > 0)
+          .map((d) => ({
+            _id: d.id,
+            _score: scoreOf(req, d),
+            _source: {
+              sune_need_weights: Object.fromEntries(
+                (req._source as string[]).map((f) => [
+                  f.replace('sune_need_weights.', ''),
+                  d.weight,
+                ]),
+              ),
+            },
+          }))
+          .sort((a, b) => b._score - a._score);
+        const respond = () =>
+          Promise.resolve({ hits: { hits: sorted.slice(0, req.size) } });
+        return headGate ? headGate.then(respond) : respond();
+      }
+      if (isBaseHead(req)) {
         const sorted = docs
           .map((d) => ({ _id: d.id, _score: scoreOf(req, d) }))
           .sort((a, b) => b._score - a._score);
-        return Promise.resolve({
-          hits: {
-            total: { value: docs.length, relation: 'eq' },
-            hits: sorted.slice(0, 21),
-          },
-        });
+        const respond = () =>
+          Promise.resolve({
+            hits: {
+              total: { value: docs.length, relation: 'eq' },
+              hits: sorted.slice(0, 21),
+            },
+          });
+        return headGate ? headGate.then(respond) : respond();
       }
       if (req.size === 0 && req.min_score != null) {
         const n = docs.filter((d) => scoreOf(req, d) >= req.min_score).length;
@@ -162,6 +193,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
           .sort((a, b) => scoreOf(req, b) - scoreOf(req, a));
         return Promise.resolve({
           hits: {
+            total: { value: kept.length, relation: 'eq' },
             hits: kept.slice(0, req.size).map((d) => ({
               _id: d.id,
               _score: scoreOf(req, d),
@@ -251,17 +283,19 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
   beforeEach(async () => {
     enabled = 'true';
     gate = undefined;
+    headGate = undefined;
     await build();
   });
 
   it('1. probe requests carry the boost clause sized at 10% of the probe own top score', async () => {
     await run(tier2Fod);
 
-    const own = probeOwnTop();
-    expect(own).toHaveLength(1);
-    expect(hasRankFeature(own[0])).toBe(false);
+    // no sequential own-top-score call any more: the base head is unboosted
+    expect(probeOwnTop()).toHaveLength(0);
+    expect(hasRankFeature(requests.find(isBaseHead))).toBe(false);
+    expect(hasRankFeature(requests.find(isTaggedHead))).toBe(false);
 
-    const head = probeCalls().find((r) => r.size === 21);
+    const head = probeCalls().find((r) => r.size === 1001);
     const clauses: any[] = [];
     const walk = (n: any) => {
       if (!n || typeof n !== 'object') return;
@@ -273,8 +307,8 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(clauses[0].field).toBe('sune_need_weights.N-FOD-01');
     // 10% of 100 (the probe's own top), not 10% of 200 (the main search's top)
     expect(clauses[0].boost).toBeCloseTo(FRACTION * OWN_TOP * 0.98, 6);
-    // every probe call carries the same boost
-    for (const call of probeCalls()) {
+    // every cut and rung call carries the same boost
+    for (const call of probeCalls().filter((r) => r.min_score != null)) {
       expect(JSON.stringify(call.query)).toContain(
         'sune_need_weights.N-FOD-01',
       );
@@ -333,7 +367,7 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(probeOwnTop()).toHaveLength(0);
     expect(mainTop()).toHaveLength(0);
     expect(requests.some(hasRankFeature)).toBe(false);
-    expect(probeCalls()).toHaveLength(3);
+    expect(probeCalls()).toHaveLength(2);
   });
 
   it('3b. boost on but only sub-gate needs: same requests as no needs', async () => {
@@ -352,7 +386,8 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(probeCalls()).toHaveLength(0);
     expect(probeOwnTop()).toHaveLength(0);
     expect(mainTop()).toHaveLength(1);
-    expect(requests).toHaveLength(2);
+    // main top score, pinned gate (v2, default mode boost), main search
+    expect(requests).toHaveLength(3);
   });
 
   it('5. v1 path unchanged: no probe boost, boost top score after the cut with the ids filter', async () => {
@@ -360,14 +395,14 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
 
     expect(probeOwnTop()).toHaveLength(0);
     for (const call of probeCalls()) expect(hasRankFeature(call)).toBe(false);
-    expect(probeCalls()).toHaveLength(3);
+    expect(probeCalls()).toHaveLength(2);
 
     const top = mainTop();
     expect(top).toHaveLength(1);
     expect(JSON.stringify(top[0].query)).toContain('"ids"');
     // the top-score call comes after the probe's last call
     expect(requests.indexOf(top[0])).toBeGreaterThan(
-      requests.indexOf(probeCalls()[2]),
+      requests.indexOf(probeCalls()[1]),
     );
   });
 
@@ -387,31 +422,91 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
     expect(cacheKeys[0]).toBe(cacheKeys[1]);
   });
 
-  it('7. the probe top-score call and the main top-score call start before either is awaited', async () => {
+  it('7. the base head, the tagged head and the main top-score call start before any is awaited', async () => {
     let release!: () => void;
     gate = new Promise<void>((r) => (release = r));
+    headGate = gate;
 
     const pending = run(tier2Fod);
     await new Promise((r) => setImmediate(r));
 
-    expect(probeOwnTop()).toHaveLength(1);
+    expect(requests.filter(isBaseHead)).toHaveLength(1);
+    expect(requests.filter(isTaggedHead)).toHaveLength(1);
+    expect(probeOwnTop()).toHaveLength(0); // no size-1 own-top call
     expect(mainTop()).toHaveLength(1);
-    expect(probeCalls()).toHaveLength(0); // nothing past the top-score calls yet
+    // nothing past the heads yet
+    expect(probeCalls().filter((r) => r.min_score != null)).toHaveLength(0);
 
     release();
     await pending;
     expect(probeCalls().length).toBeGreaterThanOrEqual(3);
   });
 
-  it('8. the probe boost call failing leaves the probe unboosted and the search still returns', async () => {
-    const original = (service as any).fetchTopScore.bind(service);
-    jest
-      .spyOn(service as any, 'fetchTopScore')
-      .mockImplementation((op: string, a: any) =>
-        op === 'hybrid_cutoff_boost_top_score'
-          ? Promise.resolve(0)
-          : original(op, a),
-      );
+  it('7b. the tagged head asks for need-tagged documents and only their weights', async () => {
+    await run(tier2Fod);
+    const tagged = requests.find(isTaggedHead);
+    expect(tagged.track_total_hits).toBe(false);
+    expect(tagged._source).toEqual(['sune_need_weights.N-FOD-01']);
+    const filters = JSON.stringify(
+      tagged.query.function_score.query.bool.filter,
+    );
+    expect(filters).toContain(
+      '"exists":{"field":"sune_need_weights.N-FOD-01"}',
+    );
+    // the base head has no such filter
+    expect(JSON.stringify(requests.find(isBaseHead).query)).not.toContain(
+      'sune_need_weights',
+    );
+  });
+
+  it('7c. kept ids equal what the sequential own-top code produced on this index', async () => {
+    await run(tier2Fod);
+    // Frozen from the code before the change (own-top call, boosted head).
+    expect(JSON.parse(keptIdsOfMain()!)).toEqual([
+      'top',
+      ...Array.from({ length: 25 }, (_, i) => `strong-${i}`),
+      'tagged',
+    ]);
+  });
+
+  it('7d. a tagged document at rank 21 survives the cut (lower bound on the 21st score)', async () => {
+    // top, 19 strong docs at 12, and a tagged doc at 1 + 9.8 = 10.8: rank 21
+    // after the boost, below the 0.2 x 100 fraction, so only the clamp keeps it.
+    docs = [
+      { id: 'top', base: OWN_TOP, weight: 0 },
+      ...Array.from({ length: 19 }, (_, i) => ({
+        id: `s-${i}`,
+        base: 12,
+        weight: 0,
+      })),
+      { id: 'tagged21', base: 1, weight: 1 },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        id: `weak-${i}`,
+        base: 0.5,
+        weight: 0,
+      })),
+    ];
+    await run(tier2Fod);
+    expect(keptIdsOfMain()).toContain('tagged21');
+    expect(JSON.parse(keptIdsOfMain()!)).toHaveLength(21);
+  });
+
+  it('7e. own top score <= 0: no boost clauses in any probe request', async () => {
+    docs = Array.from({ length: 40 }, (_, i) => ({
+      id: `z-${i}`,
+      base: 0,
+      weight: 0,
+    }));
+    await run(tier2Fod);
+    expect(probeCalls().length).toBeGreaterThanOrEqual(1);
+    for (const call of probeCalls()) expect(hasRankFeature(call)).toBe(false);
+  });
+
+  it('8. the tagged head failing leaves the probe unboosted and the search still returns', async () => {
+    const original = (service as any).elasticsearchService.search;
+    (service as any).elasticsearchService.search = jest.fn((req: any) =>
+      isTaggedHead(req) ? Promise.reject(new Error('es down')) : original(req),
+    );
     const res: any = await run(tier2Fod);
 
     for (const call of probeCalls()) expect(hasRankFeature(call)).toBe(false);

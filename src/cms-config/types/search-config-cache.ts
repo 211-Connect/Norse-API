@@ -60,4 +60,19 @@ export interface SearchConfigCache {
    * Payload does not write this field yet.
    */
   ai_classification?: 'on' | 'off' | null;
+
+  /**
+   * Tenant emergency hotlines, an ordered array written by Payload. Shown only
+   * in the emergency question (ADR 0039). Empty or absent: the rules engine's
+   * default hotlines (988 and 911).
+   */
+  hotlines?: { label: string; number: string }[] | null;
+
+  /**
+   * Payload tenant flag `enableV2Api`, copied here as `enable_v2_api`. True
+   * marks a v2 tenant: scorecard overrides go to `sune_scorecard`. Absent or
+   * false: not v2. TODO(ISS-2499): gate GET /v2/search per tenant on this flag
+   * once Payload pushes it to every tenant.
+   */
+  enable_v2_api?: boolean;
 }

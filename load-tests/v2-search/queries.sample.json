@@ -1,0 +1,154 @@
+[
+ {
+  "query": "food pantry",
+  "weight": 10
+ },
+ {
+  "query": "rent assistance",
+  "weight": 8
+ },
+ {
+  "query": "homeless shelter",
+  "weight": 6
+ },
+ {
+  "query": "legal aid",
+  "weight": 5
+ },
+ {
+  "query": "dental clinic",
+  "weight": 4
+ },
+ {
+  "query": "mental health counseling",
+  "weight": 3
+ },
+ {
+  "query": "child care",
+  "weight": 1
+ },
+ {
+  "query": "utility assistance",
+  "weight": 1
+ },
+ {
+  "query": "job training",
+  "weight": 1
+ },
+ {
+  "query": "free clinic",
+  "weight": 1
+ },
+ {
+  "query": "senior meals",
+  "weight": 1
+ },
+ {
+  "query": "transportation",
+  "weight": 1
+ },
+ {
+  "query": "i need help paying my electric bill this month",
+  "weight": 1
+ },
+ {
+  "query": "looking for a food pantry that is open on saturdays",
+  "weight": 1
+ },
+ {
+  "query": "my landlord says we have to leave by friday and i have kids",
+  "weight": 1
+ },
+ {
+  "query": "where can i get free diapers for my baby",
+  "weight": 1
+ },
+ {
+  "query": "how do i find a lawyer for an eviction notice",
+  "weight": 1
+ },
+ {
+  "query": "i just lost my job and need help with groceries",
+  "weight": 1
+ },
+ {
+  "query": "is there a place that helps with prescriptions when you have no insurance",
+  "weight": 1
+ },
+ {
+  "query": "my mother has dementia and i need respite care",
+  "weight": 1
+ },
+ {
+  "query": "i am a veteran looking for housing help",
+  "weight": 1
+ },
+ {
+  "query": "need a ride to dialysis three times a week",
+  "weight": 1
+ },
+ {
+  "query": "help signing up for medicaid for my son",
+  "weight": 1
+ },
+ {
+  "query": "where to get a free winter coat for a teenager",
+  "weight": 1
+ },
+ {
+  "query": "tutoring for a third grader who is behind in reading",
+  "weight": 1
+ },
+ {
+  "query": "counseling for a teenager who is being bullied",
+  "weight": 1
+ },
+ {
+  "query": "a place to do laundry when you are living in a car",
+  "weight": 1
+ },
+ {
+  "query": "help with english classes for adults",
+  "weight": 1
+ },
+ {
+  "query": "i want to kill myself",
+  "weight": 1
+ },
+ {
+  "query": "i dont want to be here anymore",
+  "weight": 1
+ },
+ {
+  "query": "my husband hit me and i am scared to go home",
+  "weight": 1
+ },
+ {
+  "query": "i have not eaten in two days and have no money",
+  "weight": 1
+ },
+ {
+  "query": "i am being abused and need to leave tonight",
+  "weight": 1
+ },
+ {
+  "query": "necesito ayuda con la renta",
+  "weight": 1
+ },
+ {
+  "query": "banco de alimentos cerca de mi",
+  "weight": 1
+ },
+ {
+  "query": "clinica gratis para ninos",
+  "weight": 1
+ },
+ {
+  "query": "ayuda legal para inmigrantes",
+  "weight": 1
+ },
+ {
+  "query": "busco refugio para mi familia esta noche",
+  "weight": 1
+ }
+]

@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Span } from '@opentelemetry/api';
+import { withSpan, withSpanSync } from 'src/common/tracing/with-span';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
@@ -12,6 +14,7 @@ import {
   AiClassificationSetting,
   RulesRequest,
   RulesSignals,
+  Hotline,
 } from '../rules/types';
 import { SearchResourcesBodyDto } from 'src/search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
@@ -21,6 +24,11 @@ import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
 import { contentWords } from 'src/search/internal/text-matching/word-rarity';
 import { modelText } from './model-text';
+import { RegionService } from 'src/region/internal';
+import { SearchService } from 'src/search/search.service';
+import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
+import { resolveArea } from 'src/search/internal/area/resolve-area';
+import { TopAreasService } from './top-areas.service';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -147,15 +155,29 @@ export function tenantAiClassification(
   return config?.ai_classification === 'off' ? 'off' : 'on';
 }
 
+const MAX_HOTLINES = 4;
+
 /**
- * Off when the tenant setting is off OR the request says `classify=off`.
- * A request can never turn it on.
+ * Tenant hotlines from `search_config:<tenant>` (ADR 0039: shown only in the
+ * emergency question). Keeps entries with a non-empty label and number, trimmed,
+ * at most 4, in order. Anything malformed gives [], and the rules engine then
+ * uses its default hotlines (988 and 911).
  */
-export function resolveAiClassification(
-  tenant: AiClassificationSetting,
-  requested: 'off' | undefined,
-): AiClassificationSetting {
-  return tenant === 'off' || requested === 'off' ? 'off' : 'on';
+export function tenantHotlines(
+  config: SearchConfigCache | null | undefined,
+): Hotline[] {
+  const raw: unknown = config?.hotlines;
+  if (!Array.isArray(raw)) return [];
+  const out: Hotline[] = [];
+  for (const item of raw) {
+    const { label, number } = (item ?? {}) as Record<string, unknown>;
+    if (typeof label !== 'string' || typeof number !== 'string') continue;
+    const l = label.trim();
+    const n = number.trim();
+    if (l && n) out.push({ label: l, number: n });
+    if (out.length === MAX_HOTLINES) break;
+  }
+  return out;
 }
 
 type HybridCall = Parameters<HybridSearchService['searchHybrid']>[0];
@@ -186,6 +208,9 @@ export class V2SearchService {
     private readonly classifier: SearchClassificationClient,
     private readonly hybridSearch: HybridSearchService,
     private readonly tenantConfig: TenantConfigService,
+    private readonly regionService: RegionService,
+    private readonly searchService: SearchService,
+    private readonly topAreasService: TopAreasService,
   ) {}
 
   /**
@@ -209,62 +234,155 @@ export class V2SearchService {
     });
   }
 
-  async search({
+  /**
+   * Map pins for a v2 search: the same membership as `search` (child taxonomy
+   * codes, region), the v1 pins shape. No classify call and no embedding unless
+   * `relevance_cutoff=on` needs scores (the v1 pins rule). The region is
+   * resolved by `SearchService.searchPins`, the same `resolveArea` as `search`.
+   */
+  async pins({
     headers,
     query: dto,
-    body,
   }: {
+    headers: HeadersDto;
+    query: V2SearchQueryDto;
+  }): Promise<SearchPinsResponseDto> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    return this.searchService
+      .searchPins({
+        headers,
+        query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
+        rankingVersion: 'v2',
+      })
+      .catch((error: unknown) => {
+        if (isIndexNotFound(error)) {
+          throw new BadRequestException(
+            `no search index for accept-language ${headers['accept-language']}`,
+          );
+        }
+        if (isQueryTooLarge(error)) {
+          throw new BadRequestException('query is too long for search');
+        }
+        throw error;
+      });
+  }
+
+  /** One `v2.search` span over the whole pipeline; each step is a child. */
+  search(args: {
     headers: HeadersDto;
     query: V2SearchQueryDto;
     body?: SearchResourcesBodyDto;
   }): Promise<V2SearchResponseDto> {
+    return withSpan('v2.search', (span) => this.run(args, span));
+  }
+
+  private async run(
+    {
+      headers,
+      query: dto,
+      body,
+    }: {
+      headers: HeadersDto;
+      query: V2SearchQueryDto;
+      body?: SearchResourcesBodyDto;
+    },
+    span: Span,
+  ): Promise<V2SearchResponseDto> {
     // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
     const text = dto.query;
     const hasText = text.trim().length > 0;
 
-    // The embedding starts before classify so the two run in parallel.
-    const queryVector = hasText
-      ? this.hybridSearch.startEmbedding(modelText(text))
-      : undefined;
+    // Only caller-sent needs make blocks; a model guess never does. N-X never
+    // makes a block. They never filter (Lucas 2026-11-12).
+    const callerNeeds = dto.needs ?? [];
+    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    // What retrieval gets that does not depend on classify. It is built once:
+    // the early start and the final call use the same values.
+    const retrievalOptions = {
+      headers,
+      query: {
+        ...v1Fields,
+        // The keyword search and the embedding get the same text form as the
+        // classifier: extra spaces and a trailing ? changed the top 10 of 15 of
+        // 40 queries even after the models were normalized (ISS-2797, 2026-11-18).
+        ...(hasText && { query: modelText(text) }),
+        query_type: 'hybrid',
+        // Off by default (DTO); a browse has nothing to trim, so it stays off.
+        ...(!hasText && { relevance_cutoff: 'off' }),
+      } as SearchResourcesQueryDto,
+      rankingVersion: 'v2' as const,
+      ...(selectedNeeds.length > 0 && { selectedNeeds }),
+      body,
+    };
+    // Everything in retrieval that does not read the classify result starts
+    // now, in parallel with the tenant config read and classify: the embedding,
+    // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
+    // failure surfaces inside searchHybrid, where the catch below maps it.
+    // An area search resolves its Region after the tenant config read, and the
+    // early stage builds its filters without it, so an area search starts
+    // nothing early.
+    const early =
+      hasText && !dto.region
+        ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
+        : undefined;
+
+    // Tenant top areas run in parallel with the config read and classify. The
+    // service never throws: a failure is [] (engine default areas).
+    const topAreasPromise = this.topAreasService.topAreas(
+      headers['x-tenant-id'],
+      headers['accept-language'],
+    );
 
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
     // never throws: a missing or unreadable value is an empty object (on).
-    const searchConfig = await this.tenantConfig.getSearchConfig(
-      headers['x-tenant-id'],
+    const searchConfig = await withSpan('v2.tenant_config', () =>
+      this.tenantConfig.getSearchConfig(headers['x-tenant-id']),
     );
-    const aiClassification = resolveAiClassification(
-      tenantAiClassification(searchConfig),
-      dto.classify,
-    );
+    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
+    // setting can turn the need guess off.
+    const aiClassification = tenantAiClassification(searchConfig);
 
     // Classify never throws; a failure comes back as error signals.
     const classified = hasText
-      ? await this.classifier.classify(
-          cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
-          headers['x-tenant-id'],
-          aiClassification,
-        )
+      ? await withSpan('v2.classify', async (classifySpan) => {
+          const result = await this.classifier.classify(
+            cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
+            headers['x-tenant-id'],
+            aiClassification,
+          );
+          // Classify never throws; error signals mark a failed call.
+          classifySpan.setAttribute(
+            'v2.classify.failed',
+            result.signals.emergency?.status === 'error',
+          );
+          return result;
+        })
       : null;
     const signals = classified?.signals ?? NO_TEXT_SIGNALS;
     const scores = classified?.scores ?? {};
 
-    const callerNeeds = dto.needs ?? [];
+    const lang = headers['accept-language'] || 'en';
     const rulesRequest: RulesRequest = {
       has_text: hasText,
-      has_content_word: hasContentWord(
-        text,
-        headers['accept-language'] || 'en',
-      ),
+      has_content_word: hasContentWord(text, lang),
       needs: callerNeeds,
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
-    // Tenant top areas and hotlines: later slice.
-    const decision = decide(rulesRequest, signals, {
-      ai_classification: aiClassification,
-    });
+    const topAreas = await topAreasPromise;
+    const decision = withSpanSync('v2.rules.decide', () =>
+      decide(rulesRequest, signals, {
+        ai_classification: aiClassification,
+        hotlines: tenantHotlines(searchConfig),
+        top_areas: topAreas,
+      }),
+    );
 
     const needScores: NeedScore[] = [];
     for (const code of decision.boost_needs) {
@@ -275,40 +393,47 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
-    // Only caller-sent needs make blocks; a model guess never does. N-X never
-    // makes a block. They never filter (Lucas 2026-11-12).
-    const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, classify, ...v1Fields } =
-      dto;
-    const lang = headers['accept-language'] || 'en';
-    const tenantContext = { ai_classification: aiClassification };
-    const hybridCall: HybridCall = {
-      headers,
-      query: {
-        ...v1Fields,
-        // The keyword search gets the same text form as the models: extra
-        // spaces and a trailing ? changed the top 10 of 15 of 40 queries
-        // even after the models were normalized (ISS-2797, 2026-11-18).
-        ...(hasText && { query: modelText(text) }),
-        query_type: 'hybrid',
-        // Off by default (DTO); a browse has nothing to trim, so it stays off.
-        ...(!hasText && { relevance_cutoff: 'off' }),
-      } as SearchResourcesQueryDto,
-      rankingVersion: 'v2',
-      ...(queryVector && { queryVector }),
-      needScores,
-      ...(selectedNeeds.length > 0 && { selectedNeeds }),
-      ...(countCodes.length > 0 && { countCodes }),
-      body,
+    // An area search (`region`, PR #313): an unknown Region is a 400 before
+    // the search runs. The tenant config read above gives the defaults.
+    const { area, resolved } = await resolveArea(
+      dto,
+      this.regionService,
+      async () => searchConfig,
+      { rankingVersion: 'v2' },
+    );
+
+    // The language picks the index. An unknown language has no index; that
+    // was a 500 (break run 2026-11-14) and is a caller error.
+    span.setAttributes({
+      'v2.has_text': hasText,
+      'v2.ai_classification': aiClassification,
+      'v2.boost_needs': needScores.length,
+      'v2.selected_needs': selectedNeeds.length,
+      'v2.count_codes': countCodes.length,
+    });
+
+    const tenantContext = {
+      ai_classification: aiClassification,
+      hotlines: tenantHotlines(searchConfig),
+      top_areas: topAreas,
     };
-    // The text-free second call (weak match) starts from this call minus the embedding.
-    const { queryVector: _qv, ...withoutVector } = hybridCall;
-    void _qv;
-    const first = await this.runSearch(hybridCall, headers);
+    const hybridCall: HybridCall = {
+      ...retrievalOptions,
+      ...(early && { early }),
+      ...(area && { area }),
+      needScores,
+      ...(countCodes.length > 0 && { countCodes }),
+    };
+    // The text-free second call (weak match) starts from this call minus the
+    // early handle: the early stage was built for the text query.
+    const { early: _early, ...withoutEarly } = hybridCall;
+    void _early;
+    const first = await withSpan('v2.retrieval', () =>
+      this.runSearch(hybridCall, headers),
+    );
     const {
       judges,
       needCounts: firstCounts,
@@ -355,21 +480,23 @@ export class V2SearchService {
       response = emptyResults(firstResponse);
       counts = { total: 0, by_code: null };
       if (clarifyDecision.count_codes.length > 0) {
-        const second = await this.runSearch(
-          {
-            ...withoutVector,
-            query: {
-              ...hybridCall.query,
-              query: '',
-              relevance_cutoff: 'off',
-              limit: 1,
-              page: 1,
-            } as SearchResourcesQueryDto,
-            needScores: [],
-            selectedNeeds: undefined,
-            countCodes: clarifyDecision.count_codes,
-          },
-          headers,
+        const second = await withSpan('v2.retrieval.weak_counts', () =>
+          this.runSearch(
+            {
+              ...withoutEarly,
+              query: {
+                ...hybridCall.query,
+                query: '',
+                relevance_cutoff: 'off',
+                limit: 1,
+                page: 1,
+              } as SearchResourcesQueryDto,
+              needScores: [],
+              selectedNeeds: undefined,
+              countCodes: clarifyDecision.count_codes,
+            },
+            headers,
+          ),
         );
         counts = {
           total: countedTotal(second),
@@ -379,18 +506,20 @@ export class V2SearchService {
     } else if (weak) {
       // The caller picked needs after a weak match: the text is dropped and
       // the need tags decide (hard filter).
-      const second = await this.runSearch(
-        {
-          ...withoutVector,
-          query: {
-            ...hybridCall.query,
-            query: '',
-            relevance_cutoff: 'off',
-          } as SearchResourcesQueryDto,
-          needScores: [],
-          needFilter: callerNeeds,
-        },
-        headers,
+      const second = await withSpan('v2.retrieval.weak_pick', () =>
+        this.runSearch(
+          {
+            ...withoutEarly,
+            query: {
+              ...hybridCall.query,
+              query: '',
+              relevance_cutoff: 'off',
+            } as SearchResourcesQueryDto,
+            needScores: [],
+            needFilter: callerNeeds,
+          },
+          headers,
+        ),
       );
       const {
         needCounts: secondCounts,
@@ -405,14 +534,17 @@ export class V2SearchService {
     }
 
     // strong_text_match is still a placeholder: no retrieval signal yet.
-    const clarification = finalize(clarifyDecision, {
-      counts,
-      strong_text_match: false,
-    });
+    const clarification = withSpanSync('v2.rules.finalize', () =>
+      finalize(clarifyDecision, {
+        counts,
+        strong_text_match: false,
+      }),
+    );
 
     const result: V2SearchResponseDto = {
       ...response,
       weak_match: weak,
+      ...(resolved && { resolved_location: resolved }),
       intent: {
         query: hasText ? text : null,
         ...(dto.taxonomy &&

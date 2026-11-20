@@ -39,8 +39,10 @@ const mainResponse = {
 };
 
 /**
- * The probe is three calls, not one window: ask for the top score, count what
- * clears a fraction of it, and only then fetch the survivors. `plan` describes
+ * The probe is two calls, not one window: ask for the top score, then one cut
+ * call that counts what clears a fraction of it and, when at most 1000 clear,
+ * returns the survivors too. Only a ladder rung that enumerates a larger cut
+ * needs a separate kept call. `plan` describes
  * the shape Elasticsearch reports back, so a test states a distribution rather
  * than a sequence of mocked responses.
  */
@@ -61,9 +63,26 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   let service: HybridSearchService;
   let requests: any[];
   let plan: Plan;
+  // Holds the count answers of the ladder rungs (everything above the base 20).
+  let ladderGate: Promise<void> | undefined;
 
   const build = async () => {
     requests = [];
+    const countAnswer = (req: any) => {
+      // Tolerance lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
+      const entry = Object.entries(plan.countsByMinScore ?? {}).find(
+        ([k]) => Math.abs(Number(k) - req.min_score) < 1e-6,
+      );
+      return {
+        hits: {
+          total: {
+            value: entry ? entry[1] : plan.survivors,
+            relation: 'eq',
+          },
+          hits: [],
+        },
+      };
+    };
     const esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
@@ -104,24 +123,36 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
           },
         });
       }
-      // 2. count above the threshold, no documents collected. The ladder sends
-      //    several of these; countsByMinScore answers per threshold. Tolerance
-      //    lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
-      if (req.size === 0 && req.min_score != null) {
-        const entry = Object.entries(plan.countsByMinScore ?? {}).find(
-          ([k]) => Math.abs(Number(k) - req.min_score) < 1e-6,
-        );
+      // 2. the cut call: size MAX_ENUMERATED_CUT + 1, total = survivors at the
+      //    base threshold; its docs are the kept docs when total <= 1000.
+      if (
+        req.size === 1001 &&
+        req.min_score != null &&
+        Array.isArray(req._source)
+      ) {
+        const total = countAnswer(req).hits.total.value;
+        const svc = plan.keptServices ?? [];
         return Promise.resolve({
           hits: {
-            total: {
-              value: entry ? entry[1] : plan.survivors,
-              relation: 'eq',
-            },
-            hits: [],
+            total: { value: total, relation: 'eq' },
+            hits: Array.from({ length: Math.min(total, 1001) }, (_, i) => ({
+              _id: `keep-${i}`,
+              _score: req.min_score,
+              _source: { service_id: svc[i] ?? `svc-${i}` },
+            })),
           },
         });
       }
-      // 3. the survivors themselves — the last kept doc's score is the
+      // 2b. count above the threshold, no documents collected. The ladder sends
+      //    several of these; countsByMinScore answers per threshold. Tolerance
+      //    lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
+      if (req.size === 0 && req.min_score != null) {
+        if (ladderGate && req.min_score > 21) {
+          return ladderGate.then(() => countAnswer(req));
+        }
+        return Promise.resolve(countAnswer(req));
+      }
+      // 3. a separate kept call (only after a ladder rung) — the last kept doc's score is the
       //    threshold, so cutoff_score stays meaningful for every rung
       if (req.min_score != null && Array.isArray(req._source)) {
         const svc = plan.keptServices ?? [];
@@ -212,6 +243,9 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   const headRequest = () => requests.find((r) => r._source === false);
   const survivorRequest = () =>
     requests.find((r) => r.min_score != null && Array.isArray(r._source));
+  const cutRequest = () => requests.find((r) => r.size === 1001);
+  const countRequests = () =>
+    requests.filter((r) => r.size === 0 && r.min_score != null);
 
   const run = async (overrides: Record<string, unknown> = {}) => {
     await build();
@@ -223,6 +257,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   };
 
   beforeEach(async () => {
+    ladderGate = undefined;
     // 1,234 matched, 18 of them above a fifth of the top score.
     plan = { matched: 1234, topScore: 100, survivors: 18 };
     await build();
@@ -363,8 +398,9 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       // only enough to tell one service's locations apart from another's.
       expect(survivorRequest()._source).toEqual(['service_id']);
       expect(survivorRequest().sort).toEqual(['_score']);
-      // and it asks for exactly the cut it already counted
-      expect(survivorRequest().size).toBe(18);
+      // one call counts and collects: a full page is one past the limit
+      expect(survivorRequest().size).toBe(1001);
+      expect(survivorRequest().track_total_hits).toBe(true);
     });
 
     it('reads the same shard copies as the main search', async () => {
@@ -377,24 +413,117 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       };
       await run();
 
-      // head, count, survivors, widening window and the main search
+      // head, cut call, widening window and the main search
       expect(requests.some((r) => r.size === 200)).toBe(true);
-      expect(requests.length).toBeGreaterThanOrEqual(5);
+      expect(requests.length).toBeGreaterThanOrEqual(4);
       const preferences = new Set(requests.map((r) => r.preference));
       expect(preferences.size).toBe(1);
       expect([...preferences][0]).toEqual(expect.any(String));
     });
 
-    it('counts before it collects, so a large cut costs one cheap call', async () => {
+    it('a cut over 1000 discards the cut call docs and never fetches a kept page', async () => {
       plan = { matched: 27452, topScore: 100, survivors: 1500 };
       await run();
 
-      const counting = requests.find(
-        (r) => r.size === 0 && r.min_score != null,
+      // the cut call reported 1500 survivors; the ladder counts size 0
+      expect(cutRequest()).toBeDefined();
+      expect(countRequests().length).toBeGreaterThan(0);
+      // no rung enumerates, so no kept call with size = survivors was made
+      expect(
+        requests.filter(
+          (r) =>
+            r.min_score != null && Array.isArray(r._source) && r.size !== 1001,
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  describe('the cut call counts and collects in one request', () => {
+    const keptCalls = () =>
+      requests.filter(
+        (r) =>
+          r.min_score != null && Array.isArray(r._source) && r.size !== 1001,
       );
-      expect(counting).toBeDefined();
-      // over MAX_ENUMERATED_CUT, so the survivors were never fetched
-      expect(survivorRequest()).toBeUndefined();
+
+    it('with at most 1000 survivors sends one min_score call and no separate kept fetch', async () => {
+      plan = { matched: 5000, topScore: 100, survivors: 40 };
+      const response = await run();
+
+      const minScoreCalls = requests.filter((r) => r.min_score != null);
+      expect(minScoreCalls).toHaveLength(1);
+      expect(minScoreCalls[0].size).toBe(1001);
+      expect(minScoreCalls[0].track_total_hits).toBe(true);
+      // no call that would fetch size = survivors without totals
+      expect(
+        requests.filter((r) => r.size === 40 && r.track_total_hits === false),
+      ).toHaveLength(0);
+      expect(keptCalls()).toHaveLength(0);
+
+      // the kept ids are the cut call's docs, and the cut is applied
+      const ids = mainRequest().query.function_score.query.bool.filter.find(
+        (clause: any) => clause.ids,
+      ).ids.values;
+      expect(ids).toEqual(Array.from({ length: 40 }, (_, i) => `keep-${i}`));
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 40,
+        matched_before_cutoff: 5000,
+        cutoff_score: 20,
+        candidates_examined: 40,
+      });
+    });
+
+    it('uses the cut call docs at exactly 1000 survivors', async () => {
+      plan = { matched: 20000, topScore: 100, survivors: 1000 };
+      const response = await run();
+
+      expect(countRequests()).toHaveLength(0);
+      expect(keptCalls()).toHaveLength(0);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 1000,
+        candidates_examined: 1000,
+      });
+    });
+
+    it('does not use the cut call docs at 1001 survivors and fetches the rung it enumerates', async () => {
+      plan = {
+        matched: 20000,
+        topScore: 100,
+        rank20Score: 60,
+        survivors: 1001,
+        countsByMinScore: { 20: 1001, 25: 1001, 30: 800, 40: 500, 50: 300 },
+      };
+      const response = await run();
+
+      // the base cut call is discarded: the ladder counts rungs at size 0
+      expect(cutRequest().min_score).toBe(20);
+      expect(countRequests()).toHaveLength(4);
+      // a separate kept call fetches exactly the first enumerating rung (30)
+      const kept = keptCalls();
+      expect(kept).toHaveLength(1);
+      expect(kept[0].size).toBe(800);
+      expect(kept[0].track_total_hits).toBe(false);
+      expect(Math.round(kept[0].min_score)).toBe(30);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 800,
+        candidates_examined: 800,
+      });
+    });
+
+    it('declines no_elbow at 0.9 x matched with at most 1000 survivors and makes no kept fetch', async () => {
+      plan = { matched: 500, topScore: 100, survivors: 450 };
+      const response = await run();
+
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: false,
+        reason: 'no_elbow',
+        kept: 500,
+      });
+      expect(keptCalls()).toHaveLength(0);
+      expect(countRequests()).toHaveLength(0);
+      expect(JSON.stringify(mainRequest())).not.toContain('"ids"');
     });
   });
 
@@ -496,10 +625,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       plan = { matched: 1234, topScore: 300, rank20Score: 50, survivors: 24 };
       const response = await run();
 
-      const counting = requests.find(
-        (r) => r.size === 0 && r.min_score != null,
-      );
-      expect(counting.min_score).toBe(50);
+      expect(cutRequest().min_score).toBe(50);
       expect(response.relevance_cutoff).toMatchObject({
         applied: true,
         kept: 24,
@@ -530,10 +656,12 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       const response = await run();
 
       // no 21st score, so nothing to clamp to: the fraction alone decides
+      // the only min_score call is the base cut call; no rung counts
       const countScores = requests
-        .filter((r) => r.size === 0 && r.min_score != null)
+        .filter((r) => r.min_score != null)
         .map((r) => r.min_score);
       expect(countScores).toEqual([20]);
+      expect(countRequests()).toHaveLength(0);
       expect(response.relevance_cutoff.applied).toBe(true);
       expect(response.relevance_cutoff.kept).toBe(5);
     });
@@ -554,16 +682,59 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       };
       const response = await run();
 
-      const countScores = requests
-        .filter((r) => r.size === 0 && r.min_score != null)
-        .map((r) => Math.round(r.min_score));
+      // base cut call (size 1001) then the four rung counts (size 0)
+      expect(cutRequest().min_score).toBe(20);
+      const countScores = [cutRequest(), ...countRequests()].map((r) =>
+        Math.round(r.min_score),
+      );
       expect(countScores).toEqual([20, 25, 30, 40, 50]);
+      // the winning rung's survivors come from one separate kept call
+      const kept = requests.find(
+        (r) =>
+          r.min_score != null && Array.isArray(r._source) && r.size !== 1001,
+      );
+      expect(kept.size).toBe(490);
+      expect(kept.track_total_hits).toBe(false);
       expect(response.relevance_cutoff).toMatchObject({
         applied: true,
         reason: null,
         kept: 490,
         candidates_examined: 490,
         matched_before_cutoff: 15700,
+      });
+      expect(response.relevance_cutoff.cutoff_score).toBeCloseTo(50, 6);
+    });
+
+    it('sends every rung count at once and picks the first rung that enumerates', async () => {
+      plan = {
+        matched: 15700,
+        topScore: 100,
+        rank20Score: 60,
+        survivors: 5524,
+        countsByMinScore: { 20: 5524, 25: 3504, 30: 2788, 40: 1064, 50: 490 },
+      };
+      let release!: () => void;
+      ladderGate = new Promise<void>((r) => (release = r));
+      await build();
+      const pending: Promise<any> = service.searchHybrid({
+        headers,
+        query: { ...baseQuery, relevance_cutoff: 'on' },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      // all four rung counts are out while none has answered
+      const rungs = requests
+        .filter((r) => r.size === 0 && r.min_score != null && r.min_score > 21)
+        .map((r) => Math.round(r.min_score));
+      expect(rungs).toEqual([25, 30, 40, 50]);
+
+      release();
+      const response = await pending;
+      ladderGate = undefined;
+      // the first rung in ladder order with survivors <= MAX_ENUMERATED_CUT
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 490,
       });
       expect(response.relevance_cutoff.cutoff_score).toBeCloseTo(50, 6);
     });
@@ -580,10 +751,11 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       };
       const response = await run();
 
-      const countScores = requests
-        .filter((r) => r.size === 0 && r.min_score != null)
-        .map((r) => r.min_score);
-      expect(countScores).toEqual([20, 22]);
+      const countScores = [cutRequest(), ...countRequests()].map(
+        (r) => r.min_score,
+      );
+      // base cut call, then every rung is counted (in parallel); each clamps to 22
+      expect(countScores).toEqual([20, 22, 22, 22, 22]);
       expect(response.relevance_cutoff.applied).toBe(true);
       expect(response.relevance_cutoff.kept).toBe(900);
       expect(response.relevance_cutoff.cutoff_score).toBe(22);

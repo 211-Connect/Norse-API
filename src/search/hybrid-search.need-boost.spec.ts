@@ -184,7 +184,22 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
     await build();
   });
 
-  it('1. switch off: no head call and the request ignores needScores', async () => {
+  it('0. unset means on; only the exact string false turns it off', async () => {
+    enabled = undefined;
+    await build();
+    await run(tier2Fod);
+    expect(headCalls().length).toBeGreaterThan(0);
+
+    for (const value of ['false', 'FALSE', '0', 'off']) {
+      enabled = value;
+      await build();
+      await run(tier2Fod);
+      // Only the exact string `false` turns it off.
+      expect(headCalls().length > 0).toBe(value !== 'false');
+    }
+  });
+
+  it('1. switch off (NEED_BOOST_ENABLED=false): no head call and the request ignores needScores', async () => {
     enabled = 'false';
     await build();
     await run();
