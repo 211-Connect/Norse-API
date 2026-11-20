@@ -90,7 +90,8 @@ describe('HybridSearchService embedding race', () => {
     fetchMock.mock.calls.find((c) => c[0] === url);
   const winner = () =>
     setAttribute.mock.calls.find((c) => c[0] === 'hybrid.embed_winner')?.[1];
-  const flush = () => new Promise((r) => setTimeout(r, 20));
+  // Well past the 15 ms side delays, so the slow side has settled.
+  const flush = () => new Promise((r) => setTimeout(r, 60));
 
   beforeEach(() => {
     store = new Map();
