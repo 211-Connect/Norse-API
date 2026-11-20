@@ -5,10 +5,12 @@ type ExportResultCallback = Parameters<SpanExporter['export']>[1];
 /**
  * Attribute allowlist for exported spans.
  *
- * Norse-API sets no custom span attributes (only instrumentation does), so an
- * allowlist is practical: a future instrumentation upgrade that adds an
+ * An allowlist is practical: a future instrumentation upgrade that adds an
  * attribute is dropped by default instead of leaking user input, IPs or
  * headers. Keys not listed here and not matching a prefix below are removed.
+ * The attributes Norse-API sets itself (`withSpan`, `observeDownstream`) are
+ * listed one by one at the end: each holds a name, a count, a flag or a
+ * duration, never request text. A new custom attribute must be added here.
  */
 const ALLOWED_ATTRIBUTES = [
   'http.request.method',
@@ -35,6 +37,26 @@ const ALLOWED_ATTRIBUTES = [
   'otel.status_code',
   'otel.status_description',
   'user_agent.synthetic.type',
+  // Set by MetricsService.observeDownstream (one span per downstream call).
+  'downstream.dependency',
+  'downstream.operation',
+  'downstream.outcome',
+  'downstream.took_ms',
+  'downstream.server_timing',
+  // Set by the v2 search pipeline spans.
+  'v2.has_text',
+  'v2.ai_classification',
+  'v2.boost_needs',
+  'v2.selected_needs',
+  'v2.count_codes',
+  'v2.classify.failed',
+  'v2.classify.cache_hit',
+  'hybrid.embed_cache_hit',
+  'hybrid.typo_clauses',
+  'hybrid.fused',
+  'hybrid.fast_page',
+  'hybrid.cutoff',
+  'hybrid.need_counts',
 ] as const;
 
 /** Non-sensitive instrumentation families (e.g. `db.system`, `nestjs.type`). */

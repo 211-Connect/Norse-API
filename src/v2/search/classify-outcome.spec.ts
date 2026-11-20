@@ -54,9 +54,16 @@ describe('classify outcomes', () => {
       const mlBroker = {
         classifySearch: jest.fn().mockRejectedValue(error),
       } as unknown as MlBrokerHttpService;
-      const client = new SearchClassificationClient(mlBroker, {
-        get: jest.fn(),
-      } as unknown as ConfigService);
+      const client = new SearchClassificationClient(
+        mlBroker,
+        {
+          get: jest.fn(),
+        } as unknown as ConfigService,
+        {
+          getOrSet: (_k: string, f: () => Promise<unknown>) => f(),
+          setMany: jest.fn(),
+        } as never,
+      );
       const warn = jest
         .spyOn(
           (client as unknown as { logger: { warn: (m: string) => void } })
@@ -169,9 +176,16 @@ describe('classify outcomes', () => {
       const mlBroker = {
         classifySearch: jest.fn().mockResolvedValue(input),
       } as unknown as MlBrokerHttpService;
-      const client = new SearchClassificationClient(mlBroker, {
-        get: jest.fn(),
-      } as unknown as ConfigService);
+      const client = new SearchClassificationClient(
+        mlBroker,
+        {
+          get: jest.fn(),
+        } as unknown as ConfigService,
+        {
+          getOrSet: (_k: string, f: () => Promise<unknown>) => f(),
+          setMany: jest.fn(),
+        } as never,
+      );
       const warn = jest
         .spyOn(
           (client as unknown as { logger: { warn: (m: string) => void } })
@@ -190,9 +204,16 @@ describe('classify outcomes', () => {
       const mlBroker = {
         classifySearch: jest.fn().mockResolvedValue(body()),
       } as unknown as MlBrokerHttpService;
-      const client = new SearchClassificationClient(mlBroker, {
-        get: jest.fn(),
-      } as unknown as ConfigService);
+      const client = new SearchClassificationClient(
+        mlBroker,
+        {
+          get: jest.fn(),
+        } as unknown as ConfigService,
+        {
+          getOrSet: (_k: string, f: () => Promise<unknown>) => f(),
+          setMany: jest.fn(),
+        } as never,
+      );
       const warn = jest
         .spyOn(
           (client as unknown as { logger: { warn: (m: string) => void } })

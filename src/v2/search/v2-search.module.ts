@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { CmsConfigModule } from 'src/cms-config/cms-config.module';
+import { RequestCacheModule } from 'src/common/services/cache/request-cache.module';
 import { MlBrokerModule } from 'src/ml-broker/ml-broker.module';
 import { RegionServiceModule } from 'src/region/internal';
-import { RequestCacheModule } from 'src/common/services/cache/request-cache.module';
 import { SharedElasticsearchModule } from 'src/common/providers/elasticsearch.module';
 import { SearchModule } from '../../search/search.module';
 import { SearchClassificationClient } from './search-classification.client';

@@ -49,6 +49,26 @@ The states and what search does for each live in `src/v2/search/classify-outcome
 - `emergency_failed` (emergency missing, unknown status, or error): band `unknown`, needs as normal. Not cacheable.
 - `failed` (any thrown error: `unconfigured`, `timeout`, `http`, `network`, `malformed`, or `unexpected`): both signals error, band `unknown`. Not cacheable.
 
+## Typo clauses and the rarity gate (ISS-2793)
+
+The keyword list has two typo-tolerant clauses: one on the general recall fields and one on taxonomy name and description. They cost the most of any clause in the list.
+
+The rule: the keyword list leaves both clauses out when every content word of the search text matches MORE THAN 5 tenant documents (`TYPO_GATE_MAX_DOCS` in `src/search/internal/text-matching/fuzzy-match.ts`). A word with that many documents is spelled correctly. A misspelled word matches almost nothing.
+
+The count comes from the word-rarity request that already runs for every v2 search. It adds one bucket per word (`c{i}`) over the same fields as the recall clause. It is cached per word with the idf (key prefix `search:rarity4:`). No extra Elasticsearch request.
+
+The typo clauses stay in when:
+
+- the rarity lookup failed (the result is null);
+- the search text has no content words;
+- the search text has 12 or more content words (the word list may be cut, so some words are not counted).
+
+They also stay in when at least one content word has 5 documents or fewer, including 0. v1 search is not changed.
+
+The span `hybrid.word_rarity` carries the boolean attribute `hybrid.typo_clauses`.
+
+Measured on 2026-11-17: on 620 real search texts the gate removes the typo clauses on 59% and cuts the keyword list p50 from 141 ms to 81 ms. 0.8% of 600 synthetic typos are missed. nDCG@10 on 134 graded queries goes from 0.697 to 0.695.
+
 ## Tests
 
 `npx jest src/v2/search`; `npx jest --config ./test/jest-e2e.json test/v2-search-versioning.e2e-spec.ts`.

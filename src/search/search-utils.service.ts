@@ -71,6 +71,18 @@ export class SearchUtilsService {
     'organization.summary',
   ];
 
+  /**
+   * organization.name is handled exclusively via the name tier (phrase/exact/
+   * prefix on .clean/.lc). organization.description is mission-statement prose
+   * that matches unrelated need tokens. Both are excluded from the recall
+   * fallback so they don't leak noise at token level. Shared by the v2 recall
+   * clause and the word-rarity document count, so the two cannot drift.
+   */
+  static readonly GENERAL_RECALL_FIELDS: string[] =
+    SearchUtilsService.FIELDS_TO_QUERY.filter(
+      (f) => f !== 'organization.name' && f !== 'organization.description',
+    );
+
   static readonly NESTED_FIELDS_TO_QUERY: string[] = [
     'taxonomies.name',
     'taxonomies.description',
