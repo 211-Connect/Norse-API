@@ -35,10 +35,12 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let searchConfig: Record<string, unknown>;
   let mainHits: any[];
   let mainTotal: unknown;
+  let tenantNeedDocs: number;
 
   beforeEach(async () => {
     requests = [];
     countMode = 'ok';
+    tenantNeedDocs = 50;
     searchConfig = {};
     mainHits = [];
     mainTotal = { value: 7, relation: 'eq' };
@@ -52,6 +54,7 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
         return Promise.resolve({
           ...mainResponse,
           aggregations: {
+            tenant_needs: { with_needs: { doc_count: tenantNeedDocs } },
             need_counts: {
               buckets: [
                 { key: 'N-FOD-01', doc_count: 4 },
@@ -205,6 +208,20 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   it('counts: writes 0 for every requested code the aggregation omits', async () => {
     const res: any = await run({ countCodes: ['N-FOD', 'N-FOD-01', 'N-HOU'] });
     expect(res.needCounts).toEqual({ 'N-FOD': 6, 'N-FOD-01': 4, 'N-HOU': 0 });
+  });
+
+  it('counts: asks the tenant-wide number of docs with sune_needs, ignoring the search filters', async () => {
+    await run({ countCodes: ['N-FOD'] });
+    const g = countRequest().aggs.tenant_needs;
+    expect(g.global).toEqual({});
+    expect(JSON.stringify(g.aggs.with_needs.filter)).toContain('tenant-a');
+    expect(JSON.stringify(g.aggs.with_needs.filter)).toContain('sune_needs');
+  });
+
+  it('counts: a tenant index with 0 docs holding sune_needs leaves needCounts out (not counted)', async () => {
+    tenantNeedDocs = 0;
+    const res: any = await run({ countCodes: ['N-FOD', 'N-HOU'] });
+    expect('needCounts' in res).toBe(false);
   });
 
   it('counts: not requested means no count request and no needCounts', async () => {

@@ -75,7 +75,7 @@ describe('finalize', () => {
       'urgency_today',
     ]);
   });
-  it('sets counts and drops 0-count options; a code missing from counted by_code is 0', () => {
+  it('sets counts and keeps 0-count options; a code missing from counted by_code is 0', () => {
     // An Elasticsearch aggregation can leave out a code with no matches, so a
     // missing key in a counted by_code means 0 results, not "unknown".
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'])]);
@@ -85,6 +85,8 @@ describe('finalize', () => {
     });
     expect(r.questions[0].options).toEqual([
       { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
+      { label: 'N-FOD', parameter: 'needs', value: 'N-FOD', results_count: 0 },
+      { label: 'N-MON', parameter: 'needs', value: 'N-MON', results_count: 0 },
     ]);
   });
   it('an option the server did not count carries results_count null (Lucas 2026-11-13, question 7)', () => {
@@ -110,10 +112,7 @@ describe('finalize', () => {
     expect(q.options.map((o) => o.results_count)).toEqual([4, 6]);
     expect(q).not.toHaveProperty('level');
   });
-  it('recomputes uncertainty over the options left after 0-count drops', () => {
-    // Housing and Food are a toss-up (uncertainty ~0.80). With Food at 0
-    // results the question is Housing vs Money, which the model favours
-    // clearly: normEntropy([0.4, 0.05]) ~0.503.
+  it('keeps the decide-time uncertainty when an option has 0 results', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8)], {
       'N-HOU': 0.4,
       'N-FOD': 0.4,
@@ -123,35 +122,8 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
       strong_text_match: false,
     }).questions;
-    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON']);
-    expect(q.uncertainty).toBeCloseTo(0.503, 2);
-  });
-  it('a start question cut to one option ranks below a real area question', () => {
-    const d = dec(
-      [
-        mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8),
-        mk('area:N-HOU', 3, ['N-HOU-01', 'N-HOU-02'], 'needs', 0.6),
-      ],
-      {
-        'N-HOU': 0.4,
-        'N-FOD': 0.4,
-        'N-MON': 0.05,
-        'N-HOU-01': 0.5,
-        'N-HOU-02': 0.5,
-      },
-    );
-    const qs = finalize(d, {
-      counts: counts(10, {
-        'N-HOU': 5,
-        'N-FOD': 0,
-        'N-MON': 0,
-        'N-HOU-01': 5,
-        'N-HOU-02': 5,
-      }),
-      strong_text_match: false,
-    }).questions;
-    expect(qs.map((q) => q.id)).toEqual(['area:N-HOU', 'start']);
-    expect(qs[1].uncertainty).toBe(0);
+    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect(q.uncertainty).toBe(0.8);
   });
   it('keeps the decide-time uncertainty when no option was dropped', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.42)]);
@@ -182,12 +154,13 @@ describe('finalize', () => {
       },
     ]);
   });
-  it('an empty counted by_code drops every need option (all 0), unlike null', () => {
+  it('an empty counted by_code keeps every need option with count 0; null keeps them uncounted', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
-    expect(
-      finalize(d, { counts: counts(10, {}), strong_text_match: false })
-        .questions,
-    ).toEqual([]);
+    const [q] = finalize(d, {
+      counts: counts(10, {}),
+      strong_text_match: false,
+    }).questions;
+    expect(q.options.map((o) => o.results_count)).toEqual([0, 0]);
     expect(
       finalize(d, { counts: counts(10, null), strong_text_match: false })
         .questions,
@@ -215,14 +188,14 @@ describe('finalize', () => {
     });
     expect(r2.questions).toHaveLength(1);
   });
-  it('drops a question with no option left; total 0 drops needs', () => {
+  it('keeps a 0-count option; total 0 drops needs', () => {
     const d = dec([mk('start', 2, ['N-HOU'])]);
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
         strong_text_match: false,
       }).questions,
-    ).toEqual([]);
+    ).toHaveLength(1);
     expect(
       finalize(d, { counts: counts(0, {}), strong_text_match: false })
         .questions,

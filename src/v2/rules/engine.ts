@@ -7,13 +7,7 @@ import {
   noMatchQuestion,
 } from './questions';
 import { scoreOf } from './scores';
-import {
-  effort,
-  needUncertainty,
-  priorityOf,
-  splitQuality,
-  valueOf,
-} from './importance';
+import { effort, priorityOf, splitQuality, valueOf } from './importance';
 import { needOptions } from './sune';
 import {
   Clarification,
@@ -115,21 +109,14 @@ export function finalize(
     const options = [];
     for (const o of q.options) {
       if (counts.by_code !== null) {
-        const n = counts.by_code[o.value] ?? 0;
-        if (n === 0) continue;
-        o.results_count = n;
+        // A 0-count option stays: the person still sees it, with its 0.
+        o.results_count = counts.by_code[o.value] ?? 0;
       }
       options.push(o);
     }
-    const dropped = options.length < q.options.length;
     q.options = options;
     const needOpts = needOptions(options);
     if (needOpts.length === 0) continue;
-    // decide() measured uncertainty over every option; once 0-count options
-    // are gone, measure it again over the ones the person will see.
-    if (dropped) {
-      q.uncertainty = needUncertainty(q, decision.option_scores);
-    }
     const counted = needOpts.filter((o) => typeof o.results_count === 'number');
     if (
       total !== null &&
