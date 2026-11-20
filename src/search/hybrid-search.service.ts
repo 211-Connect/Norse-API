@@ -334,6 +334,17 @@ interface PredictedTaxonomy {
   score: number;
 }
 
+/** Parses `V2_KEYWORD_LOCALES` (comma list). Unset or blank returns `null` (all locales). */
+export function parseKeywordLocales(
+  raw: string | undefined,
+): Set<string> | null {
+  const items = (raw ?? '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter((x) => x.length > 0);
+  return items.length > 0 ? new Set(items) : null;
+}
+
 @Injectable()
 export class HybridSearchService {
   private readonly logger = new Logger(HybridSearchService.name);
@@ -341,6 +352,8 @@ export class HybridSearchService {
   private readonly embeddingModel: string;
   private readonly runpodApiKey: string;
   private readonly needBoostEnabled: boolean;
+  /** Locales whose v2 search keeps the keyword leg. `null` = all (today's behavior). */
+  private readonly keywordLocales: Set<string> | null;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
@@ -360,6 +373,24 @@ export class HybridSearchService {
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
       this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
+    this.keywordLocales = parseKeywordLocales(
+      this.configService.get<string>('V2_KEYWORD_LOCALES'),
+    );
+  }
+
+  /**
+   * Whether the v2 keyword leg runs for this locale. `V2_KEYWORD_LOCALES`
+   * unset or empty keeps it on for every locale. When set (for example
+   * `en,es,ru`), other locales run the vector leg only. A tag matches by its
+   * full form or its primary subtag (`es-MX` matches `es`).
+   */
+  private keywordEnabledForLocale(lang: string): boolean {
+    if (this.keywordLocales === null) return true;
+    const tag = lang.trim().toLowerCase();
+    return (
+      this.keywordLocales.has(tag) ||
+      this.keywordLocales.has(tag.split(/[-_]/)[0])
+    );
   }
 
   /**
@@ -639,6 +670,7 @@ export class HybridSearchService {
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
+    const keyword = !v2 || this.keywordEnabledForLocale(lang);
     const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
     const identity: SearchIdentity = {
       tenantId,
@@ -740,6 +772,7 @@ export class HybridSearchService {
             queryStr,
             queryVector: queryVector!,
             wordRarity,
+            keyword,
           })
         : undefined;
     // A rejection is handled in fetchFusedOrder. This keeps it from being
@@ -826,6 +859,7 @@ export class HybridSearchService {
             distance: distance ?? 0,
             pinnedMode,
             wordRarity,
+            keyword,
           })
         : undefined;
     const probeNeeds =
@@ -849,6 +883,7 @@ export class HybridSearchService {
           filters: baseFilters,
           pinnedMode,
           wordRarity,
+          keyword,
           needs: probeNeeds,
         });
 
@@ -900,6 +935,7 @@ export class HybridSearchService {
         distance: distance ?? 0,
         pinnedMode,
         wordRarity,
+        keyword,
       });
       if (topScore > 0) {
         needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
@@ -919,6 +955,7 @@ export class HybridSearchService {
         queryVector: queryVector!,
         predicted: predictedTaxonomies,
         wordRarity,
+        keyword,
         needs: boostActive ? activeNeeds : [],
         earlyLists,
       });
@@ -937,6 +974,7 @@ export class HybridSearchService {
           distance: distance ?? 0,
           pinnedMode,
           wordRarity,
+          keyword,
         });
         if (topScore > 0) {
           needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
@@ -960,6 +998,7 @@ export class HybridSearchService {
       sort,
       extraShould: needShould,
       wordRarity,
+      keyword,
       fusedIds,
       selectedNeeds: [...new Set(options.selectedNeeds ?? [])],
     });
@@ -1088,9 +1127,12 @@ export class HybridSearchService {
     queryStr: string;
     queryVector: number[];
     wordRarity: WordRarity;
+    keyword: boolean;
   }): Promise<string[][]> {
-    const { filters, queryStr, queryVector, wordRarity } = args;
-    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
+    const { filters, queryStr, queryVector, wordRarity, keyword } = args;
+    const lexical = keyword
+      ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+      : [];
     const requests: Promise<string[]>[] = [];
     if (lexical.length > 0) {
       requests.push(
@@ -1155,6 +1197,7 @@ export class HybridSearchService {
     queryVector: number[];
     predicted: PredictedTaxonomy[];
     wordRarity: WordRarity;
+    keyword: boolean;
     needs: NeedScore[];
     earlyLists?: Promise<string[][]>;
   }): Promise<string[] | undefined> {
@@ -1911,6 +1954,7 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    keyword: boolean;
     /** Active needs; set only for v2 with the need boost active (option A). */
     needs?: NeedScore[];
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
@@ -1923,11 +1967,14 @@ export class HybridSearchService {
       filters,
       pinnedMode,
       wordRarity,
+      keyword,
       needs,
     } = args;
 
     const should = [
-      ...(queryStr ? this.buildLexicalShouldClauses(queryStr, wordRarity) : []),
+      ...(queryStr && keyword
+        ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+        : []),
       ...this.buildTaxonomyBoostClauses(predicted, queryStr),
       ...(pinnedMode === 'ignore'
         ? []
@@ -2172,6 +2219,7 @@ export class HybridSearchService {
     distance: number;
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    keyword: boolean;
   }): Promise<number> {
     const { index, preference, ...queryArgs } = args;
     return this.fetchTopScore('hybrid_need_boost_top_score', {
@@ -2247,6 +2295,7 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    keyword: boolean;
     fusedIds?: string[];
     selectedNeeds?: string[];
   }): SearchRequest {
@@ -2266,6 +2315,7 @@ export class HybridSearchService {
       sort: sortOption,
       extraShould,
       wordRarity,
+      keyword,
       fusedIds,
       selectedNeeds,
     } = args;
@@ -2287,6 +2337,7 @@ export class HybridSearchService {
       pinnedMode,
       extraShould,
       wordRarity,
+      keyword,
     });
 
     return {
@@ -2325,6 +2376,7 @@ export class HybridSearchService {
     pinnedMode: PinnedResourcesMode;
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    keyword: boolean;
   }): QueryDslQueryContainer {
     const {
       queryStr,
@@ -2336,13 +2388,15 @@ export class HybridSearchService {
       pinnedMode,
       extraShould,
       wordRarity,
+      keyword,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
     // geo + taxonomy boosts still produce a valid ranked, counted, paginated set.
-    const lexicalShould = queryStr
-      ? this.buildLexicalShouldClauses(queryStr, wordRarity)
-      : [];
+    const lexicalShould =
+      queryStr && keyword
+        ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+        : [];
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted, queryStr);
     // When pinned_resources_mode is `boost`, pinned becomes a small additive
     // score contribution (constant_score) instead of a hard sort tier. When it
