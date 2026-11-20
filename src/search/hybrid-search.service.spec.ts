@@ -8,6 +8,7 @@ import {
   virtualDistanceWeight,
 } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { SearchUtilsService } from './search-utils.service';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -475,6 +476,113 @@ describe('HybridSearchService', () => {
           expect(hasPointFilter()).toBe(false);
         },
       );
+
+      describe('strict ascending distance, with and without selected needs', () => {
+        const ORIGIN = { lat: 47.61, lon: -122.33 };
+        const points = [
+          { id: 'far', lat: 47.9, lon: -122.0 },
+          { id: 'near', lat: 47.62, lon: -122.32 },
+          { id: 'mid', lat: 47.7, lon: -122.2 },
+        ];
+        const miles = (p: { lat: number; lon: number }) =>
+          SearchUtilsService.haversineDistanceMiles(
+            ORIGIN.lat,
+            ORIGIN.lon,
+            p.lat,
+            p.lon,
+          );
+
+        // Stand-in for Elasticsearch: honours the request's sort tiers.
+        // A _script tier (the need block) would lead, as in production.
+        const useSortingEs = (selected: string[]) => {
+          esSearch.mockImplementation((req: any) => {
+            if (req.index === 'hybrid_taxonomies') {
+              return Promise.resolve(taxonomyResponse);
+            }
+            if (req.size === 0 && req.aggs?.df) {
+              rarityRequests.push(req);
+              return rarityImpl(req);
+            }
+            capturedMainRequest = req;
+            const hasBlock = req.sort.some((s: any) => s._script);
+            const rows = points.map((p, i) => ({
+              _index: 'hybrid_search_resources_en',
+              _id: p.id,
+              _score: 1,
+              _source: { name: p.id, facets: {}, facets_en: {} },
+              // 'far' has every selected need, 'near' none.
+              block: p.id === 'far' ? 2 : p.id === 'mid' ? 1 : 0,
+              dist: miles(p),
+              i,
+            }));
+            rows.sort((a, b) =>
+              hasBlock && selected.length > 0
+                ? b.block - a.block || a.dist - b.dist
+                : a.dist - b.dist,
+            );
+            return Promise.resolve({
+              ...mainResponse,
+              hits: {
+                ...mainResponse.hits,
+                hits: rows.map((r) => ({
+                  _index: r._index,
+                  _id: r._id,
+                  _score: r._score,
+                  _source: r._source,
+                  sort: hasBlock ? [r.block, r.dist, r._id] : [r.dist, r._id],
+                  fields: { matched_needs: [] },
+                })),
+              },
+            });
+          });
+        };
+
+        it.each([[[]], [['N-A', 'N-B']]] as [string[]][])(
+          'selectedNeeds=%j: no need-block tier, geo sort first, ids ascending by haversine',
+          async (selectedNeeds) => {
+            useSortingEs(selectedNeeds);
+            const out: any = await service.searchHybrid({
+              headers,
+              query: {
+                ...baseQuery,
+                coords: [ORIGIN.lon, ORIGIN.lat],
+                sort: 'distance',
+              },
+              rankingVersion: 'v2',
+              selectedNeeds,
+            } as any);
+
+            const sort = capturedMainRequest.sort;
+            expect(sort.some((s: any) => s._script)).toBe(false);
+            expect(sort[0]._geo_distance).toBeDefined();
+
+            const res = out.search;
+            const ids = res.hits.hits.map((h: any) => h._id);
+            const expected = [...points]
+              .sort((a, b) => miles(a) - miles(b))
+              .map((p) => p.id);
+            expect(ids).toEqual(expected);
+            // Returned sort values are the distance first, not the block number.
+            expect(res.hits.hits[0].sort[0]).toBeCloseTo(miles(points[1]), 6);
+          },
+        );
+
+        it('selectedNeeds with sort=relevance still lead as a block tier', async () => {
+          useSortingEs(['N-A']);
+          await service.searchHybrid({
+            headers,
+            query: {
+              ...baseQuery,
+              coords: [ORIGIN.lon, ORIGIN.lat],
+              sort: 'relevance',
+            },
+            rankingVersion: 'v2',
+            selectedNeeds: ['N-A'],
+          } as any);
+
+          expect(capturedMainRequest.sort[0]._script).toBeDefined();
+        });
+      });
 
       it('v1, coords, sort=distance: unchanged, no map-point filter', async () => {
         await service.searchHybrid({

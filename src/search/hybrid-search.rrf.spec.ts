@@ -320,12 +320,15 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(response.search.hits.max_score).toBe(42);
   });
 
-  it('4. v2 with sort name: no list requests and no pinned query', async () => {
-    await run({ sort: 'name' });
+  it.each(['name', 'organization', 'distance'] as const)(
+    '4. v2 with sort %s (no coords): fusion skipped, no list requests, no pinned query',
+    async (sort) => {
+      await run({ sort });
 
-    expect(lists()).toHaveLength(0);
-    expect(mainRequest().query.pinned).toBeUndefined();
-  });
+      expect(lists()).toHaveLength(0);
+      expect(mainRequest().query.pinned).toBeUndefined();
+    },
+  );
 
   const NEEDS = [
     { code: 'N-FOD-01', tier: 'tier2', score: 0.98 },

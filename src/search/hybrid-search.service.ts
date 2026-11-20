@@ -147,6 +147,20 @@ export function buildNeedBlockSort(codes: string[]): SortCombinations {
   };
 }
 
+/**
+ * Whether sent needs lead the order as a block tier. Under sort=distance with
+ * coords the order is strict distance (Lucas 2026-11-19: closeness ranker only,
+ * selected needs do not lead). matched_needs is still returned.
+ */
+export function needBlockLeads(
+  selectedNeeds: string[] | undefined,
+  sort: SearchResourcesQueryDto['sort'],
+  coords: number[] | undefined,
+): boolean {
+  if (!selectedNeeds || selectedNeeds.length === 0) return false;
+  return !(sort === 'distance' && !!coords && coords.length === 2);
+}
+
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
   needCounts?: Record<string, number>;
@@ -500,6 +514,11 @@ export class HybridSearchService {
     );
 
     const needsSent = (options.selectedNeeds ?? []).length > 0;
+    const blockTier = needBlockLeads(
+      options.selectedNeeds,
+      options.query.sort,
+      options.query.coords,
+    );
     const hits: SearchHit[] = (data.hits.hits ?? []).map((hit) => {
       const normalizedFacets = SearchUtilsService.normalizeDocFacets(
         hit._source,
@@ -520,7 +539,7 @@ export class HybridSearchService {
         ...(fused
           ? {}
           : {
-              sort: (needsSent ? hit.sort?.slice(1) : hit.sort) as
+              sort: (blockTier ? hit.sort?.slice(1) : hit.sort) as
                 number[] | undefined,
             }),
         ...(needsSent
@@ -1953,7 +1972,7 @@ export class HybridSearchService {
       sortOption,
       coords,
       leadingTiers: [
-        ...(selectedNeeds.length > 0
+        ...(needBlockLeads(selectedNeeds, sortOption, coords)
           ? [buildNeedBlockSort(selectedNeeds)]
           : []),
         ...(pinnedMode === 'top'
