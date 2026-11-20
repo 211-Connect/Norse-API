@@ -256,6 +256,10 @@ export class V2SearchService {
         text,
         headers['accept-language'] || 'en',
       ),
+      query: hasText ? text.trim() : undefined,
+      content_words: hasText
+        ? contentWords(text, headers['accept-language'] || 'en').length
+        : undefined,
       needs: callerNeeds,
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,

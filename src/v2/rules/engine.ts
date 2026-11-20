@@ -101,8 +101,11 @@ export function finalize(
   const total = counts.total;
   let questions: Question[] = JSON.parse(JSON.stringify(decision.candidates));
 
+  // A strong name match drops the needs questions, but not `spread`: a short
+  // word like 'testing' matches many service names and still means 2+ areas
+  // (David 2026-11-20).
   if (strongTextMatch) {
-    questions = questions.filter((q) => !asksNeeds(q));
+    questions = questions.filter((q) => !asksNeeds(q) || q.id === 'spread');
   }
 
   const kept: Question[] = [];
@@ -125,6 +128,8 @@ export function finalize(
     q.options = options;
     const needOpts = needOptions(options);
     if (needOpts.length === 0) continue;
+    // A spread question with one area left asks nothing.
+    if (q.id === 'spread' && needOpts.length < 2) continue;
     // decide() measured uncertainty over every option; once 0-count options
     // are gone, measure it again over the ones the person will see.
     if (dropped) {

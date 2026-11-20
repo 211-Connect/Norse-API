@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-18.3';
+export const RULES_VERSION = 'rules-2026-11-20.1';
 
 export const CUTOFFS = {
   emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
@@ -15,6 +15,10 @@ export const CUTOFFS = {
   // Weak match: keyword top score < keywordBelow, best need score < needBelow
   // and vector top score < vectorBelow.
   weakMatch: { keywordBelow: 1, needBelow: 0.9, vectorBelow: 0.55 },
+  // Area spread (David 2026-11-20, 'testing'): a short query (at most
+  // maxWords content words) with no used need, an ask-band Tier 2 need and 2+
+  // Tier 1 areas at or above `min` asks "Which kind of <query>?".
+  spread: { maxWords: 2, min: 0.05 },
   maxQuestions: 3,
   optionsPerQuestion: 3,
 };
@@ -30,6 +34,7 @@ export const STEMS = {
   today: 'Do you need this today?',
   time: 'When do you need this?',
   start: 'What do you need help with most?',
+  spread: 'Which kind of {query} do you mean?',
   noMatch: 'We could not find a good match. What do you need help with?',
   area: 'Which kind of help with {area}?',
   narrow: 'Which of these fits best?',

@@ -12,6 +12,10 @@ export interface RulesRequest {
    * is exempt). Absent means true.
    */
   has_content_word?: boolean;
+  /** The query text, trimmed (the `spread` stem quotes it). */
+  query?: string;
+  /** Number of content words in the query. Absent: the `spread` rule is off. */
+  content_words?: number;
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
@@ -71,7 +75,8 @@ export type QuestionReason =
   | 'area_only'
   | 'area_confirmed'
   | 'unsure_needs'
-  | 'weak_match';
+  | 'weak_match'
+  | 'area_spread';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
