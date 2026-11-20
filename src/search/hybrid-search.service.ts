@@ -751,6 +751,7 @@ export class HybridSearchService {
       geometry,
       organization_id,
       options.area,
+      v2 ? 'or-within-facet' : 'and',
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
 

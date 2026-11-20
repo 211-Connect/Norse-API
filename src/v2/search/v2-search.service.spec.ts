@@ -106,6 +106,95 @@ function build(opts: {
 }
 
 describe('V2SearchService', () => {
+  describe('filters, facets and counts (ISS-2499)', () => {
+    it('passes filters, organization_id, age, geo_type, taxonomy, distance, sort, page and limit to searchHybrid unchanged', async () => {
+      const { service, searchHybrid } = build({});
+      const query = dto({
+        query: 'food',
+        filters: { languages: 'Spanish', age_group: ['a', 'b'] },
+        organization_id: 'org-1',
+        age: 30,
+        geo_type: 'proximity',
+        taxonomy: ['BH-1800'],
+        distance: 10,
+        sort: 'name',
+        page: 2,
+        limit: 50,
+      });
+      await service.search({ headers, query });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg.query).toMatchObject({
+        filters: { languages: 'Spanish', age_group: ['a', 'b'] },
+        organization_id: 'org-1',
+        age: 30,
+        geo_type: 'proximity',
+        taxonomy: ['BH-1800'],
+        distance: 10,
+        sort: 'name',
+        page: 2,
+        limit: 50,
+        query_type: 'hybrid',
+      });
+      expect(arg.rankingVersion).toBe('v2');
+      expect(arg.query).not.toHaveProperty('needs');
+      expect(arg.query).not.toHaveProperty('classify');
+    });
+
+    it('returns the facets from searchHybrid in the v2 response', async () => {
+      const facets = [
+        {
+          key: 'languages',
+          name: { en: 'Languages', locale: 'Languages' },
+          values: [{ en: 'Spanish', locale: 'Spanish', doc_count: 7 }],
+        },
+      ];
+      const { service } = build({
+        search: jest.fn().mockResolvedValue({ ...hybridResponse(7), facets }),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'food', filters: { languages: 'Spanish' } }),
+      });
+      expect(res.facets).toEqual(facets);
+    });
+
+    it('sends needs to searchHybrid as selectedNeeds and countCodes together with the filters; needCounts do not leak into the response', async () => {
+      const { service, searchHybrid } = build({
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(7),
+          needCounts: { 'N-FOD': 5 },
+        }),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({
+          query: 'food',
+          needs: ['N-FOD'],
+          filters: { languages: 'Spanish' },
+        }),
+      });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg.selectedNeeds).toEqual(['N-FOD']);
+      expect(arg.query.filters).toEqual({ languages: 'Spanish' });
+      expect(res).not.toHaveProperty('needCounts');
+    });
+
+    it('clarify=never sends no countCodes, filters still pass', async () => {
+      const { service, searchHybrid } = build({});
+      await service.search({
+        headers,
+        query: dto({
+          query: 'food',
+          clarify: 'never',
+          filters: { languages: 'Spanish' },
+        }),
+      });
+      const arg = searchHybrid.mock.calls[0][0];
+      expect(arg).not.toHaveProperty('countCodes');
+      expect(arg.query.filters).toEqual({ languages: 'Spanish' });
+    });
+  });
+
   it('starts the embedding before classify resolves', async () => {
     let resolveClassify!: (r: ClassifyResult) => void;
     const classify = jest.fn().mockReturnValue(
@@ -146,6 +235,17 @@ describe('V2SearchService', () => {
       const q = searchHybrid.mock.calls[0][0].query;
       expect(q.sort).toBe(sort);
       expect(q.coords).toEqual([-122.3, 47.6]);
+    },
+  );
+
+  // David 2026-11-18: sort is required at the API level. v2 passes the v1
+  // sort parameter to the hybrid query unchanged.
+  it.each(['relevance', 'distance', 'name', 'organization'] as const)(
+    'passes sort=%s to searchHybrid',
+    async (sort) => {
+      const { service, searchHybrid } = build({});
+      await service.search({ headers, query: dto({ query: 'food', sort }) });
+      expect(searchHybrid.mock.calls[0][0].query.sort).toBe(sort);
     },
   );
 
