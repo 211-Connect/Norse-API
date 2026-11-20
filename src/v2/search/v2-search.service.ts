@@ -370,6 +370,8 @@ export class V2SearchService {
     const rulesRequest: RulesRequest = {
       has_text: hasText,
       has_content_word: hasContentWord(text, lang),
+      query: hasText ? text.trim() : undefined,
+      content_words: hasText ? contentWords(text, lang).length : undefined,
       needs: callerNeeds,
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,

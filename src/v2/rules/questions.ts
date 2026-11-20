@@ -187,6 +187,44 @@ export function noMatchQuestion(
   return q;
 }
 
+/**
+ * The `spread` question: "Which kind of <query> do you mean?" with the Tier 1
+ * areas at or above `CUTOFFS.spread.min`, best first. Null unless the query
+ * has 1 to `maxWords` content words, no caller need, no used need, at least
+ * one ask-band need, and 2+ eligible areas pass the cutoff.
+ */
+export function spreadQuestion(
+  req: RulesRequest,
+  states: NeedStatesResult,
+  sc: (code: string) => number,
+  eligible: (code: string) => boolean,
+): Question | null {
+  const words = req.content_words;
+  if (words === undefined || words < 1 || words > CUTOFFS.spread.maxWords) {
+    return null;
+  }
+  if (confirmedCodes(req).length > 0) return null;
+  if (states.needs.some((s) => s.state === 'use')) return null;
+  if (states.inferredAsk.length === 0) return null;
+  const areas = TIER1_CODES.filter(
+    (c) => eligible(c) && sc(c) >= CUTOFFS.spread.min,
+  )
+    .sort((a, b) => sc(b) - sc(a) || cmp(a, b))
+    .slice(0, CUTOFFS.optionsPerQuestion);
+  if (areas.length < 2) return null;
+  const text = (req.query ?? '').trim();
+  return question({
+    id: 'spread',
+    type: 'find_need',
+    importance: 'high',
+    reason: 'area_spread',
+    step: 2,
+    stem: text ? STEMS.spread.replace('{query}', text) : STEMS.start,
+    options: areas.map(needOption),
+    ...needsFlags,
+  });
+}
+
 export function buildCandidates(
   req: RulesRequest,
   signals: RulesSignals,
@@ -316,6 +354,12 @@ export function buildCandidates(
         areaRuleFired = true;
       }
     }
+
+    // 4b. area spread (David 2026-11-20, 'testing'): a short query whose
+    // model scores spread over 2+ Tier 1 areas, with no used need, asks which
+    // area first. `start` covers the case with no need state at all.
+    const spread = spreadQuestion(req, states, sc, eligible);
+    if (!areaRuleFired && areaQuestionCount === 0 && spread) out.push(spread);
 
     if (!areaRuleFired) {
       // 5. start
