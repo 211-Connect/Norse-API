@@ -193,6 +193,9 @@ export class AppModule implements NestModule {
         PrintableDirectoryPublicController,
         PrintableDirectoryDeliveryInternalController,
         OrganizationController,
+        // Checks ?locale= against accept-language on a CDN-cached route that
+        // returns translations (the cache keys on URL, ignoring Vary).
+        ServiceController,
       );
   }
 }

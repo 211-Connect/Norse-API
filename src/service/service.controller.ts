@@ -2,7 +2,10 @@ import { Controller, Get, Param, UseGuards, Version } from '@nestjs/common';
 import { ApiHeader, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CustomHeaders } from 'src/common/decorators/CustomHeaders';
 import { ApiLocaleQuery, ApiTenantIdQuery } from 'src/common/decorators';
-import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import {
+  RequireCdnUrlMirrors,
+  SetCdnCacheTTL,
+} from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { FIFTEEN_MINUTES } from 'src/common/const';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { HeadersDto, headersSchema } from 'src/common/dto/headers.dto';
@@ -21,6 +24,7 @@ export class ServiceController {
   @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
+  @RequireCdnUrlMirrors()
   @ApiTenantIdQuery()
   @ApiLocaleQuery()
   @ApiHeader({
