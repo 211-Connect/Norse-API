@@ -89,6 +89,12 @@ export class TenantConfigController {
     @Param('tenantId') tenantId: string,
     @Query() query: TenantConfigQueryDto,
   ): Promise<AllTenantConfigResponseDto> {
+    // Gate (Lucas, 2026-11-20): `appConfig` only with `?include=appConfig`, so
+    // existing callers get the same body and no extra Redis read.
+    const wantsAppConfig = (query.include ?? '')
+      .split(',')
+      .map((part) => part.trim())
+      .includes('appConfig');
     const [
       locales,
       facets,
@@ -104,10 +110,12 @@ export class TenantConfigController {
       this.tenantConfigService.getSuggestions(tenantId),
       this.tenantConfigService.getSearchConfig(tenantId),
       this.tenantConfigService.getOrchestrationConfig(tenantId),
-      this.tenantConfigService.getPublicAppConfig(
-        tenantId,
-        query.locale ?? 'en',
-      ),
+      wantsAppConfig
+        ? this.tenantConfigService.getPublicAppConfig(
+            tenantId,
+            query.locale ?? 'en',
+          )
+        : Promise.resolve(undefined),
     ]);
 
     return {
@@ -117,7 +125,7 @@ export class TenantConfigController {
       suggestions,
       hybridSearchConfig,
       orchestrationConfig,
-      appConfig,
+      ...(wantsAppConfig ? { appConfig } : {}),
     };
   }
 }

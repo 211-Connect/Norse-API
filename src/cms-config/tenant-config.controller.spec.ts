@@ -150,7 +150,7 @@ describe('TenantConfigController', () => {
   describe('GET /tenant-config/:tenantId', () => {
     it('returns the full tenant config aggregate', async () => {
       const response = await request(app.getHttpServer())
-        .get('/tenant-config/tenant-1')
+        .get('/tenant-config/tenant-1?include=appConfig')
         .set('x-internal-api-key', INTERNAL_API_KEY)
         .expect(200);
 
@@ -211,9 +211,19 @@ describe('TenantConfigController', () => {
       );
     });
 
+    it('without ?include=appConfig the body has no appConfig and Redis is not read for it', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1?locale=es')
+        .expect(200);
+
+      expect(res.body).not.toHaveProperty('appConfig');
+      expect(tenantConfigService.getPublicAppConfig).not.toHaveBeenCalled();
+      expect(tenantConfigService.getTopics).toHaveBeenCalledWith('tenant-1');
+    });
+
     it('passes ?locale= to the app config only', async () => {
       await request(app.getHttpServer())
-        .get('/tenant-config/tenant-1?locale=es')
+        .get('/tenant-config/tenant-1?locale=es&include=appConfig')
         .expect(200);
 
       expect(tenantConfigService.getPublicAppConfig).toHaveBeenCalledWith(
