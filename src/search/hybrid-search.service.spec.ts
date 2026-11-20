@@ -404,6 +404,87 @@ describe('HybridSearchService', () => {
       );
       expect(geoSort).toBeDefined();
     });
+
+    describe('v2 sort=distance hides services with no map point', () => {
+      const mainFilters = (): any[] =>
+        (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+          .function_score.query.bool.filter;
+      const hasPointFilter = () =>
+        mainFilters().some((f: any) => f.exists?.field === 'location.point');
+      const area = {
+        regionIds: ['region-1'],
+        match: 'located_or_serving',
+        unlocated: 'virtual',
+      } as any;
+
+      it('v2, coords: requires a map point and sorts by distance', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(true);
+        expect(
+          capturedMainRequest.sort.find((s: any) => s._geo_distance),
+        ).toBeDefined();
+      });
+
+      it('v2 area search, coords: still hides virtual services', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(true);
+      });
+
+      it('v2 area search, no coords: sorts by relevance, hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(false);
+        expect(capturedMainRequest.sort[0]).toBe('_score');
+      });
+
+      it('v2, no coords: hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it.each(['name', 'organization', 'relevance'] as const)(
+        'v2, coords, sort=%s: no map-point filter',
+        async (sort) => {
+          await service.searchHybrid({
+            headers,
+            query: { ...baseQuery, coords: COORDS, sort },
+            rankingVersion: 'v2',
+          });
+
+          expect(hasPointFilter()).toBe(false);
+        },
+      );
+
+      it('v1, coords, sort=distance: unchanged, no map-point filter', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+    });
   });
 
   it("v2 taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {

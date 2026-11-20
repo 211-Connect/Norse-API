@@ -913,6 +913,14 @@ export class HybridSearchService {
       }
     }
 
+    // v2 sort=distance with a search point: strict closeness, so a service
+    // with no map point (virtual, hotline) has no distance and is hidden.
+    // Added after the relevance cut, so the cut itself does not change. Without
+    // coords the sort falls back to relevance and nothing is hidden.
+    if (v2 && sort === 'distance' && coords && coords.length === 2) {
+      baseFilters.push({ exists: { field: 'location.point' } });
+    }
+
     // v2 pinned gate: starts here, after the cut's ids filter, and runs in
     // parallel with the need-boost top score and the fused order.
     const gatePromise: Promise<string[]> = gateActive
