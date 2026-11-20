@@ -1755,7 +1755,8 @@ export class HybridSearchService {
 
   private async requestEmbedding(
     baseUrl: string,
-    apiKey: string | undefined,
+    // null = send no Authorization header (own TEI server has no key).
+    apiKey: string | undefined | null,
     operation: 'embed' | 'embed_local',
     query: string,
   ): Promise<number[]> {
@@ -1767,7 +1768,7 @@ export class HybridSearchService {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            ...(apiKey === null ? {} : { Authorization: `Bearer ${apiKey}` }),
           },
           body: JSON.stringify({ model: this.embeddingModel, input: query }),
           signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
@@ -1819,7 +1820,7 @@ export class HybridSearchService {
           local: side('local', () =>
             this.requestEmbedding(
               localBaseUrl,
-              undefined,
+              null,
               'embed_local',
               query,
             ),
