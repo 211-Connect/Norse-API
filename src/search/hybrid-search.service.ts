@@ -181,7 +181,18 @@ export type HybridSearchResult = SearchResponse & {
   needCounts?: Record<string, number>;
   /** v2 only, internal (never sent to callers). Present, and false, only when Elasticsearch sent a hits.total that cannot be read; hits.total.value is then 0. */
   totalCounted?: false;
+  /**
+   * v2 only: raw top scores of the RRF keyword and vector lists, the
+   * weak-match judges (ISS-2796). Absent when the fused path did not run.
+   * The v1 /search never fuses, so it never gets this field.
+   */
+  judges?: Judges;
 };
+
+/** Raw top `_score` of the RRF keyword list and of the RRF vector list; 0 when a list has no hit. */
+export type Judges = { keyword_top: number; vector_top: number };
+
+type RankedList = { ids: string[]; top: number };
 
 type HybridSearchOptions = {
   headers: HeadersDto;
@@ -200,6 +211,12 @@ type HybridSearchOptions = {
    * `needs=` filter. Every code is returned, 0 when the aggregation omits it.
    */
   countCodes?: string[];
+  /**
+   * v2 only. Hard filter used only for a weak-match pick (ISS-2796): the text
+   * was weak, so the need tags decide. The `needs` parameter itself never
+   * filters.
+   */
+  needFilter?: string[];
   /**
    * Internal switch, not a DTO field and not a query parameter. Set only by
    * the future /v2/search; today's /search never sets it, so it always runs
@@ -235,9 +252,9 @@ export interface EarlyRetrieval {
  * means the request is not sent: no lexical clauses, or no taxonomy clauses.
  */
 export interface EarlyLists {
-  keyword: Promise<string[] | undefined>;
-  vector: Promise<string[]>;
-  taxonomy: Promise<string[] | undefined>;
+  keyword: Promise<RankedList | undefined>;
+  vector: Promise<RankedList>;
+  taxonomy: Promise<RankedList | undefined>;
 }
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -533,6 +550,7 @@ export class HybridSearchService {
       cutoff,
       lang,
       fused,
+      judges,
       fastPage,
     } = await withSpan('hybrid.prepare', async (span) => {
       const prepared = await this.prepareHybridSearch(options, {
@@ -687,6 +705,7 @@ export class HybridSearchService {
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
       ...(totalUnreadable ? { totalCounted: false as const } : {}),
+      ...(judges ? { judges } : {}),
     };
   }
 
@@ -838,6 +857,13 @@ export class HybridSearchService {
       v2 ? 'or-within-facet' : 'and',
     );
     baseFilters.unshift({ term: { tenant_id: tenantId } });
+    // v2 weak-match pick only (ISS-2796, Lucas 2026-11-18): results, counts,
+    // lists and pins all see this filter.
+    if (options.needFilter && options.needFilter.length > 0) {
+      baseFilters.splice(1, 0, {
+        terms: { sune_needs: options.needFilter },
+      });
+    }
 
     if (hardScopeCodes.length > 0) {
       baseFilters.push(
@@ -893,30 +919,32 @@ export class HybridSearchService {
         : Promise.resolve(null);
 
     // The keyword list needs word rarity only, not the embedding.
-    const keywordPromise: Promise<string[] | undefined> | undefined = startLists
-      ? wordRarityPromise.then((wordRarity) =>
-          this.fetchKeywordList({
-            index,
-            preference,
-            filters: [...baseFilters],
-            queryStr,
-            wordRarity,
-          }),
-        )
-      : undefined;
+    const keywordPromise: Promise<RankedList | undefined> | undefined =
+      startLists
+        ? wordRarityPromise.then((wordRarity) =>
+            this.fetchKeywordList({
+              index,
+              preference,
+              filters: [...baseFilters],
+              queryStr,
+              wordRarity,
+            }),
+          )
+        : undefined;
     // The vector list needs the embedding only, not word rarity.
-    const vectorPromise: Promise<string[] | undefined> | undefined = startLists
-      ? embedPromise.then((queryVector) =>
-          queryVector
-            ? this.fetchVectorList({
-                index,
-                preference,
-                filters: [...baseFilters],
-                queryVector,
-              })
-            : undefined,
-        )
-      : undefined;
+    const vectorPromise: Promise<RankedList | undefined> | undefined =
+      startLists
+        ? embedPromise.then((queryVector) =>
+            queryVector
+              ? this.fetchVectorList({
+                  index,
+                  preference,
+                  filters: [...baseFilters],
+                  queryVector,
+                })
+              : undefined,
+          )
+        : undefined;
     // Taxonomy prediction requires a query vector; skip if embedding was
     // skipped (browse) or failed (lexical fallback). It needs the embedding
     // only, not facets, search config or word rarity.
@@ -926,7 +954,7 @@ export class HybridSearchService {
         ? await this.getTaxonomyCodes(queryVector, tenantId, preference, v2)
         : [],
     }));
-    const taxonomyPromise: Promise<string[] | undefined> | undefined =
+    const taxonomyPromise: Promise<RankedList | undefined> | undefined =
       startLists
         ? taxonomyStart.then(({ queryVector, predicted }) =>
             queryVector
@@ -1245,11 +1273,12 @@ export class HybridSearchService {
     }
 
     let fusedIds: string[] | undefined;
+    let judges: Judges | undefined;
     if (fuseEligible) {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
       // membership from today's scores; fusion only orders.
-      fusedIds = await withSpan('hybrid.fused_order', () =>
+      const fusedOrder = await withSpan('hybrid.fused_order', () =>
         this.fetchFusedOrder({
           index,
           preference,
@@ -1262,6 +1291,8 @@ export class HybridSearchService {
           earlyLists,
         }),
       );
+      fusedIds = fusedOrder.ids;
+      judges = fusedOrder.judges;
 
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
         // Fusion failed after the top-score request was skipped: fall back
@@ -1380,6 +1411,7 @@ export class HybridSearchService {
       cutoff,
       lang,
       fused: fusedIds !== undefined,
+      judges,
       fastPage,
     };
   }
@@ -1442,7 +1474,7 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[];
     queryStr: string;
     wordRarity: WordRarity;
-  }): Promise<string[]> | undefined {
+  }): Promise<RankedList> | undefined {
     const { filters, queryStr, wordRarity } = args;
     const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
     if (lexical.length === 0) return undefined;
@@ -1457,7 +1489,7 @@ export class HybridSearchService {
     preference: string;
     filters: QueryDslQueryContainer[];
     queryVector: number[];
-  }): Promise<string[]> {
+  }): Promise<RankedList> {
     const { filters, queryVector } = args;
     return this.runRankedList(args, 'hybrid_rrf_vector', {
       script_score: {
@@ -1481,7 +1513,7 @@ export class HybridSearchService {
     queryStr: string;
     queryVector: number[];
     predicted: PredictedTaxonomy[];
-  }): Promise<string[]> | undefined {
+  }): Promise<RankedList> | undefined {
     const { filters, queryStr, queryVector, predicted } = args;
     const taxonomy = this.buildTaxonomyBoostClauses(predicted, queryStr);
     if (taxonomy.length === 0) return undefined;
@@ -1511,7 +1543,7 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
-  ): Promise<string[]> {
+  ): Promise<RankedList> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
         this.elasticsearchService.search({
@@ -1523,11 +1555,13 @@ export class HybridSearchService {
           query,
         }),
       )
-      .then((response) =>
-        response.hits.hits
+      .then((response) => ({
+        ids: response.hits.hits
           .map((h) => h._id)
           .filter((id): id is string => id !== undefined),
-      );
+        // Raw score of the first hit: the weak-match judge (ISS-2796).
+        top: response.hits.hits[0]?._score ?? 0,
+      }));
   }
 
   /**
@@ -1552,7 +1586,7 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     needs: NeedScore[];
     earlyLists?: EarlyLists;
-  }): Promise<string[] | undefined> {
+  }): Promise<{ ids?: string[]; judges?: Judges }> {
     const { filters, needs, earlyLists } = args;
 
     try {
@@ -1565,8 +1599,8 @@ export class HybridSearchService {
       const taxonomy = earlyLists
         ? earlyLists.taxonomy
         : this.fetchTaxonomyList(args);
-      const needList = needs.length > 0;
-      const need = needList
+      const hasNeedList = needs.length > 0;
+      const need = hasNeedList
         ? this.runRankedList(args, 'hybrid_rrf_need', {
             bool: {
               filter: filters,
@@ -1584,20 +1618,21 @@ export class HybridSearchService {
           })
         : undefined;
 
-      const [keywordIds, vectorIds, taxonomyIds, needIds] = await Promise.all([
-        keyword,
-        vector,
-        taxonomy,
-        need,
-      ]);
+      const [keywordList, vectorList, taxonomyList, needList] =
+        await Promise.all([keyword, vector, taxonomy, need]);
+      const judges: Judges = {
+        // No lexical clause sends no keyword list: its top is 0.
+        keyword_top: keywordList?.top ?? 0,
+        vector_top: vectorList?.top ?? 0,
+      };
       // Order: keyword, vector, taxonomy, need. The weights follow the lists.
       const lists: string[][] = [];
       const weights: number[] = [];
       for (const [ids, weight] of [
-        [keywordIds, 1],
-        [vectorIds, 1],
-        [taxonomyIds, 1],
-        [needIds, RRF_NEED_LIST_WEIGHT],
+        [keywordList?.ids, 1],
+        [vectorList?.ids, 1],
+        [taxonomyList?.ids, 1],
+        [needList?.ids, RRF_NEED_LIST_WEIGHT],
       ] as const) {
         if (ids === undefined) continue;
         lists.push(ids);
@@ -1607,12 +1642,14 @@ export class HybridSearchService {
         0,
         RRF_LIST_SIZE,
       );
-      return fused.length > 0 ? fused : undefined;
+      // Judges are set whenever the keyword and vector lists succeeded, even
+      // when fusion returned no ids (ISS-2796).
+      return { ids: fused.length > 0 ? fused : undefined, judges };
     } catch (error) {
       this.logger.warn(
         `RRF lists failed, using summed ranking: ${(error as Error).message}`,
       );
-      return undefined;
+      return {};
     }
   }
 
@@ -1932,12 +1969,7 @@ export class HybridSearchService {
           };
         const result = await raceEmbeddings({
           local: side('local', () =>
-            this.requestEmbedding(
-              localBaseUrl,
-              null,
-              'embed_local',
-              query,
-            ),
+            this.requestEmbedding(localBaseUrl, null, 'embed_local', query),
           ),
           remote: side('remote', () =>
             this.requestEmbedding(

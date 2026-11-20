@@ -1,4 +1,5 @@
-import { decide, finalize } from './engine';
+import { decide, finalize, weakMatchDecision } from './engine';
+import { noMatchQuestion } from './questions';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 const ids = (d: ReturnType<typeof decide>) => d.candidates.map((q) => q.id);
@@ -10,15 +11,28 @@ describe('emergency question', () => {
   const soft = { status: 'ok' as const, score: 0.3, floor_hit: false };
   const emergencyOf = (d: ReturnType<typeof decide>) =>
     d.candidates.find((q) => q.id === 'emergency');
-  it('popup: first, Yes = U-0 and safe writes nothing, carries hotlines (Lucas 2026-11-13)', () => {
+  it('popup: first, 3 options write U-0 / U-1 / U-2, carries hotlines (Lucas 2026-11-17)', () => {
     const d = decide(req(), sig({}, { emergency: popup }));
     const q = d.candidates[0];
     expect(q.id).toBe('emergency');
     expect(q.step).toBe(0);
     // Lucas 2026-11-13 (question 24, option B2): danger answers, same codes.
     expect(q.options).toEqual([
-      { label: 'Yes, I am in danger', parameter: 'urgency', value: 'U-0' },
-      { label: 'No, I am safe now', parameter: null, value: null },
+      {
+        label: "Yes, I'm in danger right now",
+        parameter: 'urgency',
+        value: 'U-0',
+      },
+      {
+        label: "No, I'm safe, but I need help today",
+        parameter: 'urgency',
+        value: 'U-1',
+      },
+      {
+        label: "No, I'm safe, I need help soon (within a week)",
+        parameter: 'urgency',
+        value: 'U-2',
+      },
     ]);
     expect(q.stem).toBe('Are you in danger right now?');
     expect(q.hotlines).toEqual([
@@ -69,7 +83,7 @@ describe('emergency question', () => {
     const d = decide(req(), sig({}, { emergency: soft }));
     expect(d.emergency_band).toBe('soft');
     const q = emergencyOf(d);
-    expect(q.options.map((o) => o.value)).toEqual(['U-0', null]);
+    expect(q.options.map((o) => o.value)).toEqual(['U-0', 'U-1', 'U-2']);
     expect(q.hotlines).toHaveLength(2);
   });
   it('soft band uses the same danger labels and stem as the popup (question 24, B2)', () => {
@@ -78,8 +92,9 @@ describe('emergency question', () => {
     expect(orange.stem).toBe(red.stem);
     expect(orange.options).toEqual(red.options);
     expect(orange.options.map((o) => o.label)).toEqual([
-      'Yes, I am in danger',
-      'No, I am safe now',
+      "Yes, I'm in danger right now",
+      "No, I'm safe, but I need help today",
+      "No, I'm safe, I need help soon (within a week)",
     ]);
   });
   it('time questions keep the time labels (only the emergency question changes)', () => {
@@ -175,8 +190,88 @@ describe('emergency question', () => {
     const d = decide(req({ urgency: 'U-3' }), sig({}, { emergency: soft }));
     expect(ids(d)).not.toContain('emergency');
   });
-  it('popup + urgency U-X counts as no answer -> emergency question stays', () => {
-    const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: popup }));
+  it.each([
+    ['popup', popup],
+    ['soft', soft],
+  ] as const)(
+    '%s + urgency U-X (time not known) -> emergency question present',
+    (_n, e) => {
+      const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: e }));
+      expect(ids(d)).toContain('emergency');
+    },
+  );
+  it('picking "safe today" puts U-1 in the URL; the next call has no emergency card and no time question', () => {
+    const first = decide(req(), sig({}, { emergency: popup }));
+    const safe = first.candidates[0].options[1];
+    expect([safe.parameter, safe.value]).toEqual(['urgency', 'U-1']);
+    const next = decide(
+      req({ urgency: safe.value as 'U-1' }),
+      sig({}, { emergency: popup }),
+    );
+    expect(ids(next)).not.toContain('emergency');
+    expect(ids(next)).not.toContain('urgency_today');
+  });
+  describe('keyword floor hit (Lucas 2026-11-17 final: caller urgency U-1..U-4 hides the card)', () => {
+    const floor = { status: 'ok' as const, score: 0.1, floor_hit: true };
+    it.each(['U-1', 'U-2', 'U-3', 'U-4'] as const)(
+      'floor hit + caller urgency %s -> no emergency question',
+      (u) => {
+        const d = decide(req({ urgency: u }), sig({}, { emergency: floor }));
+        expect(ids(d)).not.toContain('emergency');
+      },
+    );
+    it('floor hit + no urgency -> emergency question present', () => {
+      const d = decide(req(), sig({}, { emergency: floor }));
+      expect(ids(d)).toContain('emergency');
+    });
+    it('floor hit + caller U-X (time not known) -> emergency question present', () => {
+      const d = decide(req({ urgency: 'U-X' }), sig({}, { emergency: floor }));
+      expect(ids(d)).toContain('emergency');
+    });
+  });
+  describe('soft card needs a content word', () => {
+    it('soft band, no content word -> no card', () => {
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: soft }),
+      );
+      expect(ids(d)).not.toContain('emergency');
+    });
+    it('soft band, content word -> card', () => {
+      const d = decide(
+        req({ has_content_word: true }),
+        sig({}, { emergency: soft }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('has_content_word absent -> card (older callers)', () => {
+      expect(ids(decide(req(), sig({}, { emergency: soft })))).toContain(
+        'emergency',
+      );
+    });
+    it('exempt: floor hit', () => {
+      const e = { status: 'ok' as const, score: 0.1, floor_hit: true };
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: e }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('exempt: score at or above the popup cutoff (calm context caps the band at soft)', () => {
+      const e = { status: 'ok' as const, score: 0.9, calm_context: true };
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: e }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
+    it('popup band is not touched', () => {
+      const d = decide(
+        req({ has_content_word: false }),
+        sig({}, { emergency: popup }),
+      );
+      expect(ids(d)).toContain('emergency');
+    });
   });
   describe('caller urgency=U-0 (Decision 50)', () => {
     const expectU0Popup = (d: ReturnType<typeof decide>) => {
@@ -300,7 +395,7 @@ describe('time questions', () => {
     expect(q.step).toBe(5);
     expect(q.options.map((o) => o.value)).toEqual(['U-1', 'U-2', 'U-4', 'U-3']);
   });
-  it('caller urgency=U-X counts as absent: question still shows (ISS-2499)', () => {
+  it('caller urgency=U-X means time not known: the time question still shows (ISS-2499)', () => {
     const d = decide(req({ urgency: 'U-X' }), askU('U-1'));
     expect(d.urgency).toEqual({
       value: 'U-X',
@@ -309,7 +404,7 @@ describe('time questions', () => {
     });
     expect(ids(d)).toContain('urgency_today');
   });
-  it('caller urgency=U-X counts as absent: model guess is used (ISS-2499)', () => {
+  it('caller urgency=U-X: the model urgency guess is still used (ISS-2499)', () => {
     const s = askU('U-2');
     s.urgency.score = 0.95;
     expect(decide(req({ urgency: 'U-X' }), s).urgency).toEqual({
@@ -318,10 +413,12 @@ describe('time questions', () => {
       state: 'use',
     });
   });
-  it('caller urgency=U-X does not hide the emergency question (ISS-2499)', () => {
+  it('caller urgency=U-X does not hide the emergency question (time not known)', () => {
     const s = askU('U-1');
     s.emergency = { status: 'ok', score: 0.9 };
-    expect(ids(decide(req({ urgency: 'U-X' }), s))).toContain('emergency');
+    const d = decide(req({ urgency: 'U-X' }), s);
+    expect(ids(d)).toContain('emergency');
+    expect(d.emergency_band).toBe('popup');
   });
   it('suppressed when emergency question exists', () => {
     const s = askU('U-1');
@@ -365,6 +462,23 @@ describe('start question', () => {
   });
   it('not built when text has an inferred ask', () => {
     expect(ids(decide(req(), sig({ 'N-FOD-01': 0.5 })))).toEqual(['narrow:1']);
+  });
+});
+
+describe('one-word Tier 1 query: food (Lucas 2026-11-17)', () => {
+  it('N-FOD 0.851 is used and the area question asks about Food & Water', () => {
+    const d = decide(
+      req(),
+      sig({ 'N-FOD': 0.851, 'N-FOD-01': 0.05, 'N-FOD-02': 0.04 }),
+    );
+    expect(d.needs.map((n) => [n.code, n.state])).toEqual([['N-FOD', 'use']]);
+    expect(ids(d)).toEqual(['area:N-FOD']);
+    expect(d.candidates[0].stem).toBe('Which kind of help with Food & Water?');
+    expect(d.candidates[0].reason).toBe('area_only');
+  });
+  it('a clear Tier 1 below the new gate (0.79) asks no area question', () => {
+    const d = decide(req(), sig({ 'N-FOD': 0.79 }));
+    expect(ids(d)).not.toContain('area:N-FOD');
   });
 });
 
@@ -594,5 +708,110 @@ describe('importance per question type', () => {
       sig({ 'N-SAF-01': 0.24 }),
     );
     expect(imp(late, 'narrow:1')).toBe('low');
+  });
+});
+
+describe('no_match question (weak match, Lucas 2026-11-18)', () => {
+  const codes = (q: ReturnType<typeof noMatchQuestion>) =>
+    q.options.map((o) => o.value);
+  it('options: tenant Tier 1 top areas, then defaults', () => {
+    const q = noMatchQuestion(req(), { top_areas: ['N-LEG', 'N-WRK'] });
+    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-HOU']);
+  });
+  it('no tenant areas: the defaults', () => {
+    expect(codes(noMatchQuestion(req(), {}))).toEqual([
+      'N-HOU',
+      'N-FOD',
+      'N-MON',
+    ]);
+  });
+  it('skips Tier 2 and unknown tenant codes, and duplicates', () => {
+    const q = noMatchQuestion(req(), {
+      top_areas: ['N-FOD-01', 'bogus', 'N-HOU', 'N-HOU'],
+    });
+    expect(codes(q)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+  });
+  it('skips passed and confirmed codes', () => {
+    const q = noMatchQuestion(
+      req({ passed_needs: ['N-HOU'], needs: ['N-FOD'] }),
+      {},
+    );
+    expect(codes(q)).toEqual(['N-MON']);
+  });
+  it('at most 3 options', () => {
+    const q = noMatchQuestion(req(), {
+      top_areas: ['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU'],
+    });
+    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
+  });
+  it('shape: id, type, importance, reason, step, stem, flags, parameter', () => {
+    const q = noMatchQuestion(req(), {});
+    expect(q).toMatchObject({
+      id: 'no_match',
+      type: 'find_need',
+      importance: 'high',
+      reason: 'weak_match',
+      step: 2,
+      stem: 'We could not find a good match. What do you need help with?',
+      multi_select: true,
+      allow_other: true,
+      none_of_these: true,
+      uncertainty: 1,
+    });
+    expect(q.options.every((o) => o.parameter === 'needs')).toBe(true);
+    expect(q.value).toBeGreaterThan(0);
+    expect(q.priority).toBeGreaterThan(1);
+  });
+  it('null when no option is left', () => {
+    expect(
+      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), {}),
+    ).toBeNull();
+  });
+});
+
+describe('weakMatchDecision', () => {
+  const base = () => decide(req(), sig({ 'N-FOD': 0.2 }));
+  it('replaces candidates with the no_match question; count codes and scores follow', () => {
+    const d = weakMatchDecision(base(), req(), {});
+    expect(d.candidates.map((q) => q.id)).toEqual(['no_match']);
+    expect(d.count_codes).toEqual(['N-FOD', 'N-HOU', 'N-MON']);
+    expect(d.option_scores).toEqual({ 'N-FOD': 0, 'N-HOU': 0, 'N-MON': 0 });
+  });
+  it('copies the other fields', () => {
+    const b = base();
+    const d = weakMatchDecision(b, req(), {});
+    expect(d.rules_version).toBe(b.rules_version);
+    expect(d.cacheable).toBe(b.cacheable);
+    expect(d.urgency).toEqual(b.urgency);
+  });
+  it('clarify=never: no candidates, no count codes', () => {
+    const d = weakMatchDecision(base(), req({ clarify: 'never' }), {});
+    expect(d.candidates).toEqual([]);
+    expect(d.count_codes).toEqual([]);
+    expect(d.option_scores).toEqual({});
+  });
+  it('no option left: no candidates', () => {
+    const r = req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] });
+    expect(weakMatchDecision(base(), r, {}).candidates).toEqual([]);
+  });
+  it('keeps the emergency question (soft card) next to no_match', () => {
+    const b = decide(
+      req(),
+      sig({ 'N-FOD': 0.2 }, { emergency: { status: 'ok', score: 0.3 } }),
+    );
+    expect(b.candidates.some((q) => q.type === 'emergency')).toBe(true);
+    const d = weakMatchDecision(b, req(), {});
+    expect(d.candidates.map((q) => q.id)).toEqual(['emergency', 'no_match']);
+    expect(
+      weakMatchDecision(b, req({ clarify: 'never' }), {}).candidates.map(
+        (q) => q.id,
+      ),
+    ).toEqual(['emergency']);
+  });
+  it('does not change the input decision', () => {
+    const b = base();
+    const before = JSON.stringify(b);
+    weakMatchDecision(b, req(), {});
+    expect(JSON.stringify(b)).toBe(before);
   });
 });

@@ -1,6 +1,11 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, RULES_VERSION } from './config';
-import { asksNeeds, buildCandidates, countCodesOf } from './questions';
+import {
+  asksNeeds,
+  buildCandidates,
+  countCodesOf,
+  noMatchQuestion,
+} from './questions';
 import { scoreOf } from './scores';
 import {
   effort,
@@ -26,7 +31,7 @@ export function decide(
   signals: RulesSignals,
   tenant: TenantContext = {},
 ): Decision {
-  // U-X means "urgency not yet known": same as no urgency sent (ISS-2499).
+  // U-X means "time not known": same as no urgency sent (ISS-2499).
   const req: RulesRequest =
     request.urgency === 'U-X' ? { ...request, urgency: undefined } : request;
   const aiOff = tenant.ai_classification === 'off';
@@ -62,6 +67,29 @@ export function decide(
     urgency,
     candidates,
     count_codes: countCodes,
+  };
+}
+
+/**
+ * The decision for a weak match (ISS-2796, Lucas 2026-11-18): the emergency
+ * question (when the decision has one) and the no_match question (none when
+ * clarify=never or no option is left). Counts and option scores follow that question; the rest is copied.
+ */
+export function weakMatchDecision(
+  decision: Decision,
+  req: RulesRequest,
+  tenant: TenantContext,
+): Decision {
+  // The emergency question stays (a soft card can sit next to a weak match).
+  const emergency = decision.candidates.filter((c) => c.type === 'emergency');
+  const q = req.clarify === 'never' ? null : noMatchQuestion(req, tenant);
+  const candidates = [...emergency, ...(q ? [q] : [])];
+  const countCodes = countCodesOf(candidates);
+  return {
+    ...decision,
+    candidates,
+    count_codes: countCodes,
+    option_scores: Object.fromEntries(countCodes.map((c) => [c, 0])),
   };
 }
 

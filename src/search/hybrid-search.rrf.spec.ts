@@ -42,7 +42,7 @@ const mainResponse = {
   aggregations: {},
 };
 
-type Mode = 'ok' | 'reject-vector' | 'reject-page';
+type Mode = 'ok' | 'reject-vector' | 'reject-page' | 'empty-lists';
 
 // Lists as Elasticsearch would return them. Hand-worked RRF (k = 60):
 //   b = 1/62 + 1/61 = 0.032522
@@ -63,8 +63,15 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
   let taxonomyGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
 
-  const hitsOf = (ids: string[]) => ({
-    hits: { hits: ids.map((id) => ({ _id: id })) },
+  // The first hit of the keyword list scores 12.5, of the vector list 0.61
+  // (the weak-match judges, ISS-2796).
+  const hitsOf = (ids: string[], top?: number) => ({
+    hits: {
+      hits: ids.map((id, i) => ({
+        _id: id,
+        ...(i === 0 && top !== undefined && { _score: top }),
+      })),
+    },
   });
   const isList = (r: any) => r._source === false && r.size === 100;
   const kindOf = (r: any) =>
@@ -95,16 +102,18 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
         if (kind === 'vector' && mode === 'reject-vector') {
           return Promise.reject(new Error('es down'));
         }
+        if (
+          mode === 'empty-lists' &&
+          (kind === 'keyword' || kind === 'vector')
+        ) {
+          return Promise.resolve(hitsOf([]));
+        }
         return Promise.resolve(
-          hitsOf(
-            kind === 'keyword'
-              ? KEYWORD
-              : kind === 'vector'
-                ? VECTOR
-                : kind === 'need'
-                  ? NEED
-                  : TAXONOMY,
-          ),
+          kind === 'keyword'
+            ? hitsOf(KEYWORD, 12.5)
+            : kind === 'vector'
+              ? hitsOf(VECTOR, 0.61)
+              : hitsOf(kind === 'need' ? NEED : TAXONOMY),
         );
       }
       // relevance cutoff probe: head (size 21), count, survivors
@@ -418,6 +427,70 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(mainRequest().query.pinned).toBeUndefined();
     expect(response.search.hits.total.value).toBe(1234);
     expect(response.search.hits.hits[0]._score).toBe(42);
+  });
+
+  describe('weak-match judges and needFilter (ISS-2796, Lucas 2026-11-18)', () => {
+    it('J1. fused search returns the top raw score of the keyword and vector lists', async () => {
+      const response = await run();
+      expect(response.judges).toEqual({ keyword_top: 12.5, vector_top: 0.61 });
+    });
+
+    it('J2. lists with no hits: both judges are 0', async () => {
+      mode = 'empty-lists';
+      const response = await run();
+      expect(response.judges).toEqual({ keyword_top: 0, vector_top: 0 });
+    });
+
+    it('J3. a list rejects: no judges', async () => {
+      mode = 'reject-vector';
+      const response = await run();
+      expect(response.judges).toBeUndefined();
+    });
+
+    it('J4. non-fused paths (v1, coords, sort name): no judges', async () => {
+      expect((await run({}, { rankingVersion: undefined })).judges).toBe(
+        undefined,
+      );
+      expect((await run({ coords: [-93.1, 44.9], distance: 25 })).judges).toBe(
+        undefined,
+      );
+      expect((await run({ sort: 'name' })).judges).toBe(undefined);
+    });
+
+    const needTerms = { terms: { sune_needs: ['N-HOU', 'N-FOD'] } };
+    const tenantTerm = { term: { tenant_id: 'tenant-a' } };
+
+    it('N1. needFilter adds the terms filter right after the tenant filter, in the main and the count request', async () => {
+      await run(
+        { query: '', relevance_cutoff: 'off' },
+        { needFilter: ['N-HOU', 'N-FOD'], countCodes: ['N-HOU', 'N-FOD'] },
+      );
+      const main = requests.find((r) => r.size === 25 && r.min_score == null);
+      const mainFilter =
+        main.query.function_score?.query.bool.filter ?? main.query.bool.filter;
+      expect(mainFilter.slice(0, 2)).toEqual([tenantTerm, needTerms]);
+      const count = requests.find((r) => r.aggs?.need_counts);
+      expect(count.query.bool.filter.slice(0, 2)).toEqual([
+        tenantTerm,
+        needTerms,
+      ]);
+    });
+
+    it('N2. needFilter is in the keyword and vector lists too', async () => {
+      await run({}, { needFilter: ['N-HOU', 'N-FOD'] });
+      expect(lists().length).toBeGreaterThan(0);
+      for (const req of lists()) {
+        expect(filterOf(req).slice(0, 2)).toEqual([tenantTerm, needTerms]);
+      }
+    });
+
+    it('N3. no needFilter or an empty one: no sune_needs terms filter', async () => {
+      await run({}, { needFilter: [] });
+      await run();
+      for (const req of requests) {
+        expect(JSON.stringify(req.query)).not.toContain('"sune_needs"');
+      }
+    });
   });
 
   it('7. pins request with v2 and relevance_cutoff on: no list requests and no pinned query', async () => {
