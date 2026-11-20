@@ -1947,5 +1947,84 @@ describe('tenantHotlines', () => {
     expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
       [],
     );
+
+// Lucas 2026-11-20: full v2 features only for en and es. Other locales get no
+// need questions, no need guesses, and the danger question only on a keyword-floor hit.
+describe('V2SearchService limited locales (full v2 only for en and es)', () => {
+  const strong = { 'N-FOD': 0.9, 'N-FOD-01': 0.95, 'N-HOU': 0.3 };
+  const classified = (floorHit: boolean, score = 0.5): ClassifyResult =>
+    okResult(strong, {
+      signals: {
+        needs: { status: 'ok', scores: strong },
+        urgency: { level: 'U-1', score: 0.85 },
+        emergency: { status: 'ok', score, floor_hit: floorHit },
+      },
+    });
+  const inLang = (lang: string) =>
+    ({ ...headers, 'accept-language': lang }) as HeadersDto;
+  const ids = (res: { clarification: { questions: { id: string }[] } }) =>
+    res.clarification.questions.map((q) => q.id);
+
+  it('ko "I need food": no danger question, no needs, no need chips', async () => {
+    const { service, classify } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.9)),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '음식이 필요해요' }),
+    });
+    expect(classify.mock.calls[0][2]).toBe('off');
+    expect(res.intent.needs).toEqual([]);
+    expect(res.clarification.questions).toEqual([]);
+  });
+
+  it('es keeps needs and questions', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.001)),
+    });
+    const res = await service.search({
+      headers: inLang('es'),
+      query: dto({ query: 'necesito comida' }),
+    });
+    expect(res.intent.needs.some((n) => n.source === 'inferred')).toBe(true);
+    expect(ids(res).length).toBeGreaterThan(0);
+  });
+
+  it('ko crisis phrase on the floor list: the danger question, in Korean, with hotlines', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(true, 0.5)),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '죽고 싶어요' }),
+    });
+    expect(ids(res)).toEqual(['emergency']);
+    const q = res.clarification.questions[0];
+    expect(q.stem).toBe('지금 위험한 상황에 있으신가요?');
+    expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
+    expect(res.intent.needs).toEqual([]);
+  });
+
+  it('a limited locale with a high model score but no floor hit: no danger question', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.99)),
+    });
+    const res = await service.search({
+      headers: inLang('vi'),
+      query: dto({ query: 'tôi cần nhà ở' }),
+    });
+    expect(ids(res)).toEqual([]);
+  });
+
+  it('caller U-0 still gets the hotlines in a limited locale', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.1)),
+    });
+    const res = await service.search({
+      headers: inLang('ru'),
+      query: dto({ query: 'x', urgency: 'U-0' }),
+    });
+    expect(ids(res)).toEqual(['emergency']);
+    expect(res.clarification.questions[0].hotlines.length).toBe(2);
   });
 });

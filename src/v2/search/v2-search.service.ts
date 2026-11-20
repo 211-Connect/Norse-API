@@ -9,7 +9,11 @@ import {
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
-import { localizeClarification } from '../rules/localize';
+import {
+  floorOnlyEmergency,
+  isFullV2Locale,
+  localizeClarification,
+} from '../rules/localize';
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
@@ -263,7 +267,6 @@ export class V2SearchService {
         dto,
         text,
         searchConfig,
-        aiClassification: tenantAiClassification(searchConfig),
         topAreasPromise: this.topAreasService.topAreas(
           headers['x-tenant-id'],
           headers['accept-language'],
@@ -300,18 +303,27 @@ export class V2SearchService {
     dto,
     text,
     searchConfig,
-    aiClassification,
     topAreasPromise,
   }: {
     headers: HeadersDto;
     dto: V2SearchQueryDto;
     text: string;
     searchConfig: SearchConfigCache;
-    aiClassification: AiClassificationSetting;
     topAreasPromise: ReturnType<TopAreasService['topAreas']>;
   }) {
     const hasText = text.trim().length > 0;
     const callerNeeds = dto.needs ?? [];
+    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
+    // setting can turn the need guess off. Full v2 features only for en and es
+    // (Lucas 2026-11-20): any other locale runs with AI classification off (no
+    // need or urgency guesses, no need questions) and shows the danger question
+    // only on a keyword-floor hit. The list and the map pins both come through
+    // here, so they follow the same rule.
+    const lang = headers['accept-language'] || 'en';
+    const limitedLocale = !isFullV2Locale(lang);
+    const aiClassification: AiClassificationSetting = limitedLocale
+      ? 'off'
+      : tenantAiClassification(searchConfig);
     const classified = hasText
       ? await withSpan('v2.classify', async (classifySpan) => {
           const result = await this.classifier.classify(
@@ -327,10 +339,12 @@ export class V2SearchService {
           return result;
         })
       : null;
-    const signals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const classifiedSignals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const signals = limitedLocale
+      ? floorOnlyEmergency(classifiedSignals)
+      : classifiedSignals;
     const scores = classified?.scores ?? {};
 
-    const lang = headers['accept-language'] || 'en';
     const rulesRequest: RulesRequest = {
       has_text: hasText,
       has_content_word: hasContentWord(text, lang),
@@ -363,6 +377,7 @@ export class V2SearchService {
       decision,
       needScores,
       modelVersion: classified?.modelVersion ?? null,
+      aiClassification,
     };
   }
 
@@ -390,6 +405,7 @@ export class V2SearchService {
     // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
     const text = dto.query;
     const hasText = text.trim().length > 0;
+    const lang = headers['accept-language'] || 'en';
 
     // Only caller-sent needs make blocks; a model guess never does. N-X never
     // makes a block. They never filter (Lucas 2026-11-12).
@@ -441,11 +457,6 @@ export class V2SearchService {
     const searchConfig = await withSpan('v2.tenant_config', () =>
       this.tenantConfig.getSearchConfig(headers['x-tenant-id']),
     );
-    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
-    // setting can turn the need guess off.
-    const aiClassification = tenantAiClassification(searchConfig);
-
-    const lang = headers['accept-language'] || 'en';
     const {
       signals,
       rulesRequest,
@@ -453,12 +464,12 @@ export class V2SearchService {
       decision,
       needScores,
       modelVersion,
+      aiClassification,
     } = await this.classifyAndDecide({
       headers,
       dto,
       text,
       searchConfig,
-      aiClassification,
       topAreasPromise,
     });
 

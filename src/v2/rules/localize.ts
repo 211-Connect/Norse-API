@@ -1,7 +1,23 @@
 import { LOCALE_TABLES } from './locales';
 import { STEMS } from './config';
 import { displayOf } from './sune';
-import { Clarification, Question, QuestionOption } from './types';
+import { Clarification, Question, QuestionOption, RulesSignals } from './types';
+
+/** Languages with the full v2 features (Lucas 2026-11-20). Every other locale gets the danger question only. */
+const FULL_V2_LANGUAGES = new Set(['en', 'es']);
+
+export const isFullV2Locale = (lang: string | undefined): boolean =>
+  !lang || FULL_V2_LANGUAGES.has(lang.toLowerCase().split('-')[0]);
+
+/**
+ * For a limited locale the danger question needs a keyword-floor hit. The
+ * model score alone gives no emergency band (score 0, band none).
+ */
+export function floorOnlyEmergency(signals: RulesSignals): RulesSignals {
+  const e = signals.emergency;
+  if (!e || (e.status === 'ok' && e.floor_hit === true)) return signals;
+  return { ...signals, emergency: { status: 'ok', score: 0 } };
+}
 
 const EMERGENCY_KEY: Record<string, string> = {
   'U-0': 'yes',
