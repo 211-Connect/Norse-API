@@ -37,7 +37,8 @@ import { RELEVANCE_CUTOFF_VALUES } from './internal/relevance-cutoff/types';
 import {
   AREA_MATCH_PARAM_DESCRIPTION,
   AREA_MATCH_VALUES,
-  INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_PARAM_DESCRIPTION,
+  UNLOCATED_VALUES,
   REGION_PARAM_DESCRIPTION,
 } from './internal/area/area-match';
 import { HttpException, HttpStatus } from '@nestjs/common';
@@ -61,6 +62,7 @@ import {
   searchTypeFor,
 } from '../metrics/usage-metrics.service';
 import { Request } from 'express';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -136,10 +138,10 @@ const ApiSearchParams = () =>
       description: AREA_MATCH_PARAM_DESCRIPTION,
     }),
     ApiQuery({
-      name: 'include_unlocated',
+      name: 'unlocated',
       required: false,
-      description: INCLUDE_UNLOCATED_PARAM_DESCRIPTION,
-      schema: { type: 'boolean' },
+      enum: UNLOCATED_VALUES,
+      description: UNLOCATED_PARAM_DESCRIPTION,
     }),
     ApiQuery({
       name: 'geo_type',
@@ -218,7 +220,7 @@ export class SearchController {
   ) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @RequireCdnUrlMirrors()
@@ -271,7 +273,7 @@ export class SearchController {
   }
 
   @Post()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @Header('Deprecation', 'true')
@@ -419,7 +421,7 @@ export class SearchController {
   }
 
   @Get('pins')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
   @RequireCdnUrlMirrors()
@@ -452,7 +454,7 @@ export class SearchController {
   }
 
   @Get('predict')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
   @RequireCdnUrlMirrors()
   @ApiResponse({
@@ -486,7 +488,7 @@ export class SearchController {
   }
 
   @Get('re-rank')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
   @RequireCdnUrlMirrors()
   @ApiResponse({

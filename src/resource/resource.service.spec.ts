@@ -5,6 +5,7 @@ import { ResourceService } from './resource.service';
 import { Resource } from 'src/common/schemas/resource.schema';
 import { Redirect } from 'src/common/schemas/redirect.schema';
 import { HeadersDto } from 'src/common/dto/headers.dto';
+import { Types } from 'mongoose';
 
 describe('ResourceService', () => {
   let service: ResourceService;
@@ -25,6 +26,9 @@ describe('ResourceService', () => {
 
   const tenantId = 'tenant-abc';
   const salId = 'sal-123';
+  // UWGKC/SCC-style resource: `_id` is a Mongo ObjectId, not the SAL id.
+  const objectIdHex = '6ad7c5109064bd9e676a932f';
+  const objectId = new Types.ObjectId(objectIdHex);
   const headers: HeadersDto = {
     'accept-language': 'en',
     'x-tenant-id': tenantId,
@@ -95,12 +99,33 @@ describe('ResourceService', () => {
 
       expect(mockAggregate).toHaveBeenCalledTimes(2);
       expect(mockAggregate).toHaveBeenNthCalledWith(2, [
-        { $match: { tenant_id: tenantId, _id: salId } },
+        { $match: { tenant_id: tenantId, _id: { $in: [salId] } } },
         expect.any(Object),
       ]);
       expect(service['logger'].warn).toHaveBeenCalledWith(
         expect.stringContaining('"lookupPath":"fallback"'),
       );
+      expect(result.displayName).toBe('Test Resource');
+    });
+
+    it('matches an ObjectId-typed _id in the fallback path', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          buildResource({ _id: objectId, serviceAtLocationId: 'other-sal' }),
+        ]);
+
+      const result = await service.findById(objectIdHex, { headers });
+
+      expect(mockAggregate).toHaveBeenNthCalledWith(2, [
+        {
+          $match: {
+            tenant_id: tenantId,
+            _id: { $in: [objectIdHex, objectId] },
+          },
+        },
+        expect.any(Object),
+      ]);
       expect(result.displayName).toBe('Test Resource');
     });
 
@@ -225,6 +250,30 @@ describe('ResourceService', () => {
       );
       expect(result.data[salId]).toBeDefined();
       expect(result.errors).toHaveLength(0);
+    });
+
+    it('keys an ObjectId-typed _id fallback hit by the requested id', async () => {
+      aggregateExec
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          buildResource({ _id: objectId, serviceAtLocationId: 'other-sal' }),
+        ]);
+
+      const result = await service.findManyByIds([objectIdHex], { headers });
+
+      expect(mockAggregate).toHaveBeenCalledTimes(2);
+      expect(mockAggregate).toHaveBeenNthCalledWith(2, [
+        {
+          $match: {
+            tenant_id: tenantId,
+            _id: { $in: [objectIdHex, objectId] },
+          },
+        },
+        expect.any(Object),
+      ]);
+      expect(result.data[objectIdHex]).toBeDefined();
+      expect(result.errors).toHaveLength(0);
+      expect(mockRedirectModel.findById).not.toHaveBeenCalled();
     });
 
     it('uses cross-tenant fallback_no_tenant for missing tenant-scoped ids and logs', async () => {

@@ -42,11 +42,12 @@ import {
 import { KeycloakAuthService } from 'src/auth/services/keycloak-auth.service';
 import { SyncFavoriteListDto } from './dto/sync-favorite-list.dto';
 import { Request, Response } from 'express';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Favorite List')
 @Controller({
   path: 'favorite-list',
-  version: '1',
+  version: V1_AND_LEGACY,
 })
 @ApiTenantIdQuery()
 @ApiLocaleQuery()

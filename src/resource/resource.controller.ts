@@ -45,6 +45,7 @@ import {
 import { TransformedResourceOpenApiDto } from './dto/transformed-resource.openapi.dto';
 import { ArcjetGuard } from 'src/common/guards/arcjet.guard';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Resource')
 @ApiExtraModels(TransformedResourceOpenApiDto)
@@ -58,7 +59,7 @@ export class ResourceController {
   ) {}
 
   @Get(':id')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @RequireCdnUrlMirrors()
@@ -90,7 +91,7 @@ export class ResourceController {
   @Get('original/:id')
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @RequireCdnUrlMirrors()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @ApiHeader({ name: 'accept-language', required: true })
   @ApiHeader({
@@ -118,7 +119,7 @@ export class ResourceController {
   }
 
   @Post('titles')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
@@ -149,7 +150,7 @@ export class ResourceController {
   }
 
   @Post('batch')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(FIFTEEN_MINUTES)
   @RequireCdnUrlMirrors()
   @ApiHeader({ name: 'accept-language', required: true })

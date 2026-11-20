@@ -3,6 +3,7 @@ import {
   FUZZY_FALLBACK_BOOST,
   FUZZY_PREFIX_LENGTH,
   fuzzyFallbackFor,
+  needsTypoClauses,
 } from './fuzzy-match';
 
 const base: QueryDslQueryContainer = {
@@ -64,5 +65,21 @@ describe('fuzzyFallbackFor', () => {
     expect(() => fuzzyFallbackFor({ term: { name: 'x' } })).toThrow(
       /multi_match/,
     );
+  });
+});
+
+describe('needsTypoClauses', () => {
+  it.each([
+    ['every word has 6+ docs', [6, 100, 5000], 3, false],
+    ['one word has exactly 5 docs', [5, 100], 2, true],
+    ['one word has 0 docs', [0, 100], 2, true],
+    ['one word has 1 doc', [1], 1, true],
+    ['single common word', [6], 1, false],
+    ['no content words', [], 0, true],
+    ['12 content words, all common', Array(12).fill(900), 12, true],
+    ['13 content words, all common', Array(12).fill(900), 13, true],
+    ['11 content words, all common', Array(11).fill(900), 11, false],
+  ])('%s', (_name, docs, count, expected) => {
+    expect(needsTypoClauses(docs as number[], count as number)).toBe(expected);
   });
 });

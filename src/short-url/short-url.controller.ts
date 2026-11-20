@@ -9,6 +9,7 @@ import {
 import { ShortUrlService } from './short-url.service';
 import { CreateShortUrlDto } from './dto/create-short-url.dto';
 import { ShortUrlResponseDto } from './dto/short-url-response.dto';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Short URL')
 @Controller('short-url')
@@ -16,7 +17,7 @@ export class ShortUrlController {
   constructor(private readonly shortUrlService: ShortUrlService) {}
 
   @Get(':id')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Resolve a short URL',
     description: 'Looks up the original URL for a previously issued short ID.',
@@ -37,7 +38,7 @@ export class ShortUrlController {
   }
 
   @Post()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get or create a short URL',
     description:

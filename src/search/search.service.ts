@@ -20,18 +20,20 @@ import {
   SearchSource,
 } from './dto/search-response.dto';
 import { RegionService } from 'src/region/internal';
-import { AreaFilter, tenantAreaMatch } from './internal/area/area-match';
+import { AreaFilter } from './internal/area/area-match';
+import { resolveArea } from './internal/area/resolve-area';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
-import { HybridSearchService } from './hybrid-search.service';
+import { HybridSearchService, RankingVersion } from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import { searchFingerprint } from './internal/search-fingerprint';
+import { SEARCH_SOURCE_EXCLUDES } from './internal/response-fields';
 import { SearchPinsResponseDto } from './dto/search-pins-response.dto';
 import {
   SEARCH_PINS_LIMIT,
@@ -53,6 +55,8 @@ type SearchOptions = {
   body?: SearchResourcesBodyDto;
   /** Set by `withArea`; never by a caller. */
   area?: AreaFilter;
+  /** Set by the v2 routes only; absent means v1 rules. Hybrid pins only. */
+  rankingVersion?: RankingVersion;
 };
 
 @Injectable()
@@ -123,37 +127,23 @@ export class SearchService {
 
   /**
    * Settles an area search (`region`) once for every search path: checks the
-   * Regions exist (400 otherwise) and fills `area_match`/`include_unlocated`
+   * Regions exist (400 otherwise) and fills `area_match`/`unlocated`
    * from the tenant's CMS search settings when the caller left them out — see
    * docs/area-search.md.
    */
   private async withArea(
     options: SearchOptions,
   ): Promise<{ options: SearchOptions; resolved?: ResolvedLocationDto }> {
-    const { query: q, headers } = options;
-    if (!q.region?.length) return { options };
-
-    const [regions, searchConfig] = await Promise.all([
-      this.regionService.getSummaries(q.region),
-      this.tenantConfigService
-        .getSearchConfig(headers['x-tenant-id'])
-        .catch((): SearchConfigCache => ({})),
-    ]);
-    const area: AreaFilter = {
-      regionIds: q.region,
-      match: q.area_match ?? tenantAreaMatch(searchConfig),
-      includeUnlocated:
-        q.include_unlocated ??
-        searchConfig.include_unlocated_in_area_search === true,
-    };
-    return {
-      options: { ...options, area },
-      resolved: {
-        regions,
-        area_match: area.match,
-        include_unlocated: area.includeUnlocated,
-      },
-    };
+    const { area, resolved } = await resolveArea(
+      options.query,
+      this.regionService,
+      () =>
+        this.tenantConfigService
+          .getSearchConfig(options.headers['x-tenant-id'])
+          .catch((): SearchConfigCache => ({})),
+      { rankingVersion: options.rankingVersion },
+    );
+    return area ? { options: { ...options, area }, resolved } : { options };
   }
 
   private async searchWithin(options: SearchOptions): Promise<SearchResponse> {
@@ -231,6 +221,7 @@ export class SearchService {
       ...(await this.withArea(options)).options,
       query: { ...q, page: 1, limit: SEARCH_PINS_LIMIT },
     };
+    // v1 never sets rankingVersion, so its request is unchanged.
 
     const isHybrid = q.query_type === 'hybrid';
     const request = isHybrid
@@ -360,7 +351,7 @@ export class SearchService {
       index: indexName,
       from: (page - 1) * limit,
       size: limit || 25,
-      _source_excludes: ['service_area'],
+      _source_excludes: SEARCH_SOURCE_EXCLUDES,
       sort: SearchUtilsService.buildSort(
         coords,
         sort,

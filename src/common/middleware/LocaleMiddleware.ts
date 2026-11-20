@@ -7,6 +7,7 @@ import {
 import { Request, Response, NextFunction } from 'express';
 import { acceptLanguageSchema } from '../dto/headers.dto';
 import { requestPathForLog } from '../lib/request-path';
+import { readsTenantFromUrlOnly } from '../versioning/api-version';
 
 @Injectable()
 export class LocaleMiddleware implements NestMiddleware {
@@ -17,6 +18,8 @@ export class LocaleMiddleware implements NestMiddleware {
   }
 
   async use(req: Request, res: Response, next: NextFunction) {
+    if (readsTenantFromUrlOnly(req)) return this.useUrlOnly(req, next);
+
     const validation = acceptLanguageSchema.safeParse(
       req.headers['accept-language'],
     );
@@ -54,6 +57,23 @@ export class LocaleMiddleware implements NestMiddleware {
       }
     }
 
+    next();
+  }
+
+  /**
+   * v2 (ADR 0039 Decision 34): the language comes from `locale` in the URL.
+   * The `accept-language` header is not read; it is replaced by the URL value
+   * (or removed). The exact-code check (Decision 72) stays in the v2 header
+   * pipe, which now reads the URL value.
+   */
+  private useUrlOnly(req: Request, next: NextFunction) {
+    const raw = req.query.locale;
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      req.headers['accept-language'] = raw;
+      req.locale = raw.trim().toLowerCase();
+    } else {
+      delete req.headers['accept-language'];
+    }
     next();
   }
 }

@@ -6,6 +6,7 @@ import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { RegionController } from 'src/region/internal/region.controller';
 import { RegionService } from 'src/region/internal/region.service';
 import { apiVersioningOptions } from 'src/common/versioning/api-version';
+import { withoutV1Duplicates } from './setup-swagger';
 
 // The documentation controller is never mounted by AppModule. It inherits the
 // runtime routes and DTO metadata without the runtime controller's exclusion.
@@ -45,7 +46,7 @@ export async function createInternalRegionsOpenApi(): Promise<OpenAPIObject> {
         'x-internal-api-key',
       )
       .build();
-    return SwaggerModule.createDocument(app, config);
+    return withoutV1Duplicates(SwaggerModule.createDocument(app, config));
   } finally {
     await app.close();
   }

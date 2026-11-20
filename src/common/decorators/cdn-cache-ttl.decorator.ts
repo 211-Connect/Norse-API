@@ -8,6 +8,10 @@ import { Seconds } from '../types';
 export const SetCdnCacheTTL = (ttl: Seconds) =>
   SetMetadata(CDN_CACHE_TTL_KEY, ttl);
 
-/** Marks a cached route as safe for the CDN only when tenant_id and locale are in the URL. */
+/**
+ * The route's response is storable by a shared cache only when the URL has the
+ * `tenant_id` and `locale` mirrors. Use it where a URL-keyed CDN could
+ * otherwise serve one tenant's or language's answer to another.
+ */
 export const RequireCdnUrlMirrors = () =>
   SetMetadata(CDN_REQUIRES_URL_MIRRORS_KEY, true);

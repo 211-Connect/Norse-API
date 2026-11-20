@@ -37,6 +37,7 @@ import {
   TaxonomySourceResponseDto,
   VersionMetadataResponseDto,
 } from './dto/taxonomy-scorecard-response.dto';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Taxonomy Scorecard')
 @Controller('taxonomy-scorecard')
@@ -61,7 +62,7 @@ export class TaxonomyScorecardController {
   ) {}
 
   @Get('taxonomies')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Search HSIS taxonomies for scorecard customization',
   })
@@ -81,7 +82,7 @@ export class TaxonomyScorecardController {
   }
 
   @Get('tenants/:tenantId/taxonomies/:hsisCode')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get effective taxonomy scorecard configuration for tenant',
   })
@@ -99,7 +100,7 @@ export class TaxonomyScorecardController {
   }
 
   @Put('tenants/:tenantId/taxonomies/:hsisCode')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Update tenant taxonomy scorecard configuration',
   })
@@ -130,7 +131,7 @@ export class TaxonomyScorecardController {
   }
 
   @Post('tenants/:tenantId/taxonomies/:hsisCode/enable')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Enable tenant taxonomy scorecard version',
   })

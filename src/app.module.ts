@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { RedisWarmupService } from './common/services/cache/redis-warmup.service';
 import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { TracingShutdownService } from './common/lifecycle/tracing-shutdown.service';
 import { AppController } from './app.controller';
@@ -34,6 +35,8 @@ import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 import { LocaleMiddleware } from './common/middleware/LocaleMiddleware';
 import { TaxonomyController } from './taxonomy/taxonomy.controller';
 import { SearchController } from './search/search.controller';
+import { V2SearchModule } from './v2/search/v2-search.module';
+import { V2SearchController } from './v2/search/v2-search.controller';
 import { ResourceController } from './resource/resource.controller';
 import { FavoriteController } from './favorite/favorite.controller';
 import { FavoriteListController } from './favorite-list/favorite-list.controller';
@@ -54,6 +57,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { BlockedTrafficInternalController } from './analytics/blocked-traffic-internal.controller';
+import { CrawlerTrafficInternalController } from './analytics/crawler-traffic-internal.controller';
 import { TaxonomyScorecardModule } from './taxonomy-scorecard/taxonomy-scorecard.module';
 import { PrintableDirectoryController } from './printable-directory/printable-directory.controller';
 import { PrintableDirectoryPublicController } from './printable-directory/printable-directory-public.controller';
@@ -110,6 +114,7 @@ const arcjetKey = configuration().ARCJET_KEY;
     }),
     TaxonomyModule,
     SearchModule,
+    V2SearchModule,
     ShortUrlModule,
     HealthModule,
     FavoriteModule,
@@ -129,6 +134,7 @@ const arcjetKey = configuration().ARCJET_KEY;
   controllers: [AppController],
   providers: [
     AppService,
+    RedisWarmupService,
     TracingShutdownService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
@@ -156,6 +162,7 @@ export class AppModule implements NestModule {
     consumer.apply(TenantMiddleware).forRoutes(
       TaxonomyController,
       SearchController,
+      V2SearchController,
       ResourceController,
       FavoriteController,
       FavoriteListController,
@@ -165,6 +172,7 @@ export class AppModule implements NestModule {
       PrintableDirectoryDeliveryController,
       PrintableDirectoryDeliveryInternalController,
       BlockedTrafficInternalController,
+      CrawlerTrafficInternalController,
       OrganizationController,
       RegionPublicController,
       // Also enforces ?tenant_id= vs x-tenant-id consistency on a
@@ -172,19 +180,22 @@ export class AppModule implements NestModule {
       ServiceController,
     );
 
-    consumer.apply(LocaleMiddleware).forRoutes(
-      TaxonomyController,
-      SearchController,
-      ResourceController,
-      FavoriteListController,
-      SuggestionController,
-      PrintableDirectoryController,
-      PrintableDirectoryPublicController,
-      PrintableDirectoryDeliveryInternalController,
-      OrganizationController,
-      // Checks ?locale= against accept-language on a CDN-cached route that
-      // returns translations (the cache keys on URL, ignoring Vary).
-      ServiceController,
-    );
+    consumer
+      .apply(LocaleMiddleware)
+      .forRoutes(
+        TaxonomyController,
+        SearchController,
+        V2SearchController,
+        ResourceController,
+        FavoriteListController,
+        SuggestionController,
+        PrintableDirectoryController,
+        PrintableDirectoryPublicController,
+        PrintableDirectoryDeliveryInternalController,
+        OrganizationController,
+        // Checks ?locale= against accept-language on a CDN-cached route that
+        // returns translations (the cache keys on URL, ignoring Vary).
+        ServiceController,
+      );
   }
 }

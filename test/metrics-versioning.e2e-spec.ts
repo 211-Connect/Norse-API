@@ -62,4 +62,16 @@ describe('MetricsController versioning (e2e)', () => {
       .set('x-api-version', '1');
     expect(res.status).toBe(200);
   });
+
+  // ISS-2496: after the chart sets versionPrefix "", a gateway caller's
+  // /norse-api/v1/metrics reaches this service as /v1/metrics.
+  it('GET /v1/metrics -> 200', async () => {
+    const res = await request(app.getHttpServer()).get('/v1/metrics');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /v2/metrics -> 404 (no v2 route is declared)', async () => {
+    const res = await request(app.getHttpServer()).get('/v2/metrics');
+    expect(res.status).toBe(404);
+  });
 });

@@ -12,11 +12,11 @@ The code: `SearchUtilsService.buildRegionFilter`
 
 ## Request
 
-| Param               | Meaning                                                                                                                                                                                                                     |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `region`            | One or more Region ids, comma list, up to 20: `state:WA`, `county:53033` (5-digit FIPS), `place:5363000` (7-digit Census place GEOID), `zip:98101`. A resource matching **any** of them is returned. Unknown ids are a 400. |
-| `area_match`        | `located`, `located_or_serving` or `serving` — see [Modes](#modes). Absent: the tenant default, else `located_or_serving`.                                                                                                  |
-| `include_unlocated` | `true` also returns resources with neither a location nor a service area. Absent: the tenant default, else `false`.                                                                                                         |
+| Param        | Meaning                                                                                                                                                                                                                     |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `region`     | One or more Region ids, comma list, up to 20: `state:WA`, `county:53033` (5-digit FIPS), `place:5363000` (7-digit Census place GEOID), `zip:98101`. A resource matching **any** of them is returned. Unknown ids are a 400. |
+| `area_match` | `located`, `located_or_serving` or `serving` — see [Modes](#modes). Absent: the tenant default, else `located_or_serving`.                                                                                                  |
+| `unlocated`  | Which resources with neither a location nor a service area are also returned: `none`, `virtual` (only virtual services) or `all`. Absent: the tenant default, else `virtual`.                                               |
 
 With `region` set, `distance` and `geo_type` are ignored: an area is searched
 as its shape, never as a radius. `coords`, if also sent, only sets the origin
@@ -46,8 +46,18 @@ location and a shaded shape is its service area. Green resources match.
 | `located_or_serving` (default) | location inside the Region                                 | service area overlaps the Region                     |
 | `serving`                      | location inside the Region **or** service area overlaps it | service area overlaps the Region                     |
 
-`include_unlocated=true` adds, in every mode, resources with **neither** field.
-They cannot be placed anywhere, so they would otherwise never match an area.
+`unlocated` adds, in every mode, resources with **neither** field. They cannot
+be placed anywhere, so they match every area search or none:
+
+| `unlocated`         | Resources with neither a location nor a service area              |
+| ------------------- | ----------------------------------------------------------------- |
+| `none`              | left out                                                          |
+| `virtual` (default) | only virtual services (`location.physical_address.type: virtual`) |
+| `all`               | all of them, including physical services missing their address    |
+
+A virtual service with no service area usually serves everyone, so `virtual`
+lists it; a physical one with neither field is missing data, not a claim to
+serve the area.
 
 ### `located` — physically in the area
 
@@ -108,14 +118,16 @@ on the Region's border counts as inside.
 
 ## Tenant defaults
 
-`area_match` and `include_unlocated` default per tenant from the CMS search
+`area_match` and `unlocated` default per tenant from the CMS search
 settings (Payload, search tab), which Payload writes to Redis DB 2 under
-`search_config:<tenantId>` as `area_match` and
-`include_unlocated_in_area_search` (`SearchConfigCache`). A caller's params
-always win. An unset or invalid tenant value falls back to
-`located_or_serving` / `false`. Norse sends both params explicitly; the
+`search_config:<tenantId>` as `area_match` and `unlocated_in_area_search`
+(`SearchConfigCache`). A caller's params always win. An unset or invalid
+tenant value falls back to `located_or_serving` / `virtual`. A cache written
+before `unlocated_in_area_search` existed holds the boolean
+`include_unlocated_in_area_search` instead: `true` reads as `all`. Norse
+sends both params explicitly; the
 defaults matter for other callers (Keeper, agents) so they get the tenant's
-behavior.
+behavior. `/v2/search` ignores the tenant `unlocated_in_area_search` default and uses `virtual` unless the caller sends `unlocated` (Lucas 2026-11-18).
 
 A printable directory can override the mode with
 `defaultQueryConfig.areaMatch` (null: tenant default), applied with its
@@ -138,7 +150,7 @@ An area search adds `resolved_location`:
       }
     ],
     "area_match": "located_or_serving",
-    "include_unlocated": false
+    "unlocated": "virtual"
   }
 }
 ```

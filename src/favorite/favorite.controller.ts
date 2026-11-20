@@ -14,6 +14,7 @@ import { KeycloakGuard } from 'src/auth/guards/keycloak.guard';
 import { User } from 'src/common/decorators/User';
 import { ApiTenantIdQuery } from 'src/common/decorators';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Favorite')
 @Controller('favorite')
@@ -29,13 +30,13 @@ export class FavoriteController {
   constructor(private readonly favoriteService: FavoriteService) {}
 
   @Post()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   create(@Body() createFavoriteDto: CreateFavoriteDto, @User() user: User) {
     return this.favoriteService.create(createFavoriteDto, { user });
   }
 
   @Delete(':favoriteId/:favoriteListId')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   remove(
     @Param('favoriteId') favoriteId: string,
     @Param('favoriteListId') favoriteListId: string,

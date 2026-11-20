@@ -10,7 +10,6 @@ import { RELEASE_HEADER, releaseInfo } from '../release/release-info';
 import {
   API_VERSION_HEADER,
   DEFAULT_API_VERSION,
-  SUPPORTED_API_VERSIONS,
   requestedApiVersion,
 } from '../versioning/api-version';
 
@@ -21,10 +20,11 @@ export const API_VERSION_MIDDLEWARE_ROUTES: RouteInfo = {
 };
 
 /**
- * Stamps the release on every response (ISS-2482), then refuses an
- * `x-api-version` no route is declared under (ISS-2481). Without this an
- * unknown version fell through to `404 Cannot GET /search`, which reads as
- * "the endpoint does not exist".
+ * Stamps the release on every response (ISS-2482), then checks the
+ * `x-api-version` header (ISS-2496). The path picks the version now, so the
+ * header may only be `1`, what current callers and the SDK send, and is then
+ * ignored. Any other value is a 400 that says to use the path: silently
+ * serving v1 to a caller who asked for 2 would hide the mistake.
  */
 @Injectable()
 export class ApiVersionMiddleware implements NestMiddleware {
@@ -32,13 +32,11 @@ export class ApiVersionMiddleware implements NestMiddleware {
     res.setHeader(RELEASE_HEADER, releaseInfo().release);
 
     const requested = requestedApiVersion(req);
-    if (
-      requested !== undefined &&
-      !SUPPORTED_API_VERSIONS.includes(requested)
-    ) {
+    if (requested !== undefined && requested !== DEFAULT_API_VERSION) {
       throw new BadRequestException(
-        `${API_VERSION_HEADER} must be one of: ${SUPPORTED_API_VERSIONS.join(', ')} ` +
-          `(received "${requested}"). Omit it to use version ${DEFAULT_API_VERSION}.`,
+        `${API_VERSION_HEADER} no longer picks the API version; the path does ` +
+          `(/v1/..., /v2/...). Omit the header or send ${DEFAULT_API_VERSION} ` +
+          `(received "${requested}").`,
       );
     }
     next();

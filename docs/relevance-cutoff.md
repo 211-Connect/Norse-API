@@ -305,6 +305,6 @@ response object; no existing field changes shape. Per
 [AGENTS.md](../AGENTS.md), the OpenAPI document is the contract that generates
 the Norse frontend SDK — check `GET /swagger/json` after changing any of this.
 
-If this becomes the default, it belongs in a `v2` handler (`x-api-version: 2`),
+If this becomes the default, it belongs in a `v2` handler (`/v2/...`),
 not a change to v1. Existing consumers should not find search behaviour changed
 underneath them.

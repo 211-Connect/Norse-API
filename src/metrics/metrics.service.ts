@@ -1,3 +1,5 @@
+import { Span } from '@opentelemetry/api';
+import { withSpan } from 'src/common/tracing/with-span';
 import { Injectable } from '@nestjs/common';
 import { TraceFlags, isSpanContextValid, trace } from '@opentelemetry/api';
 import {
@@ -49,6 +51,27 @@ export type CacheName =
   | 'tenant-config-app-redis'; // TenantConfigService app-Redis fallback (Keycloak realm id only)
 
 export type CacheResult = 'hit' | 'miss' | 'coalesced' | 'get-error';
+
+/**
+ * Server-side time of a downstream call, read from its result, so a trace
+ * separates the server's work from the network: Elasticsearch `took` (ms) and
+ * an HTTP `Server-Timing` header (ml-broker: slot wait and model time). Both
+ * hold durations only, never request text.
+ */
+function setResultTimings(span: Span, result: unknown): void {
+  if (typeof result !== 'object' || result === null) return;
+  const took = (result as { took?: unknown }).took;
+  if (typeof took === 'number') {
+    span.setAttribute('downstream.took_ms', took);
+  }
+  const headers = (result as { headers?: { get?: unknown } }).headers;
+  if (typeof headers?.get === 'function') {
+    const timing = (headers as Headers).get('server-timing');
+    if (timing) {
+      span.setAttribute('downstream.server_timing', timing.slice(0, 200));
+    }
+  }
+}
 
 @Injectable()
 export class MetricsService {
@@ -149,23 +172,33 @@ export class MetricsService {
     fn: () => Promise<T>,
     classifyResult?: (result: T) => DownstreamOutcome,
   ): Promise<T> {
-    const start = performance.now();
-    try {
-      const result = await fn();
-      const outcome: DownstreamOutcome = classifyResult
-        ? classifyResult(result)
-        : 'ok';
-      this.recordDownstream(dependency, operation, outcome, start);
-      return result;
-    } catch (err) {
-      this.recordDownstream(
-        dependency,
-        operation,
-        this.downstreamOutcomeFromError(err),
-        start,
-      );
-      throw err;
-    }
+    // One span per downstream call, named like the metric labels, so a trace
+    // shows which call is which (several Elasticsearch calls share one URL).
+    return withSpan(
+      `${dependency} ${operation}`,
+      async (span) => {
+        const start = performance.now();
+        try {
+          const result = await fn();
+          const outcome: DownstreamOutcome = classifyResult
+            ? classifyResult(result)
+            : 'ok';
+          span.setAttribute('downstream.outcome', outcome);
+          setResultTimings(span, result);
+          this.recordDownstream(dependency, operation, outcome, start);
+          return result;
+        } catch (err) {
+          const outcome = this.downstreamOutcomeFromError(err);
+          span.setAttribute('downstream.outcome', outcome);
+          this.recordDownstream(dependency, operation, outcome, start);
+          throw err;
+        }
+      },
+      {
+        'downstream.dependency': dependency,
+        'downstream.operation': operation,
+      },
+    );
   }
 
   private downstreamOutcomeFromError(err: unknown): DownstreamOutcome {

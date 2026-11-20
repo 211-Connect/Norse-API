@@ -1,5 +1,6 @@
 import { hashCacheKey } from 'src/common/lib/hash-cache-key';
 import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
+import type { RankingVersion } from '../../hybrid-search.service';
 
 /**
  * Keyed on the search's identity, so pages 2..n of the same search reuse one
@@ -20,12 +21,30 @@ import { SearchIdentity, searchFingerprint } from '../search-fingerprint';
  * why `CUTOFF_PROBE_TTL_MS` is minutes rather than the cache default's hour.
  */
 export const relevanceCutoffCacheKey = (
-  args: SearchIdentity & { pinnedMode: string },
+  args: SearchIdentity & {
+    pinnedMode: string;
+    rankingVersion?: RankingVersion;
+    /**
+     * Active needs when the probe applies the need boost (v2, option A). Their
+     * code, tier and score size the boost, so they move the cut. Absent or
+     * empty leaves the key exactly as it was.
+     */
+    needs?: { code: string; tier: string; score: number }[];
+  },
 ): string => {
+  const needs = [...(args.needs ?? [])]
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map(({ code, tier, score }) => ({ code, tier, score }));
+
   const fingerprint = hashCacheKey({
     search: searchFingerprint(args),
     pinnedMode: args.pinnedMode,
+    ...(needs.length > 0 ? { needs } : {}),
   });
 
-  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}`;
+  // v1 keeps the key string it always had; v2 scores differently, so it must
+  // never be served a v1 probe.
+  const version = args.rankingVersion === 'v2' ? ':v2' : '';
+
+  return `search:cutoff:${args.tenantId}:${args.lang}:${fingerprint}${version}`;
 };
