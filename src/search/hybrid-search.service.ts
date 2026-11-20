@@ -407,8 +407,10 @@ export class HybridSearchService {
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
       this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
+    // Opt-in (Lucas, 2026-11-20): off unless exactly `true`. The cache serves
+    // v1 hybrid search too, so merging must not turn it on by itself.
     this.embeddingCacheEnabled =
-      this.configService.get<string>('EMBEDDING_CACHE_ENABLED') !== 'false';
+      this.configService.get<string>('EMBEDDING_CACHE_ENABLED') === 'true';
     const ttl = Number(
       this.configService.get<string>('EMBEDDING_CACHE_TTL_MS'),
     );
