@@ -2,6 +2,7 @@ import { Controller, Get, Param, Version } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ApiTenantIdQuery } from 'src/common/decorators';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../../common/versioning/api-version';
 import { RegionDetailDto, RegionIdParamDto, RegionService } from '../internal';
 
 /**
@@ -22,7 +23,7 @@ export class RegionPublicController {
   constructor(private readonly regionService: RegionService) {}
 
   @Get(':id')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiHeader({
     name: 'x-tenant-id',
     required: true,
