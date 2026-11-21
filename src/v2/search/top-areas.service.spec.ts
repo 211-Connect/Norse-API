@@ -1,17 +1,27 @@
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
 import { TIER1_CODES } from '../rules/sune';
 import { TopAreasService } from './top-areas.service';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 
-function build(search: jest.Mock) {
+const metrics = {
+  observeDownstream: (_dep: string, _op: string, fn: () => Promise<unknown>) =>
+    fn(),
+} as unknown as MetricsService;
+
+function build(
+  search: jest.Mock,
+  existsAlias: jest.Mock = jest.fn().mockResolvedValue(false),
+) {
   const getOrSet = jest.fn((_key: string, factory: () => Promise<unknown>) =>
     factory(),
   );
   const service = new TopAreasService(
-    { search } as unknown as ElasticsearchService,
+    { search, indices: { existsAlias } } as unknown as ElasticsearchService,
     { getOrSet } as unknown as RequestCacheService,
+    metrics,
   );
   return { service, getOrSet };
 }
@@ -61,6 +71,47 @@ describe('TopAreasService', () => {
     expect(options).toEqual({ requestTimeout: 1500 });
   });
 
+  // Dagster republishes a tenant by pointing this alias at a complete temp
+  // copy while it rewrites the shared index. Counting the shared index then
+  // would cache a half-published tenant's areas for 24 h.
+  it('reads the tenant alias when it exists', async () => {
+    const search = buckets(['N-FOD', 1]);
+    const existsAlias = jest.fn().mockResolvedValue(true);
+    const { service } = build(search, existsAlias);
+    await service.topAreas(TENANT, 'es');
+    expect(existsAlias).toHaveBeenCalledWith({
+      name: `${TENANT}-hybrid_search_resources_es`,
+    });
+    expect(search.mock.calls[0][0].index).toBe(
+      `${TENANT}-hybrid_search_resources_es`,
+    );
+  });
+
+  it('serves cached areas without checking the alias', async () => {
+    const search = jest.fn();
+    const existsAlias = jest.fn();
+    const service = new TopAreasService(
+      { search, indices: { existsAlias } } as unknown as ElasticsearchService,
+      {
+        getOrSet: jest.fn().mockResolvedValue(['N-FOD']),
+      } as unknown as RequestCacheService,
+      metrics,
+    );
+    await expect(service.topAreas(TENANT, 'en')).resolves.toEqual(['N-FOD']);
+    expect(existsAlias).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('reads the shared index when the alias check fails', async () => {
+    const search = buckets(['N-FOD', 3]);
+    const existsAlias = jest
+      .fn()
+      .mockRejectedValue(new Error('security_exception'));
+    const { service } = build(search, existsAlias);
+    await expect(service.topAreas(TENANT, 'en')).resolves.toEqual(['N-FOD']);
+    expect(search.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+  });
+
   it('uses the en index when accept-language is missing', async () => {
     const search = buckets();
     const { service } = build(search);
@@ -92,6 +143,7 @@ describe('TopAreasService', () => {
       {
         getOrSet: jest.fn().mockRejectedValue(new Error('redis down')),
       } as unknown as RequestCacheService,
+      metrics,
     );
     await expect(service.topAreas(TENANT, 'en')).resolves.toEqual([]);
   });

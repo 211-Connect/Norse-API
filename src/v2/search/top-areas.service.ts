@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
 import { languageIndexSuffix } from 'src/common/locales';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { MetricsService } from 'src/metrics/metrics.service';
+import { resolveHybridIndex } from 'src/search/internal/hybrid-index';
 import { TIER1_CODES, isTier1 } from '../rules/sune';
 
 const TTL_MS = 24 * 60 * 60 * 1000;
@@ -10,7 +12,9 @@ const REQUEST_TIMEOUT_MS = 1500;
 /**
  * A tenant's Tier 1 areas ranked by service count (ADR 0039 Decision 44), for
  * the start question. One size-0 terms aggregation on `sune_needs`, filtered to
- * the tenant, cached 24 h per tenant and language. A failure returns [] and is
+ * the tenant, cached 24 h per tenant and language. It reads the tenant's alias
+ * when there is one (`resolveHybridIndex`), so a cache miss during a Dagster
+ * publish does not store a half-published tenant's areas for a day. A failure returns [] and is
  * not cached; the rules engine then uses its default areas.
  */
 @Injectable()
@@ -20,17 +24,19 @@ export class TopAreasService {
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
     private readonly cache: RequestCacheService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async topAreas(
     tenantId: string,
     acceptLanguage: string | undefined,
   ): Promise<string[]> {
-    const suffix = languageIndexSuffix(acceptLanguage || 'en');
+    const lang = acceptLanguage || 'en';
+    const suffix = languageIndexSuffix(lang);
     try {
       return await this.cache.getOrSet(
         `topareas:v1:${tenantId}:${suffix}`,
-        () => this.query(tenantId, suffix),
+        () => this.query(tenantId, lang),
         TTL_MS,
       );
     } catch (error) {
@@ -41,10 +47,21 @@ export class TopAreasService {
     }
   }
 
-  private async query(tenantId: string, suffix: string): Promise<string[]> {
+  private async query(tenantId: string, lang: string): Promise<string[]> {
+    // Resolved on a cache miss only: cached areas need no index.
+    const index = await resolveHybridIndex(
+      {
+        elasticsearch: this.elasticsearchService,
+        cache: this.cache,
+        metrics: this.metrics,
+        logger: this.logger,
+      },
+      tenantId,
+      lang,
+    );
     const response = await this.elasticsearchService.search(
       {
-        index: `hybrid_search_resources_${suffix}`,
+        index,
         size: 0,
         track_total_hits: false,
         query: { bool: { filter: [{ term: { tenant_id: tenantId } }] } },
