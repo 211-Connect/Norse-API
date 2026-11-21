@@ -53,6 +53,7 @@ describe('HybridSearchService', () => {
   let service: HybridSearchService;
   let esSearch: jest.Mock;
   let esCount: jest.Mock;
+  let esExistsAlias: jest.Mock;
   let capturedMainRequest: any;
   let rarityRequests: any[];
   let rarityImpl: (req: any) => Promise<any>;
@@ -100,13 +101,19 @@ describe('HybridSearchService', () => {
       return Promise.resolve(mainResponse);
     });
     esCount = jest.fn().mockResolvedValue({ count: 42 });
+    // Default: no per-tenant hybrid alias, so searches read the shared name.
+    esExistsAlias = jest.fn().mockResolvedValue(false);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HybridSearchService,
         {
           provide: ElasticsearchService,
-          useValue: { search: esSearch, count: esCount },
+          useValue: {
+            search: esSearch,
+            count: esCount,
+            indices: { existsAlias: esExistsAlias },
+          },
         },
         {
           provide: ConfigService,
@@ -1164,6 +1171,98 @@ describe('HybridSearchService', () => {
     expect(source).not.toHaveProperty('sune_needs');
     expect(source).not.toHaveProperty('sune_need_weights');
     expect(source).not.toHaveProperty('sune_scorecard_version');
+  });
+
+  // Dagster publishes a tenant by pointing `{tenant}-hybrid_search_resources_{lang}`
+  // at the tenant's complete temp index while it rewrites the shared index. Reading
+  // the shared name directly sees that rewrite half done: services missing for
+  // minutes, or listed twice.
+  describe('index resolution', () => {
+    it('searches the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(esExistsAlias).toHaveBeenCalledWith({
+        name: 'tenant-a-hybrid_search_resources_en',
+      });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('counts through the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(esCount.mock.calls[0][0].index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('falls back to the shared name when the tenant has no alias', async () => {
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('searches the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('counts through the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(42);
+      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+    });
+
+    it('does not cache a failed alias check', async () => {
+      // A cache that keeps successes and, like RequestCacheService, drops failures.
+      const store = new Map<string, unknown>();
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        async (key: string, factory: () => Promise<unknown>) => {
+          if (store.has(key)) return store.get(key);
+          const value = await factory();
+          store.set(key, value);
+          return value;
+        },
+      );
+      esExistsAlias
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockResolvedValueOnce(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('serves a cached count without checking the alias', async () => {
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        (key: string, factory: () => Promise<unknown>) =>
+          key.startsWith('hybrid_alias_exists:')
+            ? factory()
+            : Promise.resolve(7),
+      );
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(7);
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
   });
 
   describe('getDocumentsCount', () => {

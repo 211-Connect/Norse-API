@@ -210,7 +210,12 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
         HybridSearchService,
         {
           provide: ElasticsearchService,
-          useValue: { search: esSearch, count: jest.fn() },
+          useValue: {
+            search: esSearch,
+            count: jest.fn(),
+            // No per-tenant hybrid alias: searches read the shared name.
+            indices: { existsAlias: jest.fn().mockResolvedValue(false) },
+          },
         },
         {
           provide: ConfigService,

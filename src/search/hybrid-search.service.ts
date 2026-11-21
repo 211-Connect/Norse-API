@@ -48,7 +48,7 @@ import {
   SUNE_ENRICHMENT_FIELDS,
   stripEnrichment,
 } from './internal/enrichment-fields';
-import { languageIndexSuffix } from 'src/common/locales';
+import { resolveHybridIndex as resolveTenantHybridIndex } from './internal/hybrid-index';
 import {
   contentWords,
   idf,
@@ -506,7 +506,6 @@ export class HybridSearchService {
   ): Promise<number> {
     const tenantId = headers['x-tenant-id'];
     const lang = headers['accept-language'] || 'en';
-    const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
 
     if (!taxonomies || taxonomies.length === 0) {
       return 0;
@@ -521,6 +520,8 @@ export class HybridSearchService {
 
     return this.requestCacheService.getOrSet(cacheKey, async () => {
       try {
+        // Resolved on a cache miss only: a cached count needs no index.
+        const index = await this.resolveHybridIndex(tenantId, lang);
         const result = await this.metrics.observeDownstream(
           'elasticsearch',
           'hybrid_documents_count',
@@ -813,7 +814,7 @@ export class HybridSearchService {
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
-    const index = `hybrid_search_resources_${this.sanitizeLang(lang)}`;
+    const index = await this.resolveHybridIndex(tenantId, lang);
     const identity: SearchIdentity = {
       tenantId,
       lang,
@@ -3251,12 +3252,17 @@ export class HybridSearchService {
     return esQuery;
   }
 
-  /**
-   * Mirrors the logic in src/common/lib/utils.ts getIndexName but only
-   * returns the language portion since hybrid indices are not tenant-prefixed.
-   * The naming lives in src/common/locales.ts, next to the supported list.
-   */
-  private sanitizeLang(lang: string): string {
-    return languageIndexSuffix(lang);
+  /** The tenant's alias when it has one, else the shared index (`resolveHybridIndex`). */
+  private resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
+    return resolveTenantHybridIndex(
+      {
+        elasticsearch: this.elasticsearchService,
+        cache: this.requestCacheService,
+        metrics: this.metrics,
+        logger: this.logger,
+      },
+      tenantId,
+      lang,
+    );
   }
 }
