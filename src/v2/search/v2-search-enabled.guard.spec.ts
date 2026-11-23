@@ -67,6 +67,17 @@ describe('V2SearchEnabledGuard', () => {
     expect(isV2Tenant).not.toHaveBeenCalled();
   });
 
+  it.each(['x'.repeat(5000), '../../etc', 'not-a-uuid', 'a:b'])(
+    'tenant_id that is not a UUID never reaches Redis or the caches: %#',
+    async (bad) => {
+      const { guard, isV2Tenant } = make('true', true);
+      await expect(guard.canActivate(ctx({ tenant_id: bad }))).resolves.toBe(
+        true,
+      );
+      expect(isV2Tenant).not.toHaveBeenCalled();
+    },
+  );
+
   it('Redis up: no X-Degraded header', async () => {
     const { guard } = make('true', true);
     await guard.canActivate(ctx({ tenant_id: TENANT }));

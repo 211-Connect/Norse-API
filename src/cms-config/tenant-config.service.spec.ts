@@ -289,12 +289,23 @@ describe('TenantConfigService cache metrics', () => {
         });
       });
 
-      it('a failure cached by getSearchConfig does not hide a known tenant', async () => {
+      it('getSearchConfig does not cache a failed read (v1 path)', async () => {
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await expect(service.getSearchConfig('t1')).resolves.toEqual({});
+        // Redis is back: the very next call reads it, no 60 s of defaults.
+        cmsRedisService.get.mockResolvedValue(on);
+        await expect(service.getSearchConfig('t1')).resolves.toEqual({
+          enable_v2_api: true,
+        });
+        expect(cmsRedisService.get).toHaveBeenCalledTimes(2);
+      });
+
+      it('a failure in getSearchConfig does not hide a known tenant', async () => {
         cmsRedisService.get.mockResolvedValue(on);
         await service.getV2TenantFlag('t1');
         expireLru();
         cmsRedisService.get.mockRejectedValue(new Error('redis down'));
-        await service.getSearchConfig('t1'); // v1 path caches {} on failure
+        await service.getSearchConfig('t1');
         await expect(service.getV2TenantFlag('t1')).resolves.toEqual({
           enabled: true,
           degraded: true,

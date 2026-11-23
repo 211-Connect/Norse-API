@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
+import { xTenantIdSchema } from '../../common/dto/headers.dto';
 import { TenantConfigService } from '../../cms-config/tenant-config.service';
 
 const RETRY_AFTER_SECONDS = 5;
@@ -17,8 +18,8 @@ const RETRY_AFTER_SECONDS = 5;
  *  1. global env `V2_SEARCH_ENABLED`, on only for the exact string `true`;
  *  2. per tenant: the Payload flag `enableV2Api` (`getV2TenantFlag`).
  * A guard runs before the validation pipe, so a disabled route never answers
- * 400 for a bad query. When the URL has no valid `tenant_id` the tenant check
- * is skipped; `V2UrlMirrorsGuard` answers the 400 next.
+ * 400 for a bad query. When the URL has no valid UUID `tenant_id` the tenant
+ * check is skipped (no Redis read, no cache key from user text); `V2UrlMirrorsGuard` answers the 400 next.
  *
  * When the Redis read of the tenant flag fails, the guard uses the last value
  * this pod read for the tenant and the response carries
@@ -38,8 +39,11 @@ export class V2SearchEnabledGuard implements CanActivate {
     }
     const http = context.switchToHttp();
     const tenantId = http.getRequest<Request>()?.query?.tenant_id;
-    if (typeof tenantId === 'string' && tenantId.trim() !== '') {
-      const flag = await this.tenantConfig.getV2TenantFlag(tenantId);
+    // Only a UUID reaches Redis and the caches; anything else skips the tenant
+    // check and `V2UrlMirrorsGuard` answers the 400.
+    if (xTenantIdSchema.safeParse(tenantId).success) {
+      // safeParse passed, so the value is a string.
+      const flag = await this.tenantConfig.getV2TenantFlag(tenantId as string);
       const res = http.getResponse<Response>();
       if (flag.unknown) {
         res.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));

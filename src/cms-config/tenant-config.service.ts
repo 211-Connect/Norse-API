@@ -40,14 +40,13 @@ export class TenantConfigService {
     LRU_CACHE_CONFIG,
   );
   /**
-   * Last `enable_v2_api` value read from Redis, per tenant, per pod. No expiry
-   * and no eviction: it only answers when the Redis read fails.
+   * Last `enable_v2_api` value read from Redis, per tenant, per pod. No expiry;
+   * the oldest tenant leaves when the cache passes `max` (10,000). It only
+   * answers when the Redis read fails.
    */
   private readonly lastKnownV2Flag = new LRUCache<string, boolean>({
     max: 10_000,
   });
-  /** Empty configs cached after a failed Redis read; the `/v2` gate re-reads them. */
-  private readonly failedSearchConfigs = new WeakSet<object>();
   private readonly topicsCache = new LRUCache<string, TopicsConfigCache>(
     LRU_CACHE_CONFIG,
   );
@@ -227,8 +226,9 @@ export class TenantConfigService {
 
     const { config, redisFailed } =
       await this.readSearchConfigFromRedis(tenantId);
-    if (redisFailed) this.failedSearchConfigs.add(config);
-    this.searchConfigCache.set(tenantId, config);
+    // A failed read is not cached: the next request reads Redis again, so the
+    // defaults do not outlive the outage by the LRU TTL.
+    if (!redisFailed) this.searchConfigCache.set(tenantId, config);
     return config;
   }
 
@@ -269,7 +269,7 @@ export class TenantConfigService {
    * The `enable_v2_api` flag for the `/v2` tenant gate.
    *  - Redis up (or an in-memory LRU hit): the live value, `degraded: false`.
    *  - Redis read fails: the last known value for this tenant on this pod,
-   *    `degraded: true`. The empty failure result is not cached in the LRU.
+   *    `degraded: true`. A failed read is not cached in the LRU.
    *  - Redis read fails and the pod never saw the tenant: `unknown: true`.
    */
   async getV2TenantFlag(
@@ -279,7 +279,7 @@ export class TenantConfigService {
     | { enabled: false; degraded: true; unknown: true }
   > {
     const cached = this.searchConfigCache.get(tenantId);
-    if (cached && !this.failedSearchConfigs.has(cached)) {
+    if (cached) {
       this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
       return {
         enabled: cached.enable_v2_api === true,
