@@ -2,8 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { HybridSearchService } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  VIRTUAL_DISTANCE_IN_SCALES,
+  virtualDistanceWeight,
+} from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { SearchUtilsService } from './search-utils.service';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MetricsService } from 'src/metrics/metrics.service';
@@ -48,6 +53,7 @@ describe('HybridSearchService', () => {
   let service: HybridSearchService;
   let esSearch: jest.Mock;
   let esCount: jest.Mock;
+  let esExistsAlias: jest.Mock;
   let capturedMainRequest: any;
   let rarityRequests: any[];
   let rarityImpl: (req: any) => Promise<any>;
@@ -91,17 +97,28 @@ describe('HybridSearchService', () => {
         rarityRequests.push(req);
         return rarityImpl(req);
       }
+      // Every ranked list fails, so a v2 text search keeps the summed request
+      // these specs read. The fused path has its own spec (rrf.spec.ts).
+      if (req._source === false && req.size === 100) {
+        return Promise.reject(new Error('lists off in this spec'));
+      }
       capturedMainRequest = req;
       return Promise.resolve(mainResponse);
     });
     esCount = jest.fn().mockResolvedValue({ count: 42 });
+    // Default: no per-tenant hybrid alias, so searches read the shared name.
+    esExistsAlias = jest.fn().mockResolvedValue(false);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HybridSearchService,
         {
           provide: ElasticsearchService,
-          useValue: { search: esSearch, count: esCount },
+          useValue: {
+            search: esSearch,
+            count: esCount,
+            indices: { existsAlias: esExistsAlias },
+          },
         },
         {
           provide: ConfigService,
@@ -321,6 +338,275 @@ describe('HybridSearchService', () => {
     });
   });
 
+  // Lucas, 2026-11-18: in v2 a service with no map point (virtual, hotline)
+  // scores as if it sat at the scale distance. v1 keeps 0.
+  describe('v2 virtual distance: no-point services score as a fixed distance', () => {
+    const COORDS = [-122.33, 47.61];
+    const mainFunctions = () =>
+      (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+        .function_score.functions;
+    const virtualFns = () =>
+      mainFunctions().filter(
+        (fn: any) =>
+          fn.filter?.bool?.must_not?.[0]?.exists?.field === 'location.point',
+      );
+
+    it('weight is the gauss value of a service one scale away (12.5)', () => {
+      expect(VIRTUAL_DISTANCE_IN_SCALES).toBe(1);
+      expect(virtualDistanceWeight()).toBeCloseTo(12.5, 6);
+    });
+
+    it.each([
+      [0, 5],
+      [10, 10],
+      [25, 25],
+    ])(
+      'v2, distance %p: one flat function on no-point services, scale %p mi',
+      async (distance, scaleMi) => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, distance },
+          rankingVersion: 'v2',
+        });
+
+        const fns = virtualFns();
+        expect(fns).toHaveLength(1);
+        expect(fns[0]).toEqual({
+          filter: {
+            bool: { must_not: [{ exists: { field: 'location.point' } }] },
+          },
+          weight: 12.5,
+        });
+        // The gauss on services with a point is unchanged.
+        const gauss = mainFunctions().filter((fn: any) => fn.gauss);
+        expect(gauss).toHaveLength(1);
+        expect(gauss[0].weight).toBe(25);
+        expect(gauss[0].gauss['location.point'].scale).toBe(`${scaleMi}mi`);
+      },
+    );
+
+    it('v1 with coords: no virtual function (unchanged)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10 },
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+      expect(mainFunctions().filter((fn: any) => fn.gauss)).toHaveLength(1);
+    });
+
+    it('v2 without coords: no virtual function', async () => {
+      await service.searchHybrid({
+        headers,
+        query: baseQuery,
+        rankingVersion: 'v2',
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+    });
+
+    it('v2 sort=distance keeps the distance sort (no-point services last)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10, sort: 'distance' },
+        rankingVersion: 'v2',
+      });
+
+      const geoSort = capturedMainRequest.sort.find(
+        (s: any) => s._geo_distance,
+      );
+      expect(geoSort).toBeDefined();
+    });
+
+    describe('v2 sort=distance hides services with no map point', () => {
+      const mainFilters = (): any[] =>
+        (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+          .function_score.query.bool.filter;
+      const hasPointFilter = () =>
+        mainFilters().some((f: any) => f.exists?.field === 'location.point');
+      const area = {
+        regionIds: ['region-1'],
+        match: 'located_or_serving',
+        unlocated: 'virtual',
+      } as any;
+
+      it('v2, coords: requires a map point and sorts by distance', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(true);
+        expect(
+          capturedMainRequest.sort.find((s: any) => s._geo_distance),
+        ).toBeDefined();
+      });
+
+      it('v2 area search, coords: still hides virtual services', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(true);
+      });
+
+      it('v2 area search, no coords: sorts by relevance, hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(false);
+        expect(capturedMainRequest.sort[0]).toBe('_score');
+      });
+
+      it('v2, no coords: hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it.each(['name', 'organization', 'relevance'] as const)(
+        'v2, coords, sort=%s: no map-point filter',
+        async (sort) => {
+          await service.searchHybrid({
+            headers,
+            query: { ...baseQuery, coords: COORDS, sort },
+            rankingVersion: 'v2',
+          });
+
+          expect(hasPointFilter()).toBe(false);
+        },
+      );
+
+      describe('strict ascending distance, with and without selected needs', () => {
+        const ORIGIN = { lat: 47.61, lon: -122.33 };
+        const points = [
+          { id: 'far', lat: 47.9, lon: -122.0 },
+          { id: 'near', lat: 47.62, lon: -122.32 },
+          { id: 'mid', lat: 47.7, lon: -122.2 },
+        ];
+        const miles = (p: { lat: number; lon: number }) =>
+          SearchUtilsService.haversineDistanceMiles(
+            ORIGIN.lat,
+            ORIGIN.lon,
+            p.lat,
+            p.lon,
+          );
+
+        // Stand-in for Elasticsearch: honours the request's sort tiers.
+        // A _script tier (the need block) would lead, as in production.
+        const useSortingEs = (selected: string[]) => {
+          esSearch.mockImplementation((req: any) => {
+            if (req.index === 'hybrid_taxonomies') {
+              return Promise.resolve(taxonomyResponse);
+            }
+            if (req.size === 0 && req.aggs?.df) {
+              rarityRequests.push(req);
+              return rarityImpl(req);
+            }
+            capturedMainRequest = req;
+            const hasBlock = req.sort.some((s: any) => s._script);
+            const rows = points.map((p, i) => ({
+              _index: 'hybrid_search_resources_en',
+              _id: p.id,
+              _score: 1,
+              _source: { name: p.id, facets: {}, facets_en: {} },
+              // 'far' has every selected need, 'near' none.
+              block: p.id === 'far' ? 2 : p.id === 'mid' ? 1 : 0,
+              dist: miles(p),
+              i,
+            }));
+            rows.sort((a, b) =>
+              hasBlock && selected.length > 0
+                ? b.block - a.block || a.dist - b.dist
+                : a.dist - b.dist,
+            );
+            return Promise.resolve({
+              ...mainResponse,
+              hits: {
+                ...mainResponse.hits,
+                hits: rows.map((r) => ({
+                  _index: r._index,
+                  _id: r._id,
+                  _score: r._score,
+                  _source: r._source,
+                  sort: hasBlock ? [r.block, r.dist, r._id] : [r.dist, r._id],
+                  fields: { matched_needs: [] },
+                })),
+              },
+            });
+          });
+        };
+
+        it.each([[[]], [['N-A', 'N-B']]] as [string[]][])(
+          'selectedNeeds=%j: no need-block tier, geo sort first, ids ascending by haversine',
+          async (selectedNeeds) => {
+            useSortingEs(selectedNeeds);
+            const out: any = await service.searchHybrid({
+              headers,
+              query: {
+                ...baseQuery,
+                coords: [ORIGIN.lon, ORIGIN.lat],
+                sort: 'distance',
+              },
+              rankingVersion: 'v2',
+              selectedNeeds,
+            } as any);
+
+            const sort = capturedMainRequest.sort;
+            expect(sort.some((s: any) => s._script)).toBe(false);
+            expect(sort[0]._geo_distance).toBeDefined();
+
+            const res = out.search;
+            const ids = res.hits.hits.map((h: any) => h._id);
+            const expected = [...points]
+              .sort((a, b) => miles(a) - miles(b))
+              .map((p) => p.id);
+            expect(ids).toEqual(expected);
+            // Returned sort values are the distance first, not the block number.
+            expect(res.hits.hits[0].sort[0]).toBeCloseTo(miles(points[1]), 6);
+          },
+        );
+
+        it('selectedNeeds with sort=relevance still lead as a block tier', async () => {
+          useSortingEs(['N-A']);
+          await service.searchHybrid({
+            headers,
+            query: {
+              ...baseQuery,
+              coords: [ORIGIN.lon, ORIGIN.lat],
+              sort: 'relevance',
+            },
+            rankingVersion: 'v2',
+            selectedNeeds: ['N-A'],
+          } as any);
+
+          expect(capturedMainRequest.sort[0]._script).toBeDefined();
+        });
+      });
+
+      it('v1, coords, sort=distance: unchanged, no map-point filter', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+    });
+  });
+
   it("v2 taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
     await service.searchHybrid({
       headers,
@@ -382,7 +668,9 @@ describe('HybridSearchService', () => {
       .map((c) => c[0])
       .find((req) => req.index === 'hybrid_taxonomies');
     expect(taxonomyCall).toBeUndefined();
-    const functions = capturedMainRequest.query.function_score.functions ?? [];
+    // v2 with a query has no pinned priority function (pinned gate), so a
+    // lexical-only main query can be a plain bool with no function_score.
+    const functions = capturedMainRequest.query.function_score?.functions ?? [];
     expect(functions.find((f: any) => f.script_score)).toBeUndefined();
   });
 
@@ -480,6 +768,50 @@ describe('HybridSearchService', () => {
       expect(request.size).toBe(10000);
       expect(JSON.stringify(request.query)).toContain('"tenant_id":"tenant-a"');
       expect(JSON.stringify(request.query)).not.toContain('cosineSimilarity');
+    });
+
+    it('v2 pins match taxonomy child codes; v1 pins match the exact code only', async () => {
+      const v1: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+      });
+      const v2: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+        rankingVersion: 'v2',
+      });
+
+      expect(JSON.stringify(v1.query)).toContain(
+        '"terms":{"taxonomies.code":["BH-1800"]}',
+      );
+      expect(JSON.stringify(v1.query)).not.toContain(
+        '"prefix":{"taxonomies.code"',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800."}',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800-"}',
+      );
+    });
+
+    it('v2 pins with text embed the query (the kept set); an empty query skips the embedding', async () => {
+      const embed = jest
+        .spyOn(service, 'embedQuery')
+        .mockResolvedValue([0.1, 0.2]);
+      await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, query: '' },
+        rankingVersion: 'v2',
+      });
+      expect(embed).not.toHaveBeenCalled();
+
+      await service.buildPinsRequest({
+        headers,
+        query: pinsQuery,
+        rankingVersion: 'v2',
+      });
+      expect(embed).toHaveBeenCalledWith('food');
     });
 
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
@@ -705,7 +1037,7 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      // taxonomy, rarity, three rank-fusion lists, fused-page stats, main search
+      // taxonomy, rarity, three rank-fusion lists, pinned gate, main search
       expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
@@ -724,10 +1056,10 @@ describe('HybridSearchService', () => {
         await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
-      // Every search of all three requests, not just the first of each. The
-      // relevance searches add three rank-fusion lists and a stats request
-      // each (7 + 7 + 3).
-      expect(preferences).toHaveLength(17);
+      // Every search of all three requests, not just the first of each. Every
+      // sort adds three rank-fusion lists; the relevance sorts add a pinned
+      // gate request each (7 + 7 + 6).
+      expect(preferences).toHaveLength(20);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });
@@ -810,8 +1142,11 @@ describe('HybridSearchService', () => {
         'sune_needs',
         'sune_need_weights',
         'sune_scorecard_version',
+        'taxonomies.use_references',
+        'taxonomies.see_also_references',
       ]),
     );
+    expect(excludes).not.toContain('taxonomies.description');
   });
 
   it('never returns SUNE enrichment fields even if ES sends them (ISS-2754)', async () => {
@@ -849,6 +1184,98 @@ describe('HybridSearchService', () => {
     expect(source).not.toHaveProperty('sune_needs');
     expect(source).not.toHaveProperty('sune_need_weights');
     expect(source).not.toHaveProperty('sune_scorecard_version');
+  });
+
+  // Dagster publishes a tenant by pointing `{tenant}-hybrid_search_resources_{lang}`
+  // at the tenant's complete temp index while it rewrites the shared index. Reading
+  // the shared name directly sees that rewrite half done: services missing for
+  // minutes, or listed twice.
+  describe('index resolution', () => {
+    it('searches the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(esExistsAlias).toHaveBeenCalledWith({
+        name: 'tenant-a-hybrid_search_resources_en',
+      });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('counts through the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(esCount.mock.calls[0][0].index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('falls back to the shared name when the tenant has no alias', async () => {
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('searches the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('counts through the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(42);
+      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+    });
+
+    it('does not cache a failed alias check', async () => {
+      // A cache that keeps successes and, like RequestCacheService, drops failures.
+      const store = new Map<string, unknown>();
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        async (key: string, factory: () => Promise<unknown>) => {
+          if (store.has(key)) return store.get(key);
+          const value = await factory();
+          store.set(key, value);
+          return value;
+        },
+      );
+      esExistsAlias
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockResolvedValueOnce(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('serves a cached count without checking the alias', async () => {
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        (key: string, factory: () => Promise<unknown>) =>
+          key.startsWith('hybrid_alias_exists:')
+            ? factory()
+            : Promise.resolve(7),
+      );
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(7);
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
   });
 
   describe('getDocumentsCount', () => {
@@ -928,7 +1355,12 @@ describe('HybridSearchService', () => {
           hits: { total: { value: 29181 } },
           aggregations: {
             df: {
-              buckets: { w0: { doc_count: 0 }, w1: { doc_count: 2 } },
+              buckets: {
+                w0: { doc_count: 0 },
+                w1: { doc_count: 2 },
+                c0: { doc_count: 0 },
+                c1: { doc_count: 0 },
+              },
             },
           },
         });
@@ -1062,7 +1494,11 @@ describe('HybridSearchService', () => {
         rarityImpl = () =>
           Promise.resolve({
             hits: { total: { value: 29181 } },
-            aggregations: { df: { buckets: { w0: { doc_count: 2 } } } },
+            aggregations: {
+              df: {
+                buckets: { w0: { doc_count: 2 }, c0: { doc_count: 0 } },
+              },
+            },
           });
         await service.searchHybrid({
           headers,
@@ -1366,7 +1802,14 @@ describe('HybridSearchService', () => {
         aggregations: {
           df: {
             buckets: Object.fromEntries(
-              Object.entries(counts).map(([k, v]) => [k, { doc_count: v }]),
+              [
+                ...Object.entries(counts),
+                // Document-count buckets for the typo gate: low, so the
+                // clause list keeps its typo clauses as before.
+                ...Object.keys(counts)
+                  .filter((k) => k.startsWith('w'))
+                  .map((k): [string, number] => [`c${k.slice(1)}`, 0]),
+              ].map(([k, v]) => [k, { doc_count: v }]),
             ),
           },
         },

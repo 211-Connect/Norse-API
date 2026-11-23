@@ -1,8 +1,12 @@
 import { ApiPropertyOptional, OmitType } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  IsEnum,
+  IsInt,
   IsIn,
+  Max,
+  Min,
   IsOptional,
   IsString,
   Validate,
@@ -14,6 +18,10 @@ import {
   IsQueryWithinMaxLengthConstraint,
   SearchResourcesQueryDto,
 } from '../../../search/dto/search-query.dto';
+import {
+  RELEVANCE_CUTOFF_VALUES,
+  RelevanceCutoffValue,
+} from '../../../search/internal/relevance-cutoff/types';
 import { MAX_QUERY_LENGTH } from '../../../search/internal/query-log';
 import { NX, isKnownCode, isTier1, isTier2 } from '../../rules/sune';
 
@@ -26,8 +34,6 @@ export const V2_URGENCY_CODES = [
   'U-X',
 ] as const;
 export const V2_CLARIFY_VALUES = ['auto', 'never'] as const;
-// Only `off` exists: a request can turn AI classification off for itself, never on.
-export const V2_CLASSIFY_VALUES = ['off'] as const;
 
 /** Codes that are neither SUNE Tier 1, Tier 2 nor N-X, in request order. */
 function unknownCodes(value: unknown): string[] {
@@ -128,6 +134,28 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @Validate(CoordsConstraint)
   coords?: [number, number];
 
+  // v1 keeps @Min(25); v2 takes 1 to 300 (Lucas 2026-11-17).
+  @ApiPropertyOptional({ minimum: 1, maximum: 300, default: 25 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(300)
+  limit: number = 25;
+
+  // Off by default in v2 until a dev Tempo trace shows the cost (Lucas
+  // 2026-11-19, final); `on` turns it on. The service leaves it off for an
+  // empty query (browse).
+  @ApiPropertyOptional({
+    enum: RELEVANCE_CUTOFF_VALUES,
+    default: 'off',
+    description:
+      'Trims low-relevance results. `off` by default; `on` trims when there is query text. Empty query: always off. See v1 for the rule.',
+  })
+  @IsOptional()
+  @IsEnum(RELEVANCE_CUTOFF_VALUES)
+  relevance_cutoff?: RelevanceCutoffValue = 'off';
+
   // v1 also takes a string array or an AND/OR object. v2 has no use for them:
   // they reached the search as "food,rent" or "[object Object]" (break run
   // 2026-11-14). ADR 0039 OpenAPI draft types query as a string.
@@ -177,7 +205,7 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,
     description:
-      'Urgency the caller confirmed. `U-X` means not yet known and counts as absent.',
+      'Urgency the caller confirmed. `U-X` means the time is not yet known and counts as absent. `U-1` to `U-4` hide the emergency card, also on a keyword floor hit.',
   })
   @IsOptional()
   @IsIn(V2_URGENCY_CODES)
@@ -192,13 +220,4 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsOptional()
   @IsIn(V2_CLARIFY_VALUES)
   clarify: (typeof V2_CLARIFY_VALUES)[number] = 'auto';
-
-  @ApiPropertyOptional({
-    enum: V2_CLASSIFY_VALUES,
-    description:
-      '`off` turns AI classification off for this request: no need guess and no clarifying question; the emergency check still runs; `needs` and `urgency` sent by the caller still count. It cannot turn AI classification on for a tenant whose setting is off. Name not yet confirmed (draft).',
-  })
-  @IsOptional()
-  @IsIn(V2_CLASSIFY_VALUES)
-  classify?: (typeof V2_CLASSIFY_VALUES)[number];
 }

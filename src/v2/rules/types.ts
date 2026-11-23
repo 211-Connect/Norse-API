@@ -5,7 +5,13 @@ export interface RulesRequest {
   has_text: boolean; // query non-empty after trim
   needs: string[]; // confirmed, URL order
   passed_needs: string[];
-  urgency?: UrgencyCode; // from the URL
+  urgency?: UrgencyCode; // from the URL; U-X means "time not known" (same as none)
+  /**
+   * The query text has a content word: 2+ letters, not a function word. The
+   * soft emergency card needs one (a floor hit or a score at the popup cutoff
+   * is exempt). Absent means true.
+   */
+  has_content_word?: boolean;
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
@@ -64,12 +70,13 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs';
+  | 'unsure_needs'
+  | 'weak_match';
 /** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
 export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
   label: string;
-  /** null with value null: the option writes nothing to the URL (emergency "safe"; the client dismisses the question for this visit). */
+  /** null with value null: the option writes nothing to the URL (no option does today). */
   parameter: OptionParameter | null;
   value: string | null;
   /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */

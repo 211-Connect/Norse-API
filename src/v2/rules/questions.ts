@@ -42,13 +42,14 @@ const urgencyOption = (v: string): QuestionOption => ({
   parameter: 'urgency',
   value: v,
 });
-// Lucas 2026-11-13: "in danger -> u0". "Safe" writes nothing to the URL
-// (parameter and value null): the client dismisses the question for this
-// visit. The server keeps no memory, so a later call asks again when the
-// model still finds danger (intended: a shared link shows it again).
+// Lucas 2026-11-17 (final): the emergency question has 3 answers, each
+// writes urgency: danger = U-0, safe but help today = U-1, safe but help
+// within a week = U-2. A caller U-1 to U-4 then hides the card (Decision 51).
+// ADR 0039 Decision 50 needs a follow-up line that lists the 3 answers.
 const EMERGENCY_OPTIONS: QuestionOption[] = [
   { label: LABELS.emergency.yes, parameter: 'urgency', value: 'U-0' },
-  { label: LABELS.emergency.safe, parameter: null, value: null },
+  { label: LABELS.emergency.safeToday, parameter: 'urgency', value: 'U-1' },
+  { label: LABELS.emergency.safeSoon, parameter: 'urgency', value: 'U-2' },
 ];
 const needOption = (code: string): QuestionOption => ({
   label: displayOf(code),
@@ -131,6 +132,61 @@ const question = ({
   ...rest,
 });
 
+/**
+ * Tier 1 codes for a question the model cannot rank: the tenant's top areas,
+ * then the defaults; skips codes that are not `eligible`, no duplicates, at
+ * most `optionsPerQuestion`.
+ */
+function fallbackAreas(
+  tenant: TenantContext,
+  eligible: (code: string) => boolean,
+): string[] {
+  const pool = [
+    ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
+    ...DEFAULT_TOP_AREAS,
+  ];
+  const picks: string[] = [];
+  for (const c of pool) {
+    if (eligible(c) && !picks.includes(c)) picks.push(c);
+    if (picks.length === CUTOFFS.optionsPerQuestion) break;
+  }
+  return picks;
+}
+
+/**
+ * The question for a weak match (ISS-2796, Lucas 2026-11-18): the text found
+ * nothing good, so ask what the person needs. Same options as the `start`
+ * fallback. "Other" opens a text box whose text joins `query` (ADR 0039
+ * Decision 7). The model cannot vouch for it: uncertainty is 1. Null when no
+ * option is left.
+ */
+export function noMatchQuestion(
+  req: RulesRequest,
+  tenant: TenantContext,
+): Question | null {
+  const confirmed = confirmedCodes(req);
+  const passed = passedCodes(req);
+  const picks = fallbackAreas(
+    tenant,
+    (c) => !confirmed.includes(c) && !passed.has(c),
+  );
+  if (picks.length === 0) return null;
+  const q = question({
+    id: 'no_match',
+    type: 'find_need',
+    importance: 'high',
+    reason: 'weak_match',
+    step: 2,
+    stem: STEMS.noMatch,
+    options: picks.map(needOption),
+    ...needsFlags,
+  });
+  q.uncertainty = 1;
+  q.value = valueOf(1, effort(q), 1);
+  q.priority = priorityOf('high', q.value);
+  return q;
+}
+
 export function buildCandidates(
   req: RulesRequest,
   signals: RulesSignals,
@@ -142,10 +198,20 @@ export function buildCandidates(
   const out: Question[] = [];
 
   // 1. emergency. `req.urgency` is never U-X here: decide() strips it.
-  // A caller U-1 to U-4 wins over the band (Decision 51).
+  // A caller U-1 to U-4 wins over the band, also on a keyword floor hit
+  // (Decision 51 as written; Lucas 2026-11-17 (final)).
+  const e = signals.emergency;
+  const floorHit = e?.status === 'ok' && e.floor_hit === true;
+  // The soft card needs a content word; a floor hit or a score at the popup
+  // cutoff is exempt (Lucas 2026-11-17).
+  const thinSoft =
+    band === 'soft' &&
+    req.has_content_word === false &&
+    !floorHit &&
+    !((e?.score ?? 0) >= CUTOFFS.emergency.popup);
   const hasEmergency =
     req.urgency === 'U-0' ||
-    ((band === 'popup' || band === 'soft') && !req.urgency);
+    ((band === 'popup' || band === 'soft') && !req.urgency && !thinSoft);
   if (req.urgency === 'U-0') {
     out.push(callerU0EmergencyQuestion(tenant));
   } else if (hasEmergency) {
@@ -266,15 +332,7 @@ export function buildCandidates(
         ) {
           picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
         } else {
-          const pool = [
-            ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
-            ...DEFAULT_TOP_AREAS,
-          ];
-          picks = [];
-          for (const c of pool) {
-            if (eligible(c) && !picks.includes(c)) picks.push(c);
-            if (picks.length === CUTOFFS.optionsPerQuestion) break;
-          }
+          picks = fallbackAreas(tenant, eligible);
         }
         const options = picks.map(needOption);
         if (options.length > 0)

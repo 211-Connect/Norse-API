@@ -7,6 +7,7 @@ import { V2SearchController } from './v2-search.controller';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { V2SearchService } from './v2-search.service';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
+import { CDN_CACHE_TTL_KEY } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const headers = { 'x-tenant-id': 't', 'accept-language': 'en' } as HeadersDto;
 const req = {
@@ -15,6 +16,14 @@ const req = {
 } as unknown as Request;
 
 describe('V2SearchController', () => {
+  it('declares a 30 minute CDN TTL (s-maxage=1800) on GET', () => {
+    const ttl = Reflect.getMetadata(
+      CDN_CACHE_TTL_KEY,
+      V2SearchController.prototype.getResources,
+    );
+    expect(ttl).toBe(1800);
+  });
+
   const build = (search: jest.Mock) => {
     const recordSearchRequest = jest.fn();
     const controller = new V2SearchController(
@@ -111,6 +120,23 @@ describe('V2SearchController', () => {
       ).rejects.toThrow('Content-Type must be application/json');
       expect(search).not.toHaveBeenCalled();
       expect(recordSearchRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getPins', () => {
+    it('delegates to the service pins method', async () => {
+      const pins = { total: 0, truncated: false, pins: [] };
+      const search = jest.fn();
+      const pinsFn = jest.fn().mockResolvedValue(pins);
+      const controller = new V2SearchController(
+        { search, pins: pinsFn } as unknown as V2SearchService,
+        {} as unknown as UsageMetricsService,
+      );
+      const query = new V2SearchQueryDto();
+
+      await expect(controller.getPins(headers, query)).resolves.toBe(pins);
+      expect(pinsFn).toHaveBeenCalledWith({ headers, query });
+      expect(search).not.toHaveBeenCalled();
     });
   });
 });

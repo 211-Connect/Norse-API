@@ -5,7 +5,15 @@ import { SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 import { TenantConfigController } from './tenant-config.controller';
 import { TenantConfigService } from './tenant-config.service';
+import { OrchestrationConfigController } from './orchestration-config.controller';
+import { OrchestrationConfigService } from './orchestration-config.service';
+import { CmsConfigController } from './cms-config.controller';
 import { buildSwaggerConfig } from '../common/swagger/swagger-config';
+import { APP_GUARD, Reflector } from '@nestjs/core';
+import { GatewayIdentityGuard } from '../auth/gateway/gateway-identity.guard';
+import { GatewayPermissionsGuard } from '../auth/gateway/gateway-permissions.guard';
+import { PermissionsSideChannelService } from '../auth/gateway/permissions-side-channel.service';
+import { UnauthorizedException } from '@nestjs/common';
 import { apiVersioningOptions } from 'src/common/versioning/api-version';
 
 const INTERNAL_API_KEY = 'internal-key-for-tests';
@@ -76,7 +84,12 @@ describe('TenantConfigController', () => {
         ConfigModule.forRoot({
           isGlobal: true,
           ignoreEnvFile: true,
-          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+          load: [
+            () => ({
+              internalApiKey: INTERNAL_API_KEY,
+              TENANT_CONFIG_KEY_ENFORCE: 'true',
+            }),
+          ],
         }),
       ],
       controllers: [TenantConfigController],
@@ -84,6 +97,33 @@ describe('TenantConfigController', () => {
         {
           provide: TenantConfigService,
           useValue: tenantConfigService,
+        },
+        // The real app-wide gateway guards, with the Unkey side channel stubbed:
+        // key-1 is a known gateway key, any other key id is unknown (401).
+        {
+          provide: PermissionsSideChannelService,
+          useValue: {
+            resolveSlugs: async (keyId: string) => {
+              if (keyId !== 'key-1') {
+                throw new UnauthorizedException('gateway_key_not_found');
+              }
+              return ['norse-api.invoke'];
+            },
+          },
+        },
+        {
+          provide: APP_GUARD,
+          useFactory: (reflector: Reflector) =>
+            new GatewayIdentityGuard(reflector),
+          inject: [Reflector],
+        },
+        {
+          provide: APP_GUARD,
+          useFactory: (
+            reflector: Reflector,
+            service: PermissionsSideChannelService,
+          ) => new GatewayPermissionsGuard(reflector, service),
+          inject: [Reflector, PermissionsSideChannelService],
         },
       ],
     }).compile();
@@ -209,7 +249,82 @@ describe('TenantConfigController', () => {
     });
   });
 
+  describe.each([
+    ['/tenant-config/tenant-1', 'getTenantLocales'],
+    ['/tenant-config/tenant-1/topics', 'getTopics'],
+    ['/tenant-config/tenant-1/suggestions', 'getSuggestions'],
+  ] as const)('internal API key on GET %s', (path, serviceMethod) => {
+    it('returns 401 without a key and never reaches the service', async () => {
+      await request(app.getHttpServer()).get(path).expect(401);
+      expect(tenantConfigService[serviceMethod]).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 with a wrong key and never reaches the service', async () => {
+      await request(app.getHttpServer())
+        .get(path)
+        .set('x-internal-api-key', `${INTERNAL_API_KEY}-wrong`)
+        .expect(401);
+      expect(tenantConfigService[serviceMethod]).not.toHaveBeenCalled();
+    });
+
+    it('returns 200 with the right key', async () => {
+      await request(app.getHttpServer())
+        .get(path)
+        .set('x-internal-api-key', INTERNAL_API_KEY)
+        .expect(200);
+      expect(tenantConfigService[serviceMethod]).toHaveBeenCalledWith(
+        'tenant-1',
+      );
+    });
+
+    it('returns 200 for a gateway-authenticated identity without the internal key', async () => {
+      await request(app.getHttpServer())
+        .get(path)
+        .set('x-connect211-identity-external-id', 'tenant-1')
+        .set('x-connect211-key-id', 'key-1')
+        .expect(200);
+      expect(tenantConfigService[serviceMethod]).toHaveBeenCalledWith(
+        'tenant-1',
+      );
+    });
+
+    it('returns 401 for forged gateway headers with an unknown key id', async () => {
+      // A direct host (api.c211.io) has no Envoy to strip forged headers.
+      // The permissions side channel rejects the unknown key id.
+      await request(app.getHttpServer())
+        .get(path)
+        .set('x-connect211-identity-external-id', 'tenant-1')
+        .set('x-connect211-key-id', 'forged-key')
+        .expect(401);
+      expect(tenantConfigService[serviceMethod]).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 for an incomplete gateway identity (one header)', async () => {
+      await request(app.getHttpServer())
+        .get(path)
+        .set('x-connect211-key-id', 'key-1')
+        .expect(401);
+      expect(tenantConfigService[serviceMethod]).not.toHaveBeenCalled();
+    });
+  });
+
   describe('OpenAPI document', () => {
+    it('marks every tenant-config operation with the internal key requirement', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/swagger/json')
+        .expect(200);
+
+      for (const path of [
+        '/tenant-config/{tenantId}',
+        '/tenant-config/{tenantId}/topics',
+        '/tenant-config/{tenantId}/suggestions',
+      ]) {
+        expect(res.body.paths[path].get.security).toContainEqual({
+          'x-internal-api-key': [],
+        });
+      }
+    });
+
     it('publishes the tenant-config endpoints', async () => {
       const res = await request(app.getHttpServer())
         .get('/swagger/json')
@@ -221,5 +336,148 @@ describe('TenantConfigController', () => {
       expect(paths).toContain('/tenant-config/{tenantId}/suggestions');
       expect(JSON.stringify(res.body)).toContain('Tenant Config');
     });
+  });
+});
+
+describe('TenantConfigController with INTERNAL_API_KEY unset', () => {
+  it('fails closed on every tenant-config route', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [
+            () => ({ internalApiKey: '', TENANT_CONFIG_KEY_ENFORCE: 'true' }),
+          ],
+        }),
+      ],
+      controllers: [TenantConfigController],
+      providers: [{ provide: TenantConfigService, useValue: {} }],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    app.enableVersioning(apiVersioningOptions);
+    await app.init();
+
+    try {
+      for (const path of [
+        '/tenant-config/tenant-1',
+        '/tenant-config/tenant-1/topics',
+        '/tenant-config/tenant-1/suggestions',
+      ]) {
+        await request(app.getHttpServer()).get(path).expect(401);
+        await request(app.getHttpServer())
+          .get(path)
+          .set('x-internal-api-key', 'anything')
+          .expect(401);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('Other CmsConfigModule routes are unaffected', () => {
+  let app: INestApplication;
+  const orchestrationConfigService = {
+    getCustomAttributesBySchemaNameAsCsv: jest
+      .fn()
+      .mockResolvedValue('source_table,source_column\n'),
+    clearCache: jest.fn(),
+    clearCacheForTenant: jest.fn(),
+  };
+  const tenantConfigService = {
+    clearCache: jest.fn(),
+    clearCacheForTenant: jest.fn(),
+  };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
+      ],
+      controllers: [
+        OrchestrationConfigController,
+        CmsConfigController,
+        TenantConfigController,
+      ],
+      providers: [
+        {
+          provide: OrchestrationConfigService,
+          useValue: orchestrationConfigService,
+        },
+        { provide: TenantConfigService, useValue: tenantConfigService },
+      ],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    app.enableVersioning(apiVersioningOptions);
+    await app.init();
+  });
+
+  afterEach(() => app.close());
+
+  it('serves GET /orchestration-config/custom-attributes with the key, 401 without', async () => {
+    await request(app.getHttpServer())
+      .get('/orchestration-config/custom-attributes')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
+      .expect(200)
+      .expect('Content-Type', /text\/csv/);
+    await request(app.getHttpServer())
+      .get('/orchestration-config/custom-attributes')
+      .expect(401);
+  });
+
+  it('serves POST /cms-config/cache/clear/:tenantId with the key, 401 without', async () => {
+    await request(app.getHttpServer())
+      .post('/cms-config/cache/clear/tenant-1')
+      .set('x-internal-api-key', INTERNAL_API_KEY)
+      .expect(204);
+    expect(tenantConfigService.clearCacheForTenant).toHaveBeenCalledWith(
+      'tenant-1',
+    );
+    await request(app.getHttpServer())
+      .post('/cms-config/cache/clear/tenant-1')
+      .expect(401);
+  });
+});
+
+describe('TenantConfigController with TENANT_CONFIG_KEY_ENFORCE off (default)', () => {
+  it('allows a request without a key and still reaches the service', async () => {
+    const tenantConfigService = {
+      getTopics: jest.fn().mockResolvedValue({ topics: [] }),
+    };
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          ignoreEnvFile: true,
+          load: [() => ({ internalApiKey: INTERNAL_API_KEY })],
+        }),
+      ],
+      controllers: [TenantConfigController],
+      providers: [
+        { provide: TenantConfigService, useValue: tenantConfigService },
+      ],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    app.enableVersioning(apiVersioningOptions);
+    await app.init();
+
+    try {
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1/topics')
+        .expect(200);
+      await request(app.getHttpServer())
+        .get('/tenant-config/tenant-1/topics')
+        .set('x-internal-api-key', 'wrong')
+        .expect(200);
+      expect(tenantConfigService.getTopics).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
   });
 });

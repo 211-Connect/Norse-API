@@ -1,5 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
+import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import { V2SearchQueryDto } from './v2-search-query.dto';
 import {
   MAX_QUERY_LENGTH,
@@ -23,6 +24,30 @@ describe('V2SearchQueryDto', () => {
     expect(dto.page).toBe(1);
     expect(dto.limit).toBe(25);
     expect(dto.sort).toBe('relevance');
+  });
+
+  it('limit takes 1 to 300 on v2 (v1 keeps 25 to 300)', () => {
+    for (const limit of ['1', '10', '24', '300']) {
+      expect(parse({ query: 'rent', limit }).errors).toEqual([]);
+    }
+    for (const limit of ['0', '-1', '301', 'abc', '1.5']) {
+      expect(parse({ query: 'rent', limit }).props).toContain('limit');
+    }
+    expect(parse({ query: 'rent', limit: '10' }).dto.limit).toBe(10);
+    const v1 = validateSync(
+      plainToInstance(SearchResourcesQueryDto, { limit: '10' }),
+    );
+    expect(v1.map((e) => e.property)).toContain('limit');
+  });
+
+  it('relevance_cutoff defaults to off; the caller can send on', () => {
+    expect(parse({ query: 'rent' }).dto.relevance_cutoff).toBe('off');
+    expect(
+      parse({ query: 'rent', relevance_cutoff: 'on' }).dto.relevance_cutoff,
+    ).toBe('on');
+    expect(parse({ query: 'rent', relevance_cutoff: 'bogus' }).props).toContain(
+      'relevance_cutoff',
+    );
   });
 
   it('does not carry query_type', () => {
@@ -116,12 +141,9 @@ describe('V2SearchQueryDto', () => {
     expect(parse({}).dto.taxonomy).toEqual([]);
   });
 
-  it('classify accepts only off; absent stays undefined; any other value is a 400', () => {
-    expect(parse({ classify: 'off' }).errors).toEqual([]);
-    expect(parse({ classify: 'off' }).dto.classify).toBe('off');
-    expect(parse({ query: 'rent' }).dto.classify).toBeUndefined();
-    for (const bad of ['on', 'auto', 'OFF', '', 'false'])
-      expect(parse({ classify: bad }).props).toContain('classify');
+  it('classify is not a request parameter (always on, Lucas 2026-11-18)', () => {
+    expect(parse({ classify: 'off' }).dto).not.toHaveProperty('classify');
+    expect(parse({ query: 'rent' }).dto).not.toHaveProperty('classify');
   });
 
   // Break run 2026-11-14 (HANDOFF-ASSETS/v2-search--eval-data/break-v2-2026-11-14):

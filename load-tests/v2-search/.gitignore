@@ -1,0 +1,5 @@
+# k6 result files and private query files (real user queries must never be committed)
+results/*
+!results/.gitkeep
+queries-real*.json
+*.private.json

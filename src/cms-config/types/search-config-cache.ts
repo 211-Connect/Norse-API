@@ -31,10 +31,8 @@ export interface SearchConfigCache {
 
   /**
    * The tenant's search engine setting (Payload: resource directory,
-   * `search.searchSettings.searchEngine`). `/v2/search` treats any value other
-   * than `ai_classification` as "AI classification off". Payload does not write
-   * this field to Redis yet; absent, null or unknown means AI classification
-   * on (today's behaviour).
+   * `search.searchSettings.searchEngine`). v1 setting; `/v2/search` does not
+   * read it (see `ai_classification`). Payload does not write it yet.
    */
   search_engine?: SearchEngineSetting | null;
 
@@ -55,4 +53,26 @@ export interface SearchConfigCache {
    * a cache written before it still works (`true` → `all`).
    */
   include_unlocated_in_area_search?: boolean;
+
+  /**
+   * v2 only: the tenant's "AI classification" switch for `/v2/search`. Only
+   * exactly `off` turns it off; absent, null or any other value is on.
+   * Payload does not write this field yet.
+   */
+  ai_classification?: 'on' | 'off' | null;
+
+  /**
+   * Tenant emergency hotlines, an ordered array written by Payload. Shown only
+   * in the emergency question (ADR 0039). Empty or absent: the rules engine's
+   * default hotlines (988 and 911).
+   */
+  hotlines?: { label: string; number: string }[] | null;
+
+  /**
+   * Payload tenant flag `enableV2Api`, copied here as `enable_v2_api`. True
+   * marks a v2 tenant: scorecard overrides go to `sune_scorecard`. Absent or
+   * false: not v2. TODO(ISS-2499): gate GET /v2/search per tenant on this flag
+   * once Payload pushes it to every tenant.
+   */
+  enable_v2_api?: boolean;
 }

@@ -545,7 +545,7 @@ export class AnalyticsController {
   }
 
   @Get('crawler-traffic')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get per-crawler request counts for the tenant',
     description:

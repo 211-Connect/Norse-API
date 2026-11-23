@@ -26,7 +26,7 @@ import {
   RequireCdnUrlMirrors,
   SetCdnCacheTTL,
 } from '../../common/decorators/cdn-cache-ttl.decorator';
-import { ONE_HOUR } from '../../common/const/one-hour';
+import { THIRTY_MINUTES } from '../../common/const/thirty-minutes';
 import { ApiLocaleQuery, ApiTenantIdQuery } from '../../common/decorators';
 import { HeadersDto } from '../../common/dto/headers.dto';
 import { ArcjetGuard } from '../../common/guards/arcjet.guard';
@@ -36,6 +36,7 @@ import {
 } from '../../metrics/usage-metrics.service';
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
+import { SearchPinsResponseDto } from '../../search/dto/search-pins-response.dto';
 import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
@@ -59,8 +60,8 @@ import { V2SearchService } from './v2-search.service';
  * generates the frontend SDK, and a draft must not reach it. Remove
  * `@ApiExcludeController()` when the v2 ADR (ISS-2493) is accepted.
  */
-/** ADR 0039 Question 11 leaves the number open; the same hour as v1 /search. */
-export const V2_SEARCH_CDN_TTL = ONE_HOUR;
+/** ADR 0039 Question 11 (Lucas, 2026-11-18): a calm answer is cached 30 minutes, because the index and pins change fast. */
+export const V2_SEARCH_CDN_TTL = THIRTY_MINUTES;
 
 @ApiExcludeController()
 @ApiTags('Search v2')
@@ -112,6 +113,41 @@ export class V2SearchController {
         query,
       }),
     );
+  }
+
+  @Get('pins')
+  @Version('2')
+  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
+  @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
+  @RequireCdnUrlMirrors()
+  @ApiOperation({
+    summary: 'Map pins for a v2 search (draft)',
+    description:
+      'The locations of a v2 search independent of list pagination, up to ' +
+      '10,000. Same membership as `GET /v2/search` (child taxonomy codes, ' +
+      '`region`); needs, urgency, clarify and classify are ignored. Matches ' +
+      'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
+  })
+  @ApiResponse({ status: 200, type: SearchPinsResponseDto })
+  @ApiQuery({
+    name: 'tenant_id',
+    required: true,
+    description:
+      'Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).',
+  })
+  @ApiQuery({
+    name: 'locale',
+    required: true,
+    schema: { default: 'en' },
+    description:
+      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
+  })
+  getPins(
+    @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: V2SearchQueryDto,
+  ): Promise<SearchPinsResponseDto> {
+    return this.v2SearchService.pins({ headers, query });
   }
 
   @Post()

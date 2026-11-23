@@ -71,7 +71,12 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
         HybridSearchService,
         {
           provide: ElasticsearchService,
-          useValue: { search: esSearch, count: jest.fn() },
+          useValue: {
+            search: esSearch,
+            count: jest.fn(),
+            // No per-tenant hybrid alias: searches read the shared name.
+            indices: { existsAlias: jest.fn().mockResolvedValue(false) },
+          },
         },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         {
@@ -144,15 +149,15 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     expect(sort[2]).toEqual({ priority: 'desc' });
   });
 
-  it('blocks lead the geo distance sort', async () => {
+  it('sort=distance with coords: no block tier, strict geo distance leads (decisions 2026-11-19)', async () => {
     const coords = [-76.6122, 39.2904];
     await run({
       query: { ...baseQuery, sort: 'distance', coords },
       selectedNeeds: ['A'],
     });
     const sort = mainRequest().sort;
-    expect(sort[0]).toEqual(buildNeedBlockSort(['A']));
-    expect(sort[1]).toEqual(SearchUtilsService.getGeoDistanceSort(coords));
+    expect(JSON.stringify(sort)).not.toContain('_script');
+    expect(sort[0]).toEqual(SearchUtilsService.getGeoDistanceSort(coords));
   });
 
   it('no selectedNeeds or an empty list: query and sort equal the no-option request', async () => {
@@ -243,6 +248,8 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
         excludes: [
           'embedding',
           'service_area',
+          'taxonomies.use_references',
+          'taxonomies.see_also_references',
           'sune_needs',
           'sune_need_weights',
           'sune_scorecard_version',
