@@ -154,7 +154,7 @@ Everything here is v2 with a text query. v1 and an empty query do not change.
   result is empty. There is no summed tail.
 - **Sort only re-orders the kept set:** relevance keeps the fused order,
   distance with `coords` sorts by miles (services with no map point are not
-  hidden and sort last, at the fixed distance), name and organization sort A-Z.
+  hidden and sort last: their sort value is `Infinity`; the summed path gives them the fixed distance weight), name and organization sort A-Z.
 - **Counts and pins:** the need counts use the base filters plus the kept ids,
   with no map-point filter on any request. Map pins for a text query use the same kept
   set. Weak match is not checked on pins.

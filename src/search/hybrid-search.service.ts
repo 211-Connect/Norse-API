@@ -235,7 +235,7 @@ type HybridSearchOptions = {
   needScores?: NeedScore[];
   /**
    * v2 only. The used urgency (U-1..U-4) and its score. Boosts services tagged
-   * with that level. Ignored unless URGENCY_BOOST_ENABLED is "true".
+   * with that level. Ignored unless URGENCY_BOOST_ENABLED is true (any case, no spaces).
    */
   urgencyBoost?: { code: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number };
   /**
@@ -496,7 +496,7 @@ export function parseKeywordLocales(
 ): Set<string> | null {
   const items = (raw ?? '')
     .split(',')
-    .map((x) => x.trim().toLowerCase())
+    .map((x) => x.trim().toLowerCase().replace(/_/g, '-'))
     .filter((x) => x.length > 0);
   // A malformed entry (`en es`, `en;es`) would match no locale and drop the
   // keyword leg everywhere; ignore it. A list with no valid entry means all.

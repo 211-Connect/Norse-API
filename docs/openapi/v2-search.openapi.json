@@ -284,7 +284,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
@@ -589,7 +589,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
@@ -880,7 +880,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
