@@ -65,13 +65,16 @@ describe('v2 search OpenAPI', () => {
   it('states the query cap, the strict locale and the nullable answer option', async () => {
     const doc = await createV2SearchOpenApi();
     const get = doc.paths['/v2/search'].get;
-    const param = (name: string) =>
-      get.parameters.find((p: { name: string }) => p.name === name);
+    const param = (name: string): any =>
+      get.parameters.find((p: any) => p.name === name);
     expect(param('query').schema.maxLength).toBe(500);
     expect(param('locale').required).toBe(true);
     expect(param('locale').description).toContain('Exactly one');
-    expect(get.responses['400'].description).toContain('500 characters');
-    const option = doc.components.schemas.V2QuestionOptionDto.properties;
+    expect((get.responses['400'] as any).description).toContain(
+      '500 characters',
+    );
+    const option = (doc.components.schemas.V2QuestionOptionDto as any)
+      .properties;
     expect(option.parameter.nullable).toBe(true);
     expect(option.value.nullable).toBe(true);
   });
