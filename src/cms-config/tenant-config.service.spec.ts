@@ -289,6 +289,27 @@ describe('TenantConfigService cache metrics', () => {
         });
       });
 
+      it('a failure cached by getSearchConfig does not hide a known tenant', async () => {
+        cmsRedisService.get.mockResolvedValue(on);
+        await service.getV2TenantFlag('t1');
+        expireLru();
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await service.getSearchConfig('t1'); // v1 path caches {} on failure
+        await expect(service.getV2TenantFlag('t1')).resolves.toEqual({
+          enabled: true,
+          degraded: true,
+          unknown: false,
+        });
+      });
+
+      it('a "null" Redis value is an empty config, not a crash', async () => {
+        cmsRedisService.get.mockResolvedValue('null');
+        await expect(service.getV2TenantFlag('t1')).resolves.toMatchObject({
+          enabled: false,
+          degraded: false,
+        });
+      });
+
       it('recovery: live value again, and the failure was not cached', async () => {
         cmsRedisService.get.mockResolvedValue(on);
         await service.getV2TenantFlag('t1');

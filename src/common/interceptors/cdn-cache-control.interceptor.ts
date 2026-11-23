@@ -97,6 +97,7 @@ export class CdnCacheControlInterceptor implements NestInterceptor {
         if (
           ttl === 0 ||
           isMarkedNotStorable(body) ||
+          response.getHeader('X-Degraded') !== undefined ||
           (requiresMirrors && !hasUrlMirrors(request))
         ) {
           response.setHeader('Cache-Control', NO_STORE);
