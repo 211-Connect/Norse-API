@@ -7,6 +7,7 @@ import { ConfigModule } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { apiVersioningOptions } from 'src/common/versioning/api-version';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
 import { V2SearchService } from 'src/v2/search/v2-search.service';
@@ -19,7 +20,7 @@ import { V2SearchService } from 'src/v2/search/v2-search.service';
 // `@ApiExcludeController(false)` cannot do this: the decorator appends to the
 // inherited list and Swagger reads the first entry, which stays `true`. The
 // subclass therefore sets its own metadata entry directly.
-@Controller(['v2/search', 'search'])
+@Controller('search')
 class DocumentedV2SearchController extends V2SearchController {}
 Reflect.defineMetadata(
   DECORATORS.API_EXCLUDE_CONTROLLER,
@@ -27,7 +28,7 @@ Reflect.defineMetadata(
   DocumentedV2SearchController,
 );
 
-// Swagger reads metadata only. Empty stand-ins replace the services (the guards need only ConfigService),
+// Swagger reads metadata only. Empty stand-ins replace the services (the guards need ConfigService and an empty tenant-config stand-in),
 // so no Redis, Elasticsearch, ML broker or secret is needed.
 const stub = (provide: Type<unknown>): Provider => ({
   provide,
@@ -37,7 +38,11 @@ const stub = (provide: Type<unknown>): Provider => ({
 @Module({
   imports: [ConfigModule],
   controllers: [DocumentedV2SearchController],
-  providers: [stub(V2SearchService), stub(UsageMetricsService)],
+  providers: [
+    stub(V2SearchService),
+    stub(UsageMetricsService),
+    stub(TenantConfigService),
+  ],
 })
 class V2SearchDocumentationModule {}
 

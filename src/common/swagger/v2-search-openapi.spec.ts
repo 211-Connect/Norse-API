@@ -11,10 +11,15 @@ import {
 describe('v2 search OpenAPI', () => {
   it('holds the v2 search routes, their parameters and their errors', async () => {
     const doc = await createV2SearchOpenApi();
-    expect(Object.keys(doc.paths).sort()).toEqual(['/search', '/v2/search']);
-    for (const path of ['/v2/search', '/search']) {
-      expect(Object.keys(doc.paths[path]).sort()).toEqual(['get', 'post']);
-    }
+    expect(Object.keys(doc.paths).sort()).toEqual([
+      '/v2/search',
+      '/v2/search/pins',
+    ]);
+    expect(Object.keys(doc.paths['/v2/search']).sort()).toEqual([
+      'get',
+      'post',
+    ]);
+    expect(Object.keys(doc.paths['/v2/search/pins'])).toEqual(['get']);
     const get = doc.paths['/v2/search'].get;
     expect(Object.keys(get.responses)).toEqual(
       expect.arrayContaining(['200', '400', '404']),
@@ -28,13 +33,10 @@ describe('v2 search OpenAPI', () => {
         'passed_needs',
         'urgency',
         'clarify',
-        'classify',
-        'x-tenant-id',
-        'accept-language',
+        'tenant_id',
+        'locale',
       ]),
     );
-<<<<<<< HEAD
-=======
     // classify is always on: no request parameter (Lucas 2026-11-18).
     expect(names).not.toContain('classify');
     expect(names).not.toContain('relevance_cutoff_fraction');
@@ -44,21 +46,34 @@ describe('v2 search OpenAPI', () => {
     expect(cutoff.description).toContain('dynamic ladder only');
     expect(cutoff.description).not.toContain('query_type');
     expect(doc.info.description).toContain('enableV2Api');
->>>>>>> 5f5de27 (docs(v2-search): OpenAPI states the 2026-11-18 decisions David confirmed (ADR 0039 Decisions 77-81))
     expect(get.parameters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           name: 'limit',
           schema: expect.objectContaining({
             type: 'integer',
-            minimum: 25,
+            minimum: 1,
             maximum: 300,
           }),
         }),
-        expect.objectContaining({ name: 'x-tenant-id', required: true }),
-        expect.objectContaining({ name: 'accept-language', required: true }),
+        expect.objectContaining({ name: 'tenant_id', required: true }),
+        expect.objectContaining({ name: 'locale', required: true }),
       ]),
     );
+  });
+
+  it('states the query cap, the strict locale and the nullable answer option', async () => {
+    const doc = await createV2SearchOpenApi();
+    const get = doc.paths['/v2/search'].get;
+    const param = (name: string) =>
+      get.parameters.find((p: { name: string }) => p.name === name);
+    expect(param('query').schema.maxLength).toBe(500);
+    expect(param('locale').required).toBe(true);
+    expect(param('locale').description).toContain('Exactly one');
+    expect(get.responses['400'].description).toContain('500 characters');
+    const option = doc.components.schemas.V2QuestionOptionDto.properties;
+    expect(option.parameter.nullable).toBe(true);
+    expect(option.value.nullable).toBe(true);
   });
 
   it('matches the committed file docs/openapi/v2-search.openapi.json', async () => {

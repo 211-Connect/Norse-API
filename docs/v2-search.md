@@ -75,7 +75,7 @@ Measured on 2026-11-17: on 620 real search texts the gate removes the typo claus
 
 ## OpenAPI file
 
-`docs/openapi/v2-search.openapi.json` holds the OpenAPI 3.0 document of `/v2/search` and `/search` with `x-api-version: 2`. The code generates it. The main Swagger document (`/swagger/json`) and the frontend SDK do not contain these routes: `@ApiExcludeController()` stays on the controller until the v2 ADR (ISS-2493) is accepted.
+`docs/openapi/v2-search.openapi.json` holds the OpenAPI 3.0 document of `GET /v2/search`, `POST /v2/search` and `GET /v2/search/pins`. The code generates it. The main Swagger document (`/swagger/json`) and the frontend SDK do not contain these routes: `@ApiExcludeController()` stays on the controller until the v2 ADR (ISS-2493) is accepted.
 
 ```sh
 npm run openapi:v2-search
