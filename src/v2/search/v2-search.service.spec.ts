@@ -1991,6 +1991,60 @@ describe('V2SearchService limited locales (full v2 only for en and es)', () => {
     expect(isMarkedNotStorable(res)).toBe(true);
   });
 
+  // The seam: the list (`run`) and the map pins (`pins`) both go through
+  // `classifyAndDecide`, so the limited-locale rule cannot differ between them.
+  it.each(['ko', 'ru', 'vi', 'am', 'zh-hans'])(
+    '%s: pins classify with AI off and get no need boost, like the list',
+    async (lang) => {
+      const searchPins = jest.fn().mockResolvedValue({
+        total: 0,
+        truncated: false,
+        pins: [],
+      });
+      const { service, classify, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(classified(false, 0.9)),
+        searchPins,
+      });
+      await service.pins({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      expect(classify.mock.calls.map((c) => c[2])).toEqual(['off', 'off']);
+      expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+      expect(searchHybrid.mock.calls[0][0].needScores ?? []).toEqual([]);
+    },
+  );
+
+  it.each(['en', 'es'])(
+    '%s: pins and the list get the same need boost',
+    async (lang) => {
+      const searchPins = jest.fn().mockResolvedValue({
+        total: 0,
+        truncated: false,
+        pins: [],
+      });
+      const { service, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(classified(false, 0.001)),
+        searchPins,
+      });
+      await service.pins({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      const pinScores = searchPins.mock.calls[0][0].needScores;
+      expect(pinScores.length).toBeGreaterThan(0);
+      expect(pinScores).toEqual(searchHybrid.mock.calls[0][0].needScores);
+    },
+  );
+
   it('es keeps needs and questions', async () => {
     const { service } = build({
       classify: jest.fn().mockResolvedValue(classified(false, 0.001)),
