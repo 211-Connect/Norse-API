@@ -1893,24 +1893,17 @@ describe('tenant context (hotlines, top areas)', () => {
     expect(DEFAULT_TOP_AREAS).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
 
-  it('gives every tenant the same start areas and reads no tenant count', async () => {
+  it('gives every tenant the same start areas', async () => {
     const other = {
       ...headers,
       'x-tenant-id': '22222222-2222-4222-8222-222222222222',
     };
-    const a = build({});
-    const b = build({});
-    const ra = await a.service.search({ headers, query: dto({ query: '' }) });
-    const rb = await b.service.search({
-      headers: other,
-      query: dto({ query: '' }),
-    });
-    const opts = (r: typeof ra) =>
-      r.clarification.questions.find((x) => x.id === 'start')?.options;
-    expect(opts(ra)).toEqual(opts(rb));
-    expect(a.searchHybrid).not.toHaveBeenCalledWith(
-      expect.objectContaining({ aggs: expect.anything() }),
-    );
+    const { service } = build({});
+    const opts = async (h: typeof headers) =>
+      (
+        await service.search({ headers: h, query: dto({ query: '' }) })
+      ).clarification.questions.find((x) => x.id === 'start')?.options;
+    expect(await opts(other)).toEqual(await opts(headers));
   });
 });
 

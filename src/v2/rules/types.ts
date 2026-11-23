@@ -42,7 +42,7 @@ export interface Hotline {
 export type AiClassificationSetting = 'on' | 'off';
 
 export interface TenantContext {
-  top_areas?: string[]; // Tier 1 codes by service count, desc
+  top_areas?: string[]; // optional; the v2 service does not set it (global defaults)
   hotlines?: Hotline[];
   ai_classification?: AiClassificationSetting;
 }
