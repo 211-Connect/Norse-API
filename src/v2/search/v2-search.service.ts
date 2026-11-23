@@ -447,8 +447,15 @@ export class V2SearchService {
     };
     // The text-free second call (weak match) starts from this call minus the
     // early handle: the early stage was built for the text query.
-    const { early: _early, ...withoutEarly } = hybridCall;
+    // The text-free second calls (weak match) drop every boost: needScores
+    // is set to [] below and the urgency boost is left out here (ISS-2867).
+    const {
+      early: _early,
+      urgencyBoost: _urgencyBoost,
+      ...withoutEarly
+    } = hybridCall;
     void _early;
+    void _urgencyBoost;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );

@@ -1441,6 +1441,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
       expect(second).not.toHaveProperty('needFilter');
     });
 
+    it('a used urgency boosts the first call only, never the text-free second call (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(secondResponse(40, { 'N-HOU': 10 }));
+      const { service } = build({ classify: weakClassify(), search });
+      const res = await service.search({
+        headers,
+        query: dto({ query: text, urgency: 'U-1' } as never),
+      });
+      expect(res.weak_match).toBe(true);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
+
     it('question is dropped when every count is 0 (no sune_needs on any document)', async () => {
       const search = jest
         .fn()
@@ -1486,6 +1505,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
   });
 
   describe('(b) weak, caller sent needs', () => {
+    it('the need-filtered second call carries no urgency boost (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(
+          secondResponse(1, { 'N-FOD-01': 1 }, [hit('x')]),
+        );
+      const { service } = build({ classify: weakClassify(), search });
+      await service.search({
+        headers,
+        query: dto({ query: text, needs: ['N-FOD'], urgency: 'U-1' } as never),
+      });
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
     it('second call filters by the needs with no text; its hits are the result', async () => {
       const search = jest
         .fn()
