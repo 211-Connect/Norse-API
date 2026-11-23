@@ -39,6 +39,11 @@ export class TenantConfigService {
   private readonly searchConfigCache = new LRUCache<string, SearchConfigCache>(
     LRU_CACHE_CONFIG,
   );
+  /**
+   * Last `enable_v2_api` value read from Redis, per tenant, per pod. No expiry
+   * and no eviction: it only answers when the Redis read fails.
+   */
+  private readonly lastKnownV2Flag = new Map<string, boolean>();
   private readonly topicsCache = new LRUCache<string, TopicsConfigCache>(
     LRU_CACHE_CONFIG,
   );
@@ -216,6 +221,19 @@ export class TenantConfigService {
     }
     this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
 
+    const { config } = await this.readSearchConfigFromRedis(tenantId);
+    this.searchConfigCache.set(tenantId, config);
+    return config;
+  }
+
+  /**
+   * One Redis read of `search_config:<tenant>`. `redisFailed` is true only when
+   * the read threw; a missing key is a normal empty config. A successful read
+   * records the tenant's `enable_v2_api` value as the last known one.
+   */
+  private async readSearchConfigFromRedis(
+    tenantId: string,
+  ): Promise<{ config: SearchConfigCache; redisFailed: boolean }> {
     try {
       const redisKey = `search_config:${tenantId}`;
       const redisValue = await this.cmsRedisService.get(redisKey);
@@ -223,27 +241,71 @@ export class TenantConfigService {
       if (redisValue) {
         this.metrics.recordCacheAccess('tenant-config-redis', 'hit');
         this.logger.debug(`Redis DB 2 hit for search config: ${tenantId}`);
-        const searchConfig =
+        const searchConfig: SearchConfigCache =
           typeof redisValue === 'string' ? JSON.parse(redisValue) : redisValue;
-        this.searchConfigCache.set(tenantId, searchConfig);
-        return searchConfig;
+        this.lastKnownV2Flag.set(
+          tenantId,
+          searchConfig?.enable_v2_api === true,
+        );
+        return { config: searchConfig, redisFailed: false };
       }
+      this.lastKnownV2Flag.set(tenantId, false);
     } catch (error) {
       this.metrics.recordCacheAccess('tenant-config-redis', 'get-error');
       this.logger.error(
         `Error fetching search config from Redis DB 2 for ${tenantId}: ${error.message}`,
       );
+      return { config: {}, redisFailed: true };
     }
     this.metrics.recordCacheAccess('tenant-config-redis', 'miss');
+    return { config: {}, redisFailed: false };
+  }
 
-    const emptyConfig: SearchConfigCache = {};
-    this.searchConfigCache.set(tenantId, emptyConfig);
-    return emptyConfig;
+  /**
+   * The `enable_v2_api` flag for the `/v2` tenant gate.
+   *  - Redis up (or an in-memory LRU hit): the live value, `degraded: false`.
+   *  - Redis read fails: the last known value for this tenant on this pod,
+   *    `degraded: true`. The empty failure result is not cached in the LRU.
+   *  - Redis read fails and the pod never saw the tenant: `unknown: true`.
+   */
+  async getV2TenantFlag(
+    tenantId: string,
+  ): Promise<
+    | { enabled: boolean; degraded: boolean; unknown: false }
+    | { enabled: false; degraded: true; unknown: true }
+  > {
+    const cached = this.searchConfigCache.get(tenantId);
+    if (cached) {
+      this.metrics.recordCacheAccess('tenant-config-lru', 'hit');
+      return {
+        enabled: cached.enable_v2_api === true,
+        degraded: false,
+        unknown: false,
+      };
+    }
+    this.metrics.recordCacheAccess('tenant-config-lru', 'miss');
+
+    const { config, redisFailed } =
+      await this.readSearchConfigFromRedis(tenantId);
+    if (!redisFailed) {
+      this.searchConfigCache.set(tenantId, config);
+      return {
+        enabled: config.enable_v2_api === true,
+        degraded: false,
+        unknown: false,
+      };
+    }
+    const known = this.lastKnownV2Flag.get(tenantId);
+    if (known === undefined) {
+      return { enabled: false, degraded: true, unknown: true };
+    }
+    return { enabled: known, degraded: true, unknown: false };
   }
 
   /**
    * True when the tenant has the Payload flag `enableV2Api` on (cache field
-   * `enable_v2_api`). Missing, false or a read error means not v2.
+   * `enable_v2_api`). Missing, false or a read error means not v2. The `/v2`
+   * gate uses `getV2TenantFlag` instead, to tell a failed read apart.
    */
   async isV2Tenant(tenantId: string): Promise<boolean> {
     const config = await this.getSearchConfig(tenantId);

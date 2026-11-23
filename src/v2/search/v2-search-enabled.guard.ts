@@ -3,9 +3,10 @@ import {
   ExecutionContext,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { TenantConfigService } from '../../cms-config/tenant-config.service';
 
 /**
@@ -16,7 +17,14 @@ import { TenantConfigService } from '../../cms-config/tenant-config.service';
  * A guard runs before the validation pipe, so a disabled route never answers
  * 400 for a bad query. When the URL has no valid `tenant_id` the tenant check
  * is skipped; `V2UrlMirrorsGuard` answers the 400 next.
+ *
+ * When the Redis read of the tenant flag fails, the guard uses the last value
+ * this pod read for the tenant and the response carries
+ * `X-Degraded: tenant-flag-cache`. A tenant this pod never read gets
+ * 503 + `Retry-After: 5`. With Redis up nothing changes.
  */
+const RETRY_AFTER_SECONDS = 5;
+
 @Injectable()
 export class V2SearchEnabledGuard implements CanActivate {
   constructor(
@@ -28,10 +36,19 @@ export class V2SearchEnabledGuard implements CanActivate {
     if (this.configService.get('V2_SEARCH_ENABLED') !== 'true') {
       throw new NotFoundException();
     }
-    const tenantId = context.switchToHttp().getRequest<Request>()
-      ?.query?.tenant_id;
+    const http = context.switchToHttp();
+    const tenantId = http.getRequest<Request>()?.query?.tenant_id;
     if (typeof tenantId === 'string' && tenantId.trim() !== '') {
-      if (!(await this.tenantConfig.isV2Tenant(tenantId))) {
+      const flag = await this.tenantConfig.getV2TenantFlag(tenantId);
+      const res = http.getResponse<Response>();
+      if (flag.unknown) {
+        res?.setHeader?.('Retry-After', String(RETRY_AFTER_SECONDS));
+        throw new ServiceUnavailableException();
+      }
+      if (flag.degraded) {
+        res?.setHeader?.('X-Degraded', 'tenant-flag-cache');
+      }
+      if (!flag.enabled) {
         throw new NotFoundException();
       }
     }

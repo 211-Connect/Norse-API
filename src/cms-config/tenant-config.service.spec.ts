@@ -240,5 +240,68 @@ describe('TenantConfigService cache metrics', () => {
       cmsRedisService.get.mockRejectedValue(new Error('redis down'));
       await expect(service.isV2Tenant('tenant-err')).resolves.toBe(false);
     });
+
+    describe('getV2TenantFlag (Redis failure)', () => {
+      const on = JSON.stringify({ enable_v2_api: true });
+      // Simulates the 1-minute LRU expiring, so the next call reads Redis again.
+      const expireLru = () =>
+        (
+          service as unknown as { searchConfigCache: { clear: () => void } }
+        ).searchConfigCache.clear();
+
+      it('Redis up: live value, not degraded', async () => {
+        cmsRedisService.get.mockResolvedValue(on);
+        await expect(service.getV2TenantFlag('t1')).resolves.toEqual({
+          enabled: true,
+          degraded: false,
+          unknown: false,
+        });
+      });
+
+      it('Redis down, tenant known: last value, degraded', async () => {
+        cmsRedisService.get.mockResolvedValue(on);
+        await service.getV2TenantFlag('t1');
+        expireLru();
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await expect(service.getV2TenantFlag('t1')).resolves.toEqual({
+          enabled: true,
+          degraded: true,
+          unknown: false,
+        });
+        // A known "off" stays off.
+        cmsRedisService.get.mockResolvedValue(JSON.stringify({}));
+        await service.getV2TenantFlag('t2');
+        expireLru();
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await expect(service.getV2TenantFlag('t2')).resolves.toMatchObject({
+          enabled: false,
+          degraded: true,
+          unknown: false,
+        });
+      });
+
+      it('Redis down, tenant never seen: unknown', async () => {
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await expect(service.getV2TenantFlag('cold')).resolves.toEqual({
+          enabled: false,
+          degraded: true,
+          unknown: true,
+        });
+      });
+
+      it('recovery: live value again, and the failure was not cached', async () => {
+        cmsRedisService.get.mockResolvedValue(on);
+        await service.getV2TenantFlag('t1');
+        expireLru();
+        cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+        await service.getV2TenantFlag('t1');
+        cmsRedisService.get.mockResolvedValue(JSON.stringify({}));
+        await expect(service.getV2TenantFlag('t1')).resolves.toEqual({
+          enabled: false,
+          degraded: false,
+          unknown: false,
+        });
+      });
+    });
   });
 });
