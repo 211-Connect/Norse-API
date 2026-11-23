@@ -1155,6 +1155,13 @@ describe('HybridSearchService', () => {
       });
 
       it('returns no weak-match judges when the keyword leg is off', async () => {
+        // The ranked lists are off in this spec (see the esSearch mock), so
+        // the fused order is stubbed with judges; the gate under test is the
+        // keyword leg switch.
+        jest.spyOn(service as any, 'fetchFusedOrder').mockResolvedValue({
+          ids: undefined,
+          judges: { keyword_top: 1, vector_top: 1 },
+        });
         const off = await service.searchHybrid({
           headers: { ...headers, 'accept-language': 'vi' },
           query: { ...baseQuery },
