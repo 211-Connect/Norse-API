@@ -135,6 +135,30 @@ the text and semantic scores (`boost_mode: sum`):
   - Hybrid search: `pinned` then `priority`, only in `top` mode.
 - A final tiebreak on id keeps paging stable.
 
+## v2 simple location model (`/v2/search`, 2026-11-23)
+
+Everything here is v2 with a text query. v1 and an empty query do not change.
+
+- **Filter:** a region filters by its shape, `coords` with `distance` above 0
+  filter by radius, and with neither the tenant is the only scope.
+- **Fusion always:** every text query fuses the keyword, vector, taxonomy and
+  need lists, under every sort, with or without `coords`. A failed list is
+  logged and the other lists fuse. The weak-match judges need the keyword and
+  the vector list both. Only when every list fails does the search fall back
+  to the summed request.
+- **Near you:** with `sort=relevance`, `coords` and no region, a low-weight
+  (0.5) proximity list joins the fusion. Services with no map point get no
+  vote. Region searches have no such list.
+- **Kept set:** the first 100 ids of the fused order. The page request filters
+  to those ids, so `hits.total` is the kept count and a page past the 100th
+  result is empty. There is no summed tail.
+- **Sort only re-orders the kept set:** relevance keeps the fused order,
+  distance with `coords` sorts by miles and hides services with no map point
+  (page request only), name and organization sort A-Z.
+- **Counts and pins:** the need counts use the base filters plus the kept ids,
+  without the map-point filter. Map pins for a text query use the same kept
+  set. Weak match is not checked on pins.
+
 ## Who sends what
 
 - **Norse UI:** `coords` and `distance` (`0` for "Any"), no `geo_type`, so

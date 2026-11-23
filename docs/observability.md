@@ -124,7 +124,7 @@ search apart: they all post to the same `_search` path.
 | `v2.classify` | ml-broker classify call and its mapping. `v2.classify.failed` is true when the call gave error signals. `v2.classify.cache_hit` is true when ml-broker was not called |
 | `v2.rules.decide`, `v2.rules.finalize` | Rules engine |
 | `v2.retrieval` | `HybridSearchService.searchHybrid` |
-| `hybrid.prepare` | Everything before the final request. Attributes: `hybrid.fused`, `hybrid.fast_page`, `hybrid.cutoff`, `hybrid.need_counts` |
+| `hybrid.prepare` | Everything before the final request. Attributes: `hybrid.fused`, `hybrid.cutoff`, `hybrid.need_counts` |
 | `hybrid.embed` | Query embedding: cache read, API call on a miss. Attribute: `hybrid.embed_cache_hit` (true when the API was not called), `hybrid.embed_winner` (`local`, `remote`, or `none` when both failed; absent on a cache hit or when `EMBEDDING_LOCAL_BASE_URL` is empty) |
 | `hybrid.word_rarity` | Word rarity: cache read, probe, cache write |
 | `hybrid.cutoff_probe` | Relevance cutoff probe; its Elasticsearch calls are `elasticsearch hybrid_cutoff_head`, `_count`, `_kept`, `_widened` |
