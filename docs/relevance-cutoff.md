@@ -264,6 +264,29 @@ documents come from organizations with a food word in the name and the 988
 Suicide & Crisis Lifeline outranks soup kitchens — the outcome there is the
 threshold correctly refusing to hand back a cut that big.
 
+## Windowed cut (v2, `V2_CUTOFF_WINDOW`)
+
+Default **off** everywhere. With the flag off, `/v2/search` runs the probe described above, request for request (a spec compares the two). The flag changes nothing for v1.
+
+With the flag on, `relevance_cutoff=on` on a v2 text search that has a query vector and lexical clauses skips the probe. One `_search` asks for a window of 200 hits:
+
+- **BM25 leg:** the lexical clauses are required, plus the taxonomy and need clauses and the geo decay of the main query. Geography is part of this window score (the probe leaves it out).
+- **kNN leg:** `k` 200, `num_candidates` 400, weight 100 (today's vector weight). Elasticsearch adds the two scores.
+
+The cut runs in the service, on the window scores: keep `min(rank cap 100, rule)`, where the rule is the probe's own (score at least `min(0.2 x top, score of rank 20)`; ties stay together). The kept ids, in score order, go to the page request as an `ids` filter, so paging, `sort`, facets and counts stay inside the kept set. The RRF fusion does not run on top of the window.
+
+What changes for a caller with the flag on:
+
+- `hits.total.value` is the kept count (at most 100). `relation` is `gte` when the window filled or the rank cap bound, because the real count may be higher. Otherwise `eq`.
+- Paging ends at the kept set: page 5 at limit 25 is empty.
+- `sort=distance|name` orders the kept set, not all matches.
+- `relevance_cutoff.matched_before_cutoff` is the window size (at most 200), not the full match count. `cutoff_score` is on the window scale and includes distance.
+- A document with no query word enters only through the vector leg (retrieval item A3).
+- An empty window cuts nothing (`applied: false`, `reason: no_elbow`). A failed window request fails the search, as a failed probe does, and nothing is cached.
+- `judges` (weak-match test) are absent, because the fusion that produces them does not run.
+
+Cost (read-only prototype, 30 queries, IL211, `HANDOFF-ASSETS/v2-search--endpoint/cutoff-window-2026-11-23.md`): ES time p95 246 ms against 899 ms for the probe path. That run used a pseudo query vector, so quality numbers are indicative only. Do not turn the flag on for a real tenant before a quality run on real embeddings and the Keeper repro (ISS-2479).
+
 ## Pagination
 
 The cut applies to the result set, not the page. If the cut leaves 18 results and
