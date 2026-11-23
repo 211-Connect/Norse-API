@@ -459,7 +459,10 @@ export function parseKeywordLocales(
     .split(',')
     .map((x) => x.trim().toLowerCase())
     .filter((x) => x.length > 0);
-  return items.length > 0 ? new Set(items) : null;
+  // A malformed entry (`en es`, `en;es`) would match no locale and drop the
+  // keyword leg everywhere; ignore it. A list with no valid entry means all.
+  const valid = items.filter((x) => /^[a-z]{2,3}([-_][a-z0-9]{2,8})*$/.test(x));
+  return valid.length > 0 ? new Set(valid) : null;
 }
 
 interface PredictedTaxonomy {
@@ -820,7 +823,7 @@ export class HybridSearchService {
     const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
     // `V2_KEYWORD_LOCALES` (v2 only): a locale outside the list runs the vector leg only.
-    const keyword = !v2 || this.keywordEnabledForLocale(lang);
+    const keywordLocale = !v2 || this.keywordEnabledForLocale(lang);
     const queryStr = typeof query === 'string' ? query : String(query);
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
@@ -927,7 +930,7 @@ export class HybridSearchService {
               filters: [...baseFilters],
               queryStr,
               wordRarity,
-              keyword,
+              keyword: keywordLocale,
             }),
           )
         : undefined;
@@ -988,6 +991,9 @@ export class HybridSearchService {
         searchConfigPromise,
         wordRarityPromise,
       ]);
+    // The vector leg is the only signal left when the keyword leg is off for
+    // this locale; if the embedding failed, the keyword leg runs after all.
+    const keyword = keywordLocale || queryVector === undefined;
 
     const pinnedMode =
       SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
@@ -1266,7 +1272,8 @@ export class HybridSearchService {
         }),
       );
       fusedIds = fusedOrder.ids;
-      judges = fusedOrder.judges;
+      // The weak-match test needs the keyword judge; without it no weak match.
+      judges = keyword ? fusedOrder.judges : undefined;
 
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
         // Fusion failed after the top-score request was skipped: fall back

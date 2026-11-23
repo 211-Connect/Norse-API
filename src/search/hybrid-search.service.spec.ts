@@ -1108,6 +1108,11 @@ describe('HybridSearchService', () => {
       }
     });
 
+    it('parseKeywordLocales: a malformed entry is ignored; no valid entry means all', () => {
+      expect([...parseKeywordLocales('en es, fr')!]).toEqual(['fr']);
+      expect(parseKeywordLocales('en es;ru')).toBeNull();
+    });
+
     it('parseKeywordLocales: unset or blank means all locales', () => {
       expect(parseKeywordLocales(undefined)).toBeNull();
       expect(parseKeywordLocales('  , ')).toBeNull();
@@ -1139,6 +1144,31 @@ describe('HybridSearchService', () => {
         expect(mainHasLexical()).toBe(true);
         await run('vi', { coords: [-122.3, 47.6] });
         expect(mainHasLexical()).toBe(false);
+      });
+
+      it('embedding failed for vi: the keyword leg runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+      });
+
+      it('returns no weak-match judges when the keyword leg is off', async () => {
+        const off = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(off.judges).toBeUndefined();
+        (service as any).keywordLocales = null;
+        cacheStore.clear();
+        const on = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(on.judges).toBeDefined();
       });
 
       it('v1 is unchanged: keyword stays on for vi without rankingVersion', async () => {
