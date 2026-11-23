@@ -16,8 +16,10 @@ export const isFullV2Locale = (lang: string | undefined): boolean =>
 export function floorOnlyEmergency(signals: RulesSignals): RulesSignals {
   const e = signals.emergency;
   // An error stays an error (band `unknown` keeps the danger question, and the
-  // answer is not cached); only a model-only score is dropped.
-  if (!e || e.status !== 'ok' || e.floor_hit === true) return signals;
+  // answer is not cached). Only a score the floor checked and did not hit
+  // (`floor_hit === false`) is dropped; an unknown floor (null/undefined) keeps
+  // the model score, so a missing floor never hides the danger question.
+  if (!e || e.status !== 'ok' || e.floor_hit !== false) return signals;
   return { ...signals, emergency: { status: 'ok', score: 0 } };
 }
 

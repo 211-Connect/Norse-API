@@ -63,6 +63,8 @@ type SearchOptions = {
   rankingVersion?: RankingVersion;
   /** Set by the v2 pins route: the need list of the kept set. Hybrid pins only. */
   needScores?: NeedScore[];
+  /** Set by the v2 pins route: the used urgency of the kept set. Hybrid pins only. */
+  urgencyBoost?: { code: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number };
 };
 
 @Injectable()

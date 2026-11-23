@@ -1154,6 +1154,15 @@ describe('HybridSearchService', () => {
         expect(mainHasLexical()).toBe(true);
       });
 
+      it('embedding failed for vi on the fused path (no coords): the keyword list runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        const calls = await run('vi');
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(false);
+      });
+
       it('returns no weak-match judges when the keyword leg is off', async () => {
         // The ranked lists are off in this spec (see the esSearch mock), so
         // the fused order is stubbed with judges; the gate under test is the

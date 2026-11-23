@@ -1045,7 +1045,19 @@ export class HybridSearchService {
     const earlyLists: EarlyLists | undefined =
       fuseEligible && !cutoffRequested
         ? {
-            keyword: keywordPromise!,
+            // The early keyword list honored the locale switch; when the
+            // embedding then failed, the keyword leg runs after all here too.
+            keyword:
+              keyword && !keywordLocale
+                ? this.fetchKeywordList({
+                    index,
+                    preference,
+                    filters: [...baseFilters],
+                    queryStr,
+                    wordRarity,
+                    keyword: true,
+                  })
+                : keywordPromise!,
             vector: vectorPromise!,
             taxonomy: taxonomyPromise!,
           }

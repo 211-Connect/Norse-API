@@ -225,6 +225,29 @@ function throwCallerError(error: unknown, headers: HeadersDto): never {
   throw error;
 }
 
+/**
+ * A used urgency U-1..U-4 lifts services tagged with that level (ISS-2867).
+ * U-0 comes only from the emergency check and has no service weights. Shared
+ * by the list and the pins, so both rank the same kept set.
+ */
+function urgencyBoostOf(
+  decision: { urgency: { source?: string; state: string; value: string } },
+  signals: { urgency?: { score?: number } | null },
+): HybridCall['urgencyBoost'] {
+  const u = decision.urgency;
+  const urgencyScore =
+    u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
+  return u.state === 'use' &&
+    /^U-[1-4]$/.test(u.value) &&
+    Number.isFinite(urgencyScore) &&
+    urgencyScore > 0
+    ? {
+        code: u.value as 'U-1' | 'U-2' | 'U-3' | 'U-4',
+        score: urgencyScore,
+      }
+    : undefined;
+}
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -267,16 +290,20 @@ export class V2SearchService {
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const text = dto.query;
     let needScores: NeedScore[] | undefined;
+    let urgencyBoost: HybridCall['urgencyBoost'];
     if (text.trim().length > 0) {
       const searchConfig = await this.tenantConfig.getSearchConfig(
         headers['x-tenant-id'],
       );
-      ({ needScores } = await this.classifyAndDecide({
+      const decided = await this.classifyAndDecide({
         headers,
         dto,
         text,
         searchConfig,
-      }));
+      });
+      needScores = decided.needScores;
+      // The same urgency as the list, so the pins come from the same kept set.
+      urgencyBoost = urgencyBoostOf(decided.decision, decided.signals);
     }
     return this.searchService
       .searchPins({
@@ -284,6 +311,7 @@ export class V2SearchService {
         query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
         rankingVersion: 'v2',
         ...(needScores && { needScores }),
+        ...(urgencyBoost && { urgencyBoost }),
       })
       .catch((error: unknown) => throwCallerError(error, headers));
   }
@@ -454,21 +482,7 @@ export class V2SearchService {
       searchConfig,
     });
 
-    // A used urgency U-1..U-4 lifts services tagged with that level (ISS-2867).
-    // U-0 comes only from the emergency check and has no service weights.
-    const u = decision.urgency;
-    const urgencyScore =
-      u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
-    const urgencyBoost: HybridCall['urgencyBoost'] =
-      u.state === 'use' &&
-      /^U-[1-4]$/.test(u.value) &&
-      Number.isFinite(urgencyScore) &&
-      urgencyScore > 0
-        ? {
-            code: u.value as 'U-1' | 'U-2' | 'U-3' | 'U-4',
-            score: urgencyScore,
-          }
-        : undefined;
+    const urgencyBoost = urgencyBoostOf(decision, signals);
 
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;

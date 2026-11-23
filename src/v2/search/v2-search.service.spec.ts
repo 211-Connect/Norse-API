@@ -1899,6 +1899,30 @@ describe('V2SearchService.pins', () => {
     expect(searchPins.mock.calls[1][0]).not.toHaveProperty('needScores');
   });
 
+  it('P9. text pins get the same urgencyBoost as search (ISS-2867); none without urgency', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, searchHybrid } = build({ searchPins });
+
+    await service.pins({
+      headers,
+      query: dto({ query: 'rent', urgency: 'U-1' } as any),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'rent', urgency: 'U-1' } as any),
+    });
+    expect(searchPins.mock.calls[0][0].urgencyBoost).toEqual({
+      code: 'U-1',
+      score: 1,
+    });
+    expect(searchPins.mock.calls[0][0].urgencyBoost).toEqual(
+      searchHybrid.mock.calls[0][0].urgencyBoost,
+    );
+
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    expect(searchPins.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+  });
+
   it('turns a missing index into a 400', async () => {
     const searchPins = jest.fn().mockRejectedValue({
       meta: { body: { error: { type: 'index_not_found_exception' } } },
