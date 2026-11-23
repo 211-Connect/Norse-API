@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import { xTenantIdSchema } from '../../common/dto/headers.dto';
+import { envFlag } from '../../common/config/configuration';
 import { TenantConfigService } from '../../cms-config/tenant-config.service';
 
 const RETRY_AFTER_SECONDS = 5;
@@ -34,7 +35,7 @@ export class V2SearchEnabledGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (this.configService.get('V2_SEARCH_ENABLED') !== 'true') {
+    if (!envFlag(this.configService.get<string>('V2_SEARCH_ENABLED'), false)) {
       throw new NotFoundException();
     }
     const http = context.switchToHttp();

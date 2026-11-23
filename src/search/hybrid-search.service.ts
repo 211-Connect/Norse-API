@@ -32,6 +32,7 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { envFlag } from 'src/common/config/configuration';
 import { matchLocale } from 'src/common/locales';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import {
@@ -543,13 +544,18 @@ export class HybridSearchService {
       undefined;
     // On by default (ADR 0039 Decision 79, Lucas and David, 2026-11-18).
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
-    this.needBoostEnabled =
-      this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
-    this.urgencyBoostEnabled =
-      this.configService.get<string>('URGENCY_BOOST_ENABLED')?.trim() ===
-      'true';
-    this.embeddingCacheEnabled =
-      this.configService.get<string>('EMBEDDING_CACHE_ENABLED') !== 'false';
+    this.needBoostEnabled = envFlag(
+      this.configService.get<string>('NEED_BOOST_ENABLED'),
+      true,
+    );
+    this.urgencyBoostEnabled = envFlag(
+      this.configService.get<string>('URGENCY_BOOST_ENABLED'),
+      false,
+    );
+    this.embeddingCacheEnabled = envFlag(
+      this.configService.get<string>('EMBEDDING_CACHE_ENABLED'),
+      true,
+    );
     const ttl = Number(
       this.configService.get<string>('EMBEDDING_CACHE_TTL_MS'),
     );

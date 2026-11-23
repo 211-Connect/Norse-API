@@ -189,7 +189,7 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
     await build();
   });
 
-  it('0. unset means on; only the exact string false turns it off', async () => {
+  it('0. unset means on; only false (any case, no spaces) turns it off', async () => {
     enabled = undefined;
     await build();
     await run(tier2Fod);
@@ -199,8 +199,8 @@ describe('HybridSearchService — need boost (ISS-2745)', () => {
       enabled = value;
       await build();
       await run(tier2Fod);
-      // Only the exact string `false` turns it off.
-      expect(headCalls().length > 0).toBe(value !== 'false');
+      // Only `false` in any case turns it off.
+      expect(headCalls().length > 0).toBe(value.toLowerCase() !== 'false');
     }
   });
 

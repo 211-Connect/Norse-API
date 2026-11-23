@@ -50,7 +50,18 @@ describe('V2SearchEnabledGuard', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it.each([undefined, '', 'false', 'TRUE', '1', 'yes', ' true', true])(
+  it.each(['TRUE', 'True'])(
+    'env %p: case does not matter, the tenant flag decides',
+    async (value) => {
+      const { guard, isV2Tenant } = make(value, true);
+      await expect(guard.canActivate(ctx({ tenant_id: TENANT }))).resolves.toBe(
+        true,
+      );
+      expect(isV2Tenant).toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, '', 'false', '1', 'yes', ' true', 'true ', true])(
     'env %p: 404 and the tenant flag is not read',
     async (value) => {
       const { guard, isV2Tenant } = make(value, true);

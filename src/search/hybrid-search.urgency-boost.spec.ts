@@ -222,7 +222,9 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
       ['1', false],
       ['on', false],
       ['', false],
-      [' true ', true],
+      [' true ', false],
+      ['TRUE', true],
+      ['True', true],
       ['true', true],
     ])('URGENCY_BOOST_ENABLED=%p -> on is %p', async (value, on) => {
       urgencySwitch = undefined;
