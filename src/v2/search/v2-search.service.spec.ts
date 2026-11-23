@@ -1980,6 +1980,17 @@ describe('V2SearchService limited locales (full v2 only for en and es)', () => {
     expect(res.clarification.questions).toEqual([]);
   });
 
+  it('ko with a failed emergency check: the answer is not storable (same as en)', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(errorResult()),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '죽고 싶어요' }),
+    });
+    expect(isMarkedNotStorable(res)).toBe(true);
+  });
+
   it('es keeps needs and questions', async () => {
     const { service } = build({
       classify: jest.fn().mockResolvedValue(classified(false, 0.001)),

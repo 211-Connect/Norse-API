@@ -9,7 +9,7 @@ export const ko: RawTable = {
   emergency: {
     yes: '예, 지금 위험한 상황입니다',
     safeToday: '아니요, 안전하지만 오늘 도움이 필요합니다',
-    safeSoon: '아니요, 안전하지만 곧(일주일 이내) 도움이 필요합니다',
+    safeSoon: '아니요, 안전하지만 곧 (일주일 이내) 도움이 필요합니다',
   },
   needs: {},
 };

@@ -15,7 +15,9 @@ export const isFullV2Locale = (lang: string | undefined): boolean =>
  */
 export function floorOnlyEmergency(signals: RulesSignals): RulesSignals {
   const e = signals.emergency;
-  if (!e || (e.status === 'ok' && e.floor_hit === true)) return signals;
+  // An error stays an error (band `unknown` keeps the danger question, and the
+  // answer is not cached); only a model-only score is dropped.
+  if (!e || e.status !== 'ok' || e.floor_hit === true) return signals;
   return { ...signals, emergency: { status: 'ok', score: 0 } };
 }
 
@@ -40,7 +42,9 @@ export function localizeClarification(
   clarification: Clarification,
   lang: string | undefined,
 ): Clarification {
-  const table = lang ? LOCALE_TABLES[lang.toLowerCase()] : undefined;
+  const table = lang
+    ? LOCALE_TABLES[lang.toLowerCase().split(/[-_]/)[0]]
+    : undefined;
   if (!table) return clarification;
 
   const stemKeyOf = (q: Question): string | null => {
@@ -71,7 +75,7 @@ export function localizeClarification(
     if (stem && key === 'area') {
       const t1 = q.id.slice('area:'.length);
       const area = text(table.needs, t1) ?? displayOf(t1);
-      stem = stem.replace('{area}', area);
+      stem = stem.replace('{area}', () => area);
     }
     return {
       ...q,
