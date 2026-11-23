@@ -1947,6 +1947,8 @@ describe('tenantHotlines', () => {
     expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
       [],
     );
+  });
+});
 
 // Lucas 2026-11-20: full v2 features only for en and es. Other locales get no
 // need questions, no need guesses, and the danger question only on a keyword-floor hit.
