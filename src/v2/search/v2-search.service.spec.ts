@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { errors } from '@elastic/elasticsearch';
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
 import { SearchService } from 'src/search/search.service';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
@@ -15,6 +16,7 @@ import {
   hasContentWord,
   V2SearchService,
   tenantHotlines,
+  matchHits,
 } from './v2-search.service';
 import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
@@ -41,7 +43,13 @@ const hybridResponse = (total: number | { value: number } = 12) =>
       took: 1,
       timed_out: false,
       _shards: {},
-      hits: { total, hits: [] },
+      // One unrelated hit: an empty page reads as match "spread".
+      hits: {
+        total,
+        hits: [
+          { _source: { name: 'a service', organization: { name: 'An Org' } } },
+        ],
+      },
     },
     facets: [],
   }) as unknown as SearchResponse;
@@ -75,6 +83,8 @@ function build(opts: {
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
   searchPins?: jest.Mock;
+  /** V2_QUESTION_RULE_V1. Default 'true': the suites below test question rule v1. Any other value (or 'off') runs development's engine. */
+  ruleV1?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -92,6 +102,10 @@ function build(opts: {
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
     { searchPins } as unknown as SearchService,
+    {
+      get: (k: string) =>
+        k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
+    } as unknown as ConfigService,
   );
   return {
     searchPins,
@@ -652,12 +666,18 @@ describe('V2SearchService', () => {
     });
     expect(res.intent.needs).toEqual(
       expect.arrayContaining([
-        { value: 'N-FOD-01', source: 'caller', state: 'use' },
+        {
+          value: 'N-FOD-01',
+          source: 'caller',
+          state: 'use',
+          description: expect.stringMatching(/\S/),
+        },
         expect.objectContaining({
           value: 'N-HOU-02',
           source: 'inferred',
           state: 'use',
           confidence: 0.99,
+          description: expect.stringMatching(/\S/),
         }),
       ]),
     );
@@ -689,9 +709,7 @@ describe('V2SearchService', () => {
     });
     expect(a.clarification).toEqual(b.clarification);
     expect(
-      a.clarification.questions.filter((q) =>
-        ['find_need', 'narrow'].includes(q.type),
-      ),
+      a.clarification.questions.filter((q) => q.type === 'find_need'),
     ).toEqual([]);
   });
 
@@ -718,9 +736,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'x' }),
       });
       const needsQ = (r: typeof a) =>
-        r.clarification.questions.filter((q) =>
-          ['find_need', 'narrow'].includes(q.type),
-        );
+        r.clarification.questions.filter((q) => q.type === 'find_need');
       expect(needsQ(b)).toEqual([]);
       expect(needsQ(a).length).toBeGreaterThan(0);
       expect('totalCounted' in a).toBe(false);
@@ -841,7 +857,7 @@ describe('V2SearchService', () => {
       expect(res.clarification).toBeDefined();
     });
 
-    it('counted: a requested code with no count is written as 0 and its option drops', async () => {
+    it('counted: a requested code with no count is written as 0 and its option stays with 0', async () => {
       const search = jest.fn().mockImplementation(async (a: any) => ({
         ...hybridResponse(10),
         needCounts: Object.fromEntries(
@@ -849,17 +865,25 @@ describe('V2SearchService', () => {
         ),
       }));
       const { service } = build({
-        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD-01': 0.5 })),
+        classify: jest
+          .fn()
+          .mockResolvedValue(okResult({ 'N-FOD': 0.9, 'N-FOD-01': 0.5 })),
         search,
       });
       const res: any = await service.search({
         headers,
         query: dto({ query: 'food' }),
       });
-      const needQs = res.clarification.questions.filter((q: any) =>
-        ['find_need', 'narrow'].includes(q.type),
+      const needQs = res.clarification.questions.filter(
+        (q: any) => q.type === 'find_need',
       );
-      expect(needQs).toHaveLength(0);
+      // Tier 1 at 0.9 makes the area clear; the hits hold no query word, so a
+      // Tier 2 at 0.5 settles no kind (D1, rule R3): the area question stays,
+      // each option with its count of 0.
+      expect(needQs.map((q: any) => q.id)).toEqual(['area:N-FOD']);
+      expect(needQs[0].options.every((o: any) => o.results_count === 0)).toBe(
+        true,
+      );
     });
   });
 
@@ -1420,11 +1444,12 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
       expect(res).not.toHaveProperty('judges');
       expect(res).not.toHaveProperty('needCounts');
       expect(questionIds(res)).toEqual(['no_match']);
-      // N-MON has 0 services: dropped. The others keep their counts.
+      // N-MON has 0 services: kept, with 0. The others keep their counts.
       const q = res.clarification.questions[0];
       expect(q.options.map((o) => [o.value, o.results_count])).toEqual([
         ['N-HOU', 10],
         ['N-FOD', 5],
+        ['N-MON', 0],
       ]);
       expect(search).toHaveBeenCalledTimes(2);
       const second = search.mock.calls[1][0];
@@ -1979,7 +2004,8 @@ describe('tenant context (hotlines, top areas)', () => {
   };
 
   it('offers the global default areas in the start question', async () => {
-    expect(await startOptions()).toEqual(DEFAULT_TOP_AREAS);
+    // The start question lists every Tier 1 need; the default areas come first.
+    expect((await startOptions())?.slice(0, 3)).toEqual(DEFAULT_TOP_AREAS);
     expect(DEFAULT_TOP_AREAS).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
 
@@ -2030,6 +2056,128 @@ describe('tenantHotlines', () => {
     expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
       [],
     );
+  });
+});
+
+describe('V2_QUESTION_RULE_V1 switch', () => {
+  const scores = { 'N-FOD-01': 0.5 };
+  const search = () =>
+    jest.fn().mockImplementation(async () => ({
+      ...hybridResponse(10),
+    }));
+  const ask = async (ruleV1: string | undefined) => {
+    const s = search();
+    const b = build({
+      ruleV1: ruleV1 ?? 'unset',
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+      search: s,
+    });
+    const res = await b.service.search({
+      headers,
+      query: dto({ query: 'food' }),
+    });
+    return { res, call: s.mock.calls[0][0] };
+  };
+
+  it("unset: runs development's engine; the hybrid call has no new fields", async () => {
+    const { res, call } = await ask(undefined);
+    expect(res.rules_version).toBe('rules-2026-11-23.1');
+    expect(res.rules_version).not.toBe(RULES_VERSION);
+    expect('nullCountsWithoutNeedTags' in call).toBe(false);
+  });
+
+  it('switch off: the clarification has no notice and no phone_line keys', async () => {
+    const { res } = await ask(undefined);
+    expect('notice' in res.clarification).toBe(false);
+    expect('phone_line' in res.clarification).toBe(false);
+  });
+
+  it("'false' also runs development's engine", async () => {
+    expect((await ask('false')).res.rules_version).toBe('rules-2026-11-23.1');
+  });
+
+  it("'true': runs question rule v1 and asks retrieval for the new fields", async () => {
+    const { res, call } = await ask('true');
+    expect(res.rules_version).toBe(RULES_VERSION);
+    expect(call.nullCountsWithoutNeedTags).toBe(true);
+  });
+});
+
+describe('match in the service (flag on)', () => {
+  const page = (orgs: string[]) => ({
+    ...hybridResponse(10),
+    search: {
+      ...(hybridResponse(10) as any).search,
+      hits: {
+        total: orgs.length,
+        hits: orgs.map((org) => ({
+          _source: {
+            name: 'Swim',
+            organization: { name: org },
+            taxonomies: [{ name: 'Recreation' }],
+          },
+        })),
+      },
+    },
+  });
+  const ask = async (query: string, orgs: string[]) => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-HLT': 0.02 })),
+      search: jest.fn().mockResolvedValue(page(orgs)),
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query }),
+    });
+    return res.clarification.questions.map((q) => q.id);
+  };
+
+  it('one org holds most hits: concentrated (R1), no need question', async () => {
+    const orgs = [
+      ...Array.from({ length: 9 }, () => 'YMCA of Seattle'),
+      'Other Org',
+    ];
+    expect(await ask('ymca', orgs)).toEqual([]);
+  });
+  it('org share high but spread over many orgs (top share < 0.45), words not in the hits: none (R5), start stays with notice', async () => {
+    const orgs = Array.from({ length: 10 }, (_, i) => `City ${i} Police`);
+    expect(await ask('police', orgs)).toEqual(['start']);
+  });
+  it('R5 sets the notice and the phone line; R1 sets neither', async () => {
+    const run = async (query: string, orgs: string[]) => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-HLT': 0.02 })),
+        search: jest.fn().mockResolvedValue(page(orgs)),
+      });
+      return (await service.search({ headers, query: dto({ query }) }))
+        .clarification;
+    };
+    const r5 = await run(
+      'police',
+      Array.from({ length: 10 }, (_, i) => `City ${i} Police`),
+    );
+    expect(r5.notice?.kind).toBe('may_not_match');
+    expect(r5.phone_line).toEqual({ label: 'Call 211', number: '211' });
+    const r1 = await run(
+      'ymca',
+      Array.from({ length: 10 }, () => 'YMCA'),
+    );
+    expect('notice' in r1).toBe(false);
+    expect('phone_line' in r1).toBe(false);
+  });
+  it('matchHits reads org, text (name, description, summary, taxonomy names) and caps at 20', () => {
+    const hits = Array.from({ length: 25 }, (_, i) => ({
+      _source: {
+        name: `N${i}`,
+        description: 'D',
+        summary: 'S',
+        organization: 'Org',
+        taxonomies: [{ name: 'Tx' }],
+      },
+    }));
+    const out = matchHits({ search: { hits: { hits } } });
+    expect(out).toHaveLength(20);
+    expect(out[0]).toEqual({ org_name: 'Org', text: 'n0 d s tx' });
   });
 });
 

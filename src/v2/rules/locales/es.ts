@@ -11,6 +11,9 @@ export const es: RawTable = {
     area: '¿Qué tipo de ayuda con {area}?',
     narrow: '¿Cuál de estas opciones se ajusta mejor?',
     narrowAlso: '¿Alguna de estas también se ajusta?',
+    notice:
+      'Es posible que estos resultados no coincidan con lo que escribió. Elija lo que necesita abajo, o pruebe con otras palabras.',
+    spread: "¿Qué tipo de '{word}' quiere decir?",
   },
   urgency: {
     'U-1': 'Hoy',

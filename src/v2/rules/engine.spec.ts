@@ -31,7 +31,12 @@ const mk = (
   reason: 'no_need' as const,
   step,
   stem: 's',
-  options: values.map((v) => ({ label: v, parameter, value: v })),
+  options: values.map((v) => ({
+    label: v,
+    parameter,
+    value: v,
+    ...(parameter === 'needs' ? { score: 0 } : {}),
+  })),
   multi_select: true,
   allow_other: true,
   none_of_these: true,
@@ -42,6 +47,7 @@ const mk = (
 const dec = (
   candidates: ReturnType<typeof mk>[],
   option_scores: Record<string, number> = {},
+  need_level: Decision['need_level'] = 'unclear',
 ): Decision => ({
   rules_version: RULES_VERSION,
   option_scores,
@@ -51,6 +57,10 @@ const dec = (
   boost_needs: [],
   nx: false,
   urgency: { value: 'U-X', source: 'default', state: 'drop' },
+  need_level,
+  open_areas: [],
+  likely_areas: [],
+  areas_in_play: [],
   candidates,
   count_codes: [],
 });
@@ -75,7 +85,7 @@ describe('finalize', () => {
       'urgency_today',
     ]);
   });
-  it('sets counts and drops 0-count options; a code missing from counted by_code is 0', () => {
+  it('sets counts and keeps 0-count options; a code missing from counted by_code is 0', () => {
     // An Elasticsearch aggregation can leave out a code with no matches, so a
     // missing key in a counted by_code means 0 results, not "unknown".
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'])]);
@@ -83,8 +93,12 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
       strong_text_match: false,
     });
-    expect(r.questions[0].options).toEqual([
-      { label: 'N-HOU', parameter: 'needs', value: 'N-HOU', results_count: 4 },
+    expect(
+      r.questions[0].options.map((o) => [o.value, o.results_count, o.score]),
+    ).toEqual([
+      ['N-HOU', 4, 0.3],
+      ['N-FOD', 0, 0],
+      ['N-MON', 0, 0],
     ]);
   });
   it('an option the server did not count carries results_count null (Lucas 2026-11-13, question 7)', () => {
@@ -107,13 +121,10 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 6 }),
       strong_text_match: false,
     }).questions;
-    expect(q.options.map((o) => o.results_count)).toEqual([4, 6]);
+    expect(q.options.map((o) => o.results_count)).toEqual([6, 4]); // sorted by score: the larger count first
     expect(q).not.toHaveProperty('level');
   });
-  it('recomputes uncertainty over the options left after 0-count drops', () => {
-    // Housing and Food are a toss-up (uncertainty ~0.80). With Food at 0
-    // results the question is Housing vs Money, which the model favours
-    // clearly: normEntropy([0.4, 0.05]) ~0.503.
+  it('keeps the decide-time uncertainty when an option has 0 results', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8)], {
       'N-HOU': 0.4,
       'N-FOD': 0.4,
@@ -123,35 +134,8 @@ describe('finalize', () => {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
       strong_text_match: false,
     }).questions;
-    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON']);
-    expect(q.uncertainty).toBeCloseTo(0.503, 2);
-  });
-  it('a start question cut to one option ranks below a real area question', () => {
-    const d = dec(
-      [
-        mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'], 'needs', 0.8),
-        mk('area:N-HOU', 3, ['N-HOU-01', 'N-HOU-02'], 'needs', 0.6),
-      ],
-      {
-        'N-HOU': 0.4,
-        'N-FOD': 0.4,
-        'N-MON': 0.05,
-        'N-HOU-01': 0.5,
-        'N-HOU-02': 0.5,
-      },
-    );
-    const qs = finalize(d, {
-      counts: counts(10, {
-        'N-HOU': 5,
-        'N-FOD': 0,
-        'N-MON': 0,
-        'N-HOU-01': 5,
-        'N-HOU-02': 5,
-      }),
-      strong_text_match: false,
-    }).questions;
-    expect(qs.map((q) => q.id)).toEqual(['area:N-HOU', 'start']);
-    expect(qs[1].uncertainty).toBe(0);
+    expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON', 'N-FOD']);
+    expect(q.uncertainty).toBe(0.8);
   });
   it('keeps the decide-time uncertainty when no option was dropped', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.42)]);
@@ -173,21 +157,24 @@ describe('finalize', () => {
         parameter: 'needs',
         value: 'N-HOU',
         results_count: null,
+        score: 0,
       },
       {
         label: 'N-FOD',
         parameter: 'needs',
         value: 'N-FOD',
         results_count: null,
+        score: 0,
       },
     ]);
   });
-  it('an empty counted by_code drops every need option (all 0), unlike null', () => {
+  it('an empty counted by_code keeps every need option with count 0; null keeps them uncounted', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
-    expect(
-      finalize(d, { counts: counts(10, {}), strong_text_match: false })
-        .questions,
-    ).toEqual([]);
+    const [q] = finalize(d, {
+      counts: counts(10, {}),
+      strong_text_match: false,
+    }).questions;
+    expect(q.options.map((o) => o.results_count)).toEqual([0, 0]);
     expect(
       finalize(d, { counts: counts(10, null), strong_text_match: false })
         .questions,
@@ -215,42 +202,63 @@ describe('finalize', () => {
     });
     expect(r2.questions).toHaveLength(1);
   });
-  it('drops a question with no option left; total 0 drops needs', () => {
-    const d = dec([mk('start', 2, ['N-HOU'])]);
+  it('keeps a 0-count option; total 0 drops needs', () => {
+    const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
         strong_text_match: false,
       }).questions,
-    ).toEqual([]);
+    ).toHaveLength(1);
     expect(
       finalize(d, { counts: counts(0, {}), strong_text_match: false })
         .questions,
     ).toEqual([]);
   });
   it('ranks by priority, caps at 3', () => {
-    const d = dec([
-      mk('narrow:1', 4, ['N-FOD-01'], 'needs', 0.1),
-      mk('area:N-HOU', 3, ['N-HOU-01'], 'needs', 0.6),
-      mk('start', 2, ['N-HOU'], 'needs', 0.9),
-      mk('urgency_today', 1, ['U-1'], 'urgency', 0.3),
-    ]);
+    const d = dec(
+      [
+        mk('narrow:1', 4, ['N-FOD-01', 'N-FOD-02'], 'needs', 0.1),
+        mk('area:N-HOU', 3, ['N-HOU-01', 'N-HOU-02'], 'needs', 0.6),
+        mk('urgency_today', 1, ['U-1'], 'urgency', 0.3),
+      ],
+      {},
+      'area',
+    );
     const r = finalize(d, {
-      counts: counts(10, { 'N-FOD-01': 5, 'N-HOU-01': 5, 'N-HOU': 5 }),
+      counts: counts(10, {
+        'N-FOD-01': 5,
+        'N-FOD-02': 5,
+        'N-HOU-01': 5,
+        'N-HOU-02': 5,
+        'N-HOU': 5,
+        'N-FOD': 5,
+      }),
       strong_text_match: false,
     });
+    // Rule R3 keeps the area questions only (narrow and start are dropped).
     expect(r.questions.map((q) => q.id)).toEqual([
-      'start',
       'area:N-HOU',
       'urgency_today',
     ]);
-    const d2 = dec([
-      mk('area:N-B', 3, ['N-HOU-01']),
-      mk('area:N-A', 3, ['N-FOD-01']),
-      mk('area:N-C', 3, ['N-MON-01']),
-    ]);
+    const d2 = dec(
+      [
+        mk('area:N-B', 3, ['N-HOU-01', 'N-HOU-02']),
+        mk('area:N-A', 3, ['N-FOD-01', 'N-FOD-02']),
+        mk('area:N-C', 3, ['N-MON-01', 'N-MON-02']),
+      ],
+      {},
+      'area',
+    );
     const r2 = finalize(d2, {
-      counts: counts(10, { 'N-HOU-01': 9, 'N-FOD-01': 6, 'N-MON-01': 5 }),
+      counts: counts(10, {
+        'N-HOU-01': 9,
+        'N-HOU-02': 1,
+        'N-FOD-01': 6,
+        'N-FOD-02': 4,
+        'N-MON-01': 5,
+        'N-MON-02': 5,
+      }),
       strong_text_match: false,
     });
     expect(r2.questions.map((q) => q.id)).toEqual([
@@ -321,12 +329,24 @@ describe('numeric order', () => {
     );
   });
   it('the result split changes the order', () => {
-    const d = dec([
-      mk('area:N-A', 3, ['N-HOU-01']),
-      mk('area:N-B', 3, ['N-FOD-01']),
-    ]);
+    const d = dec(
+      [
+        mk('area:N-A', 3, ['N-HOU-01', 'N-HOU-02']),
+        mk('area:N-B', 3, ['N-FOD-01', 'N-FOD-02']),
+      ],
+      {},
+      'area',
+    );
     const r = finalize(d, {
-      counts: { total: 100, by_code: { 'N-HOU-01': 1, 'N-FOD-01': 50 } },
+      counts: {
+        total: 100,
+        by_code: {
+          'N-HOU-01': 1,
+          'N-HOU-02': 0,
+          'N-FOD-01': 50,
+          'N-FOD-02': 50,
+        },
+      },
       strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual(['area:N-B', 'area:N-A']);
@@ -386,10 +406,6 @@ describe('golden fixture', () => {
       for (const q of d.candidates.filter((c) => asksNeeds(c))) {
         for (const o of q.options) {
           expect(d.boost_needs).not.toContain(o.value);
-          if (q.type === 'narrow') {
-            expect(r.needs[o.value]).toBeGreaterThanOrEqual(0.12);
-            expect(r.needs[o.value]).toBeLessThan(0.97);
-          }
         }
       }
       for (const c of d.boost_needs) {
@@ -479,11 +495,12 @@ describe('non-finite need scores read as no score', () => {
     }
   });
   it('a NaN Tier 2 score does not hide a real Tier 2 from the area rule', () => {
-    // N-HOU-01 at 0.8 is above the area rule's Tier 2 cap (0.5), so the rule
-    // must not fire; a NaN elsewhere must not turn the max into NaN.
+    // N-HOU-01 at 0.98 is above the kind cutoff (0.97), so the kind is clear
+    // and no area question is built; a NaN elsewhere must not turn the max
+    // into NaN.
     const d = decide(
       req(),
-      sig({ 'N-HOU': 0.95, 'N-HOU-01': 0.8, 'N-FOD-01': NaN }),
+      sig({ 'N-HOU': 0.95, 'N-HOU-01': 0.98, 'N-FOD-01': NaN }),
     );
     expect(d.candidates.map((c) => c.reason)).not.toContain('area_only');
   });

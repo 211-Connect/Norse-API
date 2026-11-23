@@ -41,10 +41,6 @@ export function needUncertainty(
   scores: Record<string, number>,
 ): number {
   if (q.type === 'find_need') return normEntropy(needScores(q, scores));
-  if (q.type === 'narrow') {
-    const ys = needScores(q, scores).map(yesNo);
-    return ys.length === 0 ? 0 : ys.reduce((a, b) => a + b, 0) / ys.length;
-  }
   return 0;
 }
 

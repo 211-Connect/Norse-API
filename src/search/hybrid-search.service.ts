@@ -251,6 +251,12 @@ type HybridSearchOptions = {
    */
   countCodes?: string[];
   /**
+   * v2 only. When true, a tenant index with no docs holding `sune_needs` makes
+   * the need counts "not counted" (a global agg is added to the count request).
+   * Absent or false: the count request is the one from before this option.
+   */
+  nullCountsWithoutNeedTags?: boolean;
+  /**
    * v2 only. Hard filter used only for a weak-match pick (ISS-2796): the text
    * was weak, so the need tags decide. The `needs` parameter itself never
    * filters.
@@ -652,7 +658,11 @@ export class HybridSearchService {
     });
 
     const needCountsPromise = countRequest
-      ? this.runNeedCounts(countRequest, options.countCodes ?? [])
+      ? this.runNeedCounts(
+          countRequest,
+          options.countCodes ?? [],
+          options.nullCountsWithoutNeedTags === true,
+        )
       : Promise.resolve(undefined);
 
     type Resp = Awaited<
@@ -775,6 +785,7 @@ export class HybridSearchService {
   private async runNeedCounts(
     request: SearchRequest,
     codes: string[],
+    nullWithoutNeedTags = false,
   ): Promise<Record<string, number> | undefined> {
     try {
       const data = await this.metrics.observeDownstream(
@@ -786,6 +797,14 @@ export class HybridSearchService {
             Record<string, AggregationsStringTermsAggregate>
           >(request),
       );
+      const tenantNeeds = data.aggregations?.tenant_needs as unknown as
+        { with_needs?: { doc_count?: number } } | undefined;
+      if (nullWithoutNeedTags && tenantNeeds?.with_needs?.doc_count === 0) {
+        this.logger.warn(
+          'Tenant index has no docs with sune_needs; need counts treated as not counted',
+        );
+        return undefined;
+      }
       const buckets =
         (data.aggregations?.need_counts?.buckets as
           { key: string; doc_count: number }[] | undefined) ?? [];
@@ -1406,6 +1425,31 @@ export class HybridSearchService {
               },
             },
             aggs: {
+              // Tenant-wide, ignoring the search filters (a global agg): does
+              // this tenant's index hold any doc with `sune_needs`? If not,
+              // every count would be a false 0, so runNeedCounts reports
+              // "not counted" instead.
+              ...(options.nullCountsWithoutNeedTags && {
+                tenant_needs: {
+                  global: {},
+                  aggs: {
+                    with_needs: {
+                      filter: {
+                        bool: {
+                          filter: [
+                            {
+                              term: {
+                                tenant_id: options.headers['x-tenant-id'],
+                              },
+                            },
+                            { exists: { field: 'sune_needs' } },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
               need_counts: {
                 terms: {
                   field: 'sune_needs',

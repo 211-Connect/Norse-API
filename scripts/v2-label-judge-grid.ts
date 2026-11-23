@@ -1,0 +1,62 @@
+/**
+ * Adds the grid fields to every row of the judge fixture
+ * (src/v2/rules/__fixtures__/question-rule-judge.json): `need` (need level of
+ * decide), `match` (matchFromShares), `results` ('none' when weak or total 0,
+ * else 'some') and `rule` (gridRule). Run once after a grid change:
+ *
+ *   npx ts-node --transpile-only scripts/v2-label-judge-grid.ts
+ */
+import { readFileSync, writeFileSync } from 'fs';
+import { resolve } from 'path';
+import { decide, gridRule } from '../src/v2/rules/engine';
+import { matchFromShares } from '../src/v2/rules/match';
+
+const file = resolve(
+  __dirname,
+  '../src/v2/rules/__fixtures__/question-rule-judge.json',
+);
+const rows = JSON.parse(readFileSync(file, 'utf8'));
+const counts: Record<string, number> = {};
+for (const row of rows) {
+  const e = row.evidence_input;
+  const decision = decide(
+    {
+      has_text: true,
+      has_content_word: row.content_words.length > 0,
+      query: row.query,
+      content_words: row.content_words,
+      needs: [],
+      passed_needs: [],
+      clarify: 'auto',
+    },
+    {
+      needs: { status: 'ok', scores: row.scores },
+      emergency: {
+        status: 'ok',
+        score: row.emergency_live ? 0.9 : 0,
+        floor_hit: false,
+        calm_context: false,
+        dv_shelter: false,
+      },
+    },
+    {},
+  );
+  row.need = decision.need_level;
+  row.match = matchFromShares({
+    words: row.content_words,
+    hit_count: e.hit_count,
+    org_share: e.org_share,
+    top_org_share: e.top_org_share,
+    text_share: e.text_share,
+  });
+  row.results = e.weak || e.total === 0 ? 'none' : 'some';
+  row.rule = gridRule(decision, {
+    counts: { total: e.total, by_code: null },
+    strong_text_match: false,
+    match: row.match,
+    weak: e.weak,
+  });
+  counts[row.rule] = (counts[row.rule] ?? 0) + 1;
+}
+writeFileSync(file, JSON.stringify(rows));
+console.log(`labeled ${rows.length} rows`, JSON.stringify(counts));

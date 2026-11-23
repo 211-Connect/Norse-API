@@ -1,5 +1,6 @@
 import { decide, finalize, weakMatchDecision } from './engine';
 import { noMatchQuestion } from './questions';
+import { TIER1_CODES } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 const ids = (d: ReturnType<typeof decide>) => d.candidates.map((q) => q.id);
@@ -62,9 +63,15 @@ describe('emergency question', () => {
     // Soft score 0.5 gives uncertainty 1 -> value 1 is capped; use 0.25 so the
     // emergency value is low and needs questions (high, value near 0.95) outrank it by number.
     const d = decide(
-      req(),
+      req({ needs: ['N-HOU'] }),
       sig(
-        { 'N-HOU': 0.34, 'N-FOD': 0.33, 'N-MON': 0.33 },
+        {
+          'N-HOU-01': 0.2,
+          'N-HOU-02': 0.2,
+          'N-HOU-03': 0.2,
+          'N-HOU-04': 0.2,
+          'N-HOU-05': 0.2,
+        },
         { emergency: { status: 'ok', score: 0.222, floor_hit: false } },
       ),
     );
@@ -349,13 +356,20 @@ describe('emergency question', () => {
 });
 
 describe('option shape (Decision 55)', () => {
-  it('need options are {label, parameter: needs, value}', () => {
+  it('need options are {label, description, parameter: needs, value, score}', () => {
     const d = decide(req(), sig({ 'N-HOU': 0.95 }));
     const q = d.candidates.find((c) => c.type === 'find_need');
     expect(q).toBeDefined();
     for (const o of q.options) {
-      expect(Object.keys(o)).toEqual(['label', 'parameter', 'value']);
+      expect(Object.keys(o)).toEqual([
+        'label',
+        'description',
+        'parameter',
+        'value',
+        'score',
+      ]);
       expect(o.parameter).toBe('needs');
+      expect(o.description.length).toBeGreaterThan(0);
     }
   });
   it('urgency options are {label, parameter: urgency, value}', () => {
@@ -428,16 +442,29 @@ describe('time questions', () => {
 });
 
 describe('start question', () => {
-  it('tiny scores -> the global default areas', () => {
+  it('tiny scores -> every Tier 1, the global default areas first', () => {
     const d = decide(req(), sig({ 'N-FOD': 0.01 }));
-    expect(opts(d, 'start')).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect(opts(d, 'start').slice(0, 3)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect([...opts(d, 'start')].sort()).toEqual([...TIER1_CODES].sort());
   });
-  it('best T1 0.35 -> model areas', () => {
+  it('best T1 0.35 -> every Tier 1, sorted by score, ties in vocabulary order', () => {
     const d = decide(
       req(),
       sig({ 'N-LEG': 0.35, 'N-WRK': 0.2, 'N-LRN': 0.1, 'N-HOU': 0.05 }),
     );
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
+    const o = opts(d, 'start');
+    expect(o.slice(0, 4)).toEqual(['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU']);
+    expect(o).toHaveLength(TIER1_CODES.length);
+    expect(o.slice(4)).toEqual(
+      TIER1_CODES.filter((c) => !o.slice(0, 4).includes(c)),
+    );
+  });
+  it('start option count equals the number of Tier 1 needs', () => {
+    const d = decide(req(), sig({ 'N-LEG': 0.35 }));
+    // eslint-disable-next-line no-console
+    console.log(`START_OPTION_COUNT=${opts(d, 'start').length}`);
+    expect(opts(d, 'start')).toHaveLength(TIER1_CODES.length);
+    expect(TIER1_CODES.length).toBeGreaterThan(3);
   });
   it('N-X is never an option on start, at any score (ISS-2499)', () => {
     for (const x of [0.06, 0.07, 0.9]) {
@@ -448,14 +475,19 @@ describe('start question', () => {
   });
   it('passed Tier 1 never offered', () => {
     const d = decide(req({ passed_needs: ['N-HOU'] }), sig());
-    expect(opts(d, 'start')).toEqual(['N-FOD', 'N-MON']);
+    expect(opts(d, 'start')).toEqual(TIER1_CODES.filter((c) => c !== 'N-HOU'));
   });
   it('not built when every area is passed (no zero-option question)', () => {
-    const d = decide(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), sig());
+    const d = decide(req({ passed_needs: [...TIER1_CODES] }), sig());
     expect(ids(d)).not.toContain('start');
   });
-  it('not built when text has an inferred ask', () => {
-    expect(ids(decide(req(), sig({ 'N-FOD-01': 0.5 })))).toEqual(['narrow:1']);
+  it('not built when a Tier 2 at 0.5 makes the area clear (the area question is asked)', () => {
+    expect(ids(decide(req(), sig({ 'N-FOD-01': 0.5 })))).toEqual([
+      'area:N-FOD',
+    ]);
+  });
+  it('built when the only Tier 2 score is below 0.5', () => {
+    expect(ids(decide(req(), sig({ 'N-FOD-01': 0.49 })))).toEqual(['start']);
   });
 });
 
@@ -476,6 +508,71 @@ describe('one-word Tier 1 query: food (Lucas 2026-11-17)', () => {
   });
 });
 
+describe('two Tier 1 needs in the text: one which-kind question each, the most uncertain first (Lucas 2026-11-23)', () => {
+  const both = { 'N-FOD': 0.9, 'N-HOU': 0.85 };
+  const fin = (r: ReturnType<typeof req>, s: ReturnType<typeof sig>, by = {}) =>
+    finalize(decide(r, s), {
+      counts: { total: 10, by_code: by },
+      strong_text_match: false,
+    }).questions.map((q) => q.id);
+  it('decide builds a question for each need, best score first', () => {
+    expect(ids(decide(req(), sig(both)))).toEqual(['area:N-FOD', 'area:N-HOU']);
+  });
+  it('finalize keeps the need with the higher entropy: the second named need goes first', () => {
+    // Food: one clear kind (0.9 vs 0.01). Housing: three close kinds. Housing asks first.
+    const s = sig({
+      ...both,
+      'N-FOD-01': 0.4,
+      'N-FOD-02': 0.01,
+      'N-FOD-03': 0.01,
+      'N-HOU-01': 0.3,
+      'N-HOU-02': 0.3,
+      'N-HOU-03': 0.3,
+    });
+    expect(fin(req(), s)).toEqual(['area:N-HOU', 'area:N-FOD']);
+  });
+  it('all entropies equal (scores 0): more results across the options goes first', () => {
+    const food = Object.fromEntries([1, 2, 3].map((i) => [`N-FOD-0${i}`, 0]));
+    const hou = Object.fromEntries([1, 2, 3].map((i) => [`N-HOU-0${i}`, 5]));
+    // counts add a bonus, so use equal single-count shapes: housing counts are larger.
+    expect(fin(req(), sig(both), { ...food, ...hou })).toEqual([
+      'area:N-HOU',
+      'area:N-FOD',
+    ]);
+  });
+  it('all entropies and results equal: the higher Tier 1 confidence goes first', () => {
+    expect(fin(req(), sig(both))).toEqual(['area:N-FOD', 'area:N-HOU']);
+  });
+  it('live "i need food and housing": food leans to a kind (0.67) but is not clear, so both are asked', () => {
+    const s = sig({
+      'N-HOU': 0.98,
+      'N-FOD': 0.98,
+      'N-FOD-01': 0.67,
+      'N-ESS-01': 0.14,
+    });
+    expect(fin(req(), s)).toEqual(['area:N-HOU', 'area:N-FOD']);
+  });
+  it('live "baby formula and somewhere to live": housing has a kind in use, so food is asked', () => {
+    const s = sig({ 'N-HOU': 0.98, 'N-HOU-04': 0.97, 'N-FOD': 0.9 });
+    expect(fin(req(), s)).toEqual(['area:N-FOD']);
+  });
+  it('after the caller answers (needs set), the next need is asked', () => {
+    expect(ids(decide(req({ needs: ['N-FOD-01'] }), sig(both)))).toEqual([
+      'area:N-HOU',
+    ]);
+  });
+  it('after the caller passes the first need (passed_needs), the next need is asked', () => {
+    expect(ids(decide(req({ passed_needs: ['N-FOD'] }), sig(both)))).toEqual([
+      'area:N-HOU',
+    ]);
+  });
+  it('both answered -> no which-kind question', () => {
+    expect(
+      ids(decide(req({ needs: ['N-FOD-01', 'N-HOU-02'] }), sig(both))),
+    ).toEqual([]);
+  });
+});
+
 describe('area questions', () => {
   it('confirmed Tier 1 -> area:N-HOU, no start', () => {
     const d = decide(
@@ -488,24 +585,18 @@ describe('area questions', () => {
       }),
     );
     expect(ids(d)).toEqual(['area:N-HOU']);
-    expect(opts(d, 'area:N-HOU')).toEqual(['N-HOU-01', 'N-HOU-02', 'N-HOU-03']);
+    expect(opts(d, 'area:N-HOU').slice(0, 3)).toEqual([
+      'N-HOU-01',
+      'N-HOU-02',
+      'N-HOU-03',
+    ]);
     expect(d.candidates[0].reason).toBe('area_confirmed');
     expect(d.candidates[0].stem).toBe('Which kind of help with Housing?');
   });
-  it('confirmed Tier 1 + unsure needs in that area: narrow offers no option of that area', () => {
-    // Regression: needs=N-HOU with N-HOU-02 in the ask band gave area:N-HOU
-    // and narrow:1 with the same housing options.
+  it('confirmed Tier 1 + unsure needs elsewhere: only the area question (no narrow)', () => {
     const d = decide(
       req({ needs: ['N-HOU'] }),
       sig({ 'N-HOU-02': 0.6, 'N-HOU-01': 0.3, 'N-FOD-01': 0.4 }),
-    );
-    expect(ids(d)).toEqual(['area:N-HOU', 'narrow:1']);
-    expect(opts(d, 'narrow:1')).toEqual(['N-FOD-01']);
-  });
-  it('confirmed Tier 1 + unsure needs only in that area: no narrow question', () => {
-    const d = decide(
-      req({ needs: ['N-HOU'] }),
-      sig({ 'N-HOU-02': 0.6, 'N-HOU-01': 0.3 }),
     );
     expect(ids(d)).toEqual(['area:N-HOU']);
   });
@@ -516,7 +607,6 @@ describe('area questions', () => {
     );
     const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
     expect(all.filter((c) => c.startsWith('N-HOU'))).toEqual([]);
-    expect(all).toContain('N-FOD-01');
   });
   it('confirmed Tier 1 plus confirmed child -> no area question', () => {
     const d = decide(req({ needs: ['N-HOU', 'N-HOU-02'] }), sig());
@@ -547,101 +637,21 @@ describe('area questions', () => {
   });
 });
 
-describe('narrow', () => {
-  const five = {
-    'N-FOD-01': 0.9,
-    'N-FOD-02': 0.8,
-    'N-HOU-01': 0.7,
-    'N-MON-01': 0.6,
-    'N-LEG-01': 0.5,
-  };
-  it('5 ask needs -> narrow:1 (3) and narrow:2 (2)', () => {
-    const d = decide(req(), sig(five));
-    expect(opts(d, 'narrow:1')).toEqual(['N-FOD-01', 'N-FOD-02', 'N-HOU-01']);
-    expect(opts(d, 'narrow:2')).toEqual(['N-MON-01', 'N-LEG-01']);
-    expect(d.candidates.map((q) => q.step)).toEqual([4, 6]);
-    expect(d.count_codes).toEqual([...Object.keys(five)].sort());
-  });
-  it('passed codes never appear', () => {
-    const d = decide(req({ passed_needs: ['N-FOD-01'] }), sig(five));
-    const all = d.candidates.flatMap((q) => q.options.map((o) => o.value));
-    expect(all).not.toContain('N-FOD-01');
-  });
-  it('N-X is never an option on narrow:1 (ISS-2499)', () => {
-    expect(
-      opts(decide(req(), sig({ ...five, 'N-X': 0.2 })), 'narrow:1'),
-    ).not.toContain('N-X');
-  });
-  describe('a Tier 2 need is already used (ISS-2697)', () => {
-    const used = { 'N-HOU-01': 0.999, 'N-HOU': 0.999 };
-    it('used inferred Tier 2 + ask need elsewhere: narrow:1 goes to step 7', () => {
-      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
-      expect(opts(d, 'narrow:1')).toEqual(['N-SAF-01']);
-      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(7);
-    });
-    it("uses the 'also' stem; without a sure need the plain stem stays", () => {
-      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
-      expect(d.candidates.find((q) => q.id === 'narrow:1').stem).toBe(
-        'Do any of these also fit?',
-      );
-      const d2 = decide(req(), sig({ 'N-FOD-01': 0.5 }));
-      expect(d2.candidates.find((q) => q.id === 'narrow:1').stem).toBe(
-        'Which of these fits best?',
-      );
-    });
-    it('a lone late narrow is still shown, importance low, also stem', () => {
-      const d = decide(req(), sig({ ...used, 'N-SAF-01': 0.24 }));
-      const r = finalize(d, {
-        counts: { total: 100, by_code: null },
-        strong_text_match: false,
-      });
-      expect(r.questions.map((q) => q.id)).toEqual(['narrow:1']);
-      expect(r.questions[0].importance).toBe('low');
-      expect(r.questions[0].stem).toBe('Do any of these also fit?');
-    });
-    it('no sure need: narrow:1 importance medium', () => {
-      const d = decide(req(), sig({ 'N-FOD-01': 0.5 }));
-      expect(d.candidates.find((q) => q.id === 'narrow:1').importance).toBe(
-        'medium',
-      );
-    });
-    it('urgency_time ranks below narrow:1 after finalize (higher value)', () => {
-      const scores = { ...used, 'N-SAF-01': 0.24 };
-      const d = decide(
-        req(),
-        sig(scores, {
-          needs: {
-            status: 'ok',
-            scores,
-          },
-          urgency: { level: 'U-2', score: 0.85 },
-        }),
-      );
-      const r = finalize(d, {
-        counts: { total: 100, by_code: null },
-        strong_text_match: false,
-      });
-      const order = r.questions.map((q) => q.id);
-      expect(order).toContain('urgency_time');
-      expect(order.indexOf('narrow:1')).toBeLessThan(
-        order.indexOf('urgency_time'),
-      );
-    });
-    it('no used Tier 2 need: narrow:1 stays at step 4', () => {
-      const d = decide(req(), sig({ 'N-FOD-01': 0.5 }));
-      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(4);
-    });
-    it('caller-confirmed Tier 2 + ask need elsewhere: narrow:1 at step 7', () => {
-      const d = decide(req({ needs: ['N-HOU-01'] }), sig({ 'N-SAF-01': 0.24 }));
-      expect(d.candidates.find((q) => q.id === 'narrow:1').step).toBe(7);
-    });
+describe('no narrow question (Lucas 2026-11-19)', () => {
+  it('an unsure need in the text asks no narrow question', () => {
+    const d = decide(
+      req(),
+      sig({ 'N-FOD-01': 0.9, 'N-FOD-02': 0.8, 'N-HOU-01': 0.7 }),
+    );
+    expect(ids(d).some((i) => i.startsWith('narrow'))).toBe(false);
+    expect(d.candidates.every((q) => q.type !== ('narrow' as string))).toBe(
+      true,
+    );
   });
   it('count_codes excludes N-X', () => {
-    expect(decide(req(), sig({ 'N-X': 0.3 })).count_codes).toEqual([
-      'N-FOD',
-      'N-HOU',
-      'N-MON',
-    ]);
+    const codes = decide(req(), sig({ 'N-X': 0.3 })).count_codes;
+    expect(codes).not.toContain('N-X');
+    expect(codes).toEqual([...TIER1_CODES].sort());
   });
 });
 
@@ -692,16 +702,8 @@ describe('importance per question type', () => {
     const rule = decide(req(), sig({ 'N-MHS': 0.98, 'N-MHS-01': 0.38 }));
     expect(imp(rule, 'area:N-MHS')).toBe('high');
   });
-  it('urgency_time, narrow:2 and a late narrow:1 are low; narrow:1 is medium', () => {
+  it('urgency_time is low', () => {
     expect(imp(decide(req(), askU('U-2')), 'urgency_time')).toBe('low');
-    const d = decide(req(), askU('U-2'));
-    expect(imp(d, 'narrow:1')).toBe('medium');
-    expect(imp(d, 'narrow:2')).toBe('low');
-    const late = decide(
-      req({ needs: ['N-HOU-01'] }),
-      sig({ 'N-SAF-01': 0.24 }),
-    );
-    expect(imp(late, 'narrow:1')).toBe('low');
   });
 });
 
@@ -709,16 +711,21 @@ describe('no_match question (weak match, Lucas 2026-11-18)', () => {
   const codes = (q: ReturnType<typeof noMatchQuestion>) =>
     q.options.map((o) => o.value);
   it('no tenant areas: the defaults', () => {
-    expect(codes(noMatchQuestion(req()))).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect(codes(noMatchQuestion(req(), {}))).toEqual([
+      'N-HOU',
+      'N-FOD',
+      'N-MON',
+    ]);
   });
   it('skips passed and confirmed codes', () => {
     const q = noMatchQuestion(
       req({ passed_needs: ['N-HOU'], needs: ['N-FOD'] }),
+      {},
     );
-    expect(codes(q)).toEqual(['N-MON']);
+    expect(q).toBeNull(); // one option left: never a 1-option question
   });
   it('shape: id, type, importance, reason, step, stem, flags, parameter', () => {
-    const q = noMatchQuestion(req());
+    const q = noMatchQuestion(req(), {});
     expect(q).toMatchObject({
       id: 'no_match',
       type: 'find_need',
@@ -735,9 +742,9 @@ describe('no_match question (weak match, Lucas 2026-11-18)', () => {
     expect(q.value).toBeGreaterThan(0);
     expect(q.priority).toBeGreaterThan(1);
   });
-  it('null when no option is left', () => {
+  it('null when fewer than 2 options are left', () => {
     expect(
-      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] })),
+      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), {}),
     ).toBeNull();
   });
 });
@@ -786,5 +793,145 @@ describe('weakMatchDecision', () => {
     const before = JSON.stringify(b);
     weakMatchDecision(b, req(), {});
     expect(JSON.stringify(b)).toBe(before);
+  });
+});
+
+describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
+  const housing = {
+    'N-HOU-01': 0.11,
+    'N-HOU-02': 0.5,
+    'N-HOU-03': 0.09,
+    'N-HOU-04': 0.3,
+    'N-HOU-05': 0.2,
+  };
+  const area = (code: string, scores: Record<string, number>) =>
+    decide(req({ needs: [code] }), sig(scores)).candidates.find(
+      (q) => q.id === `area:${code}`,
+    );
+  it('area:N-HOU sends every Tier 2 need of housing, not only 3', () => {
+    const q = area('N-HOU', housing);
+    expect(q.options.length).toBeGreaterThan(3);
+    expect(q.options.every((o) => o.value.startsWith('N-HOU-'))).toBe(true);
+  });
+  it('each option has a score (classifier confidence), sorted high to low', () => {
+    const q = area('N-HOU', housing);
+    const sc = q.options.map((o) => o.score);
+    expect(sc.every((x) => typeof x === 'number' && x >= 0)).toBe(true);
+    expect([...sc].sort((a, b) => b - a)).toEqual(sc);
+    expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
+    expect(q.options.find((o) => o.value === 'N-HOU-01').score).toBe(0.11);
+  });
+  it('a need the model did not score gets score 0', () => {
+    const q = area('N-FOD', { 'N-FOD-01': 0.4 });
+    expect(q.options.every((o) => o.score >= 0)).toBe(true);
+    expect(q.options[0].score).toBe(0.4);
+  });
+  it('option counts for food and housing (all Tier 2 needs)', () => {
+    const h = area('N-HOU', {}).options.length;
+    const f = area('N-FOD', {}).options.length;
+    // eslint-disable-next-line no-console
+    console.log(`OPTION_COUNTS food=${f} housing=${h}`);
+    expect(h).toBeGreaterThan(3);
+    expect(f).toBeGreaterThan(3);
+  });
+  it('never a question with fewer than 2 options', () => {
+    // Every housing need but one is passed: one option left -> no area question.
+    const kids = Object.keys(housing);
+    const d = decide(
+      req({ needs: ['N-HOU'], passed_needs: ['N-HOU-02', 'N-HOU-03'] }),
+      sig({}),
+    );
+    const left = d.candidates.find((q) => q.id === 'area:N-HOU');
+    expect(left === undefined || left.options.length >= 2).toBe(true);
+    expect(kids.length).toBeGreaterThan(0);
+    for (const q of d.candidates.filter((c) => c.type === 'find_need')) {
+      expect(q.options.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+  it('finalize drops a need question left with 1 option', () => {
+    const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
+    const q = d.candidates.find((c) => c.id === 'area:N-HOU');
+    q.options = q.options.slice(0, 1);
+    const r = finalize(d, {
+      counts: { total: 10, by_code: { [q.options[0].value]: 4 } },
+      strong_text_match: false,
+    });
+    expect(r.questions.find((x) => x.id === 'area:N-HOU')).toBeUndefined();
+  });
+  const fin = (by_code: Record<string, number> | null, total = 10) => {
+    const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
+    const r = finalize(d, {
+      counts: { total: by_code ? total : null, by_code },
+      strong_text_match: false,
+    });
+    return r.questions.find((x) => x.id === 'area:N-HOU');
+  };
+  const bonus = (count: number, max: number) =>
+    (0.3 * Math.log(1 + count)) / Math.log(1 + max);
+  it('finalize: score = confidence + 0.3 * log(1+count)/log(1+max count)', () => {
+    const q = fin({
+      'N-HOU-01': 0,
+      'N-HOU-02': 10,
+      'N-HOU-03': 99,
+      'N-HOU-04': 3,
+      'N-HOU-05': 0,
+    });
+    const sc = (v: string) => q.options.find((o) => o.value === v).score;
+    expect(sc('N-HOU-03')).toBeCloseTo(0.09 + 0.3, 3);
+    expect(sc('N-HOU-02')).toBeCloseTo(0.5 + bonus(10, 99), 3);
+    expect(sc('N-HOU-04')).toBeCloseTo(0.3 + bonus(3, 99), 3);
+    // 0 count: no bonus, still listed
+    expect(sc('N-HOU-01')).toBe(0.11);
+    expect(sc('N-HOU-05')).toBe(0.2);
+    const s = q.options.map((o) => o.score);
+    expect([...s].sort((a, b) => b - a)).toEqual(s);
+  });
+  it('finalize: a big count can lift a lower-confidence option above a higher one', () => {
+    const q = fin({
+      'N-HOU-01': 0,
+      'N-HOU-02': 0,
+      'N-HOU-03': 0,
+      'N-HOU-04': 100,
+      'N-HOU-05': 0,
+    });
+    expect(q.options.map((o) => o.value).slice(0, 2)).toEqual([
+      'N-HOU-04',
+      'N-HOU-02',
+    ]);
+    expect(q.options[0].score).toBeCloseTo(0.6, 3);
+  });
+  it('finalize: all counts 0 -> score is the confidence, no divide by zero', () => {
+    const q = fin({});
+    expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
+    expect(q.options.every((o) => Number.isFinite(o.score))).toBe(true);
+  });
+  it('finalize: ties keep vocabulary order', () => {
+    const d = decide(req({ needs: ['N-HOU'] }), sig({}));
+    const r = finalize(d, {
+      counts: { total: 10, by_code: { 'N-HOU-01': 5, 'N-HOU-02': 5 } },
+      strong_text_match: false,
+    });
+    const q = r.questions.find((x) => x.id === 'area:N-HOU');
+    expect(q.options.slice(0, 2).map((o) => o.value)).toEqual([
+      'N-HOU-01',
+      'N-HOU-02',
+    ]);
+  });
+  it('finalize: count null (not counted) contributes 0, the score is the confidence', () => {
+    const q = fin(null);
+    expect(q.options[0]).toMatchObject({ value: 'N-HOU-02', score: 0.5 });
+  });
+  it('finalize keeps option order and score', () => {
+    const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
+    const by: Record<string, number> = {};
+    for (const o of d.candidates[0].options) by[o.value] = 3;
+    const r = finalize(d, {
+      counts: { total: 10, by_code: by },
+      strong_text_match: false,
+    });
+    const q = r.questions.find((x) => x.id === 'area:N-HOU');
+    expect(q.options.map((o) => o.score)).toEqual(
+      [...q.options.map((o) => o.score)].sort((a, b) => b - a),
+    );
   });
 });

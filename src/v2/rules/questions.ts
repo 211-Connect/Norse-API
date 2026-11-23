@@ -1,9 +1,5 @@
-import {
-  areaRuleTarget,
-  confirmedCodes,
-  NeedStatesResult,
-  passedCodes,
-} from './bands';
+import { confirmedCodes, passedCodes } from './bands';
+import { likelyAreas, needLevel, openAreas } from './need-level';
 import {
   CUTOFFS,
   DEFAULT_HOTLINES,
@@ -12,11 +8,11 @@ import {
   STEMS,
 } from './config';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
+import { needText } from './need-text';
 import { scoreOf } from './scores';
 import {
   childrenOf,
   displayOf,
-  isTier1,
   isTier2,
   isKnownCode,
   needOptions,
@@ -27,7 +23,6 @@ import {
 import {
   EmergencyBand,
   Question,
-  QuestionImportance,
   QuestionOption,
   RulesRequest,
   RulesSignals,
@@ -51,15 +46,91 @@ const EMERGENCY_OPTIONS: QuestionOption[] = [
   { label: LABELS.emergency.safeToday, parameter: 'urgency', value: 'U-1' },
   { label: LABELS.emergency.safeSoon, parameter: 'urgency', value: 'U-2' },
 ];
-const needOption = (code: string): QuestionOption => ({
-  label: displayOf(code),
-  parameter: 'needs',
-  value: code,
-});
+/** A question never has fewer options than this (Lucas 2026-11-19: no 1-option questions). */
+export const MIN_OPTIONS = 2;
 
-/** A question that offers need codes (start, area, narrow). */
-export const asksNeeds = (q: Question): boolean =>
-  q.type === 'find_need' || q.type === 'narrow';
+/** Weight of the count bonus in the option score (finalize), Lucas 2026-11-19. */
+export const COUNT_BONUS_WEIGHT = 0.3;
+
+/**
+ * Open point 4.10 Q2, decided by David 2026-11-23 (yes): a need question whose
+ * only option with services sits next to 0-count (marked) options is still a
+ * real choice. false = count only options with services (null counts count as
+ * present).
+ */
+export const ONE_OPTION_WITH_SERVICES_IS_CHOICE = true;
+
+/** Whether a need question keeps enough options (finalize, after the counts). */
+export function hasEnoughOptions(
+  needOpts: { results_count?: number | null }[],
+  oneOptionWithServicesIsChoice: boolean = ONE_OPTION_WITH_SERVICES_IS_CHOICE,
+): boolean {
+  if (needOpts.length < MIN_OPTIONS) return false;
+  if (oneOptionWithServicesIsChoice) return true;
+  const present = needOpts.filter((o) =>
+    o.results_count === null || o.results_count === undefined
+      ? true
+      : o.results_count > 0,
+  );
+  return present.length >= MIN_OPTIONS;
+}
+
+/**
+ * Tier 1 areas the model puts in play for the query (score of 0.05 or more),
+ * best score first, ties in vocabulary order. Codes the caller confirmed or
+ * passed are left out. [] when the needs signal failed.
+ */
+export function areasInPlay(
+  req: RulesRequest,
+  signals: RulesSignals,
+): string[] {
+  if (signals.needs.status !== 'ok') return [];
+  const scores = signals.needs.scores ?? {};
+  const confirmed = confirmedCodes(req);
+  const passed = passedCodes(req);
+  return TIER1_CODES.filter(
+    (c) =>
+      !confirmed.includes(c) &&
+      !passed.has(c) &&
+      scoreOf(scores, c) >= CUTOFFS.spread.areaInPlayMin,
+  ).sort((a, b) => scoreOf(scores, b) - scoreOf(scores, a));
+}
+
+/**
+ * Rule R4's areas in play: `areasInPlay`, but only for a query of 1 to
+ * `CUTOFFS.spread.maxContentWords` content words (else none).
+ */
+export function areasInPlayForSpread(
+  req: RulesRequest,
+  signals: RulesSignals,
+): string[] {
+  const n = req.content_words?.length ?? 0;
+  return n >= 1 && n <= CUTOFFS.spread.maxContentWords
+    ? areasInPlay(req, signals)
+    : [];
+}
+
+/** `score` is the classifier score of the need, 0..1 (0 when the model gave none). */
+const needOption = (
+  code: string,
+  score: number,
+  tenant: TenantContext,
+): QuestionOption => {
+  const text = needText(code, {
+    tenantId: tenant.tenant_id,
+    locale: tenant.locale,
+  });
+  return {
+    label: text.display,
+    description: text.description,
+    parameter: 'needs',
+    value: code,
+    score,
+  };
+};
+
+/** A question that offers need codes (start, area, no_match). */
+export const asksNeeds = (q: Question): boolean => q.type === 'find_need';
 
 const hotlinesOf = (tenant: TenantContext) =>
   tenant.hotlines?.length ? tenant.hotlines : DEFAULT_HOTLINES;
@@ -153,11 +224,14 @@ function fallbackAreas(eligible: (code: string) => boolean): string[] {
  * Decision 7). The model cannot vouch for it: uncertainty is 1. Null when no
  * option is left.
  */
-export function noMatchQuestion(req: RulesRequest): Question | null {
+export function noMatchQuestion(
+  req: RulesRequest,
+  tenant: TenantContext,
+): Question | null {
   const confirmed = confirmedCodes(req);
   const passed = passedCodes(req);
   const picks = fallbackAreas((c) => !confirmed.includes(c) && !passed.has(c));
-  if (picks.length === 0) return null;
+  if (picks.length < MIN_OPTIONS) return null;
   const q = question({
     id: 'no_match',
     type: 'find_need',
@@ -165,7 +239,7 @@ export function noMatchQuestion(req: RulesRequest): Question | null {
     reason: 'weak_match',
     step: 2,
     stem: STEMS.noMatch,
-    options: picks.map(needOption),
+    options: picks.map((c) => needOption(c, 0, tenant)),
     ...needsFlags,
   });
   q.uncertainty = 1;
@@ -180,7 +254,8 @@ export function buildCandidates(
   tenant: TenantContext,
   band: EmergencyBand,
   urgency: UrgencyState,
-  states: NeedStatesResult,
+  /** The hits do not hold the query words (D1): a likely kind settles nothing. */
+  matchNone = false,
 ): Question[] {
   const out: Question[] = [];
 
@@ -249,23 +324,24 @@ export function buildCandidates(
     }
     const eligible = (c: string) =>
       !confirmed.includes(c) && !passed.has(c) && !lockedAreas.has(tier1Of(c));
-    const byScore = (a: string, b: string) => sc(b) - sc(a) || cmp(a, b);
+    // Stable sort: ties keep vocabulary order.
+    const byScore = (a: string, b: string) => sc(b) - sc(a);
+    // Every eligible Tier 2 need of the area, best score first. The page
+    // shows the top ones and puts the rest under "Show more".
     const topChildren = (t1: string) =>
-      childrenOf(t1)
-        .filter(eligible)
-        .sort(byScore)
-        .slice(0, CUTOFFS.optionsPerQuestion);
+      childrenOf(t1).filter(eligible).sort(byScore);
 
     const areaQuestion = (
       t1: string,
       reason: 'area_confirmed' | 'area_only',
+      importance: 'high' | 'medium' = 'high',
     ): Question | null => {
-      const options = topChildren(t1).map(needOption);
-      if (options.length === 0) return null;
+      const options = topChildren(t1).map((c) => needOption(c, sc(c), tenant));
+      if (options.length < MIN_OPTIONS) return null;
       return question({
         id: `area:${t1}`,
         type: 'find_need',
-        importance: 'high',
+        importance,
         reason,
         step: 3,
         stem: STEMS.area.replace('{area}', displayOf(t1)),
@@ -274,112 +350,81 @@ export function buildCandidates(
       });
     };
 
-    // 3. area confirmed
-    const areaConfirmed = confirmed.filter(
-      (c) =>
-        isTier1(c) && !confirmed.some((d) => isTier2(d) && tier1Of(d) === c),
-    );
-    let areaQuestionCount = 0;
-    // Areas that already have an area question: their needs are not offered
-    // again in a narrow question of the same response.
-    const askedAreas = new Set<string>();
-    for (const t1 of areaConfirmed) {
-      const q = areaQuestion(t1, 'area_confirmed');
-      if (q) {
-        out.push(q);
-        areaQuestionCount++;
-        askedAreas.add(t1);
-      }
-    }
+    const level = needLevel(req, signals, matchNone);
 
-    // 4. area rule
-    const target = areaRuleTarget(req, signals, states);
-    let areaRuleFired = false;
-    if (target && !lockedAreas.has(target) && !areaConfirmed.includes(target)) {
-      const q = areaQuestion(target, 'area_only');
-      if (q) {
-        out.push(q);
-        areaQuestionCount++;
-        areaRuleFired = true;
-      }
-    }
-
-    if (!areaRuleFired) {
-      // 5. start
-      if (
-        confirmed.length === 0 &&
-        states.needs.length === 0 &&
-        areaQuestionCount === 0
-      ) {
-        const eligibleT1 = TIER1_CODES.filter(eligible).sort(byScore);
-        let picks: string[];
-        if (
-          eligibleT1.length > 0 &&
-          sc(eligibleT1[0]) >= CUTOFFS.start.modelAreasMin
-        ) {
-          picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
-        } else {
-          picks = fallbackAreas(eligible);
-        }
-        const options = picks.map(needOption);
-        if (options.length > 0)
-          out.push(
-            question({
-              id: 'start',
-              type: 'find_need',
-              importance: 'high',
-              reason: 'no_need',
-              step: 2,
-              stem: STEMS.start,
-              options,
-              ...needsFlags,
-            }),
-          );
-      }
-
-      // 6. narrow
-      // ISS-2697 rule: when a Tier 2 need is already used (any source), the
-      // narrow questions about other unsure needs go to the bottom of the order.
-      const sureTier2 = states.needs.some(
-        (s) => s.state === 'use' && isTier2(s.code),
-      );
-      const asks = states.inferredAsk
-        .map((s) => s.code)
-        .filter((c) => eligible(c) && !askedAreas.has(tier1Of(c)))
-        .sort(byScore);
-      const g1 = asks.slice(0, CUTOFFS.optionsPerQuestion).map(needOption);
-      const g2 = asks
-        .slice(CUTOFFS.optionsPerQuestion, 2 * CUTOFFS.optionsPerQuestion)
-        .map(needOption);
-      const narrow = (
-        id: 'narrow:1' | 'narrow:2',
-        importance: QuestionImportance,
-        step: number,
-        options: QuestionOption[],
-      ): Question =>
-        question({
-          id,
-          type: 'narrow',
-          importance,
-          reason: 'unsure_needs',
-          step,
-          stem: sureTier2 ? STEMS.narrowAlso : STEMS.narrow,
-          options,
-          ...needsFlags,
-        });
-      if (g1.length > 0) {
-        out.push(
-          narrow(
-            'narrow:1',
-            sureTier2 ? 'low' : 'medium',
-            sureTier2 ? 7 : 4,
-            g1,
-          ),
+    // 3. rule R3: one question per open area (finalize orders them)
+    if (level === 'area') {
+      for (const t1 of openAreas(req, signals, matchNone)) {
+        const q = areaQuestion(
+          t1,
+          confirmed.includes(t1) ? 'area_confirmed' : 'area_only',
         );
+        if (q) out.push(q);
       }
-      if (g2.length > 0) {
-        out.push(narrow('narrow:2', 'low', sureTier2 ? 8 : 6, g2));
+    }
+    // Rule C: a likely kind shows results; its area asks 'which kind' quietly (importance medium).
+    if (level !== 'unclear') {
+      for (const t1 of likelyAreas(req, signals, matchNone)) {
+        const q = areaQuestion(t1, 'area_only', 'medium');
+        if (q) out.push(q);
       }
+    }
+
+    // 4. rule R4: no clear area. The areas in play decide the question; the
+    // start question is the fallback (and rule R5's only question).
+    if (level === 'unclear') {
+      const inPlay = areasInPlayForSpread(req, signals);
+      if (inPlay.length >= 2) {
+        const word = req.query ?? req.content_words?.join(' ') ?? '';
+        out.push(
+          question({
+            id: 'spread',
+            type: 'find_need',
+            importance: 'high',
+            reason: 'several_areas',
+            step: 2,
+            stem: STEMS.spread.replace('{word}', word),
+            options: inPlay.map((c) => needOption(c, sc(c), tenant)),
+            ...needsFlags,
+          }),
+        );
+      } else if (inPlay.length === 1) {
+        const q = areaQuestion(inPlay[0], 'area_only');
+        if (q) out.push(q);
+      }
+
+      // 5. start
+      const eligibleT1 = TIER1_CODES.filter(eligible).sort(byScore);
+      // Every eligible Tier 1 need (Lucas 2026-11-19), best score first.
+      // When the model cannot rank, the global default areas come first,
+      // then the rest in vocabulary order.
+      let picks: string[];
+      if (
+        eligibleT1.length > 0 &&
+        sc(eligibleT1[0]) >= CUTOFFS.start.modelAreasMin
+      ) {
+        picks = eligibleT1;
+      } else {
+        const top = fallbackAreas(eligible);
+        picks = [
+          ...top,
+          ...TIER1_CODES.filter((c) => eligible(c) && !top.includes(c)),
+        ];
+      }
+      const options = picks.map((c) => needOption(c, sc(c), tenant));
+      if (options.length >= MIN_OPTIONS)
+        out.push(
+          question({
+            id: 'start',
+            type: 'find_need',
+            importance: 'high',
+            reason: 'no_need',
+            step: 2,
+            stem: STEMS.start,
+            options,
+            ...needsFlags,
+          }),
+        );
     }
   }
 

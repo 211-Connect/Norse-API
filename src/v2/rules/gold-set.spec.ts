@@ -2,6 +2,8 @@
 import { decide, finalize } from './engine';
 import { req } from '../../common/testing/v2-rules-helpers';
 import { Question, RulesSignals } from './types';
+import { contentWords } from '../../search/internal/text-matching/word-rarity';
+import { modelText } from '../search/model-text';
 
 /**
  * Question-order gold set (ISS-2697, rules engine).
@@ -22,20 +24,22 @@ import { Question, RulesSignals } from './types';
  */
 const MIN_PASS = 378;
 
+/** Measured count with blocking questions only (Lucas 2026-11-23). */
+const MEASURED_PASS = 385;
+
 /**
  * Row ids (`i`) that fail on development when MIN_PASS was measured. Only
  * MIN_PASS blocks a merge. When a row's result differs from this list, the
  * test prints which rows changed, so a swap (some rows break, others get
  * fixed, the count holds) shows up in the run output instead of passing
- * silently. Update the list together with MIN_PASS.
+ * silently. Update the list together with MEASURED_PASS.
  */
 const KNOWN_FAILING = new Set([
-  3, 6, 17, 21, 24, 31, 34, 35, 43, 46, 48, 52, 60, 62, 65, 74, 80, 97, 101,
-  110, 120, 121, 123, 126, 132, 135, 142, 147, 152, 153, 159, 172, 174, 179,
-  180, 186, 191, 194, 196, 201, 205, 216, 217, 219, 221, 228, 234, 236, 243,
-  256, 257, 258, 259, 263, 264, 266, 273, 275, 278, 281, 291, 294, 304, 306,
-  307, 311, 327, 329, 338, 339, 341, 344, 351, 356, 364, 369, 372, 376, 384,
-  388, 417,
+  3, 21, 24, 26, 31, 35, 42, 43, 46, 52, 60, 62, 65, 71, 74, 80, 85, 90, 93, 97,
+  98, 101, 110, 120, 121, 123, 135, 138, 142, 143, 147, 149, 153, 155, 159, 172,
+  179, 180, 186, 191, 194, 221, 228, 230, 234, 256, 257, 259, 263, 264, 266,
+  273, 278, 281, 291, 294, 303, 306, 307, 311, 338, 341, 344, 351, 356, 361,
+  364, 369, 372, 384, 388, 394, 417, 435,
 ]);
 
 interface Want {
@@ -83,14 +87,31 @@ function run(row: Row) {
     urgency: row.urgency,
     emergency: { status: 'ok', ...row.emergency },
   };
-  const decision = decide(req({ has_text: true }), signals, {});
+  const decision = decide(
+    req({
+      has_text: true,
+      query: modelText(row.query),
+      content_words: contentWords(row.query, 'en'),
+    }),
+    signals,
+    {},
+  );
   const byCode: Record<string, number> = {};
   for (const c of decision.count_codes) byCode[c] = 10;
   const clar = finalize(decision, {
     counts: { total: 100, by_code: byCode },
     strong_text_match: false,
   });
-  return { decision, questions: clar.questions };
+  // A question counts as asked only when it blocks (importance high or
+  // critical). A quiet 'medium' or 'low' question shows beside the results, and
+  // the draft key lists blocking questions only; `strict` keeps every question.
+  const blocking = (q: Question) =>
+    q.importance === 'high' || q.importance === 'critical';
+  return {
+    decision,
+    questions: clar.questions.filter(blocking),
+    strict: clar.questions,
+  };
 }
 
 function matches(acc: Acc, out: ReturnType<typeof run>): boolean {
@@ -137,8 +158,15 @@ describe('question-order gold set (459 real queries, saved scores)', () => {
   });
 
   it(`passes at least ${MIN_PASS} of 459`, () => {
-    console.log(`gold set: ${pass} of ${results.length} pass`);
-    expect(KNOWN_FAILING.size).toBe(459 - MIN_PASS);
+    const strictPass = results.filter((r) =>
+      r.row.acceptable.some((a) =>
+        matches(a, { ...r.out, questions: r.out.strict }),
+      ),
+    ).length;
+    console.log(
+      `gold set: ${pass} of ${results.length} pass (blocking questions only); ${strictPass} with every question`,
+    );
+    expect(KNOWN_FAILING.size).toBe(459 - MEASURED_PASS);
     const regressed = results.filter(
       (r) => !r.ok && !KNOWN_FAILING.has(r.row.i),
     );
