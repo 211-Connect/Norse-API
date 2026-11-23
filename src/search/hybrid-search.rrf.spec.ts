@@ -44,7 +44,13 @@ const mainResponse = {
   aggregations: {},
 };
 
-type Mode = 'ok' | 'reject-vector' | 'reject-page' | 'empty-lists';
+type Mode =
+  | 'ok'
+  | 'reject-vector'
+  | 'reject-all'
+  | 'reject-proximity'
+  | 'empty-lists'
+  | 'long-lists';
 
 // Lists as Elasticsearch would return them. Hand-worked RRF (k = 60):
 //   b = 1/62 + 1/61 = 0.032522
@@ -75,7 +81,16 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       })),
     },
   });
-  const isList = (r: any) => r._source === false && r.size === 100;
+  const isProximity = (r: any) =>
+    r._source === false &&
+    Array.isArray(r.sort) &&
+    !r.query?.bool?.should &&
+    r.query?.bool?.filter?.some?.((f: any) => f.ids);
+  const isList = (r: any) =>
+    r._source === false && r.size === 100 && !Array.isArray(r.sort);
+  // The filter of the main page request, whatever the sort made of the query.
+  const mainFilterOf = (r: any) =>
+    r.query.pinned ? r.query.pinned.organic.bool.filter : r.query.bool.filter;
   const kindOf = (r: any) =>
     r.query.script_score
       ? r.query.script_score.query.bool.should
@@ -99,10 +114,38 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       }
       requests.push(req);
 
+      if (isProximity(req)) {
+        if (mode === 'reject-proximity') {
+          return Promise.reject(new Error('proximity down'));
+        }
+        // Nearest first: the reverse of the pool order, d, c, a, b for FUSED.
+        const pool: string[] = req.query.bool.filter.find((f: any) => f.ids).ids
+          .values;
+        return Promise.resolve({
+          hits: {
+            hits: [...pool].reverse().map((id, i) => ({
+              _id: id,
+              sort: [1000 * (i + 1)],
+            })),
+          },
+        });
+      }
       if (isList(req)) {
         const kind = kindOf(req);
+        if (mode === 'reject-all') {
+          return Promise.reject(new Error('es down'));
+        }
         if (kind === 'vector' && mode === 'reject-vector') {
           return Promise.reject(new Error('es down'));
+        }
+        if (mode === 'long-lists' && kind !== 'taxonomy') {
+          const prefix = kind === 'keyword' ? 'k' : 'v';
+          return Promise.resolve(
+            hitsOf(
+              Array.from({ length: 100 }, (_, i) => `${prefix}${i}`),
+              kind === 'keyword' ? 12.5 : 0.61,
+            ),
+          );
         }
         if (
           mode === 'empty-lists' &&
@@ -152,38 +195,18 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
           hits: { hits: [{ _id: 'top', _score: 200 }] },
         });
       }
-      // fused page fast path: stats request (totals and facets)
-      if (
-        req.size === 0 &&
-        req.track_total_hits === true &&
-        req.aggs &&
-        req.query?.bool?.filter &&
-        !req.query.bool.filter.some((f: any) => f.ids)
-      ) {
+      // The main page request: the total is the kept count (ids filter).
+      const idsFilter = (
+        req.query?.pinned
+          ? req.query.pinned.organic.bool?.filter
+          : req.query?.bool?.filter
+      )?.find?.((f: any) => f.ids);
+      if (idsFilter && req.size > 0 && req.track_total_hits === true) {
         return Promise.resolve({
-          took: 7,
-          timed_out: false,
-          _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
-          hits: { total: { value: 1234, relation: 'eq' }, hits: [] },
-          aggregations: { stats_agg: { buckets: [] } },
-        });
-      }
-      // fused page fast path: the page by id, returned in reversed order
-      const idsFilter = req.query?.bool?.filter?.find?.((f: any) => f.ids);
-      if (idsFilter && req.size <= 25 && req.track_total_hits === false) {
-        if (mode === 'reject-page') {
-          return Promise.reject(new Error('page down'));
-        }
-        return Promise.resolve({
-          took: 3,
-          timed_out: false,
-          _shards: { total: 1, successful: 1, skipped: 0, failed: 0 },
+          ...mainResponse,
           hits: {
-            hits: [...idsFilter.ids.values].reverse().map((id: string) => ({
-              _index: 'hybrid_search_resources_en',
-              _id: id,
-              _source: { name: id, facets: {}, facets_en: {} },
-            })),
+            ...mainResponse.hits,
+            total: { value: idsFilter.ids.values.length, relation: 'eq' },
           },
         });
       }
@@ -287,12 +310,13 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
 
     const main = mainRequest();
     const organic = main.query.pinned.organic;
-    const mainFilter = organic.function_score.query.bool.filter;
+    const mainFilter = organic.bool.filter;
     for (const req of sent) {
       expect(req.size).toBe(100);
       expect(req._source).toBe(false);
       const filter = filterOf(req);
-      expect(filter).toEqual(mainFilter);
+      // The main request adds the kept ids to the filters the lists use.
+      expect(mainFilter).toEqual([...filter, { ids: { values: FUSED } }]);
     }
 
     expect(main.query.pinned.ids).toEqual(FUSED);
@@ -304,7 +328,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       /^_score \+ 0\.001 \* Math\.max\(0, cosineSimilarity\(params\.qv, 'embedding'\)\)$/,
     );
     expect(tax.query.script_score.script.params.qv).toBeDefined();
-    expect(organic.function_score.query.bool.minimum_should_match).toBe(0);
+    expect(Object.keys(organic)).toEqual(['bool']);
     expect(main.size).toBe(25);
     expect(main.track_total_hits).toBe(true);
 
@@ -312,7 +336,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       true,
     );
     expect(response.search.hits.max_score).toBeNull();
-    expect(response.search.hits.total.value).toBe(1234);
+    expect(response.search.hits.total.value).toBe(FUSED.length);
   });
 
   // `_score` is nulled on a fused search because the pinned score means
@@ -329,24 +353,123 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(v1.search.hits.hits[0].sort).toEqual([1.7e38, 7]);
   });
 
-  it('3. v2 with coords: no list requests and no pinned query', async () => {
-    const response = await run({ coords: [-93.1, 44.9], distance: 25 });
+  const COORDS_Q = { coords: [-93.1, 44.9], distance: 25 };
+  const proximityRequests = () => requests.filter(isProximity);
 
-    expect(lists()).toHaveLength(0);
-    expect(mainRequest().query.pinned).toBeUndefined();
-    expect(response.search.hits.hits[0]._score).toBe(42);
-    expect(response.search.hits.max_score).toBe(42);
+  it('T1. v2 text + coords + sort relevance: fusion runs, a proximity list is sent, the main request has the ids filter', async () => {
+    const response = await run({ ...COORDS_Q, sort: 'relevance' });
+
+    expect(lists()).toHaveLength(3);
+    expect(proximityRequests()).toHaveLength(1);
+    const prox = proximityRequests()[0];
+    // The pool is the kept set; the filters are the list filters.
+    expect(prox.query.bool.filter).toContainEqual({ ids: { values: FUSED } });
+    expect(prox.size).toBe(FUSED.length);
+    const main = mainRequest();
+    expect(main.query.pinned.ids).toEqual(['b', 'c', 'a', 'd']);
+    expect(mainFilterOf(main)).toContainEqual({
+      ids: { values: expect.any(Array) },
+    });
+    // Membership never changes: the same ids as the relevance fusion.
+    expect([...main.query.pinned.ids].sort()).toEqual([...FUSED].sort());
+    expect(
+      mainFilterOf(main)
+        .find((f: any) => f.ids)
+        .ids.values.sort(),
+    ).toEqual([...FUSED].sort());
+    expect(response.search.hits.hits.every((h: any) => h._score === null)).toBe(
+      true,
+    );
   });
 
-  it.each(['name', 'organization', 'distance'] as const)(
-    '4. v2 with sort %s (no coords): fusion skipped, no list requests, no pinned query',
+  it('T2. v2 text + region + coords: no proximity request', async () => {
+    await run(
+      { ...COORDS_Q, sort: 'relevance' },
+      {
+        area: {
+          regionIds: ['r1'],
+          match: 'located_or_serving',
+          unlocated: 'virtual',
+        },
+      },
+    );
+
+    expect(lists()).toHaveLength(3);
+    expect(proximityRequests()).toHaveLength(0);
+    expect(mainRequest().query.pinned.ids).toEqual(FUSED);
+  });
+
+  it('T3. v2 text + sort distance + coords: fusion runs; ids and map-point filters on the page, count has ids only', async () => {
+    const response = await run(
+      { ...COORDS_Q, sort: 'distance' },
+      { countCodes: ['N-HOU'] },
+    );
+
+    expect(lists()).toHaveLength(3);
+    expect(proximityRequests()).toHaveLength(0);
+    expect(response.judges).toEqual({ keyword_top: 12.5, vector_top: 0.61 });
+
+    const main = mainRequest();
+    expect(main.query.pinned).toBeUndefined();
+    const filter = main.query.bool.filter;
+    expect(filter).toContainEqual({ ids: { values: FUSED } });
+    expect(filter).toContainEqual({ exists: { field: 'location.point' } });
+    expect(main.sort[0]._geo_distance).toBeDefined();
+    // The lists never see the map-point filter.
+    const hasPointFilter = { exists: { field: 'location.point' } };
+    for (const req of lists()) {
+      expect(filterOf(req)).not.toContainEqual(hasPointFilter);
+    }
+
+    const count = requests.find((r) => r.aggs?.need_counts);
+    expect(count.query.bool.filter).toContainEqual({
+      ids: { values: FUSED },
+    });
+    expect(count.query.bool.filter).not.toContainEqual(hasPointFilter);
+  });
+
+  it('T4. v2 text + sort name: fusion runs; the main request sorts by name over the ids filter', async () => {
+    await run({ sort: 'name' });
+
+    expect(lists()).toHaveLength(3);
+    const main = mainRequest();
+    expect(main.query.pinned).toBeUndefined();
+    expect(main.query.bool.filter).toContainEqual({ ids: { values: FUSED } });
+    expect(main.sort[0]).toEqual({
+      [HYBRID_SORT_FIELDS.name]: { order: 'asc' },
+    });
+  });
+
+  it.each(['organization', 'distance'] as const)(
+    'T4b. v2 text + sort %s (no coords): fusion runs',
     async (sort) => {
       await run({ sort });
 
-      expect(lists()).toHaveLength(0);
-      expect(mainRequest().query.pinned).toBeUndefined();
+      expect(lists()).toHaveLength(3);
+      expect(proximityRequests()).toHaveLength(0);
     },
   );
+
+  it('T5. 100 kept: the ids filter holds at most 100 ids and the total is the kept count; page 5 sends from=100', async () => {
+    mode = 'long-lists';
+    await build();
+    const response = await run({ page: 5, limit: 25 });
+
+    const main = requests.find((r) => r.size === 25 && r.min_score == null);
+    const ids = main.query.pinned.ids;
+    expect(ids).toHaveLength(100);
+    expect(mainFilterOf(main).find((f: any) => f.ids).ids.values).toEqual(ids);
+    expect(main.from).toBe(100);
+    expect(main.track_total_hits).toBe(true);
+    expect(response.search.hits.total.value).toBe(100);
+  });
+
+  it('T5b. page 2 with limit 3 over 4 kept ids: from=3 over the kept set', async () => {
+    await run({ page: 2, limit: 3 });
+    const main = requests.find((r) => r.size === 3 && r.min_score == null);
+    expect(main.from).toBe(3);
+    expect(main.query.pinned.ids).toEqual(FUSED);
+  });
 
   const NEEDS = [
     { code: 'N-FOD-01', tier: 'tier2', score: 0.98 },
@@ -385,7 +508,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     );
   });
 
-  it('5b. v2 fused with an active need boost, cutoff on: need list sent and the organic query keeps the boost', async () => {
+  it('5b. v2 fused with an active need boost, cutoff on: need list sent; every kept doc is pinned, so no scoring clauses', async () => {
     enabled = 'true';
     await build();
     await run({ relevance_cutoff: 'on' }, { needScores: NEEDS });
@@ -394,12 +517,14 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(lists()).toHaveLength(4);
     const main = mainRequest();
     expect(main.query.pinned).toBeDefined();
-    expect(JSON.stringify(main.query.pinned.organic)).toContain('rank_feature');
+    expect(JSON.stringify(main.query.pinned.organic)).not.toContain(
+      'rank_feature',
+    );
   });
 
-  it('5c. fused planned with an active need boost but one list rejects: the top-score request is sent and the organic query keeps the boost', async () => {
+  it('5c. every list rejects with an active need boost: the top-score request is sent and the organic query keeps the boost', async () => {
     enabled = 'true';
-    mode = 'reject-vector';
+    mode = 'reject-all';
     await build();
     await run({}, { needScores: NEEDS });
 
@@ -427,13 +552,56 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(lists()).toHaveLength(3);
   });
 
-  it('6. v2 with one list rejecting: no pinned query and the search resolves', async () => {
+  it('6. the vector list fails: keyword and taxonomy still fuse, no judges, a warning', async () => {
     mode = 'reject-vector';
+    const warn = jest.spyOn((service as any).logger, 'warn');
     const response = await run();
 
-    expect(mainRequest().query.pinned).toBeUndefined();
+    const main = mainRequest();
+    expect(main.query.pinned.ids).toEqual(['c', 'a', 'b']);
+    expect(response.judges).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('vector'));
+    expect(response.search.hits.total.value).toBe(3);
+  });
+
+  it('6b. no embedding (the vector list failed): keyword and taxonomy fuse, a warning', async () => {
+    jest
+      .spyOn(service, 'embedQuery')
+      .mockRejectedValue(new Error('embed down'));
+    const warn = jest.spyOn((service as any).logger, 'warn');
+    const response = await run();
+
+    expect(lists().map(kindOf)).toEqual(['keyword']);
+    expect(mainRequest().query.pinned.ids).toEqual(KEYWORD);
+    expect(response.judges).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('vector'));
+  });
+
+  it('6c. every list fails: the summed request (no ids filter, no pinned) and a warning', async () => {
+    mode = 'reject-all';
+    const warn = jest.spyOn((service as any).logger, 'warn');
+    const response = await run();
+
+    const main = mainRequest();
+    expect(main.query.pinned).toBeUndefined();
+    expect(JSON.stringify(main.query)).not.toContain('"ids"');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('summed'));
+    expect(response.judges).toBeUndefined();
     expect(response.search.hits.total.value).toBe(1234);
     expect(response.search.hits.hits[0]._score).toBe(42);
+  });
+
+  it('7. the proximity list fails: the relevance order stays and the membership is the kept set', async () => {
+    mode = 'reject-proximity';
+    const warn = jest.spyOn((service as any).logger, 'warn');
+    await run({ ...COORDS_Q, sort: 'relevance' });
+
+    const main = mainRequest();
+    expect(main.query.pinned.ids).toEqual(FUSED);
+    expect(mainFilterOf(main).find((f: any) => f.ids).ids.values).toEqual(
+      FUSED,
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('proximity'));
   });
 
   describe('weak-match judges and needFilter (ISS-2796, Lucas 2026-11-18)', () => {
@@ -448,20 +616,21 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       expect(response.judges).toEqual({ keyword_top: 0, vector_top: 0 });
     });
 
-    it('J3. a list rejects: no judges', async () => {
+    it('J3. the vector list rejects: no judges', async () => {
       mode = 'reject-vector';
       const response = await run();
       expect(response.judges).toBeUndefined();
     });
 
-    it('J4. non-fused paths (v1, coords, sort name): no judges', async () => {
+    it('J4. v1 has no judges; coords and any sort have them (fusion runs everywhere)', async () => {
       expect((await run({}, { rankingVersion: undefined })).judges).toBe(
         undefined,
       );
-      expect((await run({ coords: [-93.1, 44.9], distance: 25 })).judges).toBe(
-        undefined,
-      );
-      expect((await run({ sort: 'name' })).judges).toBe(undefined);
+      const judges = { keyword_top: 12.5, vector_top: 0.61 };
+      expect(
+        (await run({ coords: [-93.1, 44.9], distance: 25 })).judges,
+      ).toEqual(judges);
+      expect((await run({ sort: 'name' })).judges).toEqual(judges);
     });
 
     const needTerms = { terms: { sune_needs: ['N-HOU', 'N-FOD'] } };
@@ -500,15 +669,64 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     });
   });
 
-  it('7. pins request with v2 and relevance_cutoff on: no list requests and no pinned query', async () => {
-    const request: any = await service.buildPinsRequest({
-      headers,
-      query: { ...baseQuery, relevance_cutoff: 'on' },
-      rankingVersion: 'v2',
-    } as any);
+  describe('pins (plan rule 7)', () => {
+    const pins = (
+      q: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) =>
+      service.buildPinsRequest({
+        headers,
+        query: { ...baseQuery, ...q },
+        rankingVersion: 'v2',
+        ...extra,
+      } as any) as Promise<any>;
 
-    expect(lists()).toHaveLength(0);
-    expect(request.query.pinned).toBeUndefined();
+    it('P1. v2 text: the pins request carries the kept ids filter', async () => {
+      const request = await pins({});
+
+      expect(lists()).toHaveLength(3);
+      expect(request.query.pinned.ids).toEqual(FUSED);
+      expect(mainFilterOf(request)).toContainEqual({ ids: { values: FUSED } });
+    });
+
+    it('P2. v2 text with active needs: the need list joins the kept set', async () => {
+      enabled = 'true';
+      await build();
+      await pins({}, { needScores: NEEDS });
+
+      expect(lists().map(kindOf).sort()).toEqual([
+        'keyword',
+        'need',
+        'taxonomy',
+        'vector',
+      ]);
+    });
+
+    it('P3. v2 empty text: unchanged, no lists and no ids filter', async () => {
+      const request = await pins({ query: '' });
+
+      expect(lists()).toHaveLength(0);
+      expect(request.query.pinned).toBeUndefined();
+      expect(JSON.stringify(request.query)).not.toContain('"ids"');
+    });
+
+    it('P4. every list fails: pins keep today membership, with a warning', async () => {
+      mode = 'reject-all';
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      const request = await pins({});
+
+      expect(request.query.pinned).toBeUndefined();
+      expect(JSON.stringify(request.query)).not.toContain('"ids"');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('summed'));
+    });
+
+    it('P5. v1 pins: no lists', async () => {
+      await service.buildPinsRequest({
+        headers,
+        query: { ...baseQuery },
+      } as any);
+      expect(lists()).toHaveLength(0);
+    });
   });
 
   it('8. v2 with relevance_cutoff on: the lists carry the cutoff ids filter', async () => {
@@ -516,125 +734,41 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
 
     const sent = lists();
     expect(sent).toHaveLength(3);
-    const mainFilter =
-      mainRequest().query.pinned.organic.function_score.query.bool.filter;
+    const mainFilter = mainRequest().query.pinned.organic.bool.filter;
     const idsFilter = mainFilter.find((f: any) => f.ids);
     expect(idsFilter).toBeDefined();
     for (const req of sent) {
       const filter = filterOf(req);
-      expect(filter).toContainEqual(idsFilter);
+      // The cutoff ids filter, not the kept ids the main request adds last.
+      expect(
+        filter.filter((f: any) => f.ids).map((f: any) => f.ids.values),
+      ).toHaveLength(1);
+      expect(filter.find((f: any) => f.ids).ids.values).not.toEqual(FUSED);
     }
   });
 
-  describe('fused page fast path', () => {
-    const statsRequests = () =>
-      requests.filter(
-        (r) =>
-          r.size === 0 &&
-          r.track_total_hits === true &&
-          r.aggs &&
-          r.query?.bool?.filter &&
-          !r.query.bool.filter.some((f: any) => f.ids),
-      );
-    const pageRequests = () =>
-      requests.filter(
-        (r) =>
-          !isList(r) &&
-          r.min_score == null &&
-          r.query?.bool?.filter?.some?.((f: any) => f.ids),
-      );
-    const pinnedMain = () => requests.find((r) => r.query?.pinned);
-
-    it('F1. page 1 inside the fused ids: stats before taxonomy, page by id, no pinned request', async () => {
-      let release!: () => void;
-      taxonomyGate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await build();
-      const pending = run({ limit: 3 });
-
-      for (let i = 0; i < 50 && statsRequests().length < 1; i++) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      expect(statsRequests()).toHaveLength(1);
-      expect(pageRequests()).toHaveLength(0);
-
-      release();
-      const response = await pending;
-
-      expect(pinnedMain()).toBeUndefined();
-      expect(pageRequests()).toHaveLength(1);
-      const page = pageRequests()[0];
-      expect(page.size).toBe(3);
-      expect(page.track_total_hits).toBe(false);
-      expect(page._source.excludes).toContain('embedding');
-      expect(page.query.bool.filter.find((f: any) => f.ids).ids.values).toEqual(
-        FUSED.slice(0, 3),
-      );
-      expect(response.search.hits.hits.map((h: any) => h._id)).toEqual(
-        FUSED.slice(0, 3),
-      );
-      expect(
-        response.search.hits.hits.every((h: any) => h._score === null),
-      ).toBe(true);
-      expect(response.search.hits.max_score).toBeNull();
-      expect(response.search.hits.total.value).toBe(1234);
-      expect(response.search.took).toBe(7);
-      expect(response.facets).toBeDefined();
+  it('10. empty query, v2: no fusion and no ids filter; distance with coords, name without', async () => {
+    await run({
+      query: '',
+      coords: [-93.1, 44.9],
+      distance: 25,
+      sort: 'distance',
     });
+    const withCoords = mainRequest();
+    expect(lists()).toHaveLength(0);
+    expect(proximityRequests()).toHaveLength(0);
+    expect(withCoords.sort[0]._geo_distance).toBeDefined();
+    expect(JSON.stringify(withCoords.query)).not.toContain('"ids"');
+    expect(withCoords.query.pinned).toBeUndefined();
 
-    // The fast path can serve only pages inside the fused RRF_LIST_SIZE (100)
-    // ids; past that the stats request was sent and thrown away, running the
-    // facet aggregations twice (David, PR #279 review).
-    it.each([
-      ['page 5 with limit 25', { page: 5, limit: 25 }],
-      ['page 1 with limit 150', { page: 1, limit: 150 }],
-    ])(
-      'F2b. %s reaches past the fused ids: no stats request',
-      async (_l, q) => {
-        await run(q);
-        expect(statsRequests()).toHaveLength(0);
-        expect(pinnedMain()).toBeDefined();
-      },
-    );
-
-    it('F2. page 2 with limit 3 over 4 fused ids: pinned main request', async () => {
-      const response = await run({ page: 2, limit: 3 });
-
-      expect(pageRequests()).toHaveLength(0);
-      expect(pinnedMain().query.pinned.ids).toEqual(FUSED);
-      expect(response.search.hits.total.value).toBe(1234);
+    await build();
+    await run({ query: '', sort: 'name' });
+    const noCoords = mainRequest();
+    expect(lists()).toHaveLength(0);
+    expect(noCoords.sort[0]).toEqual({
+      [HYBRID_SORT_FIELDS.name]: { order: 'asc' },
     });
-
-    it('F3. pinned mode top: v2 uses the pinned gate, not a sort tier, so the fast path runs', async () => {
-      searchConfig = { pinned_resources_mode: 'top' };
-      await build();
-      await run({ limit: 3 });
-
-      expect(statsRequests()).toHaveLength(1);
-      expect(pageRequests()).toHaveLength(1);
-    });
-
-    it('F4. cutoff on: no stats or page request, pinned main request', async () => {
-      await run({ relevance_cutoff: 'on', limit: 3 });
-
-      expect(statsRequests()).toHaveLength(0);
-      expect(pageRequests()).toHaveLength(0);
-      expect(pinnedMain()).toBeDefined();
-    });
-
-    it('F5. page request rejects: warning, pinned main request, search resolves', async () => {
-      mode = 'reject-page';
-      await build();
-      const warn = jest.spyOn((service as any).logger, 'warn');
-      const response = await run({ limit: 3 });
-
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('Fused page fast path failed'),
-      );
-      expect(pinnedMain()).toBeDefined();
-      expect(response.search.hits.total.value).toBe(1234);
-    });
+    expect(JSON.stringify(noCoords.query)).not.toContain('"ids"');
   });
 
   describe('v2 sort values (Lucas 2026-11-18)', () => {
@@ -663,33 +797,33 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       expect(mainRequest().sort).toEqual(['_score', asc(F.id)]);
     });
 
-    it('distance with coords: _geo_distance tier then id; no fusion', async () => {
+    it('distance with coords: _geo_distance tier then id; the kept set is re-ordered by distance', async () => {
       await run({ sort: 'distance', coords: COORDS });
 
-      expect(lists()).toHaveLength(0);
+      expect(lists()).toHaveLength(3);
       expect(mainRequest().query.pinned).toBeUndefined();
       expect(mainRequest().sort).toEqual([geoTier, asc(F.id)]);
     });
 
-    it('distance with no coords: falls back to _score then id (ISS-1367); no fusion', async () => {
+    it('distance with no coords: the fused order, _score then id (ISS-1367)', async () => {
       await run({ sort: 'distance' });
 
-      expect(lists()).toHaveLength(0);
-      expect(mainRequest().query.pinned).toBeUndefined();
+      expect(lists()).toHaveLength(3);
+      expect(mainRequest().query.pinned.ids).toEqual(FUSED);
       expect(mainRequest().sort).toEqual(['_score', asc(F.id)]);
     });
 
-    it('name: ascending on the hybrid name field then id; no fusion', async () => {
+    it('name: ascending on the hybrid name field then id over the kept set', async () => {
       await run({ sort: 'name' });
 
-      expect(lists()).toHaveLength(0);
+      expect(lists()).toHaveLength(3);
       expect(mainRequest().sort).toEqual([asc(F.name), asc(F.id)]);
     });
 
-    it('organization: ascending on organization name, then name, then id; no fusion', async () => {
+    it('organization: ascending on organization name, then name, then id over the kept set', async () => {
       await run({ sort: 'organization' });
 
-      expect(lists()).toHaveLength(0);
+      expect(lists()).toHaveLength(3);
       expect(mainRequest().sort).toEqual([
         asc(F.organizationName),
         asc(F.name),

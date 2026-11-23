@@ -311,12 +311,13 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     const gate = gates()[0];
     expect(JSON.stringify(gate.query)).not.toContain('gauss');
     expect(JSON.stringify(gate.query)).not.toContain('"pinned":true');
+    // Fusion runs with coords too: the gated id leads the kept set, and the
+    // organic query has no scoring clause (every kept doc is pinned).
     const main = mainRequest();
-    expect(pinnedBonus(main)).toBe(false);
+    expect(main.query.pinned.ids[0]).toBe('p1');
+    expect(JSON.stringify(main.query)).not.toContain('"pinned":true');
     expect(priorityFn(main)).toBe(false);
-    expect(gateTier(main)).toEqual({
-      constant_score: { filter: { ids: { values: ['p1'] } }, boost: 10000 },
-    });
+    expect(JSON.stringify(main.query)).not.toContain('10000');
     expect(pinnedSortTier(main)).toBe(false);
   });
 
@@ -327,8 +328,8 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     expect(gates()).toHaveLength(1);
     const main = mainRequest();
     expect(pinnedSortTier(main)).toBe(false);
-    expect(pinnedBonus(main)).toBe(false);
-    expect(gateTier(main).constant_score.filter.ids.values).toEqual(['p1']);
+    expect(JSON.stringify(main.query)).not.toContain('"pinned":true');
+    expect(main.query.pinned.ids[0]).toBe('p1');
   });
 
   it('5. v2 fused (no coords): the gated id goes first in the fused order, once', async () => {
@@ -352,8 +353,8 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     await run({ coords: SEA });
     expect(gates()).toHaveLength(0);
     const main = mainRequest();
-    expect(pinnedBonus(main)).toBe(false);
-    expect(gateTier(main)).toBeUndefined();
+    expect(JSON.stringify(main.query)).not.toContain('"pinned":true');
+    expect(main.query.pinned.ids).not.toContain('p1');
   });
 
   it('7. v2 browse (empty query): boost and top are one state (care); ignore and an explicit sort drop the tier; v1 is unchanged', async () => {
@@ -401,15 +402,15 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     expect(gates()).toHaveLength(0);
     const main = mainRequest();
     expect(pinnedSortTier(main)).toBe(false);
-    expect(pinnedBonus(main)).toBe(false);
+    expect(JSON.stringify(main.query)).not.toContain('"pinned":true');
   });
 
   it('9. v2 gate request fails: search resolves with no lead and no bonus', async () => {
     gateMode = 'reject';
     await expect(run({ coords: SEA })).resolves.toBeDefined();
     const main = mainRequest();
-    expect(gateTier(main)).toBeUndefined();
-    expect(pinnedBonus(main)).toBe(false);
+    expect(main.query.pinned.ids).not.toContain('p1');
+    expect(JSON.stringify(main.query)).not.toContain('10000');
   });
 
   it('10. v2 with relevance_cutoff on: the probe keeps its pinned bonus; the gate sees the cut ids filter', async () => {

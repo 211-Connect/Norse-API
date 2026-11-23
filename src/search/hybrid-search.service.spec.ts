@@ -97,6 +97,11 @@ describe('HybridSearchService', () => {
         rarityRequests.push(req);
         return rarityImpl(req);
       }
+      // Every ranked list fails, so a v2 text search keeps the summed request
+      // these specs read. The fused path has its own spec (rrf.spec.ts).
+      if (req._source === false && req.size === 100) {
+        return Promise.reject(new Error('lists off in this spec'));
+      }
       capturedMainRequest = req;
       return Promise.resolve(mainResponse);
     });
@@ -790,14 +795,23 @@ describe('HybridSearchService', () => {
       );
     });
 
-    it('v2 pins still skip the embedding without relevance_cutoff', async () => {
-      const embed = jest.spyOn(service, 'embedQuery');
+    it('v2 pins with text embed the query (the kept set); an empty query skips the embedding', async () => {
+      const embed = jest
+        .spyOn(service, 'embedQuery')
+        .mockResolvedValue([0.1, 0.2]);
+      await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, query: '' },
+        rankingVersion: 'v2',
+      });
+      expect(embed).not.toHaveBeenCalled();
+
       await service.buildPinsRequest({
         headers,
         query: pinsQuery,
         rankingVersion: 'v2',
       });
-      expect(embed).not.toHaveBeenCalled();
+      expect(embed).toHaveBeenCalledWith('food');
     });
 
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
@@ -1023,9 +1037,8 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      // taxonomy, rarity, three rank-fusion lists, fused-page stats, pinned
-      // gate, main search
-      expect(preferences).toHaveLength(8);
+      // taxonomy, rarity, three rank-fusion lists, pinned gate, main search
+      expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -1043,10 +1056,10 @@ describe('HybridSearchService', () => {
         await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
-      // Every search of all three requests, not just the first of each. The
-      // relevance searches add three rank-fusion lists and a stats request
-      // each, and a pinned gate request each (8 + 8 + 3).
-      expect(preferences).toHaveLength(19);
+      // Every search of all three requests, not just the first of each. Every
+      // sort adds three rank-fusion lists; the relevance sorts add a pinned
+      // gate request each (7 + 7 + 6).
+      expect(preferences).toHaveLength(20);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });

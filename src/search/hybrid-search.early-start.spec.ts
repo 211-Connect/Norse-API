@@ -257,7 +257,7 @@ describe('HybridSearchService — early retrieval start', () => {
     await build();
   });
 
-  it('sends the lists, the stats request and the taxonomy lookup before searchHybrid runs', async () => {
+  it('sends the lists and the taxonomy lookup before searchHybrid runs; no stats request', async () => {
     service.startEarlyRetrieval(options());
     await tick();
 
@@ -268,7 +268,7 @@ describe('HybridSearchService — early retrieval start', () => {
       'taxonomy',
       'vector',
     ]);
-    expect(requests.filter(isStats)).toHaveLength(1);
+    expect(requests.filter(isStats)).toHaveLength(0);
     expect(requests.some((r) => r.index === 'hybrid_taxonomies')).toBe(true);
   });
 
@@ -396,7 +396,7 @@ describe('HybridSearchService — early retrieval start', () => {
       });
       afterEach(() => process.off('unhandledRejection', onUnhandled));
 
-      it('returns the lexical-only result and does not fuse', async () => {
+      it('fuses the keyword list alone (the vector list failed)', async () => {
         const res = await service.searchHybrid(options());
         await flush();
 
@@ -404,7 +404,7 @@ describe('HybridSearchService — early retrieval start', () => {
         expect(requests.some((r) => r.index === 'hybrid_taxonomies')).toBe(
           false,
         );
-        expect(requests.some((r) => r.query?.pinned)).toBe(false);
+        expect(requests.some((r) => r.query?.pinned)).toBe(true);
         expect(hitIds(res)).toEqual(['doc-1']);
         expect(unhandled).toEqual([]);
       });
