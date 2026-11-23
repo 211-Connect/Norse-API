@@ -43,13 +43,12 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit -p tsconfig.json
 
-      # These 5 suites already fail on development and are skipped until they
+      # These 4 suites already fail on development and are skipped until they
       # are fixed. Remove a line here when its suite passes again.
       - name: Run unit tests
         run: >-
           npx jest --ci --testPathIgnorePatterns
           'src/analytics/analytics\.controller\.spec\.ts$'
           'src/analytics/services/umami-analytics\.service\.spec\.ts$'
-          'src/cms-config/tenant-config\.controller\.spec\.ts$'
           'src/taxonomy/taxonomy\.controller\.spec\.ts$'
           'src/taxonomy-scorecard/taxonomy-scorecard\.service\.spec\.ts$'
