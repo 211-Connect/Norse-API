@@ -35,9 +35,6 @@ const mainResponse = {
   aggregations: {},
 };
 
-// Start values from the service; the tests restate them so a change is visible.
-const FRACTION = 0.1;
-
 type Urgency = { code: any; score: number };
 type Needs = { code: string; tier: 'tier1' | 'tier2'; score: number }[];
 const tier2Fod: Needs = [{ code: 'N-FOD-01', tier: 'tier2', score: 0.98 }];
@@ -184,6 +181,11 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
   };
   const rankFeatures = (req: any) =>
     shouldOf(req).filter((c: any) => c.rank_feature);
+  // v2 fuses under every sort (#352): the boost terms live in the need list.
+  const needListFeatures = () =>
+    rankFeatures(
+      requests.find(isNeedList) ?? { query: { bool: { should: [] } } },
+    );
 
   const run = (
     over: {
@@ -231,7 +233,7 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
 
       if (on) {
         expect(usesUrgency(requests)).toBe(true);
-        expect(mainRequest()).not.toEqual(without);
+        expect(needListFeatures()).toHaveLength(1);
       } else {
         expect(usesUrgency(requests)).toBe(false);
         expect(mainRequest()).toEqual(without);
@@ -239,23 +241,23 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
     });
   });
 
-  it('b. switch on, U-1 score 1, no needs: one linear clause sized 0.1 x top x 1', async () => {
+  it('b. switch on, U-1 score 1, no needs: one linear need-list clause sized score x 1', async () => {
     await run({ urgencyBoost: u1 });
-    const clauses = rankFeatures(mainRequest());
+    const clauses = needListFeatures();
     expect(clauses).toHaveLength(1);
     expect(clauses[0].rank_feature.field).toBe('sune_urgency_weights.U-1');
     expect(clauses[0].rank_feature.linear).toEqual({});
-    expect(clauses[0].rank_feature.boost).toBeCloseTo(FRACTION * 200 * 1, 6);
+    expect(clauses[0].rank_feature.boost).toBeCloseTo(1, 6);
   });
 
   it('c. need and urgency: two clauses, the need clause as in the need-only request', async () => {
     await run({ needScores: tier2Fod });
-    const needOnly = rankFeatures(mainRequest());
+    const needOnly = needListFeatures();
     expect(needOnly).toHaveLength(1);
 
     await build();
     await run({ needScores: tier2Fod, urgencyBoost: u1 });
-    const clauses = rankFeatures(mainRequest());
+    const clauses = needListFeatures();
     expect(clauses).toHaveLength(2);
     expect(clauses[0]).toEqual(needOnly[0]);
     expect(clauses[1].rank_feature.field).toBe('sune_urgency_weights.U-1');
@@ -373,7 +375,7 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
       topScore = 10;
       await build();
       await run({ needScores: tier2Fod, urgencyBoost });
-      const clauses = rankFeatures(mainRequest());
+      const clauses = needListFeatures();
       const scoreOf = (s: Svc) =>
         s.base +
         clauses.reduce((sum: number, c: any) => {
