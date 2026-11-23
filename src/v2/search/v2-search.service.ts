@@ -6,9 +6,15 @@ import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
   HybridSearchResult,
   HybridSearchService,
+  isBoostableUrgency,
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
+import {
+  floorOnlyEmergency,
+  isFullV2Locale,
+  localizeClarification,
+} from '../rules/localize';
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
@@ -28,7 +34,6 @@ import { RegionService } from 'src/region/internal';
 import { SearchService } from 'src/search/search.service';
 import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
 import { resolveArea } from 'src/search/internal/area/resolve-area';
-import { TopAreasService } from './top-areas.service';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -135,7 +140,9 @@ function isQueryTooLarge(error: unknown): boolean {
   return causes.some(
     (c) =>
       c?.type === TOO_COMPLEX_TYPE ||
-      // Fallback: the prefix-length error has only a generic type.
+      // Message match kept on purpose: Elasticsearch gives the prefix-length
+      // and automaton-size errors only the generic `query_shard_exception`
+      // type, which also covers unrelated query errors. No narrower type exists.
       (typeof c?.reason === 'string' &&
         (c.reason.includes('automaton is too large') ||
           c.reason.includes('has exceeded the allowed maximum'))),
@@ -202,6 +209,40 @@ function emptyResults<T extends HybridSearchResult>(
   } as never;
 }
 
+/**
+ * An Elasticsearch failure that the caller caused becomes a 400: an unknown
+ * language has no index, and a too-large query text cannot be built. Any other
+ * error is rethrown unchanged.
+ */
+function throwCallerError(error: unknown, headers: HeadersDto): never {
+  if (isIndexNotFound(error)) {
+    throw new BadRequestException(
+      `no search index for accept-language ${headers['accept-language']}`,
+    );
+  }
+  if (isQueryTooLarge(error)) {
+    throw new BadRequestException('query is too long for search');
+  }
+  throw error;
+}
+
+/**
+ * A used urgency U-1..U-4 lifts services tagged with that level (ISS-2867).
+ * U-0 comes only from the emergency check and has no service weights. Shared
+ * by the list and the pins, so both rank the same kept set.
+ */
+function urgencyBoostOf(
+  decision: { urgency: { source?: string; state: string; value: string } },
+  signals: { urgency?: { score?: number } | null },
+): HybridCall['urgencyBoost'] {
+  const u = decision.urgency;
+  const urgencyScore =
+    u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
+  return u.state === 'use' && isBoostableUrgency(u.value, urgencyScore)
+    ? { code: u.value, score: urgencyScore }
+    : undefined;
+}
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -210,7 +251,6 @@ export class V2SearchService {
     private readonly tenantConfig: TenantConfigService,
     private readonly regionService: RegionService,
     private readonly searchService: SearchService,
-    private readonly topAreasService: TopAreasService,
   ) {}
 
   /**
@@ -221,24 +261,18 @@ export class V2SearchService {
     call: HybridCall,
     headers: HeadersDto,
   ): Promise<HybridSearchResult> {
-    return this.hybridSearch.searchHybrid(call).catch((error: unknown) => {
-      if (isIndexNotFound(error)) {
-        throw new BadRequestException(
-          `no search index for accept-language ${headers['accept-language']}`,
-        );
-      }
-      if (isQueryTooLarge(error)) {
-        throw new BadRequestException('query is too long for search');
-      }
-      throw error;
-    });
+    return this.hybridSearch
+      .searchHybrid(call)
+      .catch((error: unknown) => throwCallerError(error, headers));
   }
 
   /**
    * Map pins for a v2 search: the same membership as `search` (child taxonomy
-   * codes, region), the v1 pins shape. No classify call and no embedding unless
-   * `relevance_cutoff=on` needs scores (the v1 pins rule). The region is
-   * resolved by `SearchService.searchPins`, the same `resolveArea` as `search`.
+   * codes, region, and for a text query the same kept set), the v1 pins
+   * shape. A text query classifies, so the need list matches `search`; an
+   * empty query makes no classify call. The region is resolved by
+   * `SearchService.searchPins`, the same `resolveArea` as `search`. Weak match
+   * is not checked on pins (known limit).
    */
   async pins({
     headers,
@@ -249,23 +283,115 @@ export class V2SearchService {
   }): Promise<SearchPinsResponseDto> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const text = dto.query;
+    let needScores: NeedScore[] | undefined;
+    let urgencyBoost: HybridCall['urgencyBoost'];
+    if (text.trim().length > 0) {
+      const searchConfig = await this.tenantConfig.getSearchConfig(
+        headers['x-tenant-id'],
+      );
+      const decided = await this.classifyAndDecide({
+        headers,
+        dto,
+        text,
+        searchConfig,
+      });
+      needScores = decided.needScores;
+      // The same urgency as the list, so the pins come from the same kept set.
+      urgencyBoost = urgencyBoostOf(decided.decision, decided.signals);
+    }
     return this.searchService
       .searchPins({
         headers,
         query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
         rankingVersion: 'v2',
+        ...(needScores && { needScores }),
+        ...(urgencyBoost && { urgencyBoost }),
       })
-      .catch((error: unknown) => {
-        if (isIndexNotFound(error)) {
-          throw new BadRequestException(
-            `no search index for accept-language ${headers['accept-language']}`,
+      .catch((error: unknown) => throwCallerError(error, headers));
+  }
+
+  /**
+   * Classify the text, then run the rules to decide the need boosts. Shared by
+   * `run` and `pins`, so the pins need list equals the search page need list.
+   * Classify never throws; a failure comes back as error signals.
+   */
+  private async classifyAndDecide({
+    headers,
+    dto,
+    text,
+    searchConfig,
+  }: {
+    headers: HeadersDto;
+    dto: V2SearchQueryDto;
+    text: string;
+    searchConfig: SearchConfigCache;
+  }) {
+    const hasText = text.trim().length > 0;
+    const callerNeeds = dto.needs ?? [];
+    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
+    // setting can turn the need guess off. Full v2 features only for en and es
+    // (Lucas 2026-11-20): any other locale runs with AI classification off (no
+    // need or urgency guesses, no need questions) and shows the danger question
+    // only on a keyword-floor hit. The list and the map pins both come through
+    // here, so they follow the same rule.
+    const lang = headers['accept-language'] || 'en';
+    const limitedLocale = !isFullV2Locale(lang);
+    const aiClassification: AiClassificationSetting = limitedLocale
+      ? 'off'
+      : tenantAiClassification(searchConfig);
+    const classified = hasText
+      ? await withSpan('v2.classify', async (classifySpan) => {
+          const result = await this.classifier.classify(
+            cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
+            headers['x-tenant-id'],
+            aiClassification,
           );
-        }
-        if (isQueryTooLarge(error)) {
-          throw new BadRequestException('query is too long for search');
-        }
-        throw error;
-      });
+          // Classify never throws; error signals mark a failed call.
+          classifySpan.setAttribute(
+            'v2.classify.failed',
+            result.signals.emergency?.status === 'error',
+          );
+          return result;
+        })
+      : null;
+    const classifiedSignals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const signals = limitedLocale
+      ? floorOnlyEmergency(classifiedSignals)
+      : classifiedSignals;
+    const scores = classified?.scores ?? {};
+
+    const rulesRequest: RulesRequest = {
+      has_text: hasText,
+      has_content_word: hasContentWord(text, lang),
+      needs: callerNeeds,
+      passed_needs: dto.passed_needs ?? [],
+      urgency: dto.urgency,
+      clarify: dto.clarify ?? 'auto',
+    };
+    const decision = withSpanSync('v2.rules.decide', () =>
+      decide(rulesRequest, signals, {
+        ai_classification: aiClassification,
+        hotlines: tenantHotlines(searchConfig),
+      }),
+    );
+
+    const needScores: NeedScore[] = [];
+    for (const code of decision.boost_needs) {
+      const tier = isTier1(code) ? 'tier1' : isTier2(code) ? 'tier2' : null;
+      if (!tier) continue;
+      const score = callerNeeds.includes(code) ? 1 : scores[code];
+      if (typeof score !== 'number') continue;
+      needScores.push({ code, tier, score });
+    }
+    return {
+      signals,
+      rulesRequest,
+      decision,
+      needScores,
+      modelVersion: classified?.modelVersion ?? null,
+      aiClassification,
+    };
   }
 
   /** One `v2.search` span over the whole pipeline; each step is a child. */
@@ -292,6 +418,7 @@ export class V2SearchService {
     // V2SearchQueryDto guarantees a string: an array or AND/OR object is a 400.
     const text = dto.query;
     const hasText = text.trim().length > 0;
+    const lang = headers['accept-language'] || 'en';
 
     // Only caller-sent needs make blocks; a model guess never does. N-X never
     // makes a block. They never filter (Lucas 2026-11-12).
@@ -330,68 +457,27 @@ export class V2SearchService {
         ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
         : undefined;
 
-    // Tenant top areas run in parallel with the config read and classify. The
-    // service never throws: a failure is [] (engine default areas).
-    const topAreasPromise = this.topAreasService.topAreas(
-      headers['x-tenant-id'],
-      headers['accept-language'],
-    );
-
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
     // never throws: a missing or unreadable value is an empty object (on).
     const searchConfig = await withSpan('v2.tenant_config', () =>
       this.tenantConfig.getSearchConfig(headers['x-tenant-id']),
     );
-    // Classify is always on for the request (Lucas 2026-11-18): only the tenant
-    // setting can turn the need guess off.
-    const aiClassification = tenantAiClassification(searchConfig);
+    const {
+      signals,
+      rulesRequest,
+      decision,
+      needScores,
+      modelVersion,
+      aiClassification,
+    } = await this.classifyAndDecide({
+      headers,
+      dto,
+      text,
+      searchConfig,
+    });
 
-    // Classify never throws; a failure comes back as error signals.
-    const classified = hasText
-      ? await withSpan('v2.classify', async (classifySpan) => {
-          const result = await this.classifier.classify(
-            cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
-            headers['x-tenant-id'],
-            aiClassification,
-          );
-          // Classify never throws; error signals mark a failed call.
-          classifySpan.setAttribute(
-            'v2.classify.failed',
-            result.signals.emergency?.status === 'error',
-          );
-          return result;
-        })
-      : null;
-    const signals = classified?.signals ?? NO_TEXT_SIGNALS;
-    const scores = classified?.scores ?? {};
-
-    const lang = headers['accept-language'] || 'en';
-    const rulesRequest: RulesRequest = {
-      has_text: hasText,
-      has_content_word: hasContentWord(text, lang),
-      needs: callerNeeds,
-      passed_needs: dto.passed_needs ?? [],
-      urgency: dto.urgency,
-      clarify: dto.clarify ?? 'auto',
-    };
-    const topAreas = await topAreasPromise;
-    const decision = withSpanSync('v2.rules.decide', () =>
-      decide(rulesRequest, signals, {
-        ai_classification: aiClassification,
-        hotlines: tenantHotlines(searchConfig),
-        top_areas: topAreas,
-      }),
-    );
-
-    const needScores: NeedScore[] = [];
-    for (const code of decision.boost_needs) {
-      const tier = isTier1(code) ? 'tier1' : isTier2(code) ? 'tier2' : null;
-      if (!tier) continue;
-      const score = callerNeeds.includes(code) ? 1 : scores[code];
-      if (typeof score !== 'number') continue;
-      needScores.push({ code, tier, score });
-    }
+    const urgencyBoost = urgencyBoostOf(decision, signals);
 
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
@@ -411,6 +497,7 @@ export class V2SearchService {
       'v2.has_text': hasText,
       'v2.ai_classification': aiClassification,
       'v2.boost_needs': needScores.length,
+      'v2.urgency_boost': urgencyBoost?.code ?? 'none',
       'v2.selected_needs': selectedNeeds.length,
       'v2.count_codes': countCodes.length,
     });
@@ -418,19 +505,26 @@ export class V2SearchService {
     const tenantContext = {
       ai_classification: aiClassification,
       hotlines: tenantHotlines(searchConfig),
-      top_areas: topAreas,
     };
     const hybridCall: HybridCall = {
       ...retrievalOptions,
       ...(early && { early }),
       ...(area && { area }),
       needScores,
+      ...(urgencyBoost && { urgencyBoost }),
       ...(countCodes.length > 0 && { countCodes }),
     };
     // The text-free second call (weak match) starts from this call minus the
     // early handle: the early stage was built for the text query.
-    const { early: _early, ...withoutEarly } = hybridCall;
+    // The text-free second calls (weak match) drop every boost: needScores
+    // is set to [] below and the urgency boost is left out here (ISS-2867).
+    const {
+      early: _early,
+      urgencyBoost: _urgencyBoost,
+      ...withoutEarly
+    } = hybridCall;
     void _early;
+    void _urgencyBoost;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );
@@ -534,11 +628,15 @@ export class V2SearchService {
     }
 
     // strong_text_match is still a placeholder: no retrieval signal yet.
+    // English passes through unchanged; es vi ru ko am zh-hans get a string table.
     const clarification = withSpanSync('v2.rules.finalize', () =>
-      finalize(clarifyDecision, {
-        counts,
-        strong_text_match: false,
-      }),
+      localizeClarification(
+        finalize(clarifyDecision, {
+          counts,
+          strong_text_match: false,
+        }),
+        lang,
+      ),
     );
 
     const result: V2SearchResponseDto = {
@@ -569,7 +667,7 @@ export class V2SearchService {
       // No top-level emergency block (ADR 0039 Decision 54): the emergency
       // lives only in the emergency question inside `clarification`.
       clarification,
-      model_version: classified?.modelVersion ?? null,
+      model_version: modelVersion,
       rules_version: decision.rules_version,
     };
     // A shared cache may store only band none with no emergency question

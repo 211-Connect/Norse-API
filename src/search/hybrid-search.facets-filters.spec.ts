@@ -9,8 +9,8 @@ import { MetricsService } from 'src/metrics/metrics.service';
 
 // ISS-2499: facets, filters and need counts of the v2 search. The filters of
 // one request must reach every Elasticsearch request that counts anything:
-// the page (or main) request, the fast-path stats request and the need-count
-// request. Facet buckets and need counts are then counts of the same set.
+// the main page request and the need-count request (with the kept ids on
+// both). Facet buckets and need counts are then counts of the same set.
 
 const headers = { 'x-tenant-id': 'tenant-a', 'accept-language': 'en' } as any;
 const shards = { total: 1, successful: 1, skipped: 0, failed: 0 };
@@ -63,14 +63,7 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
   let requests: any[];
 
   const isList = (r: any) => r._source === false && r.size === 100;
-  const isStats = (r: any) =>
-    r.size === 0 &&
-    r.track_total_hits === true &&
-    r.aggs?.languages &&
-    !r.query?.bool?.filter?.some?.((f: any) => f.ids);
   const isCount = (r: any) => r.size === 0 && r.aggs?.need_counts;
-  const isPage = (r: any) =>
-    r.query?.bool?.filter?.some?.((f: any) => f.ids) && !isList(r);
   const isMain = (r: any) => r.size === 3 && r.aggs?.languages;
 
   beforeEach(async () => {
@@ -89,31 +82,6 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
         return Promise.resolve({
           aggregations: {
             need_counts: { buckets: [{ key: 'N-FOD', doc_count: 5 }] },
-          },
-        });
-      }
-      if (isStats(req)) {
-        return Promise.resolve({
-          took: 2,
-          timed_out: false,
-          _shards: shards,
-          hits: { total: { value: 7, relation: 'eq' }, hits: [] },
-          aggregations: facetAggs,
-        });
-      }
-      if (isPage(req)) {
-        return Promise.resolve({
-          took: 1,
-          timed_out: false,
-          _shards: shards,
-          hits: {
-            hits: [
-              ...req.query.bool.filter.find((f: any) => f.ids).ids.values,
-            ].map((id: string) => ({
-              _index: 'hybrid_search_resources_en',
-              _id: id,
-              _source: { name: id, facets: {}, facets_en: {} },
-            })),
           },
         });
       }
@@ -191,28 +159,27 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
       ...extra,
     } as any);
 
-  const filtersOf = (r: any): any[] => r.query.bool.filter;
+  // The pinned page query keeps its filters under organic.
+  const filtersOf = (r: any): any[] =>
+    r.query.pinned ? r.query.pinned.organic.bool.filter : r.query.bool.filter;
 
-  it('fast path: stats, page and count requests carry the same filters, and the stats facets are returned', async () => {
+  it('main and count requests carry the same filters and the kept ids; the main facets are returned', async () => {
     const res = await run({ countCodes: ['N-FOD', 'N-HOU'] });
 
-    const stats = requests.filter(isStats);
+    const main = requests.filter(isMain);
     const count = requests.filter(isCount);
-    expect(stats).toHaveLength(1);
+    expect(main).toHaveLength(1);
     expect(count).toHaveLength(1);
-    expect(requests.filter(isPage)).toHaveLength(1);
-    expect(requests.filter(isMain)).toHaveLength(0);
 
-    const statsFilters = filtersOf(stats[0]);
+    const mainFilters = filtersOf(main[0]);
     for (const clause of expectedClauses) {
-      expect(statsFilters).toContainEqual(clause);
+      expect(mainFilters).toContainEqual(clause);
     }
+    expect(mainFilters).toContainEqual({ ids: { values: LIST } });
     // age 30: both bounds
-    expect(JSON.stringify(statsFilters)).toContain('"minimum_age"');
-    expect(JSON.stringify(statsFilters)).toContain('"maximum_age"');
-    expect(filtersOf(count[0])).toEqual(statsFilters);
-    const pageFilters = filtersOf(requests.find(isPage));
-    expect(pageFilters).toEqual(expect.arrayContaining(statsFilters));
+    expect(JSON.stringify(mainFilters)).toContain('"minimum_age"');
+    expect(JSON.stringify(mainFilters)).toContain('"maximum_age"');
+    expect(filtersOf(count[0])).toEqual(mainFilters);
 
     expect(res.search.hits.total.value).toBe(7);
     expect(res.facets).toEqual([
@@ -231,7 +198,6 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
       countCodes: ['N-FOD'],
     });
 
-    expect(requests.filter(isStats)).toHaveLength(0);
     const main = requests.filter(isMain);
     expect(main).toHaveLength(1);
     const mainJson = JSON.stringify(main[0].query);
@@ -249,7 +215,7 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
     expect(res.needCounts).toEqual({ 'N-FOD': 5 });
   });
 
-  it('fast path and full path give the same facets and total for the same filters', async () => {
+  it('with and without selected needs: the same facets and total for the same filters', async () => {
     const fast = await run();
     requests = [];
     const full = await run({ selectedNeeds: ['N-FOD'] });
@@ -280,8 +246,9 @@ describe('HybridSearchService facets, filters and need counts (ISS-2499)', () =>
       },
       rankingVersion: 'v2',
     } as any);
-    expect(filtersOf(requests.find(isStats))).toEqual([
+    expect(filtersOf(requests.find(isMain))).toEqual([
       { term: { tenant_id: 'tenant-a' } },
+      { ids: { values: LIST } },
     ]);
   });
 });

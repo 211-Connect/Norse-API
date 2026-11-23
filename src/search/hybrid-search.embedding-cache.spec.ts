@@ -148,9 +148,12 @@ describe('HybridSearchService query embedding cache', () => {
     expect(sets).toHaveLength(0);
   });
 
-  it('only the exact string false turns the cache off', async () => {
-    const service = await build({ EMBEDDING_CACHE_ENABLED: 'FALSE' });
+  it('false in any case turns the cache off; padded values do not', async () => {
+    let service = await build({ EMBEDDING_CACHE_ENABLED: 'FALSE' });
     await service.embedQuery('food bank');
+    expect(sets).toHaveLength(0);
+    service = await build({ EMBEDDING_CACHE_ENABLED: ' false' });
+    await service.embedQuery('food bank 2');
     expect(sets).toHaveLength(1);
   });
 

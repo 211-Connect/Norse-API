@@ -16,7 +16,6 @@ import {
   V2SearchService,
   tenantHotlines,
 } from './v2-search.service';
-import { TopAreasService } from './top-areas.service';
 import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
@@ -76,7 +75,6 @@ function build(opts: {
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
   searchPins?: jest.Mock;
-  topAreas?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -88,14 +86,12 @@ function build(opts: {
   const searchPins =
     opts.searchPins ??
     jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
-  const topAreas = opts.topAreas ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEarlyRetrieval } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
     { searchPins } as unknown as SearchService,
-    { topAreas } as unknown as TopAreasService,
   );
   return {
     searchPins,
@@ -105,7 +101,6 @@ function build(opts: {
     startEarlyRetrieval,
     getSearchConfig,
     getSummaries,
-    topAreas,
   };
 }
 
@@ -1013,6 +1008,8 @@ describe('V2SearchService', () => {
         headers,
         query: dto({ query: 'help' }),
       });
+      expect(res.clarification.questions[0].id).toBe('emergency');
+      expect(emergencyQ(res).importance).toBe('high');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -1441,6 +1438,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
       expect(second).not.toHaveProperty('needFilter');
     });
 
+    it('a used urgency boosts the first call only, never the text-free second call (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(secondResponse(40, { 'N-HOU': 10 }));
+      const { service } = build({ classify: weakClassify(), search });
+      const res = await service.search({
+        headers,
+        query: dto({ query: text, urgency: 'U-1' } as never),
+      });
+      expect(res.weak_match).toBe(true);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
+
     it('question is dropped when every count is 0 (no sune_needs on any document)', async () => {
       const search = jest
         .fn()
@@ -1486,6 +1502,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
   });
 
   describe('(b) weak, caller sent needs', () => {
+    it('the need-filtered second call carries no urgency boost (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(
+          secondResponse(1, { 'N-FOD-01': 1 }, [hit('x')]),
+        );
+      const { service } = build({ classify: weakClassify(), search });
+      await service.search({
+        headers,
+        query: dto({ query: text, needs: ['N-FOD'], urgency: 'U-1' } as never),
+      });
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
     it('second call filters by the needs with no text; its hits are the result', async () => {
       const search = jest
         .fn()
@@ -1811,8 +1846,81 @@ describe('V2SearchService.pins', () => {
     ]) {
       expect(sent.query).not.toHaveProperty(key);
     }
-    expect(classify).not.toHaveBeenCalled();
+    // A text query classifies, so the need list matches `search` (plan rule 7).
+    expect(classify).toHaveBeenCalledTimes(1);
     expect(startEarlyRetrieval).not.toHaveBeenCalled();
+  });
+
+  it('P9. pins with a failed classify: no need boost, the pins still return', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(errorResult()),
+      searchPins,
+    });
+    const result = await service.pins({
+      headers,
+      query: dto({ query: 'rent' }),
+    });
+    expect(result).toBe(pinsResponse);
+    expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+  });
+
+  it('P10. pins with tenant ai_classification off: classify gets off, no need boost', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, classify } = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-HOU-02': 0.99 })),
+      searchConfig: TENANT_OFF,
+      searchPins,
+    });
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    expect(classify.mock.calls[0][2]).toBe('off');
+    expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+  });
+
+  it('P8. text pins get the same needScores as search; empty text does not classify', async () => {
+    const classify = jest
+      .fn()
+      .mockResolvedValue(okResult({ 'N-HOU-02': 0.99, 'N-HOU': 0.95 }));
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, searchHybrid } = build({ classify, searchPins });
+
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchPins.mock.calls[0][0].needScores).toEqual(
+      searchHybrid.mock.calls[0][0].needScores,
+    );
+    expect(searchPins.mock.calls[0][0].needScores).toEqual([
+      { code: 'N-HOU-02', tier: 'tier2', score: 0.99 },
+    ]);
+
+    classify.mockClear();
+    await service.pins({ headers, query: dto({ query: '' }) });
+    expect(classify).not.toHaveBeenCalled();
+    expect(searchPins.mock.calls[1][0]).not.toHaveProperty('needScores');
+  });
+
+  it('P9. text pins get the same urgencyBoost as search (ISS-2867); none without urgency', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, searchHybrid } = build({ searchPins });
+
+    await service.pins({
+      headers,
+      query: dto({ query: 'rent', urgency: 'U-1' } as any),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'rent', urgency: 'U-1' } as any),
+    });
+    expect(searchPins.mock.calls[0][0].urgencyBoost).toEqual({
+      code: 'U-1',
+      score: 1,
+    });
+    expect(searchPins.mock.calls[0][0].urgencyBoost).toEqual(
+      searchHybrid.mock.calls[0][0].urgencyBoost,
+    );
+
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    expect(searchPins.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
   });
 
   it('turns a missing index into a 400', async () => {
@@ -1863,31 +1971,29 @@ describe('tenant context (hotlines, top areas)', () => {
     expect(await emergencyHotlines(cfg)).toEqual(DEFAULT_HOTLINES);
   });
 
-  const startOptions = async (topAreas: string[]) => {
-    const { service } = build({
-      topAreas: jest.fn().mockResolvedValue(topAreas),
-    });
+  const startOptions = async () => {
+    const { service } = build({});
     const res = await service.search({ headers, query: dto({ query: '' }) });
     const q = res.clarification.questions.find((x) => x.id === 'start');
     return q?.options.map((o) => o.value);
   };
 
-  it('offers the tenant top areas in the start question', async () => {
-    expect(await startOptions(['N-LEG', 'N-WRK', 'N-HLT', 'N-HOU'])).toEqual([
-      'N-LEG',
-      'N-WRK',
-      'N-HLT',
-    ]);
+  it('offers the global default areas in the start question', async () => {
+    expect(await startOptions()).toEqual(DEFAULT_TOP_AREAS);
+    expect(DEFAULT_TOP_AREAS).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
 
-  it('falls back to the default top areas when TopAreasService gives []', async () => {
-    expect(await startOptions([])).toEqual(DEFAULT_TOP_AREAS);
-  });
-
-  it('passes tenant and language to TopAreasService', async () => {
-    const { service, topAreas } = build({});
-    await service.search({ headers, query: dto({ query: '' }) });
-    expect(topAreas).toHaveBeenCalledWith(headers['x-tenant-id'], 'en');
+  it('gives every tenant the same start areas', async () => {
+    const other = {
+      ...headers,
+      'x-tenant-id': '22222222-2222-4222-8222-222222222222',
+    };
+    const { service } = build({});
+    const opts = async (h: typeof headers) =>
+      (
+        await service.search({ headers: h, query: dto({ query: '' }) })
+      ).clarification.questions.find((x) => x.id === 'start')?.options;
+    expect(await opts(other)).toEqual(await opts(headers));
   });
 });
 
@@ -1924,5 +2030,214 @@ describe('tenantHotlines', () => {
     expect(tenantHotlines(cfg as SearchConfigCache | null | undefined)).toEqual(
       [],
     );
+  });
+});
+
+// Lucas 2026-11-20: full v2 features only for en and es. Other locales get no
+// need questions, no need guesses, and the danger question only on a keyword-floor hit.
+describe('V2SearchService limited locales (full v2 only for en and es)', () => {
+  const strong = { 'N-FOD': 0.9, 'N-FOD-01': 0.95, 'N-HOU': 0.3 };
+  const classified = (floorHit: boolean, score = 0.5): ClassifyResult =>
+    okResult(strong, {
+      signals: {
+        needs: { status: 'ok', scores: strong },
+        urgency: { level: 'U-1', score: 0.85 },
+        emergency: { status: 'ok', score, floor_hit: floorHit },
+      },
+    });
+  const inLang = (lang: string) =>
+    ({ ...headers, 'accept-language': lang }) as HeadersDto;
+  const ids = (res: { clarification: { questions: { id: string }[] } }) =>
+    res.clarification.questions.map((q) => q.id);
+
+  it('ko "I need food": no danger question, no needs, no need chips', async () => {
+    const { service, classify } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.9)),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '음식이 필요해요' }),
+    });
+    expect(classify.mock.calls[0][2]).toBe('off');
+    expect(res.intent.needs).toEqual([]);
+    expect(res.clarification.questions).toEqual([]);
+  });
+
+  it('ko with a failed emergency check: the answer is not storable (same as en)', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(errorResult()),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '죽고 싶어요' }),
+    });
+    expect(isMarkedNotStorable(res)).toBe(true);
+  });
+
+  // The seam: the list (`run`) and the map pins (`pins`) both go through
+  // `classifyAndDecide`, so the limited-locale rule cannot differ between them.
+  it.each(['ko', 'ru', 'vi', 'am', 'zh-hans'])(
+    '%s: pins classify with AI off and get no need boost, like the list',
+    async (lang) => {
+      const searchPins = jest.fn().mockResolvedValue({
+        total: 0,
+        truncated: false,
+        pins: [],
+      });
+      const { service, classify, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(classified(false, 0.9)),
+        searchPins,
+      });
+      await service.pins({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      expect(classify.mock.calls.map((c) => c[2])).toEqual(['off', 'off']);
+      expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+      expect(searchHybrid.mock.calls[0][0].needScores ?? []).toEqual([]);
+    },
+  );
+
+  it.each(['en', 'es'])(
+    '%s: pins and the list get the same need boost',
+    async (lang) => {
+      const searchPins = jest.fn().mockResolvedValue({
+        total: 0,
+        truncated: false,
+        pins: [],
+      });
+      const { service, searchHybrid } = build({
+        classify: jest.fn().mockResolvedValue(classified(false, 0.001)),
+        searchPins,
+      });
+      await service.pins({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'food' }),
+      });
+      const pinScores = searchPins.mock.calls[0][0].needScores;
+      expect(pinScores.length).toBeGreaterThan(0);
+      expect(pinScores).toEqual(searchHybrid.mock.calls[0][0].needScores);
+    },
+  );
+
+  it('es keeps needs and questions', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.001)),
+    });
+    const res = await service.search({
+      headers: inLang('es'),
+      query: dto({ query: 'necesito comida' }),
+    });
+    expect(res.intent.needs.some((n) => n.source === 'inferred')).toBe(true);
+    expect(ids(res).length).toBeGreaterThan(0);
+  });
+
+  it('ko crisis phrase on the floor list: the danger question, in Korean, with hotlines', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(true, 0.5)),
+    });
+    const res = await service.search({
+      headers: inLang('ko'),
+      query: dto({ query: '죽고 싶어요' }),
+    });
+    expect(ids(res)).toEqual(['emergency']);
+    const q = res.clarification.questions[0];
+    expect(q.stem).toBe('지금 위험한 상황에 있으신가요?');
+    expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
+    expect(res.intent.needs).toEqual([]);
+  });
+
+  it('a limited locale with a high model score but no floor hit: no danger question', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.99)),
+    });
+    const res = await service.search({
+      headers: inLang('vi'),
+      query: dto({ query: 'tôi cần nhà ở' }),
+    });
+    expect(ids(res)).toEqual([]);
+  });
+
+  it('caller U-0 still gets the hotlines in a limited locale', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(classified(false, 0.1)),
+    });
+    const res = await service.search({
+      headers: inLang('ru'),
+      query: dto({ query: 'x', urgency: 'U-0' }),
+    });
+    expect(ids(res)).toEqual(['emergency']);
+    expect(res.clarification.questions[0].hotlines.length).toBe(2);
+  });
+});
+
+describe('V2SearchService urgency boost (ISS-2867)', () => {
+  const withUrgency = (level: string, score: number) =>
+    okResult({}, {
+      signals: {
+        needs: { status: 'ok', scores: {} },
+        urgency: { level, score },
+        emergency: { status: 'ok', score: 0.001, floor_hit: false },
+      },
+    } as Partial<ClassifyResult>);
+  const boostOf = async (
+    classifyResult: ClassifyResult,
+    urgency?: string,
+  ): Promise<unknown> => {
+    const { service, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(classifyResult),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'rent', ...(urgency && { urgency }) } as any),
+    });
+    return searchHybrid.mock.calls[0][0].urgencyBoost;
+  };
+
+  it('caller urgency U-1 sends { code U-1, score 1 }', async () => {
+    expect(await boostOf(okResult({}), 'U-1')).toEqual({
+      code: 'U-1',
+      score: 1,
+    });
+  });
+
+  it('caller U-0 sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-0')).toBeUndefined();
+  });
+
+  it('caller U-X with no model urgency sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-X')).toBeUndefined();
+  });
+
+  it('inferred urgency at state use sends the model score', async () => {
+    expect(await boostOf(withUrgency('U-2', 0.95))).toEqual({
+      code: 'U-2',
+      score: 0.95,
+    });
+  });
+
+  it.each([[0.85], [0.5]])(
+    'model urgency at state ask or drop (score %p) sends no urgencyBoost',
+    async (score) => {
+      expect(await boostOf(withUrgency('U-2', score))).toBeUndefined();
+    },
+  );
+
+  it('needs model failed sends no urgencyBoost', async () => {
+    expect(await boostOf(errorResult())).toBeUndefined();
+  });
+
+  it('the hybrid call has no urgencyBoost key when there is none', async () => {
+    const { service, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('urgencyBoost');
   });
 });

@@ -37,11 +37,18 @@ import {
 import { SearchResourcesBodyDto } from '../../search/dto/search-body.dto';
 import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { SearchPinsResponseDto } from '../../search/dto/search-pins-response.dto';
-import { V2SearchResponseDto } from './dto/v2-search-response.dto';
+import { V2ErrorDto, V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
 import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
 import { V2UrlMirrorsGuard } from './v2-url-mirrors.guard';
 import { V2SearchService } from './v2-search.service';
+
+const OK_DESCRIPTION =
+  'The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.';
+const BAD_REQUEST =
+  'A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.';
+const NOT_FOUND =
+  'The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off.';
 
 /**
  * Reached by `GET /v2/search` and `POST /v2/search` only: the path picks the
@@ -87,7 +94,13 @@ export class V2SearchController {
       '`V2_SEARCH_ENABLED` flag; the request and response shapes are a draft ' +
       'until the v2 ADR (ISS-2493).',
   })
-  @ApiResponse({ status: 200, type: V2SearchResponseDto })
+  @ApiResponse({
+    status: 200,
+    type: V2SearchResponseDto,
+    description: OK_DESCRIPTION,
+  })
+  @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
+  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,
@@ -99,7 +112,7 @@ export class V2SearchController {
     required: true,
     schema: { default: 'en' },
     description:
-      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
+      'Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read.',
   })
   async getResources(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
@@ -125,10 +138,13 @@ export class V2SearchController {
     description:
       'The locations of a v2 search independent of list pagination, up to ' +
       '10,000. Same membership as `GET /v2/search` (child taxonomy codes, ' +
-      '`region`); needs, urgency, clarify and classify are ignored. Matches ' +
+      '`region`); needs, urgency and clarify are ignored. The query text is ' +
+      'classified, as in the list, so need boosts apply to the pins. Matches ' +
       'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
   })
   @ApiResponse({ status: 200, type: SearchPinsResponseDto })
+  @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
+  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,
@@ -140,7 +156,7 @@ export class V2SearchController {
     required: true,
     schema: { default: 'en' },
     description:
-      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
+      'Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read.',
   })
   getPins(
     @CustomHeaders(new V2HeadersPipe()) headers: HeadersDto,
@@ -161,7 +177,13 @@ export class V2SearchController {
       '`V2_SEARCH_ENABLED` flag; the shapes are a draft until the v2 ADR ' +
       '(ISS-2493).',
   })
-  @ApiResponse({ status: 200, type: V2SearchResponseDto })
+  @ApiResponse({
+    status: 200,
+    type: V2SearchResponseDto,
+    description: OK_DESCRIPTION,
+  })
+  @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
+  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,
@@ -173,7 +195,7 @@ export class V2SearchController {
     required: true,
     schema: { default: 'en' },
     description:
-      'One supported language code. v2 reads it from the URL only; the accept-language header is not read.',
+      'Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read.',
   })
   @ApiBody({
     schema: {

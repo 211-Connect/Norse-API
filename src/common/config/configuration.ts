@@ -1,5 +1,19 @@
 import { releaseInfo } from '../release/release-info';
 
+/**
+ * The one parser for on/off env switches (David, PR #364). Case-insensitive,
+ * no trim: `TRUE` and `true` are the same, `' true'` is a config error and
+ * reads as the default. A switch that is on by default turns off only for
+ * `false`; a switch that is off by default turns on only for `true`.
+ */
+export function envFlag(
+  value: string | undefined | null,
+  defaultOn: boolean,
+): boolean {
+  const v = typeof value === 'string' ? value.toLowerCase() : undefined;
+  return defaultOn ? v !== 'false' : v === 'true';
+}
+
 export default () => ({
   port: parseInt(process.env.PORT, 10) || 8080,
   logLevel: process.env.LOG_LEVEL || 'warn',
@@ -24,8 +38,9 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
-  // Need boost on hybrid search (ISS-2745); on only for the exact string `true`.
+  // Need boost on hybrid search (ISS-2745); on unless `false` (any case; read by envFlag).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
+  URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
   // Timeout of the /v2/search classify call, in ms (integer; default 1000).

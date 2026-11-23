@@ -139,6 +139,11 @@ describe('HybridSearchService — cutoff after the need boost (ISS-2499, option 
         }
         return Promise.reject(new Error('rarity not under test'));
       }
+      // The fused lists are not under test here: they fail, so the search keeps
+      // the summed request this spec reads. They are not recorded.
+      if (req._source === false && req.size === 100) {
+        return Promise.reject(new Error('lists not under test'));
+      }
       requests.push(req);
 
       if (isTopCall(req)) {

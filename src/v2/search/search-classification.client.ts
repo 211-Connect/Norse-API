@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { trace } from '@opentelemetry/api';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { envFlag } from '../../common/config/configuration';
 import { normalizeQueryText } from '../../search/internal/query-text';
 import { classifyCacheKey } from './classify-cache-key';
 import { AiClassificationSetting } from '../rules/types';
@@ -78,7 +79,10 @@ export class SearchClassificationClient {
     const text = normalizeQueryText(query);
     const emergencyOnly =
       aiClassification === 'off' &&
-      this.config.get('ML_BROKER_EMERGENCY_ONLY_SUPPORTED') === 'true';
+      envFlag(
+        this.config.get<string>('ML_BROKER_EMERGENCY_ONLY_SUPPORTED'),
+        false,
+      );
     const callBroker = async (): Promise<ClassifyResult> => {
       const result = toRulesSignals(
         await this.mlBroker.classifySearch({
@@ -95,7 +99,10 @@ export class SearchClassificationClient {
     };
     const setHit = (hit: boolean) =>
       trace.getActiveSpan()?.setAttribute('v2.classify.cache_hit', hit);
-    const cacheEnabled = this.config.get('CLASSIFY_CACHE_ENABLED') !== 'false';
+    const cacheEnabled = envFlag(
+      this.config.get<string>('CLASSIFY_CACHE_ENABLED'),
+      true,
+    );
     const key = classifyCacheKey(
       tenantId,
       aiClassification,

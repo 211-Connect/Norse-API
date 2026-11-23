@@ -82,7 +82,7 @@ export function weakMatchDecision(
 ): Decision {
   // The emergency question stays (a soft card can sit next to a weak match).
   const emergency = decision.candidates.filter((c) => c.type === 'emergency');
-  const q = req.clarify === 'never' ? null : noMatchQuestion(req, tenant);
+  const q = req.clarify === 'never' ? null : noMatchQuestion(req);
   const candidates = [...emergency, ...(q ? [q] : [])];
   const countCodes = countCodesOf(candidates);
   return {

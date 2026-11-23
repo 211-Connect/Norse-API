@@ -55,6 +55,22 @@ export const SUPPORTED_LANGUAGES: readonly string[] = [
 
 const SUPPORTED_SET: ReadonlySet<string> = new Set(SUPPORTED_LANGUAGES);
 
+/**
+ * The one locale-matching rule (David, PR #364): try the full tag, then the
+ * primary subtag. `zh-hans` tries `zh-hans`, then `zh`; `es-MX` tries `es-mx`,
+ * then `es`. Case-insensitive; `-` and `_` both split. `lookup` returns the
+ * value for a tag, or undefined for no match. Used by `isFullV2Locale`,
+ * `localizeClarification` and `keywordEnabledForLocale`.
+ */
+export function matchLocale<T>(
+  lang: string | undefined,
+  lookup: (tag: string) => T | undefined,
+): T | undefined {
+  if (!lang) return undefined;
+  const tag = lang.toLowerCase().replace(/_/g, '-');
+  return lookup(tag) ?? lookup(tag.split(/[-_]/)[0]);
+}
+
 export const isSupportedLanguage = (code: string): boolean =>
   SUPPORTED_SET.has(code);
 

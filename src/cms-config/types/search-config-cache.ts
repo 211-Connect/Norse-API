@@ -71,8 +71,8 @@ export interface SearchConfigCache {
   /**
    * Payload tenant flag `enableV2Api`, copied here as `enable_v2_api`. True
    * marks a v2 tenant: scorecard overrides go to `sune_scorecard`. Absent or
-   * false: not v2. TODO(ISS-2499): gate GET /v2/search per tenant on this flag
-   * once Payload pushes it to every tenant.
+   * false: not v2. `V2SearchEnabledGuard` gates GET and POST /v2/search per
+   * tenant on this flag.
    */
   enable_v2_api?: boolean;
 }

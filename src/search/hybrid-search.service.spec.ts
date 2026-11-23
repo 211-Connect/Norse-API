@@ -6,6 +6,7 @@ import {
   HybridSearchService,
   VIRTUAL_DISTANCE_IN_SCALES,
   virtualDistanceWeight,
+  parseKeywordLocales,
 } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { SearchUtilsService } from './search-utils.service';
@@ -96,6 +97,11 @@ describe('HybridSearchService', () => {
       if (req.size === 0 && req.aggs?.df) {
         rarityRequests.push(req);
         return rarityImpl(req);
+      }
+      // Every ranked list fails, so a v2 text search keeps the summed request
+      // these specs read. The fused path has its own spec (rrf.spec.ts).
+      if (req._source === false && req.size === 100) {
+        return Promise.reject(new Error('lists off in this spec'));
       }
       capturedMainRequest = req;
       return Promise.resolve(mainResponse);
@@ -413,7 +419,7 @@ describe('HybridSearchService', () => {
       expect(geoSort).toBeDefined();
     });
 
-    describe('v2 sort=distance hides services with no map point', () => {
+    describe('v2 sort=distance keeps services with no map point', () => {
       const mainFilters = (): any[] =>
         (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
           .function_score.query.bool.filter;
@@ -425,20 +431,20 @@ describe('HybridSearchService', () => {
         unlocated: 'virtual',
       } as any;
 
-      it('v2, coords: requires a map point and sorts by distance', async () => {
+      it('v2, coords: sorts by distance and hides nothing', async () => {
         await service.searchHybrid({
           headers,
           query: { ...baseQuery, coords: COORDS, sort: 'distance' },
           rankingVersion: 'v2',
         });
 
-        expect(hasPointFilter()).toBe(true);
+        expect(hasPointFilter()).toBe(false);
         expect(
           capturedMainRequest.sort.find((s: any) => s._geo_distance),
         ).toBeDefined();
       });
 
-      it('v2 area search, coords: still hides virtual services', async () => {
+      it('v2 area search, coords: still shows virtual services', async () => {
         await service.searchHybrid({
           headers,
           query: { ...baseQuery, coords: COORDS, sort: 'distance' },
@@ -446,7 +452,64 @@ describe('HybridSearchService', () => {
           area,
         } as any);
 
-        expect(hasPointFilter()).toBe(true);
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it('a statewide crisis line (no map point) shows under sort=distance, after the nearest services', async () => {
+        const request = (sort: string) => ({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort },
+          rankingVersion: 'v2' as const,
+        });
+        // Stand-in for Elasticsearch: applies an `exists location.point`
+        // filter if the request carries one, and sorts no-point rows last.
+        const rows = [
+          { id: 'crisis-line', dist: Infinity },
+          { id: 'near', dist: 1 },
+          { id: 'far', dist: 9 },
+        ];
+        esSearch.mockImplementation((req: any) => {
+          if (req.index === 'hybrid_taxonomies') {
+            return Promise.resolve(taxonomyResponse);
+          }
+          if (req.size === 0 && req.aggs?.df) {
+            rarityRequests.push(req);
+            return rarityImpl(req);
+          }
+          capturedMainRequest = req;
+          const filters: any[] = (req.query.pinned?.organic ?? req.query)
+            .function_score.query.bool.filter;
+          const needsPoint = filters.some(
+            (f: any) => f.exists?.field === 'location.point',
+          );
+          const kept = rows
+            .filter((r) => !needsPoint || r.dist !== Infinity)
+            .sort((a, b) => a.dist - b.dist);
+          return Promise.resolve({
+            ...mainResponse,
+            hits: {
+              total: { value: kept.length, relation: 'eq' },
+              hits: kept.map((r) => ({
+                _index: 'hybrid_search_resources_en',
+                _id: r.id,
+                _score: 1,
+                _source: { name: r.id, facets: {}, facets_en: {} },
+                sort: [r.dist, r.id],
+                fields: { matched_needs: [] },
+              })),
+            },
+          });
+        });
+
+        const byDistance: any = await service.searchHybrid(request('distance'));
+        const byRelevance: any = await service.searchHybrid(
+          request('relevance'),
+        );
+
+        const ids = (o: any) => o.search.hits.hits.map((h: any) => h._id);
+        expect(ids(byDistance)).toEqual(['near', 'far', 'crisis-line']);
+        expect(ids(byRelevance)).toContain('crisis-line');
+        expect(byDistance.search.hits.total.value).toBe(3);
       });
 
       it('v2 area search, no coords: sorts by relevance, hides nothing', async () => {
@@ -790,14 +853,23 @@ describe('HybridSearchService', () => {
       );
     });
 
-    it('v2 pins still skip the embedding without relevance_cutoff', async () => {
-      const embed = jest.spyOn(service, 'embedQuery');
+    it('v2 pins with text embed the query (the kept set); an empty query skips the embedding', async () => {
+      const embed = jest
+        .spyOn(service, 'embedQuery')
+        .mockResolvedValue([0.1, 0.2]);
+      await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, query: '' },
+        rankingVersion: 'v2',
+      });
+      expect(embed).not.toHaveBeenCalled();
+
       await service.buildPinsRequest({
         headers,
         query: pinsQuery,
         rankingVersion: 'v2',
       });
-      expect(embed).not.toHaveBeenCalled();
+      expect(embed).toHaveBeenCalledWith('food');
     });
 
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
@@ -1023,9 +1095,8 @@ describe('HybridSearchService', () => {
     it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      // taxonomy, rarity, three rank-fusion lists, fused-page stats, pinned
-      // gate, main search
-      expect(preferences).toHaveLength(8);
+      // taxonomy, rarity, three rank-fusion lists, pinned gate, main search
+      expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -1043,10 +1114,10 @@ describe('HybridSearchService', () => {
         await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
-      // Every search of all three requests, not just the first of each. The
-      // relevance searches add three rank-fusion lists and a stats request
-      // each, and a pinned gate request each (8 + 8 + 3).
-      expect(preferences).toHaveLength(19);
+      // Every search of all three requests, not just the first of each. Every
+      // sort adds three rank-fusion lists; the relevance sorts add a pinned
+      // gate request each (7 + 7 + 6).
+      expect(preferences).toHaveLength(20);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });
@@ -1064,6 +1135,135 @@ describe('HybridSearchService', () => {
       });
 
       expect(new Set([base, otherText, otherTenant, otherScope]).size).toBe(4);
+    });
+  });
+
+  describe('V2_KEYWORD_LOCALES switch (keyword leg per locale, v2 only)', () => {
+    const isKeywordList = (req: any) =>
+      req.query?.bool?.minimum_should_match === 1 &&
+      Array.isArray(req.query?.bool?.should);
+    const isVectorList = (req: any) => !!req.query?.script_score;
+    const mainHasLexical = () =>
+      JSON.stringify(capturedMainRequest.query).includes('name.edge');
+
+    const run = async (lang: string, extra: any = {}, v2 = true) => {
+      esSearch.mockClear();
+      cacheStore.clear();
+      await service.searchHybrid({
+        headers: { ...headers, 'accept-language': lang },
+        query: { ...baseQuery, ...extra },
+        ...(v2 ? { rankingVersion: 'v2' as const } : {}),
+      });
+      return esSearch.mock.calls.map(([r]) => r);
+    };
+
+    it('unset: fused v2 search runs the keyword and the vector list for every locale', async () => {
+      for (const lang of ['en', 'vi']) {
+        const calls = await run(lang);
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(true);
+      }
+    });
+
+    it('parseKeywordLocales: a malformed entry is ignored; no valid entry means all', () => {
+      expect([...parseKeywordLocales('en es, fr')!]).toEqual(['fr']);
+      expect(parseKeywordLocales('en es;ru')).toBeNull();
+    });
+
+    it('parseKeywordLocales: unset or blank means all locales', () => {
+      expect(parseKeywordLocales(undefined)).toBeNull();
+      expect(parseKeywordLocales('  , ')).toBeNull();
+      expect([...parseKeywordLocales('en, ES')!]).toEqual(['en', 'es']);
+    });
+
+    it('parseKeywordLocales: an underscore entry matches the dashed tag', () => {
+      (service as any).keywordLocales = parseKeywordLocales('zh_hans');
+      expect((service as any).keywordEnabledForLocale('zh-Hans')).toBe(true);
+      expect((service as any).keywordEnabledForLocale('zh_Hans')).toBe(true);
+    });
+
+    it('a full tag matches before the primary subtag (zh-hans, es-MX)', () => {
+      (service as any).keywordLocales = parseKeywordLocales('zh-hans,es');
+      const on = (l: string) => (service as any).keywordEnabledForLocale(l);
+      expect(on('zh-hans')).toBe(true);
+      expect(on('ZH_Hans')).toBe(true);
+      expect(on('es-MX')).toBe(true);
+      expect(on('zh-hant')).toBe(false);
+      expect(on('ru')).toBe(false);
+    });
+
+    describe('set to en,es,ru', () => {
+      beforeEach(() => {
+        (service as any).keywordLocales = parseKeywordLocales('en, ES ,ru');
+      });
+
+      it('keeps the keyword leg for listed locales, including a regional tag', async () => {
+        for (const lang of ['en', 'es', 'ru', 'es-MX']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(true);
+        }
+      });
+
+      it('drops the keyword list for other locales and keeps the vector list', async () => {
+        for (const lang of ['vi', 'am']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(false);
+          expect(calls.some(isVectorList)).toBe(true);
+        }
+      });
+
+      it('summed path (coords given): lexical clauses are gone for vi, present for en', async () => {
+        await run('en', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(false);
+      });
+
+      it('embedding failed for vi: the keyword leg runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+      });
+
+      it('embedding failed for vi on the fused path (no coords): the keyword list runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        const calls = await run('vi');
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(false);
+      });
+
+      it('returns no weak-match judges when the keyword leg is off', async () => {
+        // The ranked lists are off in this spec (see the esSearch mock), so
+        // the fused order is stubbed with judges; the gate under test is the
+        // keyword leg switch.
+        jest.spyOn(service as any, 'fetchFusedOrder').mockResolvedValue({
+          ids: undefined,
+          judges: { keyword_top: 1, vector_top: 1 },
+        });
+        const off = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(off.judges).toBeUndefined();
+        (service as any).keywordLocales = null;
+        cacheStore.clear();
+        const on = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(on.judges).toBeDefined();
+      });
+
+      it('v1 is unchanged: keyword stays on for vi without rankingVersion', async () => {
+        await run('vi', {}, false);
+        expect(mainHasLexical()).toBe(true);
+      });
     });
   });
 

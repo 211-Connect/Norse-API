@@ -126,7 +126,9 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   // `Infinity,0` was a 500 and `200,100` searched an impossible point (break
   // run 2026-11-14). v2 keeps the v1 format and rejects the rest with a 400.
   @ApiPropertyOptional({
-    description: 'Comma-delimited longitude,latitude',
+    type: String,
+    description:
+      'Comma-delimited longitude,latitude. Longitude -180 to 180, latitude -90 to 90. Anything else is a 400.',
     example: '-120.740135,47.751076',
   })
   @IsOptional()
