@@ -8,6 +8,12 @@ export {
   unknownRegionsError,
 } from './region.constants';
 export { RegionService, type GeocodeHit } from './region.service';
-export { RegionDetailDto, RegionSummaryDto, RegionIdParamDto } from './dto';
+export {
+  RegionDetailDto,
+  RegionSummaryDto,
+  RegionIdParamDto,
+  StateRegionsQueryDto,
+  StateRegionsResponseDto,
+} from './dto';
 export type { RegionType } from './dto';
 export { RegionInternalModule, RegionServiceModule } from './region.module';

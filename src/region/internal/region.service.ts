@@ -8,7 +8,17 @@ import {
   RegionSearchResponseDto,
   RegionSummaryDto,
   RegionType,
+  STATE_REGION_TYPES,
+  StateRegionDto,
+  StateRegionType,
+  StateRegionsQueryDto,
+  StateRegionsResponseDto,
 } from './dto';
+import {
+  StateRegionSource,
+  placesInCountyRequest,
+  stateRegionsRequest,
+} from './state-regions.query';
 import { REGIONS_INDEX, unknownRegionsError } from './region.constants';
 import {
   REGION_SUMMARY_FIELDS,
@@ -93,6 +103,67 @@ export class RegionService {
           ? encodePlaceCursor(query.state, last.slug, last.id)
           : null,
     };
+  }
+
+  /**
+   * Every county and/or place of a state, sorted by name, for picking which
+   * Regions get SEO landing pages. Each place carries the county containing
+   * its centroid: one search per county (the read-only Elasticsearch guard
+   * rejects `_msearch`), a few at a time.
+   */
+  async listByState(
+    query: StateRegionsQueryDto,
+  ): Promise<StateRegionsResponseDto> {
+    const types = query.types ?? [...STATE_REGION_TYPES];
+    const wantPlaces = types.includes('place');
+    const searchTypes: StateRegionType[] = wantPlaces
+      ? ['county', 'place']
+      : ['county'];
+    const result = await this.call('state list', () =>
+      this.elasticsearch.search<StateRegionSource>(
+        stateRegionsRequest(query.state, searchTypes),
+      ),
+    );
+    const sources = result.hits.hits
+      .map((hit) => hit._source)
+      .filter((source): source is StateRegionSource => !!source);
+    const counties = sources.filter((s) => s.type === 'county');
+
+    const countyOf = new Map<string, string>();
+    if (wantPlaces) {
+      await forEachLimited(counties, STATE_LIST_CONCURRENCY, async (county) => {
+        const inCounty = await this.call('places in county', () =>
+          this.elasticsearch.search<{ id: string }>(
+            placesInCountyRequest(query.state, county.id),
+          ),
+        );
+        for (const hit of inCounty.hits.hits) {
+          if (hit._source?.id) countyOf.set(hit._source.id, county.id);
+        }
+      });
+    }
+
+    const items: StateRegionDto[] = sources
+      .filter((s) => types.includes(s.type))
+      .map((s) =>
+        s.type === 'place'
+          ? {
+              id: s.id,
+              type: s.type,
+              name: s.name,
+              state: s.state,
+              ...(s.slug ? { slug: s.slug } : {}),
+              ...(s.place_type ? { place_type: s.place_type } : {}),
+              county_id: countyOf.get(s.id) ?? null,
+            }
+          : { id: s.id, type: s.type, name: s.name, state: s.state },
+      )
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
+          a.id.localeCompare(b.id),
+      );
+    return { items };
   }
 
   async getPlace(slug: string): Promise<PlaceDetailDto> {
@@ -231,6 +302,23 @@ export class RegionService {
       run,
     );
   }
+}
+
+/** Searches in flight at once when listing a state's places by county. */
+const STATE_LIST_CONCURRENCY = 8;
+
+async function forEachLimited<T>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await run(items[next++]);
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
 }
 
 /** Lower case, no accents, single spaces: `Coeur d'Alene` = `coeur d'alene`. */

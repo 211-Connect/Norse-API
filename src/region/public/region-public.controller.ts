@@ -1,9 +1,15 @@
-import { Controller, Get, Param, Version } from '@nestjs/common';
+import { Controller, Get, Param, Query, Version } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ApiTenantIdQuery } from 'src/common/decorators';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
 import { V1_AND_LEGACY } from '../../common/versioning/api-version';
-import { RegionDetailDto, RegionIdParamDto, RegionService } from '../internal';
+import {
+  RegionDetailDto,
+  RegionIdParamDto,
+  RegionService,
+  StateRegionsQueryDto,
+  StateRegionsResponseDto,
+} from '../internal';
 
 /**
  * One Region with its boundary, for drawing the searched area on a map — see
@@ -21,6 +27,30 @@ import { RegionDetailDto, RegionIdParamDto, RegionService } from '../internal';
 })
 export class RegionPublicController {
   constructor(private readonly regionService: RegionService) {}
+
+  @Get()
+  @Version(V1_AND_LEGACY)
+  @ApiHeader({
+    name: 'x-tenant-id',
+    required: true,
+    description: X_TENANT_ID_HEADER_DESCRIPTION,
+  })
+  @ApiOperation({
+    summary: "A state's counties and places, without boundaries.",
+    description:
+      'For choosing which Regions get SEO landing pages. Sorted by name. ' +
+      'Each place carries `county_id`, the county containing its centroid. ' +
+      'Global catalog: not filtered by tenant coverage.',
+  })
+  @ApiResponse({ status: 200, type: StateRegionsResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid state or types' })
+  @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })
+  @ApiResponse({ status: 503, description: 'Elasticsearch timed out' })
+  listByState(
+    @Query() query: StateRegionsQueryDto,
+  ): Promise<StateRegionsResponseDto> {
+    return this.regionService.listByState(query);
+  }
 
   @Get(':id')
   @Version(V1_AND_LEGACY)

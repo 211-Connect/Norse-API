@@ -162,6 +162,25 @@ on every page and on `/search/pins`): fetch it once from
 returns `{ id, type, name, state, centroid, geometry, fips?, zip?, attribution? }`.
 Compute the bounding box from `geometry` to fit the map.
 
+## A state's counties and places
+
+`GET /regions?state=WA&types=county,place` (`x-tenant-id` required) lists every
+county and/or place of one state, without geometry, sorted by name. Norse's
+SEO landing-page settings use it to let an admin pick the Regions that get
+pages (Norse `docs/landing-pages.md`). `types` takes `county` and `place`
+(a comma list or repeated params; absent means both). ZIPs and states are not
+listed.
+
+Each item is `{ id, type, name, state }`. Places add `slug` and `place_type`
+from the catalog, and `county_id`: the county whose boundary contains the
+place's centroid (a `geo_point`), so a place spanning two counties has exactly
+one, and `null` when none contains it. `county_id` costs one search per county
+of the state (an `indexed_shape` `within` query on `centroid`), eight at a
+time; plain searches, as the read-only Elasticsearch guard rejects
+`_msearch`. Washington (39 counties, 616 places) takes about 3 s, so callers
+cache the answer; the catalog changes only when Dagster publishes. The list
+is the global catalog: it does not say which Regions a tenant serves.
+
 ## Geocoder hit → Region
 
 `GET /geocoding/forward` (Mapbox) adds to each hit its own `name`, its
