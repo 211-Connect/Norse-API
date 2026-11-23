@@ -46,9 +46,9 @@ import { V2SearchService } from './v2-search.service';
 const OK_DESCRIPTION =
   'The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.';
 const BAD_REQUEST =
-  'A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or (POST) a Content-Type other than application/json.';
+  'A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.';
 const NOT_FOUND =
-  'The `V2_SEARCH_ENABLED` flag is not `true`: the route looks absent.';
+  'The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off.';
 
 /**
  * Reached by `GET /v2/search` and `POST /v2/search` only: the path picks the

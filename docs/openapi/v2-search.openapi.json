@@ -274,7 +274,7 @@
             }
           },
           "400": {
-            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or (POST) a Content-Type other than application/json.",
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
             "content": {
               "application/json": {
                 "schema": {
@@ -284,7 +284,7 @@
             }
           },
           "404": {
-            "description": "The `V2_SEARCH_ENABLED` flag is not `true`: the route looks absent."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
@@ -579,7 +579,7 @@
             }
           },
           "400": {
-            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or (POST) a Content-Type other than application/json.",
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
             "content": {
               "application/json": {
                 "schema": {
@@ -589,7 +589,7 @@
             }
           },
           "404": {
-            "description": "The `V2_SEARCH_ENABLED` flag is not `true`: the route looks absent."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
@@ -870,7 +870,7 @@
             }
           },
           "400": {
-            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or (POST) a Content-Type other than application/json.",
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
             "content": {
               "application/json": {
                 "schema": {
@@ -880,7 +880,7 @@
             }
           },
           "404": {
-            "description": "The `V2_SEARCH_ENABLED` flag is not `true`: the route looks absent."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
           }
         },
         "tags": [
