@@ -1514,15 +1514,7 @@ export class HybridSearchService {
           ? this.runRankedList(args, 'hybrid_rrf_need', {
               bool: {
                 filter: filters,
-                should: needs.map((n) => ({
-                  rank_feature: {
-                    field: `sune_need_weights.${n.code}`,
-                    linear: {},
-                    boost:
-                      n.score *
-                      (n.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
-                  },
-                })),
+                should: this.needRankFeatureClauses(needs, 1),
                 minimum_should_match: 1,
               },
             })
@@ -3043,11 +3035,11 @@ export class HybridSearchService {
     );
   }
 
-  private buildNeedBoostClauses(
+  /** One rank_feature clause per need, sized by `needBoostValue`. */
+  private needRankFeatureClauses(
     needs: NeedScore[],
-    topScore: number,
+    k: number,
   ): QueryDslQueryContainer[] {
-    const k = NEED_BOOST_FRACTION * topScore;
     return needs.map((need) => ({
       rank_feature: {
         field: `sune_need_weights.${need.code}`,
@@ -3055,6 +3047,13 @@ export class HybridSearchService {
         boost: this.needBoostValue(k, need),
       },
     }));
+  }
+
+  private buildNeedBoostClauses(
+    needs: NeedScore[],
+    topScore: number,
+  ): QueryDslQueryContainer[] {
+    return this.needRankFeatureClauses(needs, NEED_BOOST_FRACTION * topScore);
   }
 
   private buildHybridQuery(args: {

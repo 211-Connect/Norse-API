@@ -125,7 +125,8 @@ export class V2SearchController {
     description:
       'The locations of a v2 search independent of list pagination, up to ' +
       '10,000. Same membership as `GET /v2/search` (child taxonomy codes, ' +
-      '`region`); needs, urgency, clarify and classify are ignored. Matches ' +
+      '`region`); needs, urgency and clarify are ignored. The query text is ' +
+      'classified, as in the list, so need boosts apply to the pins. Matches ' +
       'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
   })
   @ApiResponse({ status: 200, type: SearchPinsResponseDto })
