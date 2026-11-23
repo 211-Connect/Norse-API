@@ -393,6 +393,22 @@ export class V2SearchService {
       needScores.push({ code, tier, score });
     }
 
+    // A used urgency U-1..U-4 lifts services tagged with that level (ISS-2867).
+    // U-0 comes only from the emergency check and has no service weights.
+    const u = decision.urgency;
+    const urgencyScore =
+      u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
+    const urgencyBoost: HybridCall['urgencyBoost'] =
+      u.state === 'use' &&
+      /^U-[1-4]$/.test(u.value) &&
+      Number.isFinite(urgencyScore) &&
+      urgencyScore > 0
+        ? {
+            code: u.value as 'U-1' | 'U-2' | 'U-3' | 'U-4',
+            score: urgencyScore,
+          }
+        : undefined;
+
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
@@ -411,6 +427,7 @@ export class V2SearchService {
       'v2.has_text': hasText,
       'v2.ai_classification': aiClassification,
       'v2.boost_needs': needScores.length,
+      'v2.urgency_boost': urgencyBoost?.code ?? 'none',
       'v2.selected_needs': selectedNeeds.length,
       'v2.count_codes': countCodes.length,
     });
@@ -425,6 +442,7 @@ export class V2SearchService {
       ...(early && { early }),
       ...(area && { area }),
       needScores,
+      ...(urgencyBoost && { urgencyBoost }),
       ...(countCodes.length > 0 && { countCodes }),
     };
     // The text-free second call (weak match) starts from this call minus the

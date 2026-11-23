@@ -109,6 +109,8 @@ export const VIRTUAL_DISTANCE_IN_SCALES = 1;
 const NEED_BOOST_FRACTION = 0.1;
 const NEED_BOOST_GATE = CUTOFFS.needs.use;
 const NEED_BOOST_TIER1_FACTOR = 0.5;
+// Urgency boost (ISS-2867): a used urgency lifts like one tier 2 need.
+const URGENCY_BOOST_FACTOR = 1;
 
 /**
  * The distance score a service with no map point gets in v2: the gauss value
@@ -119,11 +121,28 @@ export function virtualDistanceWeight(): number {
   return GEO_GAUSS_WEIGHT * Math.pow(0.5, VIRTUAL_DISTANCE_IN_SCALES ** 2);
 }
 
+/**
+ * One term of the boost list. `urgency` = the used urgency level, code
+ * U-1..U-4, field `sune_urgency_weights`; the other tiers are needs, field
+ * `sune_need_weights`.
+ */
 export type NeedScore = {
   code: string;
-  tier: 'tier1' | 'tier2';
+  tier: 'tier1' | 'tier2' | 'urgency';
   score: number;
 };
+
+/** The weights group a boost term reads. The one place that maps tier to field. */
+const boostGroupOf = (n: NeedScore) =>
+  n.tier === 'urgency' ? 'sune_urgency_weights' : 'sune_need_weights';
+const boostFeatureField = (n: NeedScore): string =>
+  `${boostGroupOf(n)}.${n.code}`;
+const boostFactor = (n: NeedScore): number =>
+  n.tier === 'tier1'
+    ? NEED_BOOST_TIER1_FACTOR
+    : n.tier === 'urgency'
+      ? URGENCY_BOOST_FACTOR
+      : 1;
 export type RankingVersion = 'v1' | 'v2';
 
 /**
@@ -199,6 +218,11 @@ type HybridSearchOptions = {
   query: SearchResourcesQueryDto;
   body?: SearchResourcesBodyDto;
   needScores?: NeedScore[];
+  /**
+   * v2 only. The used urgency (U-1..U-4) and its score. Boosts services tagged
+   * with that level. Ignored unless URGENCY_BOOST_ENABLED is "true".
+   */
+  urgencyBoost?: { code: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number };
   /**
    * v2 only. Caller-sent need codes. They never filter. They order results in
    * blocks: every code first, then some, then none (Lucas 2026-11-12). Empty or
@@ -459,6 +483,7 @@ export class HybridSearchService {
   private readonly runpodApiKey: string;
   private readonly embeddingLocalBaseUrl: string | undefined;
   private readonly needBoostEnabled: boolean;
+  private readonly urgencyBoostEnabled: boolean;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
@@ -484,6 +509,9 @@ export class HybridSearchService {
     // Only `false` turns it off. Only v2 passes needScores, so v1 is unchanged.
     this.needBoostEnabled =
       this.configService.get<string>('NEED_BOOST_ENABLED')?.trim() !== 'false';
+    this.urgencyBoostEnabled =
+      this.configService.get<string>('URGENCY_BOOST_ENABLED')?.trim() ===
+      'true';
     this.embeddingCacheEnabled =
       this.configService.get<string>('EMBEDDING_CACHE_ENABLED') !== 'false';
     const ttl = Number(
@@ -1139,7 +1167,26 @@ export class HybridSearchService {
         n.code !== 'N-X' &&
         n.score >= NEED_BOOST_GATE,
     );
-    const boostActive = this.needBoostEnabled && rank && activeNeeds.length > 0;
+    const { urgencyBoost } = options;
+    const urgencyTerms: NeedScore[] =
+      this.urgencyBoostEnabled &&
+      urgencyBoost &&
+      /^U-[1-4]$/.test(urgencyBoost.code) &&
+      Number.isFinite(urgencyBoost.score) &&
+      urgencyBoost.score > 0
+        ? [
+            {
+              code: urgencyBoost.code,
+              tier: 'urgency',
+              score: urgencyBoost.score,
+            },
+          ]
+        : [];
+    const boostTerms = [
+      ...(this.needBoostEnabled ? activeNeeds : []),
+      ...urgencyTerms,
+    ];
+    const boostActive = rank && boostTerms.length > 0;
 
     // Opt-in only (ISS-1752). With `relevance_cutoff` absent or `off` nothing
     // below runs, no extra Elasticsearch call is made, and the request built
@@ -1171,7 +1218,7 @@ export class HybridSearchService {
           })
         : undefined;
     const probeNeeds =
-      boostTopScorePromise !== undefined ? activeNeeds : undefined;
+      boostTopScorePromise !== undefined ? boostTerms : undefined;
 
     if (cutoffRequested) {
       const cacheKey = relevanceCutoffCacheKey({
@@ -1248,7 +1295,7 @@ export class HybridSearchService {
       // Already started before the cutoff probe (v2, cutoff on).
       const topScore = await boostTopScorePromise;
       if (topScore > 0) {
-        needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+        needShould = this.buildNeedBoostClauses(boostTerms, topScore);
       }
     } else if (boostActive && !(fuseEligible && !cutoffRequested)) {
       // Fused with the cutoff off: the need list replaces the boost and the
@@ -1269,7 +1316,7 @@ export class HybridSearchService {
         v2,
       });
       if (topScore > 0) {
-        needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+        needShould = this.buildNeedBoostClauses(boostTerms, topScore);
       }
     }
 
@@ -1288,7 +1335,7 @@ export class HybridSearchService {
           queryVector: queryVector!,
           predicted: predictedTaxonomies,
           wordRarity,
-          needs: boostActive ? activeNeeds : [],
+          needs: boostActive ? boostTerms : [],
           earlyLists,
         }),
       );
@@ -1312,7 +1359,7 @@ export class HybridSearchService {
           v2,
         });
         if (topScore > 0) {
-          needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
+          needShould = this.buildNeedBoostClauses(boostTerms, topScore);
         }
       }
     }
@@ -1607,11 +1654,9 @@ export class HybridSearchService {
               filter: filters,
               should: needs.map((n) => ({
                 rank_feature: {
-                  field: `sune_need_weights.${n.code}`,
+                  field: boostFeatureField(n),
                   linear: {},
-                  boost:
-                    n.score *
-                    (n.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1),
+                  boost: n.score * boostFactor(n),
                 },
               })),
               minimum_should_match: 1,
@@ -2605,12 +2650,15 @@ export class HybridSearchService {
       const taggedFilter: QueryDslQueryContainer = {
         bool: {
           should: needs.map((n) => ({
-            exists: { field: `sune_need_weights.${n.code}` },
+            exists: { field: boostFeatureField(n) },
           })),
           minimum_should_match: 1,
         },
       };
-      type TaggedSource = { sune_need_weights?: Record<string, unknown> };
+      type TaggedSource = {
+        sune_need_weights?: Record<string, unknown>;
+        sune_urgency_weights?: Record<string, unknown>;
+      };
       const [baseHead, taggedHead] = await Promise.all([
         this.metrics.observeDownstream(
           'elasticsearch',
@@ -2628,7 +2676,7 @@ export class HybridSearchService {
               preference,
               size: CUTOFF_TAGGED_HEAD_SIZE,
               track_total_hits: false,
-              _source: needs.map((n) => `sune_need_weights.${n.code}`),
+              _source: needs.map(boostFeatureField),
               sort: ['_score'],
               query: buildProbeQuery([], taggedFilter),
             }),
@@ -2658,11 +2706,10 @@ export class HybridSearchService {
         for (const h of taggedHead.hits.hits) {
           if (h._id === undefined) continue;
           base.set(h._id, h._score ?? 0);
-          const weights = h._source?.sune_need_weights;
           let boost = 0;
           for (const n of needs) {
             boost +=
-              this.needBoostValue(k, n) * (Number(weights?.[n.code]) || 0);
+              this.needBoostValue(k, n) * this.boostWeightOf(h._source, n);
           }
           boostOf.set(h._id, boost);
         }
@@ -3027,9 +3074,20 @@ export class HybridSearchService {
    * the two cannot drift.
    */
   private needBoostValue(k: number, need: NeedScore): number {
-    return (
-      k * need.score * (need.tier === 'tier1' ? NEED_BOOST_TIER1_FACTOR : 1)
-    );
+    return k * need.score * boostFactor(need);
+  }
+
+  /** The weight a service document carries for a boost term; 0 when it has none. */
+  private boostWeightOf(
+    source:
+      | {
+          sune_need_weights?: Record<string, unknown>;
+          sune_urgency_weights?: Record<string, unknown>;
+        }
+      | undefined,
+    n: NeedScore,
+  ): number {
+    return Number(source?.[boostGroupOf(n)]?.[n.code]) || 0;
   }
 
   private buildNeedBoostClauses(
@@ -3039,7 +3097,7 @@ export class HybridSearchService {
     const k = NEED_BOOST_FRACTION * topScore;
     return needs.map((need) => ({
       rank_feature: {
-        field: `sune_need_weights.${need.code}`,
+        field: boostFeatureField(need),
         linear: {},
         boost: this.needBoostValue(k, need),
       },

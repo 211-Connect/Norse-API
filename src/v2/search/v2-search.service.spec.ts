@@ -1926,3 +1926,66 @@ describe('tenantHotlines', () => {
     );
   });
 });
+
+describe('V2SearchService urgency boost (ISS-2867)', () => {
+  const withUrgency = (level: string, score: number) =>
+    okResult({}, {
+      signals: {
+        needs: { status: 'ok', scores: {} },
+        urgency: { level, score },
+        emergency: { status: 'ok', score: 0.001, floor_hit: false },
+      },
+    } as Partial<ClassifyResult>);
+  const boostOf = async (
+    classifyResult: ClassifyResult,
+    urgency?: string,
+  ): Promise<unknown> => {
+    const { service, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(classifyResult),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'rent', ...(urgency && { urgency }) } as any),
+    });
+    return searchHybrid.mock.calls[0][0].urgencyBoost;
+  };
+
+  it('caller urgency U-1 sends { code U-1, score 1 }', async () => {
+    expect(await boostOf(okResult({}), 'U-1')).toEqual({
+      code: 'U-1',
+      score: 1,
+    });
+  });
+
+  it('caller U-0 sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-0')).toBeUndefined();
+  });
+
+  it('caller U-X with no model urgency sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-X')).toBeUndefined();
+  });
+
+  it('inferred urgency at state use sends the model score', async () => {
+    expect(await boostOf(withUrgency('U-2', 0.95))).toEqual({
+      code: 'U-2',
+      score: 0.95,
+    });
+  });
+
+  it.each([[0.85], [0.5]])(
+    'model urgency at state ask or drop (score %p) sends no urgencyBoost',
+    async (score) => {
+      expect(await boostOf(withUrgency('U-2', score))).toBeUndefined();
+    },
+  );
+
+  it('needs model failed sends no urgencyBoost', async () => {
+    expect(await boostOf(errorResult())).toBeUndefined();
+  });
+
+  it('the hybrid call has no urgencyBoost key when there is none', async () => {
+    const { service, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('urgencyBoost');
+  });
+});
