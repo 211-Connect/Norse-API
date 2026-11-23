@@ -129,6 +129,9 @@ search apart: they all post to the same `_search` path.
 | `hybrid.word_rarity` | Word rarity: cache read, probe, cache write |
 | `hybrid.cutoff_probe` | Relevance cutoff probe; its Elasticsearch calls are `elasticsearch hybrid_cutoff_head`, `_count`, `_kept`, `_widened` |
 | `hybrid.fused_order` | Rank fusion lists that wait for the taxonomy lookup |
+| `hybrid.early_start` | Retrieval stage that starts before classify ends (the part that does not need classify) |
+| `v2.retrieval.weak_counts` | Second retrieval after a weak match: the count requests |
+| `v2.retrieval.weak_pick` | Second retrieval after a weak match: the page request |
 
 Downstream spans carry `downstream.outcome` (`ok`, `error`, `timeout`),
 `downstream.took_ms` (Elasticsearch's own `took`, so span time minus `took` is network

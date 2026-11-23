@@ -202,6 +202,23 @@ function emptyResults<T extends HybridSearchResult>(
   } as never;
 }
 
+/**
+ * An Elasticsearch failure that the caller caused becomes a 400: an unknown
+ * language has no index, and a too-large query text cannot be built. Any other
+ * error is rethrown unchanged.
+ */
+function throwCallerError(error: unknown, headers: HeadersDto): never {
+  if (isIndexNotFound(error)) {
+    throw new BadRequestException(
+      `no search index for accept-language ${headers['accept-language']}`,
+    );
+  }
+  if (isQueryTooLarge(error)) {
+    throw new BadRequestException('query is too long for search');
+  }
+  throw error;
+}
+
 @Injectable()
 export class V2SearchService {
   constructor(
@@ -221,17 +238,9 @@ export class V2SearchService {
     call: HybridCall,
     headers: HeadersDto,
   ): Promise<HybridSearchResult> {
-    return this.hybridSearch.searchHybrid(call).catch((error: unknown) => {
-      if (isIndexNotFound(error)) {
-        throw new BadRequestException(
-          `no search index for accept-language ${headers['accept-language']}`,
-        );
-      }
-      if (isQueryTooLarge(error)) {
-        throw new BadRequestException('query is too long for search');
-      }
-      throw error;
-    });
+    return this.hybridSearch
+      .searchHybrid(call)
+      .catch((error: unknown) => throwCallerError(error, headers));
   }
 
   /**
@@ -276,17 +285,7 @@ export class V2SearchService {
         rankingVersion: 'v2',
         ...(needScores && { needScores }),
       })
-      .catch((error: unknown) => {
-        if (isIndexNotFound(error)) {
-          throw new BadRequestException(
-            `no search index for accept-language ${headers['accept-language']}`,
-          );
-        }
-        if (isQueryTooLarge(error)) {
-          throw new BadRequestException('query is too long for search');
-        }
-        throw error;
-      });
+      .catch((error: unknown) => throwCallerError(error, headers));
   }
 
   /**

@@ -1013,6 +1013,8 @@ describe('V2SearchService', () => {
         headers,
         query: dto({ query: 'help' }),
       });
+      expect(res.clarification.questions[0].id).toBe('emergency');
+      expect(emergencyQ(res).importance).toBe('high');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});

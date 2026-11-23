@@ -10,7 +10,10 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 - `V2_SEARCH_ENABLED` must be exactly `true`. Anything else answers `404` before validation (`V2SearchEnabledGuard`).
 - `ML_BROKER_EMERGENCY_ONLY_SUPPORTED`: exact `true` means ml-broker accepts `emergency_only` (ml-broker PR #20). Then a tenant with AI classification off sends `emergency_only: true`: ml-broker skips the needs model and answers `needs.scores: []`, `urgency: null`. The client accepts that shape only when it sent the field, and maps it to need status `ok` with no scores and no urgency (the AI-off "no guess" state). Default off: an older ml-broker may reject the field. The route always calls ml-broker.
 - `NEED_BOOST_ENABLED`: the need boost (need list in rank fusion, summed-ranking fallback) is on by default (Lucas 2026-11-18). Unset means on; only the exact string `false` turns it off. It needs the `sune_need_weights` rank_features mapping on the index.
-- `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 1000 (Lucas 2026-11-13: ml-broker is slow; was 300).
+- `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 1000 (Lucas 2026-11-13: ml-broker is slow; was 300). A value outside 100 to 5000 is clamped to that range; a value that is not a positive integer uses the default.
+- `CLASSIFY_CACHE_ENABLED`: the classify result cache is on unless the exact string `false`. Only `false` turns it off (a value like `"false "` does not).
+- `EMBEDDING_CACHE_ENABLED`: the query embedding cache is on unless the exact string `false`. `EMBEDDING_CACHE_TTL_MS` sets its lifetime (positive integer ms, default 24 h).
+- Tenant setting `ai_classification` (in the `search_config:<tenant>` Redis value): only exactly `off` switches AI classification off for that tenant. A missing, null or unknown value means on (`tenantAiClassification`).
 
 ## Pipeline (`V2SearchService.search`)
 

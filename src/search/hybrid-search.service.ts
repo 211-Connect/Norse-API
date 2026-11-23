@@ -1111,27 +1111,28 @@ export class HybridSearchService {
     // at least one need at or above the gate; otherwise nothing below runs and
     // the request is unchanged.
 
+    // The same inputs for every need-boost top-score request below.
+    const needBoostTopScore = (): Promise<number> =>
+      this.fetchNeedBoostTopScore({
+        index,
+        preference,
+        queryStr,
+        queryVector,
+        predicted: predictedTaxonomies,
+        filters: [...baseFilters],
+        coords,
+        distance: distance ?? 0,
+        pinnedMode: rankingPinnedMode,
+        wordRarity,
+        keyword,
+        v2,
+      });
     // v2 with the cutoff and the boost both active: the cut happens after the
     // boost (ADR 0039, option A). The probe sizes its own boost, so the main
     // search's top-score call no longer needs the cut's ids and starts now, in
     // parallel with the probe's own top-score call. v1 keeps its old order.
     const boostTopScorePromise =
-      cutoffRequested && v2 && boostActive
-        ? this.fetchNeedBoostTopScore({
-            index,
-            preference,
-            queryStr,
-            queryVector,
-            predicted: predictedTaxonomies,
-            filters: [...baseFilters],
-            coords,
-            distance: distance ?? 0,
-            pinnedMode: rankingPinnedMode,
-            wordRarity,
-            keyword,
-            v2,
-          })
-        : undefined;
+      cutoffRequested && v2 && boostActive ? needBoostTopScore() : undefined;
     const probeNeeds =
       boostTopScorePromise !== undefined ? activeNeeds : undefined;
 
@@ -1230,20 +1231,7 @@ export class HybridSearchService {
       // top-score request is not sent. The organic tail after the fused top
       // 100 then has no need boost. If the fusion fails, the block after the
       // fusion call restores today's boost.
-      const topScore = await this.fetchNeedBoostTopScore({
-        index,
-        preference,
-        queryStr,
-        queryVector,
-        predicted: predictedTaxonomies,
-        filters: baseFilters,
-        coords,
-        distance: distance ?? 0,
-        pinnedMode: rankingPinnedMode,
-        wordRarity,
-        keyword,
-        v2,
-      });
+      const topScore = await needBoostTopScore();
       if (topScore > 0) {
         needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
       }
@@ -1278,20 +1266,7 @@ export class HybridSearchService {
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
         // Fusion failed after the top-score request was skipped: fall back
         // to today's summed ranking, need boost included.
-        const topScore = await this.fetchNeedBoostTopScore({
-          index,
-          preference,
-          queryStr,
-          queryVector,
-          predicted: predictedTaxonomies,
-          filters: baseFilters,
-          coords,
-          distance: distance ?? 0,
-          pinnedMode: rankingPinnedMode,
-          wordRarity,
-          keyword,
-          v2,
-        });
+        const topScore = await needBoostTopScore();
         if (topScore > 0) {
           needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
         }
