@@ -17,6 +17,7 @@ function run(opts: {
   apiVersionHeader?: string;
   status?: number;
   body?: unknown;
+  degraded?: boolean;
 }) {
   const headers: Record<string, string> = {};
   const res = {
@@ -24,6 +25,7 @@ function run(opts: {
     setHeader: (k: string, v: string) => (headers[k.toLowerCase()] = v),
     getHeader: (k: string) => headers[k.toLowerCase()],
   };
+  if (opts.degraded) headers['x-degraded'] = 'tenant-flag-cache';
   const req = {
     originalUrl: opts.url,
     url: opts.url,
@@ -53,6 +55,11 @@ describe('CdnCacheControlInterceptor', () => {
   it('leaves routes without a TTL alone', async () => {
     const h = await run({ ttl: undefined, url: '/search' });
     expect(h['cache-control']).toBeUndefined();
+  });
+
+  it('a response marked X-Degraded is never stored', async () => {
+    const h = await run({ ttl: 3600, url: '/search', degraded: true });
+    expect(h['cache-control']).toBe(NO_STORE);
   });
 
   it('keeps TTL 0 as no-store', async () => {
