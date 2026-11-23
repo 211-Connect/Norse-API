@@ -41,6 +41,11 @@ import {
 } from './internal/search-fingerprint';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { relevanceCutoffCacheKey } from './internal/cache-key/relevance-cutoff-cache-key';
+import {
+  CUTOFF_WINDOW_NUM_CANDIDATES,
+  CUTOFF_WINDOW_SIZE,
+  cutWindow,
+} from './internal/relevance-cutoff/window-cut';
 import { RelevanceCutoffDto } from './dto/search-response.dto';
 import {
   fuzzyFallbackFor,
@@ -521,6 +526,12 @@ export class HybridSearchService {
   /** Locales whose v2 search keeps the keyword leg. `null` = all (today's behavior). */
   private readonly keywordLocales: Set<string> | null;
   private readonly urgencyBoostEnabled: boolean;
+  /**
+   * `V2_CUTOFF_WINDOW` (default off everywhere). On: a v2 text search with
+   * `relevance_cutoff=on` cuts inside one windowed search instead of the
+   * probe. Off: today's probe, request for request.
+   */
+  private readonly cutoffWindowEnabled: boolean;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
@@ -550,6 +561,10 @@ export class HybridSearchService {
     );
     this.urgencyBoostEnabled = envFlag(
       this.configService.get<string>('URGENCY_BOOST_ENABLED'),
+      false,
+    );
+    this.cutoffWindowEnabled = envFlag(
+      this.configService.get<string>('V2_CUTOFF_WINDOW'),
       false,
     );
     this.embeddingCacheEnabled = envFlag(
@@ -638,6 +653,7 @@ export class HybridSearchService {
       fused,
       judges,
       fusedOrder,
+      totalRelation,
     } = await withSpan('hybrid.prepare', async (span) => {
       const prepared = await this.prepareHybridSearch(options, {
         rank: true,
@@ -747,7 +763,7 @@ export class HybridSearchService {
           failed: data._shards.failed,
         },
         hits: {
-          total: { value: totalHits, relation: 'eq' },
+          total: { value: totalHits, relation: totalRelation ?? 'eq' },
           max_score: fused ? null : (hits[0]?._score ?? null),
           hits,
         },
@@ -1210,7 +1226,71 @@ export class HybridSearchService {
     const probeNeeds =
       boostTopScorePromise !== undefined ? boostTerms : undefined;
 
-    if (cutoffRequested) {
+    // Build W: the windowed cut replaces the probe. Needs a text query, a
+    // vector and lexical clauses (the BM25 leg requires one); otherwise the
+    // probe runs as it always did.
+    const lexicalClauses =
+      queryStr.trim() && keyword
+        ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+        : [];
+    const windowActive =
+      cutoffRequested &&
+      v2 &&
+      rank &&
+      this.cutoffWindowEnabled &&
+      queryVector !== undefined &&
+      lexicalClauses.length > 0;
+    let totalRelation: 'gte' | undefined;
+    let windowKeptIds: string[] | undefined;
+
+    if (windowActive) {
+      let windowNeedShould: QueryDslQueryContainer[] = [];
+      if (boostTopScorePromise) {
+        const topScore = await boostTopScorePromise;
+        if (topScore > 0) {
+          windowNeedShould = this.buildNeedBoostClauses(boostTerms, topScore);
+        }
+      }
+      const cacheKey =
+        relevanceCutoffCacheKey({
+          ...identity,
+          pinnedMode,
+          rankingVersion: 'v2',
+          needs: probeNeeds,
+        }) + ':window';
+      const runWindow = () =>
+        withSpan('hybrid.cutoff_window', () =>
+          this.runCutoffWindow({
+            index,
+            preference,
+            queryStr,
+            queryVector,
+            predicted: predictedTaxonomies,
+            filters: baseFilters,
+            coords,
+            distance: distance ?? 0,
+            pinnedMode,
+            lexicalShould: lexicalClauses,
+            needShould: windowNeedShould,
+          }),
+        );
+      // Same caching rule as the probe: pages 2..n reuse one window, and a
+      // window scored after a failed rarity lookup is never cached.
+      const windowed =
+        wordRarity === null
+          ? await runWindow()
+          : await this.requestCacheService.getOrSet(
+              cacheKey,
+              runWindow,
+              CUTOFF_PROBE_TTL_MS,
+            );
+      cutoff = windowed.cutoff;
+      totalRelation = windowed.relation;
+      if (windowed.keptIds) {
+        windowKeptIds = windowed.keptIds;
+        baseFilters.push({ ids: { values: windowed.keptIds } });
+      }
+    } else if (cutoffRequested) {
       const cacheKey = relevanceCutoffCacheKey({
         ...identity,
         pinnedMode,
@@ -1312,9 +1392,11 @@ export class HybridSearchService {
       }
     }
 
-    let fusedIds: string[] | undefined;
+    // The window's kept ids arrive already ordered by the weighted score, so
+    // the RRF fusion does not run on top of them.
+    let fusedIds: string[] | undefined = windowKeptIds;
     let judges: Judges | undefined;
-    if (fuseEligible) {
+    if (fuseEligible && !windowActive) {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
       // membership from today's scores; fusion only orders.
@@ -1422,6 +1504,7 @@ export class HybridSearchService {
       countRequest,
       tenantFacets,
       cutoff,
+      totalRelation,
       lang,
       fused: fusedIds !== undefined,
       // The page is in the fused order (pinned query): no sort values to show.
@@ -2968,6 +3051,147 @@ export class HybridSearchService {
         matched_before_cutoff: matched,
         cutoff_score: cutoffScore,
         candidates_examined: survivors,
+      },
+    };
+  }
+
+  /**
+   * Build W: the windowed relevance cut. One `_search` replaces the probe:
+   * - BM25 leg: the lexical clauses are required (a document with no query
+   *   word enters through the vector leg only), plus the taxonomy and need
+   *   clauses and the geo decay of the main query;
+   * - kNN leg: `k` = window size, weight = today's `VECTOR_SCORE_WEIGHT`;
+   * - Elasticsearch adds the two scores (today's weighted hybrid), size = window.
+   * The cut is `cutWindow` on the returned scores, client side. The kept ids,
+   * in score order, then feed the page request like the probe's ids did, so
+   * paging, sort, facets and counts all stay inside the window.
+   * `relation` is `gte` when the window filled or the rank cap bound: the real
+   * kept count may be larger than the number reported.
+   * Rejects when the request fails; nothing is cached then.
+   */
+  private async runCutoffWindow(args: {
+    index: string;
+    preference: string;
+    queryStr: string;
+    queryVector: number[] | undefined;
+    predicted: PredictedTaxonomy[];
+    filters: QueryDslQueryContainer[];
+    coords: number[] | undefined;
+    distance: number;
+    pinnedMode: PinnedResourcesMode;
+    lexicalShould: QueryDslQueryContainer[];
+    needShould: QueryDslQueryContainer[];
+  }): Promise<{
+    keptIds: string[] | null;
+    cutoff: RelevanceCutoffDto;
+    relation: 'gte' | undefined;
+  }> {
+    const {
+      index,
+      preference,
+      queryStr,
+      queryVector,
+      predicted,
+      filters,
+      coords,
+      distance,
+      pinnedMode,
+      lexicalShould,
+      needShould,
+    } = args;
+
+    const should: QueryDslQueryContainer[] = [
+      ...this.buildTaxonomyBoostClauses(predicted, queryStr),
+      ...(pinnedMode === 'boost'
+        ? [
+            {
+              constant_score: {
+                filter: { term: { pinned: true } },
+                boost: PINNED_SCORE_BOOST,
+              },
+            } as QueryDslQueryContainer,
+          ]
+        : []),
+      ...needShould,
+    ];
+    const lexicalRequired: QueryDslQueryContainer = {
+      bool: { should: lexicalShould, minimum_should_match: 1 },
+    };
+    const innerBool: QueryDslQueryContainer = {
+      bool: { filter: filters, must: [lexicalRequired], should },
+    };
+    // No vector function here: the kNN leg carries the vector score.
+    const scoreFunctions = this.buildScoreFunctions(
+      undefined,
+      coords,
+      distance,
+      true,
+    );
+    const query: QueryDslQueryContainer =
+      scoreFunctions.length > 0
+        ? {
+            function_score: {
+              query: innerBool,
+              functions: scoreFunctions,
+              score_mode: 'sum',
+              boost_mode: 'sum',
+            },
+          }
+        : innerBool;
+
+    const res = await this.tracedSearch<{ service_id?: string }>(
+      'hybrid_cutoff_window',
+      {
+        index,
+        preference,
+        size: CUTOFF_WINDOW_SIZE,
+        track_total_hits: false,
+        _source: false,
+        query,
+        knn: {
+          field: 'embedding',
+          query_vector: queryVector,
+          k: CUTOFF_WINDOW_SIZE,
+          num_candidates: CUTOFF_WINDOW_NUM_CANDIDATES,
+          filter: filters,
+          boost: VECTOR_SCORE_WEIGHT,
+        },
+      },
+    );
+
+    const hits = (res.hits.hits ?? []).filter(
+      (h): h is typeof h & { _id: string } => typeof h._id === 'string',
+    );
+    const scores = hits.map((h) => h._score ?? 0);
+    const cut = cutWindow(scores);
+    if (cut.kept === 0) {
+      return {
+        keptIds: null,
+        relation: undefined,
+        cutoff: {
+          applied: false,
+          reason: 'no_elbow',
+          kept: 0,
+          matched_before_cutoff: 0,
+          cutoff_score: null,
+          candidates_examined: 0,
+        },
+      };
+    }
+    const keptIds = hits.slice(0, cut.kept).map((h) => h._id);
+    const windowFilled = hits.length >= CUTOFF_WINDOW_SIZE;
+    return {
+      keptIds,
+      relation: windowFilled || cut.capped ? 'gte' : undefined,
+      cutoff: {
+        applied: cut.kept < hits.length,
+        reason: cut.kept < hits.length ? null : 'no_elbow',
+        kept: keptIds.length,
+        // The window size, not the full match count: one windowed search does
+        // not count every match.
+        matched_before_cutoff: hits.length,
+        cutoff_score: cut.cutoffScore,
+        candidates_examined: hits.length,
       },
     };
   }
