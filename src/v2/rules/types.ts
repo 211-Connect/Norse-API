@@ -108,8 +108,11 @@ export interface Question {
   none_of_these: boolean;
   hotlines?: Hotline[]; // emergency question only
 }
-/** `unclear`: no clear area. `area`: a clear area without a clear kind. `kind`: every clear area has a clear kind. */
-export type NeedLevel = 'unclear' | 'area' | 'kind';
+/**
+ * `unclear`: no clear area. `area`: a clear area without a clear kind. `kind`: every clear area has a clear kind.
+ * `likely`: every clear area has a clear kind and at least one kind is only likely (`likely_kind`).
+ */
+export type NeedLevel = 'unclear' | 'area' | 'likely' | 'kind';
 /** The grid rule finalize applies (rules-signals-2026-11-23.md). */
 export type GridRule = 'no_results' | 'R1' | 'R2' | 'R3' | 'R4' | 'R5';
 export interface Decision {

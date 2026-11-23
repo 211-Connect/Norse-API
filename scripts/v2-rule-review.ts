@@ -78,7 +78,11 @@ function run(row: any) {
       hit_count: e.hit_count,
       org_share: e.org_share,
       top_org_share: e.top_org_share,
+      top_org_back: e.top_org_back,
       text_share: e.text_share,
+      words_held: e.words_held,
+      named: e.named,
+      generic: e.generic,
     }),
     weak: e.weak,
   };

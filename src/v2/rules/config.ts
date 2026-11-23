@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-23.2';
+export const RULES_VERSION = 'rules-2026-11-23.3';
 
 export const CUTOFFS = {
   emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
@@ -13,7 +13,7 @@ export const CUTOFFS = {
   // KIND clear (results show, no blocking question); below needs.use the area also
   // asks a quiet 'medium' question. When the hits do not hold the query words (match
   // 'none') such a score makes neither area nor kind clear.
-  area: { tier1Min: 0.8, tier2Max: 0.5, kindClearMin: 0.5 },
+  area: { tier1Min: 0.8, tier2Max: 0.5, kindClearMin: 0.45 },
   nx: { label: 0.07 },
   start: { modelAreasMin: 0.3 },
   // Signal D, measured 2026-11-17 (weak-match-2026-11-17/results.md); Lucas 2026-11-18: ship.

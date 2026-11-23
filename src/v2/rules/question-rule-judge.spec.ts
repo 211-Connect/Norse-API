@@ -4,9 +4,10 @@
  * Lucas 2026-11-23): labeled queries per tenant, the gold set stays a floor.
  *
  * Each fixture row is one live call on the prod index (read-only), recorded on
- * 2026-11-23 for WA_211, IL211 and Rochester NY: the model need scores, the
- * content words, and the match inputs (top-20 org share, one-org share,
- * text share). Scores under 0.001 are left out (no cutoff is that low). Labels are Claude's, for Lucas to review
+ * 2026-11-23 on branch build, local server, read-only prod ES, for WA_211, IL211
+ * and Rochester NY: the model need scores, the content words, and the match
+ * inputs (top-20 org share, one-org share, top-org back coverage, text share,
+ * words held, named by the org name lookup, generic word; scripts/v2-match-evidence.ts). Scores under 0.001 are left out (no cutoff is that low). Labels are Claude's, for Lucas to review
  * (WORK-LOG/HANDOFF-ASSETS/v2-search--rules-engine/question-rule-v1/labels.md).
  *
  * The spec runs the real decide + matchFromShares + finalize on the saved
@@ -40,7 +41,7 @@ interface Row {
   content_words: string[];
   emergency_live: boolean;
   /** Grid fields, written by scripts/v2-label-judge-grid.ts. */
-  need: 'unclear' | 'area' | 'kind';
+  need: 'unclear' | 'area' | 'likely' | 'kind';
   match: Match;
   results: 'none' | 'some';
   rule: GridRule;
@@ -50,14 +51,18 @@ interface Row {
     hit_count: number;
     org_share: number;
     top_org_share: number;
+    top_org_back: number;
     text_share: number;
+    words_held: boolean;
+    named: boolean;
+    generic: boolean;
   };
 }
 
 const rows: Row[] = require('./__fixtures__/question-rule-judge.json');
 
 /** Floor: the measured pass count on 2026-11-23 (like MIN_PASS of the gold set). */
-const MIN_PASS = 192;
+const MIN_PASS = 208;
 
 const ids = (qs: Question[]) => qs.map((q) => q.id);
 const needIds = (qs: Question[]) =>
@@ -132,7 +137,11 @@ const inputOf = (row: Row): FinalizeInput => {
       hit_count: e.hit_count,
       org_share: e.org_share,
       top_org_share: e.top_org_share,
+      top_org_back: e.top_org_back,
       text_share: e.text_share,
+      words_held: e.words_held,
+      named: e.named,
+      generic: e.generic,
     }),
     weak: e.weak,
   };

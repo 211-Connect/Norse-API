@@ -21,6 +21,8 @@ import {
 import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
+import { NameLookupService } from './name-lookup.service';
+import { NameCandidate } from '../rules/match';
 import { RegionService, RegionSummaryDto } from 'src/region/internal';
 import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
@@ -85,6 +87,8 @@ function build(opts: {
   searchPins?: jest.Mock;
   /** V2_QUESTION_RULE_V1. Default 'true': the suites below test question rule v1. Any other value (or 'off') runs development's engine. */
   ruleV1?: string;
+  /** The name lookup. Default: an empty candidate list (the lookup worked, found nothing). */
+  lookup?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -96,9 +100,15 @@ function build(opts: {
   const searchPins =
     opts.searchPins ??
     jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
+  const lookup = opts.lookup ?? jest.fn().mockResolvedValue([]);
+  const resolveHybridIndex = jest.fn().mockResolvedValue('hybrid_idx_en');
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
-    { searchHybrid, startEarlyRetrieval } as unknown as HybridSearchService,
+    {
+      searchHybrid,
+      startEarlyRetrieval,
+      resolveHybridIndex,
+    } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
     { searchPins } as unknown as SearchService,
@@ -106,8 +116,11 @@ function build(opts: {
       get: (k: string) =>
         k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
     } as unknown as ConfigService,
+    { lookup } as unknown as NameLookupService,
   );
   return {
+    lookup,
+    resolveHybridIndex,
     searchPins,
     service,
     classify,
@@ -2387,5 +2400,193 @@ describe('V2SearchService urgency boost (ISS-2867)', () => {
     const { service, searchHybrid } = build({});
     await service.search({ headers, query: dto({ query: 'rent' }) });
     expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('urgencyBoost');
+  });
+});
+
+describe('V2SearchService name lookup (question rule v1)', () => {
+  const orgHit = (id: string, name: string, text = 'service') => ({
+    _source: { name: text, organization: { id, name } },
+  });
+  const page = (hits: unknown[]) =>
+    ({
+      search: {
+        took: 1,
+        timed_out: false,
+        _shards: {},
+        hits: { total: hits.length, hits },
+      },
+      facets: [],
+    }) as unknown as SearchResponse;
+  const cand = (id: string, name: string): NameCandidate => ({
+    id,
+    name,
+    alternate_names: [],
+  });
+  const hits = [
+    orgHit('o1', 'Other One'),
+    orgHit('o2', 'Compass Housing Alliance'),
+    orgHit('o3', 'Other Three'),
+    orgHit('o4', 'Compass Housing Alliance'),
+  ];
+  const ids = (res: { search?: { hits?: { hits?: unknown[] } } }) =>
+    (res.search?.hits?.hits ?? []).map(
+      (h) =>
+        (h as { _source: { organization: { id: string } } })._source
+          .organization.id,
+    );
+
+  it('is not called with the flag off', async () => {
+    const { service, lookup } = build({ ruleV1: 'off' });
+    await service.search({ headers, query: dto({ query: 'compass housing' }) });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('is not called without text', async () => {
+    const { service, lookup } = build({});
+    await service.search({ headers, query: dto({ query: '' }) });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('is called with the tenant, the resolved index and the text', async () => {
+    const { service, lookup, resolveHybridIndex } = build({});
+    await service.search({ headers, query: dto({ query: 'compass housing' }) });
+    expect(resolveHybridIndex).toHaveBeenCalledWith(
+      headers['x-tenant-id'],
+      'en',
+    );
+    expect(lookup).toHaveBeenCalledWith(
+      headers['x-tenant-id'],
+      'hybrid_idx_en',
+      'compass housing',
+      undefined,
+    );
+  });
+
+  it('passes the request coords to the lookup, so the nearest orgs are read', async () => {
+    const { service, lookup } = build({});
+    await service.search({
+      headers,
+      query: dto({ query: 'compass housing', coords: [-87.63, 41.88] }),
+    });
+    expect(lookup).toHaveBeenCalledWith(
+      headers['x-tenant-id'],
+      'hybrid_idx_en',
+      'compass housing',
+      [-87.63, 41.88],
+    );
+  });
+
+  it('a failed lookup (null): the match comes from the hits and the result is not storable', async () => {
+    const { service } = build({
+      lookup: jest.fn().mockResolvedValue(null),
+      search: jest.fn().mockResolvedValue(page(hits)),
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'compass housing' }),
+    });
+    expect(isMarkedNotStorable(res)).toBe(true);
+    expect(ids(res)).toEqual(['o1', 'o2', 'o3', 'o4']);
+  });
+
+  it('a lookup that throws is a failed lookup', async () => {
+    const { service } = build({
+      lookup: jest.fn().mockRejectedValue(new Error('x')),
+    });
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'compass housing' }),
+    });
+    expect(isMarkedNotStorable(res)).toBe(true);
+  });
+
+  it('a lookup that worked and found nothing stays storable', async () => {
+    const { service } = build({});
+    const res = await service.search({
+      headers,
+      query: dto({ query: 'compass housing' }),
+    });
+    expect(isMarkedNotStorable(res)).toBe(false);
+  });
+
+  describe('named org leads the relevance order (pin in retrieval, no reorder here)', () => {
+    const named = [cand('o2', 'Compass Housing Alliance')];
+    const run = (
+      extra: Record<string, unknown> = {},
+      searchResult: unknown = page(hits),
+      lookupResult: NameCandidate[] | null = named,
+    ) => {
+      const b = build({
+        lookup: jest.fn().mockResolvedValue(lookupResult),
+        search: jest.fn().mockResolvedValue(searchResult),
+      });
+      return b.service
+        .search({
+          headers,
+          query: dto({ query: 'compass housing', ...extra } as never),
+        })
+        .then((res) => ({ res, searchHybrid: b.searchHybrid }));
+    };
+    const firstCall = (m: jest.Mock) => m.mock.calls[0][0];
+
+    it('relevance sort: retrieval gets the named org ids; the page order is the one retrieval gave', async () => {
+      const { res, searchHybrid } = await run();
+      expect(firstCall(searchHybrid).namedOrgIds).toEqual(['o2']);
+      expect(ids(res)).toEqual(['o1', 'o2', 'o3', 'o4']);
+    });
+
+    it('default sort is relevance: the same', async () => {
+      const { searchHybrid } = await run({ sort: 'relevance' });
+      expect(firstCall(searchHybrid).namedOrgIds).toEqual(['o2']);
+    });
+
+    it('sort=distance: no named org ids (plain order)', async () => {
+      const { searchHybrid } = await run({ sort: 'distance' });
+      expect(firstCall(searchHybrid)).not.toHaveProperty('namedOrgIds');
+    });
+
+    it('sort=name: no named org ids (plain order)', async () => {
+      const { searchHybrid } = await run({ sort: 'name' });
+      expect(firstCall(searchHybrid)).not.toHaveProperty('namedOrgIds');
+    });
+
+    it('the query names no org: no named org ids', async () => {
+      const { searchHybrid } = await run({}, page(hits), []);
+      expect(firstCall(searchHybrid)).not.toHaveProperty('namedOrgIds');
+    });
+
+    it('a failed lookup: no named org ids', async () => {
+      const { searchHybrid } = await run({}, page(hits), null);
+      expect(firstCall(searchHybrid)).not.toHaveProperty('namedOrgIds');
+    });
+
+    it('a failed pin read (-1) is not out of radius: the result is not storable', async () => {
+      const { res } = await run({}, { ...page(hits), namedPinned: -1 });
+      expect(isMarkedNotStorable(res)).toBe(true);
+      const { res: ok } = await run({}, { ...page(hits), namedPinned: 1 });
+      expect(isMarkedNotStorable(ok)).toBe(false);
+    });
+
+    it('the pin count never reaches the response', async () => {
+      const { res } = await run({}, { ...page(hits), namedPinned: 2 });
+      expect(JSON.stringify(res)).not.toContain('namedPinned');
+    });
+
+    it('named and pinned: the match is concentrated (R1, no question)', async () => {
+      const { res } = await run({}, { ...page(hits), namedPinned: 1 });
+      expect(res.clarification.questions).toEqual([]);
+    });
+
+    it('named but no service in the radius (pinned 0): the grid runs as for an unnamed query', async () => {
+      const unrelated = page([
+        orgHit('x1', 'Alpha'),
+        orgHit('x2', 'Beta'),
+        orgHit('x3', 'Gamma'),
+      ]);
+      const { res: pinned } = await run({}, { ...unrelated, namedPinned: 1 });
+      const { res: out } = await run({}, { ...unrelated, namedPinned: 0 });
+      expect(pinned.clarification.questions).toEqual([]);
+      expect(out.clarification.questions.length).toBeGreaterThan(0);
+    });
   });
 });

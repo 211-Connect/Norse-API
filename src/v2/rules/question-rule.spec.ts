@@ -48,7 +48,7 @@ const danger = (scores: Record<string, number>): RulesSignals =>
 
 describe('question rule v1: version and constants', () => {
   it('rules version is bumped', () => {
-    expect(RULES_VERSION).toBe('rules-2026-11-23.2');
+    expect(RULES_VERSION).toBe('rules-2026-11-23.3');
   });
   it('phone line and notice text', () => {
     expect(PHONE_LINE).toEqual({ label: 'Call 211', number: '211' });
@@ -134,7 +134,7 @@ describe('R2: the kind is clear', () => {
   });
   it('Tier 2 at 0.969 is a likely kind (D1): R2, results, one quiet question', () => {
     const r = run('food pantry', { 'N-FOD': 0.6, 'N-FOD-01': 0.969 });
-    expect(r.decision.need_level).toBe('kind');
+    expect(r.decision.need_level).toBe('likely');
     expect(r.decision.likely_areas).toEqual(['N-FOD']);
     expect(r.rule).toBe('R2');
     expect(r.ids).toEqual(['area:N-FOD']);
@@ -142,7 +142,7 @@ describe('R2: the kind is clear', () => {
   });
   it('a likely kind and match none (D1): neither area nor kind clear, R5 start', () => {
     const r = run('food pantry', { 'N-FOD-01': 0.9 }, { match: 'none' });
-    expect(r.decision.need_level).toBe('kind'); // before the match is known
+    expect(r.decision.need_level).toBe('likely'); // before the match is known
     expect(r.rule).toBe('R5');
     expect(r.ids).toEqual(['start']);
   });
@@ -201,7 +201,7 @@ describe('R2: the kind is clear', () => {
 describe('R3: an open area', () => {
   it('Tier 2 at 0.5 makes the kind clear (D1): R2 and a quiet question', () => {
     const r = run('food', { 'N-FOD-01': 0.5 });
-    expect(r.decision.need_level).toBe('kind');
+    expect(r.decision.need_level).toBe('likely');
     expect(r.decision.open_areas).toEqual([]);
     expect(r.rule).toBe('R2');
     expect(r.ids).toEqual(['area:N-FOD']);
@@ -259,7 +259,7 @@ describe('R3: an open area', () => {
     const flat = Object.fromEntries(childrenOf('N-FOD').map((c) => [c, 0.4]));
     const r = run('i need food and housing', {
       'N-HOU': 0.95,
-      'N-HOU-01': 0.49,
+      'N-HOU-01': 0.44,
       'N-FOD': 0.85,
       ...flat,
     });
@@ -475,6 +475,20 @@ describe('need level', () => {
     expect(lv({ 'N-FOD-01': 0.97 })).toBe('kind');
     expect(lv({}, { needs: ['N-X'] })).toBe('kind');
     expect(lv({}, { needs: ['N-FOD-02'] })).toBe('kind');
+  });
+  it('a likely kind (Tier 2 below needs.use) gives level likely', () => {
+    const lv = (scores: Record<string, number>) =>
+      needLevel(req(), sig(scores));
+    expect(lv({ 'N-FOD-01': 0.6 })).toBe('likely');
+    // 0.46 is kind clear now (cutoff 0.45) when the area is clear by Tier 1.
+    expect(lv({ 'N-FOD': 0.85, 'N-FOD-01': 0.46 })).toBe('likely');
+    expect(lv({ 'N-FOD': 0.85, 'N-FOD-01': 0.44 })).toBe('area');
+    expect(CUTOFFS.area.kindClearMin).toBe(0.45);
+  });
+  it('a likely kind gives the same questions as a clear kind (R2)', () => {
+    const r = run('food', { 'N-FOD-01': 0.6 });
+    expect(r.decision.need_level).toBe('likely');
+    expect(r.rule).toBe('R2');
   });
 });
 

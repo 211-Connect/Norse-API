@@ -221,6 +221,13 @@ export type HybridSearchResult = SearchResponse & {
    * The v1 /search never fuses, so it never gets this field.
    */
   judges?: Judges;
+  /**
+   * v2 only, internal (never sent to callers). Present only when the request
+   * named orgs (`namedOrgIds`) and the pin ran: how many in-radius services of
+   * those orgs lead the order. 0 means the named org has none in the kept set.
+   * NAMED_PIN_FAILED (-1) means the pin read failed: not the same as 0.
+   */
+  namedPinned?: number;
 };
 
 /** Raw top `_score` of the RRF keyword list and of the RRF vector list; 0 when a list has no hit. */
@@ -282,7 +289,22 @@ type HybridSearchOptions = {
    * it again. Absent: nothing changes.
    */
   early?: EarlyRetrieval;
+  /**
+   * v2 only. `organization.id`s the query names (the name lookup of question
+   * rule v1). With a text query and sort relevance (or no sort), their services
+   * inside the request's own filters (radius, area) lead the order, at most
+   * NAMED_ORG_PIN_MAX of them. Under any other sort nothing changes. An org
+   * with no service in the kept set pins nothing.
+   */
+  namedOrgIds?: string[];
 };
+
+/** Most services of the named org(s) that lead the relevance order. */
+export const NAMED_ORG_PIN_MAX = 5;
+/** `namedPinned` when the pin read failed (not "the org has no service in the filters"). */
+export const NAMED_PIN_FAILED = -1;
+/** Ids of a named org's in-radius services read before the cut to NAMED_ORG_PIN_MAX. */
+const NAMED_ORG_READ_MAX = 100;
 
 /**
  * Opaque handle to the classify-independent part of a hybrid search, started
@@ -301,6 +323,29 @@ export interface EarlyLists {
   keyword: Promise<RankedList | undefined>;
   vector: Promise<RankedList | undefined>;
   taxonomy: Promise<RankedList | undefined>;
+}
+
+/**
+ * The named org's services that lead: those already in the fused order come
+ * first, in that order; the rest follow in the order read. With `nearestFirst`
+ * (coords given) the order read, nearest first, holds. At most
+ * NAMED_ORG_PIN_MAX, so a multi-location org cannot take the page.
+ */
+export function pickNamedLeaders(
+  orgServiceIds: string[],
+  fusedIds: string[] | undefined,
+  nearestFirst = false,
+): string[] {
+  const unique = [...new Set(orgServiceIds)];
+  // With coords the ids were read nearest first: keep that order, so an org
+  // with branches in other states (no radius set) leads with its nearest one.
+  if (nearestFirst) return unique.slice(0, NAMED_ORG_PIN_MAX);
+  const rank = new Map((fusedIds ?? []).map((id, i) => [id, i]));
+  const inFused = unique
+    .filter((id) => rank.has(id))
+    .sort((a, b) => rank.get(a)! - rank.get(b)!);
+  const rest = unique.filter((id) => !rank.has(id));
+  return [...inFused, ...rest].slice(0, NAMED_ORG_PIN_MAX);
 }
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -644,6 +689,7 @@ export class HybridSearchService {
       fused,
       judges,
       fusedOrder,
+      namedPinned,
     } = await withSpan('hybrid.prepare', async (span) => {
       const prepared = await this.prepareHybridSearch(options, {
         rank: true,
@@ -769,6 +815,7 @@ export class HybridSearchService {
       ...(needCounts ? { needCounts } : {}),
       ...(totalUnreadable ? { totalCounted: false as const } : {}),
       ...(judges ? { judges } : {}),
+      ...(namedPinned !== undefined ? { namedPinned } : {}),
     };
   }
 
@@ -1312,6 +1359,25 @@ export class HybridSearchService {
         })
       : Promise.resolve([]);
 
+    // A named org (v2, text, relevance sort): its services inside the filters
+    // above (radius, area, cut) lead. Runs in parallel with the fused order.
+    const namedOrgIds = options.namedOrgIds ?? [];
+    const namedActive =
+      v2 &&
+      rank &&
+      queryStr.trim().length > 0 &&
+      (sort ?? 'relevance') === 'relevance' &&
+      namedOrgIds.length > 0;
+    const namedPromise: Promise<string[] | null> = namedActive
+      ? this.fetchNamedOrgServiceIds({
+          index,
+          preference,
+          filters: [...baseFilters],
+          orgIds: namedOrgIds,
+          coords,
+        })
+      : Promise.resolve([]);
+
     let needShould: QueryDslQueryContainer[] = [];
 
     if (boostTopScorePromise) {
@@ -1367,7 +1433,18 @@ export class HybridSearchService {
       }
     }
 
-    const gatedPinnedIds = await gatePromise;
+    const gatedOnlyIds = await gatePromise;
+    const namedRead = await namedPromise;
+    const namedIds = pickNamedLeaders(
+      namedRead ?? [],
+      fusedIds,
+      coords?.length === 2,
+    );
+    const namedSet = new Set(namedIds);
+    const gatedPinnedIds = [
+      ...namedIds,
+      ...gatedOnlyIds.filter((id) => !namedSet.has(id)),
+    ];
     if (gatedPinnedIds.length > 0 && fusedIds !== undefined) {
       const gated = new Set(gatedPinnedIds);
       fusedIds = [
@@ -1471,6 +1548,12 @@ export class HybridSearchService {
       // The page is in the fused order (pinned query): no sort values to show.
       fusedOrder: fusedIds !== undefined && orderedByFusion,
       judges,
+      ...(namedActive
+        ? {
+            namedPinned:
+              namedRead === null ? NAMED_PIN_FAILED : namedIds.length,
+          }
+        : {}),
     };
   }
 
@@ -3146,6 +3229,49 @@ export class HybridSearchService {
     }
   }
 
+  /**
+   * Ids of the services of the named org(s) inside the request's filters
+   * (radius, area, relevance cut). One small filter-only request, size
+   * NAMED_ORG_READ_MAX. Never rejects: on error [] (no org leads).
+   */
+  private async fetchNamedOrgServiceIds(args: {
+    index: string;
+    preference: string;
+    filters: QueryDslQueryContainer[];
+    orgIds: string[];
+    coords: number[] | undefined;
+  }): Promise<string[] | null> {
+    const { index, preference, filters, orgIds, coords } = args;
+    try {
+      const response = await this.metrics.observeDownstream(
+        'elasticsearch',
+        'hybrid_named_org',
+        () =>
+          this.elasticsearchService.search({
+            index,
+            preference,
+            size: NAMED_ORG_READ_MAX,
+            _source: false,
+            track_total_hits: false,
+            ...(coords?.length === 2 && {
+              sort: [SearchUtilsService.getGeoDistanceSort(coords)],
+            }),
+            query: {
+              bool: {
+                filter: [...filters, { terms: { 'organization.id': orgIds } }],
+              },
+            },
+          }),
+      );
+      return (response.hits?.hits ?? [])
+        .map((h) => h._id)
+        .filter((id): id is string => typeof id === 'string');
+    } catch (error) {
+      this.logger.warn(`Named org pin skipped: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
   /** Top score of a query (one hit, no source); 0 when absent or on error. */
   private async fetchTopScore(
     operation: string,
@@ -3447,7 +3573,7 @@ export class HybridSearchService {
   }
 
   /** The tenant's alias when it has one, else the shared index (`resolveHybridIndex`). */
-  private resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
+  resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
     return resolveTenantHybridIndex(
       {
         elasticsearch: this.elasticsearchService,

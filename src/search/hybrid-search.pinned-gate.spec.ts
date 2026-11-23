@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { HybridSearchService } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  NAMED_ORG_PIN_MAX,
+  NAMED_PIN_FAILED,
+} from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
@@ -60,12 +64,15 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
   let enabled: string | undefined;
   let taxonomyGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
+  let namedOrgServices: string[];
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
   });
   const isList = (r: any) => r._source === false && r.size === 100;
   const isGate = (r: any) => r.size === 0 && r.aggs?.pinned && r.aggs?.other;
+  const isNamedOrg = (r: any) =>
+    r.query?.bool?.filter?.some?.((f: any) => f.terms?.['organization.id']);
   const kindOf = (r: any) =>
     r.query.script_score
       ? r.query.script_score.query.bool.should
@@ -84,6 +91,9 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
           : Promise.resolve(taxonomyResponse);
       }
       requests.push(req);
+      if (isNamedOrg(req)) {
+        return Promise.resolve(hitsOf(namedOrgServices));
+      }
       if (isGate(req)) {
         if (gateMode === 'reject')
           return Promise.reject(new Error('gate down'));
@@ -278,6 +288,7 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     gateMode = 'ok';
     enabled = undefined;
     taxonomyGate = undefined;
+    namedOrgServices = [];
     searchConfig = { pinned_resources_mode: 'boost' };
     await build();
   });
@@ -420,5 +431,86 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     const gateFilter = gates()[0].query.function_score.query.bool
       .filter as any[];
     expect(gateFilter.some((f) => f.ids)).toBe(true);
+  });
+
+  describe('named org pin (namedOrgIds, question rule v1)', () => {
+    const namedRequests = () => requests.filter(isNamedOrg);
+
+    it("N1. relevance sort: the org's services lead, ones in the fused order first, at most NAMED_ORG_PIN_MAX", async () => {
+      searchConfig = {};
+      await build();
+      // KEYWORD/VECTOR/TAXONOMY fuse to b, a, c, d; the org holds d, x1..x6, a
+      namedOrgServices = ['d', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'a'];
+      const res = await run({}, { namedOrgIds: ['org-1'] });
+      expect(namedRequests()).toHaveLength(1);
+      expect(namedRequests()[0].query.bool.filter).toContainEqual({
+        terms: { 'organization.id': ['org-1'] },
+      });
+      const main = mainRequest();
+      // a and d are in the fused order (a before d), then the rest in read order
+      expect(main.query.pinned.ids.slice(0, NAMED_ORG_PIN_MAX)).toEqual([
+        'a',
+        'd',
+        'x1',
+        'x2',
+        'x3',
+      ]);
+      expect(res.namedPinned).toBe(NAMED_ORG_PIN_MAX);
+    });
+
+    it('N2. sort=distance and sort=name: no named-org request, plain order', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = ['x1'];
+      for (const sort of ['distance', 'name']) {
+        await run({ coords: SEA, sort }, { namedOrgIds: ['org-1'] });
+      }
+      expect(namedRequests()).toHaveLength(0);
+    });
+
+    it('N3. no namedOrgIds: no named-org request; v1 (no rankingVersion) ignores them', async () => {
+      searchConfig = {};
+      await build();
+      await run({ coords: SEA });
+      await run(
+        { coords: SEA },
+        { namedOrgIds: ['org-1'], rankingVersion: undefined },
+      );
+      expect(namedRequests()).toHaveLength(0);
+    });
+
+    it('N4. the org has no service in the filters: namedPinned 0, order unchanged', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = [];
+      const res = await run({ coords: SEA }, { namedOrgIds: ['org-1'] });
+      expect(res.namedPinned).toBe(0);
+    });
+
+    it('N5. the named-org request fails: search still returns, nothing pinned, namedPinned is NAMED_PIN_FAILED (not 0)', async () => {
+      searchConfig = {};
+      await build();
+      const es = (service as any).elasticsearchService;
+      const orig = es.search;
+      es.search = jest.fn((req: any) =>
+        isNamedOrg(req) ? Promise.reject(new Error('es down')) : orig(req),
+      );
+      const res = await run({ coords: SEA }, { namedOrgIds: ['org-1'] });
+      expect(res.namedPinned).toBe(NAMED_PIN_FAILED);
+    });
+
+    it("N6. with coords the org's services are read nearest first and keep that order (no radius: no far branch leads)", async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = ['near', 'mid', 'far'];
+      const res = await run({ coords: SEA }, { namedOrgIds: ['org-1'] });
+      expect(namedRequests()[0].sort[0]).toHaveProperty('_geo_distance');
+      expect(mainRequest().query.pinned.ids.slice(0, 3)).toEqual([
+        'near',
+        'mid',
+        'far',
+      ]);
+      expect(res.namedPinned).toBe(3);
+    });
   });
 });

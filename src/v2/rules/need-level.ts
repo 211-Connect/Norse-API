@@ -84,7 +84,8 @@ export function needLevel(
   if (confirmedCodes(req).includes(NX)) return 'kind';
   const areas = clearAreas(req, signals, matchNone);
   if (areas.length === 0) return 'unclear';
-  return areas.every((a) => a.kind_clear) ? 'kind' : 'area';
+  if (!areas.every((a) => a.kind_clear)) return 'area';
+  return areas.some((a) => a.likely_kind) ? 'likely' : 'kind';
 }
 
 /** Clear areas without a clear kind, best first (rule R3 asks about each). */

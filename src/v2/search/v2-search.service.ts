@@ -8,11 +8,19 @@ import {
   HybridSearchResult,
   HybridSearchService,
   isBoostableUrgency,
+  NAMED_PIN_FAILED,
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import * as rules from '../rules';
 import * as legacyRules from '../rules/legacy';
-import { MATCH, MatchHit, matchOf } from '../rules/match';
+import {
+  MATCH,
+  MatchHit,
+  NameCandidate,
+  matchOf,
+  nameMatch,
+  queryTokens,
+} from '../rules/match';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -33,6 +41,7 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
+import { NameLookupService } from './name-lookup.service';
 import { contentWords } from 'src/search/internal/text-matching/word-rarity';
 import { modelText } from './model-text';
 import { RegionService } from 'src/region/internal';
@@ -299,7 +308,24 @@ export class V2SearchService {
     private readonly regionService: RegionService,
     private readonly searchService: SearchService,
     private readonly configService: ConfigService,
+    private readonly nameLookup: NameLookupService,
   ) {}
+
+  /**
+   * Question rule v1: which orgs are named like the query? Never rejects: any
+   * failure (index name, search, timeout) is `null`.
+   */
+  private startNameLookup(
+    tenantId: string,
+    lang: string,
+    text: string,
+    coords?: number[],
+  ): Promise<NameCandidate[] | null> {
+    return this.hybridSearch
+      .resolveHybridIndex(tenantId, lang)
+      .then((index) => this.nameLookup.lookup(tenantId, index, text, coords))
+      .catch(() => null);
+  }
 
   /**
    * One hybrid search. The language picks the index; an unknown language has
@@ -507,12 +533,21 @@ export class V2SearchService {
     // now, in parallel with the tenant config read and classify: the embedding,
     // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
     // failure surfaces inside searchHybrid, where the catch below maps it.
+    // Question rule v1 also starts the org name lookup here (read only, same
+    // index as retrieval); the match step waits for it.
     // An area search resolves its Region after the tenant config read, and the
     // early stage builds its filters without it, so an area search starts
     // nothing early.
     const early =
       hasText && !dto.region
         ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
+        : undefined;
+
+    const nameLookupPromise =
+      this.configService.get('V2_QUESTION_RULE_V1') === 'true' &&
+      hasText &&
+      queryTokens(contentWords(text, lang)).length > 0
+        ? this.startNameLookup(headers['x-tenant-id'], lang, text, dto.coords)
         : undefined;
 
     // `off`: one classify call still runs for the emergency check; the rules
@@ -565,9 +600,20 @@ export class V2SearchService {
       ai_classification: aiClassification,
       hotlines: tenantHotlines(searchConfig),
     };
+    // The org(s) the query names lead the relevance order (in the radius).
+    // The lookup started with the request and is long done after classify.
+    const lookedUp = nameLookupPromise ? await nameLookupPromise : undefined;
+    const nameClaim = lookedUp
+      ? nameMatch(rulesRequest.content_words ?? [], lookedUp)
+      : null;
+    const namedOrgIds =
+      nameClaim?.named && (dto.sort ?? 'relevance') === 'relevance'
+        ? nameClaim.org_ids
+        : [];
     const hybridCall: HybridCall = {
       ...retrievalOptions,
       ...(early && { early }),
+      ...(namedOrgIds.length > 0 && { namedOrgIds }),
       ...(area && { area }),
       needScores,
       ...(urgencyBoost && { urgencyBoost }),
@@ -595,6 +641,7 @@ export class V2SearchService {
       needCounts: firstCounts,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       totalCounted: _tc1,
+      namedPinned,
       ...firstResponse
     } = first;
 
@@ -694,17 +741,36 @@ export class V2SearchService {
 
     // Question rule v1: what the returned hits say about the query.
     let match: ReturnType<typeof matchOf> | undefined;
+    let nameLookupFailed = false;
     // No text (browse): no match; finalize reads it as `spread`.
     if (ruleV1 && hasText) {
+      // The query names an org that has no service inside the radius (the pin
+      // found none): the query names nothing here, and the grid runs as usual.
+      // A failed pin read is not "out of radius": the result is degraded and not stored.
+      const pinFailed = namedPinned === NAMED_PIN_FAILED;
+      const outOfRadius = namedOrgIds.length > 0 && namedPinned === 0;
+      const names = outOfRadius ? [] : lookedUp;
+      nameLookupFailed = names === null || pinFailed;
       match = matchOf({
         words: rulesRequest.content_words ?? [],
         hits: matchHits(response),
+        names,
       });
       span.setAttributes({
         'v2.match': match.value,
         'v2.match.org_share': match.org_share,
         'v2.match.text_share': match.text_share,
         'v2.match.top_org_share': match.top_org_share,
+        'v2.match.top_org_back': match.top_org_back,
+        'v2.match.words_held': match.words_held,
+        'v2.match.named': match.named,
+        'v2.match.generic': match.generic,
+        'v2.match.name_lookup': !nameLookupPromise
+          ? 'skipped'
+          : nameLookupFailed
+            ? 'failed'
+            : 'ok',
+        'v2.match.named_pinned': namedPinned ?? -1,
       });
     }
     // Off: development's finalize input, unchanged.
@@ -767,6 +833,9 @@ export class V2SearchService {
     };
     // A shared cache may store only band none with no emergency question
     // (ADR 0039 Decision 28); the controller's TTL covers the rest.
-    return decision.cacheable ? result : markNotStorable(result);
+    // A result built without the name lookup is not stored (never cache a degraded result).
+    return decision.cacheable && !nameLookupFailed
+      ? result
+      : markNotStorable(result);
   }
 }

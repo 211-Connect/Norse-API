@@ -166,7 +166,9 @@ export function gridRule(base: Decision, input: FinalizeInput): GridRule {
     ? 'concentrated'
     : (input.match ?? 'spread');
   if (match === 'concentrated') return 'R1';
-  if (decision.need_level === 'kind') return 'R2';
+  if (decision.need_level === 'kind' || decision.need_level === 'likely') {
+    return 'R2';
+  }
   if (decision.need_level === 'area') return 'R3';
   return match === 'none' ? 'R5' : 'R4';
 }
