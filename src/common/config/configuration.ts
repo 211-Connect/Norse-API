@@ -24,7 +24,7 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
-  // Need boost on hybrid search (ISS-2745); on unless the exact string `false`.
+  // Need boost on hybrid search (ISS-2745); on unless `false` (spaces around it are ignored).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
