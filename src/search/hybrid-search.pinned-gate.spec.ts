@@ -5,7 +5,9 @@ import {
   HybridSearchService,
   NAMED_ORG_PIN_MAX,
   NAMED_PIN_FAILED,
+  RRF_NAMED_LIST_WEIGHT,
 } from './hybrid-search.service';
+import { reciprocalRankFusion } from './internal/ranking/rank-fusion';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
@@ -511,6 +513,104 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
         'far',
       ]);
       expect(res.namedPinned).toBe(3);
+    });
+  });
+
+  describe('named org as an RRF list (namedOrgRrf, V2_RULES_MATCH_RRF)', () => {
+    const namedRequests = () => requests.filter(isNamedOrg);
+    // p1 is the pinned gate's id (the mock's gate answer); it leads as today.
+    const fusedIds = () =>
+      (mainRequest().query.pinned.ids as string[]).filter((id) => id !== 'p1');
+
+    it('F1. relevance sort: one named list, ranked by the keyword clauses, fused at RRF_NAMED_LIST_WEIGHT; no hard pin', async () => {
+      searchConfig = {};
+      await build();
+      // The org holds d and x1; the list reads them in that order.
+      namedOrgServices = ['d', 'x1'];
+      const res = await run(
+        {},
+        { namedOrgIds: ['org-1'], namedOrgRrf: true },
+      );
+      expect(namedRequests()).toHaveLength(1);
+      const named = namedRequests()[0];
+      expect(named.query.bool.filter).toContainEqual({
+        terms: { 'organization.id': ['org-1'] },
+      });
+      // Ranked by the same lexical clauses as the keyword list; no
+      // minimum_should_match, so services without a word match still count.
+      const keywordList = requests.find(
+        (r) => isList(r) && !isNamedOrg(r) && kindOf(r) === 'keyword',
+      );
+      expect(named.query.bool.should).toEqual(keywordList.query.bool.should);
+      expect(named.query.bool.minimum_should_match).toBeUndefined();
+      expect(named.sort).toBeUndefined();
+      expect(fusedIds()).toEqual(
+        reciprocalRankFusion(
+          [KEYWORD, VECTOR, TAXONOMY, ['d', 'x1']],
+          60,
+          [1, 1, 1, RRF_NAMED_LIST_WEIGHT],
+        ),
+      );
+      expect(res.namedPinned).toBe(2);
+    });
+
+    it('F2. sort=distance and sort=name: no named list', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = ['x1'];
+      for (const sort of ['distance', 'name']) {
+        await run(
+          { coords: SEA, sort },
+          { namedOrgIds: ['org-1'], namedOrgRrf: true },
+        );
+      }
+      expect(namedRequests()).toHaveLength(0);
+    });
+
+    it('F3. the org has no service in the filters: namedPinned 0, plain fused order', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = [];
+      const res = await run(
+        {},
+        { namedOrgIds: ['org-1'], namedOrgRrf: true },
+      );
+      expect(res.namedPinned).toBe(0);
+      expect(fusedIds()).toEqual(
+        reciprocalRankFusion([KEYWORD, VECTOR, TAXONOMY], 60, [1, 1, 1]),
+      );
+    });
+
+    it('F4. the named list fails: plain fused order, namedPinned is NAMED_PIN_FAILED (not 0)', async () => {
+      searchConfig = {};
+      await build();
+      const es = (service as any).elasticsearchService;
+      const orig = es.search;
+      es.search = jest.fn((req: any) =>
+        isNamedOrg(req) ? Promise.reject(new Error('es down')) : orig(req),
+      );
+      const res = await run(
+        {},
+        { namedOrgIds: ['org-1'], namedOrgRrf: true },
+      );
+      expect(res.namedPinned).toBe(NAMED_PIN_FAILED);
+      expect(fusedIds()).toEqual(
+        reciprocalRankFusion([KEYWORD, VECTOR, TAXONOMY], 60, [1, 1, 1]),
+      );
+    });
+
+    it('F5. with coords (near-you list): the named list has no geo sort and the org service joins the kept set', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = ['x1'];
+      const res = await run(
+        { coords: SEA },
+        { namedOrgIds: ['org-1'], namedOrgRrf: true },
+      );
+      expect(namedRequests()).toHaveLength(1);
+      expect(namedRequests()[0].sort).toBeUndefined();
+      expect(fusedIds()).toContain('x1');
+      expect(res.namedPinned).toBe(1);
     });
   });
 });

@@ -89,6 +89,8 @@ function build(opts: {
   ruleV1?: string;
   /** The name lookup. Default: an empty candidate list (the lookup worked, found nothing). */
   lookup?: jest.Mock;
+  /** V2_RULES_MATCH_RRF. Default unset (off). */
+  matchRrf?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -114,7 +116,11 @@ function build(opts: {
     { searchPins } as unknown as SearchService,
     {
       get: (k: string) =>
-        k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
+        k === 'V2_QUESTION_RULE_V1'
+          ? (opts.ruleV1 ?? 'true')
+          : k === 'V2_RULES_MATCH_RRF'
+            ? opts.matchRrf
+            : undefined,
     } as unknown as ConfigService,
     { lookup } as unknown as NameLookupService,
   );
@@ -2515,10 +2521,12 @@ describe('V2SearchService name lookup (question rule v1)', () => {
       extra: Record<string, unknown> = {},
       searchResult: unknown = page(hits),
       lookupResult: NameCandidate[] | null = named,
+      matchRrf?: string,
     ) => {
       const b = build({
         lookup: jest.fn().mockResolvedValue(lookupResult),
         search: jest.fn().mockResolvedValue(searchResult),
+        matchRrf,
       });
       return b.service
         .search({
@@ -2533,6 +2541,27 @@ describe('V2SearchService name lookup (question rule v1)', () => {
       const { res, searchHybrid } = await run();
       expect(firstCall(searchHybrid).namedOrgIds).toEqual(['o2']);
       expect(ids(res)).toEqual(['o1', 'o2', 'o3', 'o4']);
+    });
+
+    it('V2_RULES_MATCH_RRF off (unset or not "true"): no namedOrgRrf, the hard pin as before', async () => {
+      for (const flag of [undefined, 'false', 'TRUE']) {
+        const { searchHybrid } = await run({}, page(hits), named, flag);
+        expect(firstCall(searchHybrid).namedOrgIds).toEqual(['o2']);
+        expect(firstCall(searchHybrid)).not.toHaveProperty('namedOrgRrf');
+      }
+    });
+
+    it('V2_RULES_MATCH_RRF=true: retrieval gets namedOrgRrf with the named org ids', async () => {
+      const { searchHybrid } = await run({}, page(hits), named, 'true');
+      expect(firstCall(searchHybrid).namedOrgIds).toEqual(['o2']);
+      expect(firstCall(searchHybrid).namedOrgRrf).toBe(true);
+    });
+
+    it('V2_RULES_MATCH_RRF=true but no named org (or sort=distance): no namedOrgRrf', async () => {
+      const a = await run({}, page(hits), [], 'true');
+      expect(firstCall(a.searchHybrid)).not.toHaveProperty('namedOrgRrf');
+      const b = await run({ sort: 'distance' }, page(hits), named, 'true');
+      expect(firstCall(b.searchHybrid)).not.toHaveProperty('namedOrgRrf');
     });
 
     it('default sort is relevance: the same', async () => {

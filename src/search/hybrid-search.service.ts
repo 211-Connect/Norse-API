@@ -297,6 +297,13 @@ type HybridSearchOptions = {
    * with no service in the kept set pins nothing.
    */
   namedOrgIds?: string[];
+  /**
+   * v2 only (V2_RULES_MATCH_RRF). With `namedOrgIds`, the named org's services
+   * inside the request's filters do not lead by a hard pin. They form one more
+   * ranked list in the fusion (RRF_NAMED_LIST_WEIGHT), ordered by the keyword
+   * clauses, so the org's best text match gains most. Absent or false: the pin.
+   */
+  namedOrgRrf?: boolean;
 };
 
 /** Most services of the named org(s) that lead the relevance order. */
@@ -372,6 +379,10 @@ const RRF_NEED_LIST_WEIGHT = 1;
 // RRF weight of the near-you (proximity) list. Low on purpose: it restores
 // locality without hiding a strong match that is far away (ISS-2796).
 const RRF_PROXIMITY_RELEVANCE_WEIGHT = 0.5;
+// RRF weight of the named-org list (V2_RULES_MATCH_RRF). Rank 1 adds
+// w / (RRF_K + 1): at 2 the org's best text match outranks a service that is
+// rank 1 in one other list only.
+export const RRF_NAMED_LIST_WEIGHT = Number(process.env.TMP_NAMED_W ?? 2);
 // Any sort value at or above this means the doc has no `location.point`.
 const NO_POINT_METERS = 1e12;
 
@@ -1368,7 +1379,30 @@ export class HybridSearchService {
       queryStr.trim().length > 0 &&
       (sort ?? 'relevance') === 'relevance' &&
       namedOrgIds.length > 0;
-    const namedPromise: Promise<string[] | null> = namedActive
+    const namedRrf = namedActive && options.namedOrgRrf === true;
+    // V2_RULES_MATCH_RRF: the named list, ranked by the keyword clauses, joins
+    // the fusion. null = the read failed (the same meaning as the pin read).
+    const namedListPromise: Promise<RankedList | null> | undefined = namedRrf
+      ? this.runRankedList({ index, preference }, 'hybrid_rrf_named', {
+          bool: {
+            filter: [
+              ...baseFilters,
+              { terms: { 'organization.id': namedOrgIds } },
+            ],
+            // No minimum_should_match: every org service is in the list,
+            // those that match the query words first.
+            should: keyword
+              ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+              : [],
+          },
+        }).catch((error: Error) => {
+          this.logger.warn(`Named org list skipped: ${error.message}`);
+          return null;
+        })
+      : undefined;
+    const namedPromise: Promise<string[] | null> = namedRrf
+      ? Promise.resolve([])
+      : namedActive
       ? this.fetchNamedOrgServiceIds({
           index,
           preference,
@@ -1417,6 +1451,7 @@ export class HybridSearchService {
           earlyLists,
           coords,
           nearYou,
+          namedList: namedListPromise,
         }),
       );
       fusedIds = fusedOrder.ids;
@@ -1435,6 +1470,7 @@ export class HybridSearchService {
 
     const gatedOnlyIds = await gatePromise;
     const namedRead = await namedPromise;
+    const namedListRead = namedListPromise ? await namedListPromise : undefined;
     const namedIds = pickNamedLeaders(
       namedRead ?? [],
       fusedIds,
@@ -1550,8 +1586,13 @@ export class HybridSearchService {
       judges,
       ...(namedActive
         ? {
-            namedPinned:
-              namedRead === null ? NAMED_PIN_FAILED : namedIds.length,
+            namedPinned: namedRrf
+              ? namedListRead === null || namedListRead === undefined
+                ? NAMED_PIN_FAILED
+                : Math.min(namedListRead.ids.length, NAMED_ORG_PIN_MAX)
+              : namedRead === null
+                ? NAMED_PIN_FAILED
+                : namedIds.length,
           }
         : {}),
     };
@@ -1721,6 +1762,8 @@ export class HybridSearchService {
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
     nearYou: boolean;
+    /** V2_RULES_MATCH_RRF: the named-org list; null or undefined = not fused. */
+    namedList?: Promise<RankedList | null>;
   }): Promise<{ ids?: string[]; judges?: Judges }> {
     const { filters, needs, earlyLists, queryVector } = args;
 
@@ -1749,8 +1792,14 @@ export class HybridSearchService {
             })
           : undefined;
 
-      const [keywordRes, vectorRes, taxonomyRes, needRes] =
-        await Promise.allSettled([keyword, vector, taxonomy, need]);
+      const [keywordRes, vectorRes, taxonomyRes, needRes, namedRes] =
+        await Promise.allSettled([
+          keyword,
+          vector,
+          taxonomy,
+          need,
+          args.namedList,
+        ]);
       const failed = (name: string, res: PromiseRejectedResult) =>
         this.logger.warn(
           `RRF ${name} list failed: ${(res.reason as Error)?.message}`,
@@ -1781,7 +1830,7 @@ export class HybridSearchService {
             }
           : undefined;
 
-      // Order: keyword, vector, taxonomy, need. The weights follow the lists.
+      // Order: keyword, vector, taxonomy, need, then named (below). The weights follow the lists.
       const lists: string[][] = [];
       const weights: number[] = [];
       for (const [ids, weight] of [
@@ -1797,6 +1846,14 @@ export class HybridSearchService {
       if (lists.length === 0) {
         this.logger.warn('RRF every list failed, using summed ranking');
         return {};
+      }
+      // The named list only joins other lists: alone it would keep the
+      // named org's services and nothing else.
+      const namedIds =
+        namedRes.status === 'fulfilled' ? namedRes.value?.ids : undefined;
+      if (namedIds !== undefined && namedIds.length > 0) {
+        lists.push(namedIds);
+        weights.push(RRF_NAMED_LIST_WEIGHT);
       }
       const kept = reciprocalRankFusion(lists, RRF_K, weights).slice(
         0,

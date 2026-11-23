@@ -614,6 +614,12 @@ export class V2SearchService {
       ...retrievalOptions,
       ...(early && { early }),
       ...(namedOrgIds.length > 0 && { namedOrgIds }),
+      // V2_RULES_MATCH_RRF (default off): the named org fuses as one more
+      // ranked list instead of the hard pin.
+      ...(namedOrgIds.length > 0 &&
+        this.configService.get('V2_RULES_MATCH_RRF') === 'true' && {
+          namedOrgRrf: true,
+        }),
       ...(area && { area }),
       needScores,
       ...(urgencyBoost && { urgencyBoost }),
