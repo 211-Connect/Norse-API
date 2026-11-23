@@ -52,3 +52,9 @@ jobs:
           'src/analytics/services/umami-analytics\.service\.spec\.ts$'
           'src/taxonomy/taxonomy\.controller\.spec\.ts$'
           'src/taxonomy-scorecard/taxonomy-scorecard\.service\.spec\.ts$'
+
+      # The v2 route under the real HTTP setup (guards, middleware, cache
+      # headers) behind a fake service. Boots with no secrets, Redis or
+      # Elasticsearch (verified locally: 1 suite, 35 tests).
+      - name: Run v2 e2e spec
+        run: npx jest --ci --config ./test/jest-e2e.json v2-search-versioning
