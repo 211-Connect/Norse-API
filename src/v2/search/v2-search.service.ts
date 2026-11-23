@@ -6,6 +6,7 @@ import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import {
   HybridSearchResult,
   HybridSearchService,
+  isBoostableUrgency,
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
@@ -237,14 +238,8 @@ function urgencyBoostOf(
   const u = decision.urgency;
   const urgencyScore =
     u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
-  return u.state === 'use' &&
-    /^U-[1-4]$/.test(u.value) &&
-    Number.isFinite(urgencyScore) &&
-    urgencyScore > 0
-    ? {
-        code: u.value as 'U-1' | 'U-2' | 'U-3' | 'U-4',
-        score: urgencyScore,
-      }
+  return u.state === 'use' && isBoostableUrgency(u.value, urgencyScore)
+    ? { code: u.value, score: urgencyScore }
     : undefined;
 }
 

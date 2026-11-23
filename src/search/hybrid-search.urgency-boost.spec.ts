@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { HybridSearchService } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  isBoostableUrgency,
+} from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
@@ -401,5 +404,21 @@ describe('HybridSearchService - urgency boost (ISS-2867)', () => {
     it('with U-1 and no service carrying urgency weights the order is unchanged', async () => {
       expect(await orderWith(u1, services(false))).toBe('ABCD');
     });
+  });
+});
+
+describe('isBoostableUrgency', () => {
+  it.each([
+    ['U-1', 1, true],
+    ['U-4', 0.2, true],
+    ['U-0', 1, false],
+    ['U-5', 1, false],
+    ['u-1', 1, false],
+    ['U-1', 0, false],
+    ['U-1', -1, false],
+    ['U-1', NaN, false],
+    ['U-1', Infinity, false],
+  ])('%s score %p -> %p', (code, score, expected) => {
+    expect(isBoostableUrgency(code, score)).toBe(expected);
   });
 });

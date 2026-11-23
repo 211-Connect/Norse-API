@@ -114,6 +114,19 @@ const NEED_BOOST_TIER1_FACTOR = 0.5;
 const URGENCY_BOOST_FACTOR = 1;
 
 /**
+ * The one check for a boostable urgency (David, PR #364): code U-1..U-4 and a
+ * finite score above 0. U-0 comes only from the emergency check and has no
+ * service weights. `urgencyBoostOf` (v2-search.service.ts) and the boost
+ * builder in `searchHybrid` both call it.
+ */
+export function isBoostableUrgency(
+  code: string,
+  score: number,
+): code is 'U-1' | 'U-2' | 'U-3' | 'U-4' {
+  return /^U-[1-4]$/.test(code) && Number.isFinite(score) && score > 0;
+}
+
+/**
  * The distance score a service with no map point gets in v2: the gauss value
  * of a service VIRTUAL_DISTANCE_IN_SCALES scales away, 25 x 0.5^(k^2). With
  * k = 1 it is 12.5 at every scale.
@@ -1142,9 +1155,7 @@ export class HybridSearchService {
     const urgencyTerms: NeedScore[] =
       this.urgencyBoostEnabled &&
       urgencyBoost &&
-      /^U-[1-4]$/.test(urgencyBoost.code) &&
-      Number.isFinite(urgencyBoost.score) &&
-      urgencyBoost.score > 0
+      isBoostableUrgency(urgencyBoost.code, urgencyBoost.score)
         ? [
             {
               code: urgencyBoost.code,
