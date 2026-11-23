@@ -1,3 +1,4 @@
+import { matchLocale } from '../../common/locales';
 import { LOCALE_TABLES } from './locales';
 import { STEMS } from './config';
 import { displayOf } from './sune';
@@ -7,7 +8,8 @@ import { Clarification, Question, QuestionOption, RulesSignals } from './types';
 const FULL_V2_LANGUAGES = new Set(['en', 'es']);
 
 export const isFullV2Locale = (lang: string | undefined): boolean =>
-  !lang || FULL_V2_LANGUAGES.has(lang.toLowerCase().split('-')[0]);
+  !lang ||
+  !!matchLocale(lang, (t) => (FULL_V2_LANGUAGES.has(t) ? t : undefined));
 
 /**
  * For a limited locale the danger question needs a keyword-floor hit. The
@@ -44,9 +46,7 @@ export function localizeClarification(
   clarification: Clarification,
   lang: string | undefined,
 ): Clarification {
-  const table = lang
-    ? LOCALE_TABLES[lang.toLowerCase().split(/[-_]/)[0]]
-    : undefined;
+  const table = matchLocale(lang, (t) => LOCALE_TABLES[t]);
   if (!table) return clarification;
 
   const stemKeyOf = (q: Question): string | null => {

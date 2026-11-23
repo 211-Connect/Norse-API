@@ -1,7 +1,7 @@
 import { decide, finalize } from './engine';
 import { LABELS, STEMS } from './config';
 import { LOCALE_TABLES } from './locales';
-import { localizeClarification } from './localize';
+import { isFullV2Locale, localizeClarification } from './localize';
 import { displayOf, TIER1_CODES, TIER2_CODES } from './sune';
 import { Clarification, Question } from './types';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
@@ -104,6 +104,28 @@ describe('localizeClarification', () => {
     expect(find(out, 'urgency')).toEqual(find(hand(), 'urgency'));
   });
 
+  it('zh-hans: gets the Chinese table (full tag first)', () => {
+    const out = localizeClarification(emergency(), 'zh-hans');
+    expect(find(out, 'emergency').stem).toBe(
+      LOCALE_TABLES['zh-hans'].stems.emergency.text,
+    );
+    expect(find(out, 'emergency').stem).toBe('您现在处于危险中吗？');
+    expect(localizeClarification(emergency(), 'ZH-Hans')).toEqual(out);
+    expect(localizeClarification(emergency(), 'zh_hans')).toEqual(out);
+  });
+
+  it('a regional tag falls back to its primary subtag (es-MX is Spanish)', () => {
+    const out = localizeClarification(hand(), 'es-MX');
+    expect(find(out, 'area:N-FOD').stem).toBe(
+      '¿Qué tipo de ayuda con Comida y agua?',
+    );
+  });
+
+  it('zh-hant has no table: English stays', () => {
+    const c = emergency();
+    expect(localizeClarification(c, 'zh-hant')).toBe(c);
+  });
+
   it('lowercases the language code', () => {
     const out = localizeClarification(hand(), 'ES');
     expect(find(out, 'area:N-FOD').stem).toBe(
@@ -182,5 +204,18 @@ describe('localizeClarification', () => {
     for (const t of Object.values(LOCALE_TABLES)) {
       if (t.stems.area) expect(t.stems.area.text).toContain('{area}');
     }
+  });
+});
+
+describe('isFullV2Locale', () => {
+  it.each([
+    [undefined, true],
+    ['en', true],
+    ['EN-us', true],
+    ['es_MX', true],
+    ['zh-hans', false],
+    ['ko', false],
+  ])('%p -> %p', (lang, full) => {
+    expect(isFullV2Locale(lang)).toBe(full);
   });
 });

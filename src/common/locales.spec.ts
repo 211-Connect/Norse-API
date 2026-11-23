@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import {
   isSupportedLanguage,
+  matchLocale,
   languageIndexSuffix,
   parseExactLanguage,
   SUPPORTED_LANGUAGES,
@@ -83,5 +84,23 @@ describe('locales', () => {
         expect(isSupportedLanguage(c)).toBe(false);
       }
     });
+  });
+});
+
+describe('matchLocale', () => {
+  const table: Record<string, string> = { 'zh-hans': 'cn', zh: 'zh', es: 'es' };
+  const look = (t: string) => table[t];
+
+  it('tries the full tag first, then the primary subtag', () => {
+    expect(matchLocale('zh-hans', look)).toBe('cn');
+    expect(matchLocale('ZH_Hans', look)).toBe('cn');
+    expect(matchLocale('zh-hant', look)).toBe('zh');
+    expect(matchLocale('es-MX', look)).toBe('es');
+  });
+
+  it('returns undefined for no match, an empty or a missing tag', () => {
+    expect(matchLocale('fr', look)).toBeUndefined();
+    expect(matchLocale('', look)).toBeUndefined();
+    expect(matchLocale(undefined, look)).toBeUndefined();
   });
 });

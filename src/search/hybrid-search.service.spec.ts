@@ -1119,6 +1119,16 @@ describe('HybridSearchService', () => {
       expect([...parseKeywordLocales('en, ES')!]).toEqual(['en', 'es']);
     });
 
+    it('a full tag matches before the primary subtag (zh-hans, es-MX)', () => {
+      (service as any).keywordLocales = parseKeywordLocales('zh-hans,es');
+      const on = (l: string) => (service as any).keywordEnabledForLocale(l);
+      expect(on('zh-hans')).toBe(true);
+      expect(on('ZH_Hans')).toBe(true);
+      expect(on('es-MX')).toBe(true);
+      expect(on('zh-hant')).toBe(false);
+      expect(on('ru')).toBe(false);
+    });
+
     describe('set to en,es,ru', () => {
       beforeEach(() => {
         (service as any).keywordLocales = parseKeywordLocales('en, ES ,ru');

@@ -32,6 +32,7 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
+import { matchLocale } from 'src/common/locales';
 import { shardPreference } from 'src/common/elasticsearch/shard-preference';
 import {
   SearchIdentity,
@@ -554,11 +555,8 @@ export class HybridSearchService {
    */
   private keywordEnabledForLocale(lang: string): boolean {
     if (this.keywordLocales === null) return true;
-    const tag = lang.trim().toLowerCase();
-    return (
-      this.keywordLocales.has(tag) ||
-      this.keywordLocales.has(tag.split(/[-_]/)[0])
-    );
+    const locales = this.keywordLocales;
+    return !!matchLocale(lang.trim(), (t) => (locales.has(t) ? t : undefined));
   }
 
   /**
