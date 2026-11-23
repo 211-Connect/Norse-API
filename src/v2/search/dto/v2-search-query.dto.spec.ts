@@ -208,3 +208,22 @@ describe('V2SearchQueryDto', () => {
     expect(parse({}).dto.coords).toBeUndefined();
   });
 });
+
+describe('V2SearchQueryDto asked', () => {
+  it('parses a comma list and repeats into one list', () => {
+    expect(parse({ asked: 'start,area:N-HOU' }).dto.asked).toEqual([
+      'start',
+      'area:N-HOU',
+    ]);
+    expect(parse({ asked: ['start', 'start', 'x'] }).dto.asked).toEqual([
+      'start',
+      'x',
+    ]);
+  });
+  it('rejects text that is not a question id, and more than 20', () => {
+    expect(parse({ asked: 'has space' }).props).toContain('asked');
+    expect(
+      parse({ asked: Array.from({ length: 21 }, (_, i) => `q${i}`) }).props,
+    ).toContain('asked');
+  });
+});

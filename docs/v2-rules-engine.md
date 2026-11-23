@@ -79,3 +79,8 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 `npx jest src/v2/rules`. `engine.spec.ts` runs the 40 real model outputs in `__fixtures__/golden-scores.json` (copied from ml-broker's golden file) 1,000 times each and checks the output never changes.
 
 The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `reason`, stem, options and hotlines; `importance` tells them apart (`critical` = strong band, `high` = soft band).
+
+
+## Response contract (question contract v2)
+
+`importance` and `priority` are engine-internal. With `V2_QUESTION_RULE_V1=true` the response maps them in `src/v2/rules/contract.ts`: emergency critical = popup/strong; emergency high = before_results/strong; need or urgency high = before_results/standard; medium or low = with_results/subtle. Rules the API owns: no urgency question beside danger; at most 3 `before_results` questions per `asked=` session; no fake "none" option; hotlines; UI words in `clarification.strings`.

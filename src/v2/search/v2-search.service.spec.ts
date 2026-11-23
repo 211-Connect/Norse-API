@@ -711,9 +711,9 @@ describe('V2SearchService', () => {
       query: dto({ query: 'x' }),
     });
     expect(a.clarification).toEqual(b.clarification);
-    expect(
-      a.clarification.questions.filter((q) => q.type === 'find_need'),
-    ).toEqual([]);
+    expect(a.clarification.questions.filter((q) => q.type === 'need')).toEqual(
+      [],
+    );
   });
 
   it('an unreadable hits.total is not counted (totalCounted false from the hybrid service), keeps needs questions and leaks no totalCounted', async () => {
@@ -739,7 +739,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'x' }),
       });
       const needsQ = (r: typeof a) =>
-        r.clarification.questions.filter((q) => q.type === 'find_need');
+        r.clarification.questions.filter((q) => q.type === 'need');
       expect(needsQ(b)).toEqual([]);
       expect(needsQ(a).length).toBeGreaterThan(0);
       expect('totalCounted' in a).toBe(false);
@@ -878,7 +878,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'food' }),
       });
       const needQs = res.clarification.questions.filter(
-        (q: any) => q.type === 'find_need',
+        (q: any) => q.type === 'need',
       );
       // Tier 1 at 0.9 makes the area clear; the hits hold no query word, so a
       // Tier 2 at 0.5 settles no kind (D1, rule R3): the area question stays,
@@ -1013,15 +1013,18 @@ describe('V2SearchService', () => {
       // Lucas 2026-11-13 ("bring back the popup if the model is very sure"):
       // importance tells the bands apart (strong critical = popup, soft high =
       // in-page card). Stem, options, reason and hotlines match.
-      const strip = (q: ReturnType<typeof emergencyQ>) => {
-        const { value, priority, uncertainty, importance, ...rest } = q;
-        return rest;
-      };
+      // Question contract v2: placement tells the bands apart (popup / before_results), both strong.
+      const strip = (q: ReturnType<typeof emergencyQ>) => ({
+        ...q,
+        placement: undefined,
+      });
       expect(strip(emergencyQ(pop))).toEqual(strip(emergencyQ(soft)));
-      expect(emergencyQ(pop).importance).toBe('critical');
-      expect(emergencyQ(soft).importance).toBe('high');
+      expect(emergencyQ(pop).placement).toBe('popup');
+      expect(emergencyQ(soft).placement).toBe('before_results');
+      expect(emergencyQ(pop).style).toBe('strong');
+      expect(emergencyQ(soft).style).toBe('strong');
+      expect(emergencyQ(pop)).not.toHaveProperty('importance');
       expect(soft.clarification.questions[0].id).toBe('emergency');
-      expect(emergencyQ(pop).reason).toBe('emergency_band');
       expect(emergencyQ(pop)).not.toHaveProperty('level');
       for (const o of emergencyQ(pop).options) {
         expect(o).toHaveProperty('results_count', null);
@@ -1036,7 +1039,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'help' }),
       });
       expect(res.clarification.questions[0].id).toBe('emergency');
-      expect(emergencyQ(res).importance).toBe('high');
+      expect(emergencyQ(res).placement).toBe('before_results');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -2114,6 +2117,75 @@ describe('V2_QUESTION_RULE_V1 switch', () => {
     const { res, call } = await ask('true');
     expect(res.rules_version).toBe(RULES_VERSION);
     expect(call.nullCountsWithoutNeedTags).toBe(true);
+  });
+});
+
+describe('question contract v2 in the service', () => {
+  const scores = { 'N-FOD-01': 0.5 };
+  const ask = async (ruleV1: string, over: Partial<V2SearchQueryDto> = {}) => {
+    const b = build({
+      ruleV1,
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+      search: jest.fn().mockImplementation(async () => hybridResponse(10)),
+    });
+    return b.service.search({
+      headers,
+      query: dto({ query: 'food', ...over }),
+    });
+  };
+  const LEGACY_ONLY = [
+    'importance',
+    'priority',
+    'value',
+    'uncertainty',
+    'reason',
+    'step',
+  ];
+
+  it('off: legacy shape (importance, no placement, no strings), parity with development', async () => {
+    const res: any = await ask('off');
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+    for (const q of res.clarification.questions) {
+      expect(q).toHaveProperty('importance');
+      expect(q).not.toHaveProperty('placement');
+      expect(q).not.toHaveProperty('style');
+    }
+    expect(res.clarification).not.toHaveProperty('strings');
+  });
+
+  it('on: placement and style, none of the engine-only fields, strings present', async () => {
+    const res: any = await ask('true');
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+    for (const q of res.clarification.questions) {
+      expect(['popup', 'before_results', 'with_results']).toContain(
+        q.placement,
+      );
+      expect(['strong', 'standard', 'subtle']).toContain(q.style);
+      expect(['emergency', 'urgency', 'need']).toContain(q.type);
+      for (const k of LEGACY_ONLY) expect(q).not.toHaveProperty(k);
+      for (const o of q.options) expect(o).not.toHaveProperty('score');
+    }
+    expect(res.clarification.strings.skip_to_results).toBe('Skip to results');
+  });
+
+  it('on: asked with 3 ids stops the before_results questions', async () => {
+    const before: any = await ask('true');
+    expect(
+      before.clarification.questions.some(
+        (q: any) => q.placement === 'before_results',
+      ),
+    ).toBe(true);
+    const after: any = await ask('true', { asked: ['a', 'b', 'c'] });
+    expect(
+      after.clarification.questions.filter(
+        (q: any) => q.placement === 'before_results',
+      ),
+    ).toEqual([]);
+  });
+
+  it('off: asked is ignored', async () => {
+    const res: any = await ask('off', { asked: ['a', 'b', 'c'] });
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
   });
 });
 

@@ -69,3 +69,13 @@ export const LABELS = {
     safeSoon: "No, I'm safe, I need help soon (within a week)",
   },
 };
+
+/**
+ * Words the UI used to hard-code (question contract v2, rule 5). Sent in
+ * `clarification.strings`; `localizedStrings` translates them (English fallback).
+ */
+export const UI_STRINGS = {
+  popupTitle: 'Are you safe?',
+  skipToResults: 'Skip to results',
+  alsoFitOne: 'Does this also fit?',
+};

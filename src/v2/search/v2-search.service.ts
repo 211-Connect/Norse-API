@@ -17,6 +17,7 @@ import { MATCH, Match, matchOf } from '../rules/match';
 import { nameWords } from 'src/search/internal/name-match/name-match';
 import { hitText } from 'src/search/internal/text-matching/hit-text';
 import { needDescription } from '../rules/need-text';
+import { toContractClarification } from '../rules/contract';
 import {
   floorOnlyEmergency,
   isFullV2Locale,
@@ -352,7 +353,7 @@ export class V2SearchService {
     query: V2SearchQueryDto;
   }): Promise<SearchPinsResponseDto> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, asked, ...v1Fields } = dto;
     const text = dto.query;
     const orgWords = this.orgWordsOf(text, headers);
     let needScores: NeedScore[] | undefined;
@@ -509,7 +510,7 @@ export class V2SearchService {
     const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, asked, ...v1Fields } = dto;
     const orgWords = this.orgWordsOf(text, headers);
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
@@ -778,9 +779,26 @@ export class V2SearchService {
       );
     }
     // English passes through unchanged; es vi ru ko am zh-hans get a string table.
-    const clarification = withSpanSync('v2.rules.finalize', () =>
+    const localized = withSpanSync('v2.rules.finalize', () =>
       localizeClarification(finalize(clarifyDecision, finalizeInput), lang),
     );
+    // Question contract v2 (on): placement and style, the API-owned rules. The
+    // engine's importance, priority and reason stay in the trace, not the response.
+    const clarification = ruleV1
+      ? withSpanSync('v2.rules.contract', () => {
+          span.setAttribute(
+            'v2.questions',
+            localized.questions
+              .map((q) => `${q.id}:${q.importance}:${q.reason}`)
+              .join(','),
+          );
+          return toContractClarification(localized, {
+            urgency: dto.urgency,
+            asked: dto.asked,
+            lang,
+          });
+        })
+      : localized;
 
     const result: V2SearchResponseDto = {
       ...response,

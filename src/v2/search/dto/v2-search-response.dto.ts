@@ -413,18 +413,48 @@ export class V2HotlineDto {
 }
 
 export class V2QuestionDto {
-  @ApiProperty() id: string;
   @ApiProperty({
-    enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
+    description:
+      'Names the question. Used only for memory across searches (`asked=`); the UI must not pick titles or behavior from it.',
+  })
+  id: string;
+  @ApiProperty({
+    enum: [
+      'emergency',
+      'urgency',
+      'need',
+      'confirm_urgency',
+      'find_need',
+      'narrow',
+    ],
+    description:
+      'What it asks about: `emergency`, `urgency` or `need`. The legacy names (`confirm_urgency`, `find_need`, `narrow`) come only when V2_QUESTION_RULE_V1 is off.',
   })
   type: string;
-  @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
-  importance: string;
-  @ApiProperty() value: number;
-  @ApiProperty() priority: number;
-  @ApiProperty() uncertainty: number;
-  @ApiProperty() reason: string;
-  @ApiProperty() step: number;
+  @ApiPropertyOptional({
+    enum: ['popup', 'before_results', 'with_results'],
+    description:
+      'Where it shows: popup over everything; the find page before results; the refine card beside results. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
+  })
+  placement?: 'popup' | 'before_results' | 'with_results';
+  @ApiPropertyOptional({
+    enum: ['strong', 'standard', 'subtle'],
+    description:
+      'How loud it looks. Independent of `type`. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
+  })
+  style?: 'strong' | 'standard' | 'subtle';
+  @ApiPropertyOptional({
+    enum: ['critical', 'high', 'medium', 'low'],
+    description:
+      'Legacy shape only (V2_QUESTION_RULE_V1 off). Removed from the new shape: read `placement` and `style`.',
+  })
+  importance?: string;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) value?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) priority?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' })
+  uncertainty?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) reason?: string;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) step?: number;
   @ApiProperty() stem: string;
   @ApiProperty({
     type: [V2QuestionOptionDto],
@@ -437,9 +467,16 @@ export class V2QuestionDto {
   @ApiProperty() none_of_these: boolean;
   @ApiPropertyOptional({
     type: [V2HotlineDto],
-    description: 'Emergency question only. One tap calls a number.',
+    description:
+      'Emergency question only: the numbers to show, in display order (tenant numbers, else 988 and 911). Absent when they should hide (a safe urgency answer is set). One tap calls a number.',
   })
   hotlines?: V2HotlineDto[];
+}
+
+export class V2StringsDto {
+  @ApiProperty({ example: 'Are you safe?' }) popup_title: string;
+  @ApiProperty({ example: 'Skip to results' }) skip_to_results: string;
+  @ApiProperty({ example: 'Does this also fit?' }) also_fit_one: string;
 }
 
 export class V2NoticeDto {
@@ -454,6 +491,13 @@ export class V2ClarificationDto {
 
   @ApiProperty({ type: [V2QuestionDto], description: 'At most 3, ranked.' })
   questions: V2QuestionDto[];
+
+  @ApiPropertyOptional({
+    type: V2StringsDto,
+    description:
+      'Words the page shows that no question carries, in the request language (English fallback). Absent when V2_QUESTION_RULE_V1 is off.',
+  })
+  strings?: V2StringsDto;
 
   @ApiPropertyOptional({
     type: V2NoticeDto,

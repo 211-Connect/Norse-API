@@ -1,6 +1,7 @@
 import { ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsInt,
@@ -9,6 +10,7 @@ import {
   Min,
   IsOptional,
   IsString,
+  Matches,
   Validate,
   ValidationArguments,
   ValidatorConstraint,
@@ -203,6 +205,20 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsArray()
   @Validate(IsSelectableNeedCodeConstraint)
   passed_needs?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Ids of the questions already asked in this search session (comma-separated or repeated). Only counted: after 3, the API sends no more `before_results` questions (V2_QUESTION_RULE_V1 on). Ignored when the flag is off.',
+    example: ['start', 'area:N-HOU'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => toCodeList(value))
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @Matches(/^[a-z0-9_:-]{1,40}$/i, { each: true })
+  asked?: string[];
 
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,

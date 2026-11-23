@@ -13,7 +13,11 @@ export interface RawTable {
   emergency: Record<'yes' | 'safeToday' | 'safeSoon', string>;
   /** SUNE need code -> display name */
   needs: Record<string, string>;
+  /** Words the UI used to hard-code (question contract v2). Optional: a missing key falls back to English. */
+  strings?: Partial<Record<UiStringKey, string>>;
 }
+
+export type UiStringKey = 'popupTitle' | 'skipToResults' | 'alsoFitOne';
 
 export type StemKey =
   | 'emergency'
@@ -52,6 +56,7 @@ const build = (raw: RawTable): Table => ({
   urgency: mark(raw.urgency),
   emergency: mark(raw.emergency),
   needs: mark(raw.needs),
+  strings: mark(raw.strings ?? {}),
 });
 
 /** Lowercase language code (as `parseExactLanguage` returns it) -> table. English has none. */
