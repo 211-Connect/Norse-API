@@ -1438,6 +1438,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
       expect(second).not.toHaveProperty('needFilter');
     });
 
+    it('a used urgency boosts the first call only, never the text-free second call (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(secondResponse(40, { 'N-HOU': 10 }));
+      const { service } = build({ classify: weakClassify(), search });
+      const res = await service.search({
+        headers,
+        query: dto({ query: text, urgency: 'U-1' } as never),
+      });
+      expect(res.weak_match).toBe(true);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
+
     it('question is dropped when every count is 0 (no sune_needs on any document)', async () => {
       const search = jest
         .fn()
@@ -1483,6 +1502,25 @@ describe('V2SearchService weak match (ISS-2796, Lucas 2026-11-18)', () => {
   });
 
   describe('(b) weak, caller sent needs', () => {
+    it('the need-filtered second call carries no urgency boost (ISS-2867)', async () => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(firstResponse())
+        .mockResolvedValueOnce(
+          secondResponse(1, { 'N-FOD-01': 1 }, [hit('x')]),
+        );
+      const { service } = build({ classify: weakClassify(), search });
+      await service.search({
+        headers,
+        query: dto({ query: text, needs: ['N-FOD'], urgency: 'U-1' } as never),
+      });
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls[0][0].urgencyBoost).toEqual({
+        code: 'U-1',
+        score: 1,
+      });
+      expect(search.mock.calls[1][0]).not.toHaveProperty('urgencyBoost');
+    });
     it('second call filters by the needs with no text; its hits are the result', async () => {
       const search = jest
         .fn()
@@ -2114,5 +2152,68 @@ describe('V2SearchService limited locales (full v2 only for en and es)', () => {
     });
     expect(ids(res)).toEqual(['emergency']);
     expect(res.clarification.questions[0].hotlines.length).toBe(2);
+  });
+});
+
+describe('V2SearchService urgency boost (ISS-2867)', () => {
+  const withUrgency = (level: string, score: number) =>
+    okResult({}, {
+      signals: {
+        needs: { status: 'ok', scores: {} },
+        urgency: { level, score },
+        emergency: { status: 'ok', score: 0.001, floor_hit: false },
+      },
+    } as Partial<ClassifyResult>);
+  const boostOf = async (
+    classifyResult: ClassifyResult,
+    urgency?: string,
+  ): Promise<unknown> => {
+    const { service, searchHybrid } = build({
+      classify: jest.fn().mockResolvedValue(classifyResult),
+    });
+    await service.search({
+      headers,
+      query: dto({ query: 'rent', ...(urgency && { urgency }) } as any),
+    });
+    return searchHybrid.mock.calls[0][0].urgencyBoost;
+  };
+
+  it('caller urgency U-1 sends { code U-1, score 1 }', async () => {
+    expect(await boostOf(okResult({}), 'U-1')).toEqual({
+      code: 'U-1',
+      score: 1,
+    });
+  });
+
+  it('caller U-0 sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-0')).toBeUndefined();
+  });
+
+  it('caller U-X with no model urgency sends no urgencyBoost', async () => {
+    expect(await boostOf(okResult({}), 'U-X')).toBeUndefined();
+  });
+
+  it('inferred urgency at state use sends the model score', async () => {
+    expect(await boostOf(withUrgency('U-2', 0.95))).toEqual({
+      code: 'U-2',
+      score: 0.95,
+    });
+  });
+
+  it.each([[0.85], [0.5]])(
+    'model urgency at state ask or drop (score %p) sends no urgencyBoost',
+    async (score) => {
+      expect(await boostOf(withUrgency('U-2', score))).toBeUndefined();
+    },
+  );
+
+  it('needs model failed sends no urgencyBoost', async () => {
+    expect(await boostOf(errorResult())).toBeUndefined();
+  });
+
+  it('the hybrid call has no urgencyBoost key when there is none', async () => {
+    const { service, searchHybrid } = build({});
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('urgencyBoost');
   });
 });

@@ -26,6 +26,7 @@ export default () => ({
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
   // Need boost on hybrid search (ISS-2745); on unless `false` (spaces around it are ignored).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
+  URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
   // Timeout of the /v2/search classify call, in ms (integer; default 1000).

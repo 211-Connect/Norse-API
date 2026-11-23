@@ -452,6 +452,22 @@ export class V2SearchService {
       searchConfig,
     });
 
+    // A used urgency U-1..U-4 lifts services tagged with that level (ISS-2867).
+    // U-0 comes only from the emergency check and has no service weights.
+    const u = decision.urgency;
+    const urgencyScore =
+      u.source === 'caller' ? 1 : (signals.urgency?.score ?? 0);
+    const urgencyBoost: HybridCall['urgencyBoost'] =
+      u.state === 'use' &&
+      /^U-[1-4]$/.test(u.value) &&
+      Number.isFinite(urgencyScore) &&
+      urgencyScore > 0
+        ? {
+            code: u.value as 'U-1' | 'U-2' | 'U-3' | 'U-4',
+            score: urgencyScore,
+          }
+        : undefined;
+
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
 
@@ -470,6 +486,7 @@ export class V2SearchService {
       'v2.has_text': hasText,
       'v2.ai_classification': aiClassification,
       'v2.boost_needs': needScores.length,
+      'v2.urgency_boost': urgencyBoost?.code ?? 'none',
       'v2.selected_needs': selectedNeeds.length,
       'v2.count_codes': countCodes.length,
     });
@@ -483,12 +500,20 @@ export class V2SearchService {
       ...(early && { early }),
       ...(area && { area }),
       needScores,
+      ...(urgencyBoost && { urgencyBoost }),
       ...(countCodes.length > 0 && { countCodes }),
     };
     // The text-free second call (weak match) starts from this call minus the
     // early handle: the early stage was built for the text query.
-    const { early: _early, ...withoutEarly } = hybridCall;
+    // The text-free second calls (weak match) drop every boost: needScores
+    // is set to [] below and the urgency boost is left out here (ISS-2867).
+    const {
+      early: _early,
+      urgencyBoost: _urgencyBoost,
+      ...withoutEarly
+    } = hybridCall;
     void _early;
+    void _urgencyBoost;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );
