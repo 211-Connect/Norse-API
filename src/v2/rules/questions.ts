@@ -133,20 +133,13 @@ const question = ({
 });
 
 /**
- * Tier 1 codes for a question the model cannot rank: the tenant's top areas
- * when given (the v2 service gives none), then the defaults; skips codes that are not `eligible`, no duplicates, at
- * most `optionsPerQuestion`.
+ * Tier 1 codes for a question the model cannot rank: the global default
+ * areas; skips codes that are not `eligible`, no duplicates, at most
+ * `optionsPerQuestion`.
  */
-function fallbackAreas(
-  tenant: TenantContext,
-  eligible: (code: string) => boolean,
-): string[] {
-  const pool = [
-    ...(tenant.top_areas ?? []).filter((c) => isTier1(c)),
-    ...DEFAULT_TOP_AREAS,
-  ];
+function fallbackAreas(eligible: (code: string) => boolean): string[] {
   const picks: string[] = [];
-  for (const c of pool) {
+  for (const c of DEFAULT_TOP_AREAS) {
     if (eligible(c) && !picks.includes(c)) picks.push(c);
     if (picks.length === CUTOFFS.optionsPerQuestion) break;
   }
@@ -160,16 +153,10 @@ function fallbackAreas(
  * Decision 7). The model cannot vouch for it: uncertainty is 1. Null when no
  * option is left.
  */
-export function noMatchQuestion(
-  req: RulesRequest,
-  tenant: TenantContext,
-): Question | null {
+export function noMatchQuestion(req: RulesRequest): Question | null {
   const confirmed = confirmedCodes(req);
   const passed = passedCodes(req);
-  const picks = fallbackAreas(
-    tenant,
-    (c) => !confirmed.includes(c) && !passed.has(c),
-  );
+  const picks = fallbackAreas((c) => !confirmed.includes(c) && !passed.has(c));
   if (picks.length === 0) return null;
   const q = question({
     id: 'no_match',
@@ -332,7 +319,7 @@ export function buildCandidates(
         ) {
           picks = eligibleT1.slice(0, CUTOFFS.optionsPerQuestion);
         } else {
-          picks = fallbackAreas(tenant, eligible);
+          picks = fallbackAreas(eligible);
         }
         const options = picks.map(needOption);
         if (options.length > 0)

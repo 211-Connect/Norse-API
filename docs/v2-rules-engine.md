@@ -13,7 +13,7 @@ Needs never filter results; a used or confirmed need only boosts (`boost_needs`,
 
 - Request: `has_text`, `needs` (confirmed, URL order; Tier 1 or Tier 2 codes only, `N-X` is rejected with 400), `passed_needs` (same rule: an unknown code or `N-X` is a 400 that names it), `urgency` (`U-X` means "time not known" and counts as absent: the engine behaves as if none was sent), `has_content_word` (the text has a 2+ letter token that is not a function word; the soft card needs it), `clarify` (`never` keeps only the emergency question).
 - Signals from ml-broker `search-classification`: 91 need scores (74 Tier 2, 16 Tier 1, `N-X`), top-level `urgency` `{level, score}` (beside `needs`, as ml-broker sends it; read only when the needs call succeeded), emergency `{status, score, floor_hit, calm_context, dv_shelter}`; `emergency: null` when there is no typed text.
-- Tenant: `hotlines`, `ai_classification`. (`top_areas` stays in the engine type but the v2 service does not set it.)
+- Tenant: `hotlines`, `ai_classification`. Start and no-match questions use the global default areas (Housing, Food, Money).
   - `hotlines` come from the Payload `search_config:<tenant>` Redis value, field `hotlines` (`tenantHotlines`: trimmed, at most 4). Empty or malformed: the engine's `DEFAULT_HOTLINES` (988, 911).
   - The start question's areas are the global defaults (`DEFAULT_TOP_AREAS`: Housing, Food, Money) for every tenant. There is no per-tenant count.
 

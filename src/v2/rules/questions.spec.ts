@@ -428,15 +428,9 @@ describe('time questions', () => {
 });
 
 describe('start question', () => {
-  it('tiny scores -> tenant top_areas', () => {
-    const d = decide(req(), sig({ 'N-FOD': 0.01 }), {
-      top_areas: ['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU'],
-    });
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
-  });
-  it('tenant top_areas filled with defaults', () => {
-    const d = decide(req(), sig(), { top_areas: ['N-LEG', 'bogus'] });
-    expect(opts(d, 'start')).toEqual(['N-LEG', 'N-HOU', 'N-FOD']);
+  it('tiny scores -> the global default areas', () => {
+    const d = decide(req(), sig({ 'N-FOD': 0.01 }));
+    expect(opts(d, 'start')).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
   it('best T1 0.35 -> model areas', () => {
     const d = decide(
@@ -714,38 +708,17 @@ describe('importance per question type', () => {
 describe('no_match question (weak match, Lucas 2026-11-18)', () => {
   const codes = (q: ReturnType<typeof noMatchQuestion>) =>
     q.options.map((o) => o.value);
-  it('options: tenant Tier 1 top areas, then defaults', () => {
-    const q = noMatchQuestion(req(), { top_areas: ['N-LEG', 'N-WRK'] });
-    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-HOU']);
-  });
   it('no tenant areas: the defaults', () => {
-    expect(codes(noMatchQuestion(req(), {}))).toEqual([
-      'N-HOU',
-      'N-FOD',
-      'N-MON',
-    ]);
-  });
-  it('skips Tier 2 and unknown tenant codes, and duplicates', () => {
-    const q = noMatchQuestion(req(), {
-      top_areas: ['N-FOD-01', 'bogus', 'N-HOU', 'N-HOU'],
-    });
-    expect(codes(q)).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
+    expect(codes(noMatchQuestion(req()))).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
   it('skips passed and confirmed codes', () => {
     const q = noMatchQuestion(
       req({ passed_needs: ['N-HOU'], needs: ['N-FOD'] }),
-      {},
     );
     expect(codes(q)).toEqual(['N-MON']);
   });
-  it('at most 3 options', () => {
-    const q = noMatchQuestion(req(), {
-      top_areas: ['N-LEG', 'N-WRK', 'N-LRN', 'N-HOU'],
-    });
-    expect(codes(q)).toEqual(['N-LEG', 'N-WRK', 'N-LRN']);
-  });
   it('shape: id, type, importance, reason, step, stem, flags, parameter', () => {
-    const q = noMatchQuestion(req(), {});
+    const q = noMatchQuestion(req());
     expect(q).toMatchObject({
       id: 'no_match',
       type: 'find_need',
@@ -764,7 +737,7 @@ describe('no_match question (weak match, Lucas 2026-11-18)', () => {
   });
   it('null when no option is left', () => {
     expect(
-      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] }), {}),
+      noMatchQuestion(req({ passed_needs: ['N-HOU', 'N-FOD', 'N-MON'] })),
     ).toBeNull();
   });
 });
