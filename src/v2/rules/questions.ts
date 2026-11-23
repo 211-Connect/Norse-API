@@ -133,8 +133,8 @@ const question = ({
 });
 
 /**
- * Tier 1 codes for a question the model cannot rank: the tenant's top areas,
- * then the defaults; skips codes that are not `eligible`, no duplicates, at
+ * Tier 1 codes for a question the model cannot rank: the tenant's top areas
+ * when given (the v2 service gives none), then the defaults; skips codes that are not `eligible`, no duplicates, at
  * most `optionsPerQuestion`.
  */
 function fallbackAreas(

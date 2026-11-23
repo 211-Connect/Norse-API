@@ -28,7 +28,7 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 
 - A `needs=` hard filter: `needs=` never filters. A caller need makes a block and boosts; a model guess only boosts (ADR 0039 Decision 18).
 - `strongTextMatch`: no retrieval signal yet.
-- Tenant context (`topAreas`, `hotlines`).
+- Tenant context (`hotlines`).
 - The `model_version` param.
 
 ## `taxonomy` (ISS-2612, ADR 0039 Decision 5)
