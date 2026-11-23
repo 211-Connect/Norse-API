@@ -1295,7 +1295,10 @@ export class HybridSearchService {
             // rank), so a plain filter query counts the same set. Built after
             // the relevance cut, so it counts the cut population: option
             // results_count and the result total stay comparable in finalize.
-            // With a kept set (fusion), the same ids as the page.
+            // With a kept set (fusion), the same ids as the page. Under
+            // sort=distance with coords the count does NOT hide services with
+            // no map point (Lucas 2026-11-23): an option count can be above
+            // the page total there, by design.
             query: {
               bool: {
                 filter: [
