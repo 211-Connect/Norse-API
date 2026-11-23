@@ -419,7 +419,7 @@ describe('HybridSearchService', () => {
       expect(geoSort).toBeDefined();
     });
 
-    describe('v2 sort=distance hides services with no map point', () => {
+    describe('v2 sort=distance keeps services with no map point', () => {
       const mainFilters = (): any[] =>
         (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
           .function_score.query.bool.filter;
@@ -431,20 +431,20 @@ describe('HybridSearchService', () => {
         unlocated: 'virtual',
       } as any;
 
-      it('v2, coords: requires a map point and sorts by distance', async () => {
+      it('v2, coords: sorts by distance and hides nothing', async () => {
         await service.searchHybrid({
           headers,
           query: { ...baseQuery, coords: COORDS, sort: 'distance' },
           rankingVersion: 'v2',
         });
 
-        expect(hasPointFilter()).toBe(true);
+        expect(hasPointFilter()).toBe(false);
         expect(
           capturedMainRequest.sort.find((s: any) => s._geo_distance),
         ).toBeDefined();
       });
 
-      it('v2 area search, coords: still hides virtual services', async () => {
+      it('v2 area search, coords: still shows virtual services', async () => {
         await service.searchHybrid({
           headers,
           query: { ...baseQuery, coords: COORDS, sort: 'distance' },
@@ -452,7 +452,64 @@ describe('HybridSearchService', () => {
           area,
         } as any);
 
-        expect(hasPointFilter()).toBe(true);
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it('a statewide crisis line (no map point) shows under sort=distance, after the nearest services', async () => {
+        const request = (sort: string) => ({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort },
+          rankingVersion: 'v2' as const,
+        });
+        // Stand-in for Elasticsearch: applies an `exists location.point`
+        // filter if the request carries one, and sorts no-point rows last.
+        const rows = [
+          { id: 'crisis-line', dist: Infinity },
+          { id: 'near', dist: 1 },
+          { id: 'far', dist: 9 },
+        ];
+        esSearch.mockImplementation((req: any) => {
+          if (req.index === 'hybrid_taxonomies') {
+            return Promise.resolve(taxonomyResponse);
+          }
+          if (req.size === 0 && req.aggs?.df) {
+            rarityRequests.push(req);
+            return rarityImpl(req);
+          }
+          capturedMainRequest = req;
+          const filters: any[] = (req.query.pinned?.organic ?? req.query)
+            .function_score.query.bool.filter;
+          const needsPoint = filters.some(
+            (f: any) => f.exists?.field === 'location.point',
+          );
+          const kept = rows
+            .filter((r) => !needsPoint || r.dist !== Infinity)
+            .sort((a, b) => a.dist - b.dist);
+          return Promise.resolve({
+            ...mainResponse,
+            hits: {
+              total: { value: kept.length, relation: 'eq' },
+              hits: kept.map((r) => ({
+                _index: 'hybrid_search_resources_en',
+                _id: r.id,
+                _score: 1,
+                _source: { name: r.id, facets: {}, facets_en: {} },
+                sort: [r.dist, r.id],
+                fields: { matched_needs: [] },
+              })),
+            },
+          });
+        });
+
+        const byDistance: any = await service.searchHybrid(request('distance'));
+        const byRelevance: any = await service.searchHybrid(
+          request('relevance'),
+        );
+
+        const ids = (o: any) => o.search.hits.hits.map((h: any) => h._id);
+        expect(ids(byDistance)).toEqual(['near', 'far', 'crisis-line']);
+        expect(ids(byRelevance)).toContain('crisis-line');
+        expect(byDistance.search.hits.total.value).toBe(3);
       });
 
       it('v2 area search, no coords: sorts by relevance, hides nothing', async () => {

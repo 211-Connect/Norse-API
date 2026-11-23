@@ -1258,18 +1258,19 @@ export class HybridSearchService {
       }
     }
 
-    // v2 sort=distance with a search point: strict closeness, so a service
-    // with no map point (virtual, hotline) has no distance and is hidden.
-    // The filter goes on the main page request only: the lists, the gate, the
-    // counts and the cutoff probe never see it. Without coords the sort falls
-    // back to relevance and nothing is hidden.
-    const hideNoPoint =
+    // v2 sort=distance with a search point: nearest first. A service with no
+    // map point (virtual, hotline) is not hidden (Lucas 2026-11-23, David on
+    // PR #364, ADR 0039 Decision 83). Its sort value is Infinity, so it ranks
+    // at the fixed distance after every service with a point; the summed path
+    // gives the same service `virtualDistanceWeight()`. Nothing is filtered, so
+    // the counts and the page total agree.
+    const distanceWithPoint =
       v2 && sort === 'distance' && coords !== undefined && coords.length === 2;
     // The kept set is ordered by the fused ranking when the sort is relevance,
     // or distance without a point (it falls back to relevance).
     const orderedByFusion =
       (sort ?? 'relevance') === 'relevance' ||
-      (sort === 'distance' && !hideNoPoint);
+      (sort === 'distance' && !distanceWithPoint);
     // Near-you list: sort relevance with a point and no area (plan rule 2).
     const nearYou =
       (sort ?? 'relevance') === 'relevance' &&
@@ -1362,9 +1363,7 @@ export class HybridSearchService {
       queryStr,
       queryVector,
       predicted: predictedTaxonomies,
-      filters: hideNoPoint
-        ? [...baseFilters, { exists: { field: 'location.point' } }]
-        : baseFilters,
+      filters: baseFilters,
       coords,
       distance: distance ?? 0,
       page,

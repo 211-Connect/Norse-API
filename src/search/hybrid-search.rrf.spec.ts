@@ -399,7 +399,7 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(mainRequest().query.pinned.ids).toEqual(FUSED);
   });
 
-  it('T3. v2 text + sort distance + coords: fusion runs; ids and map-point filters on the page, count has ids only', async () => {
+  it('T3. v2 text + sort distance + coords: fusion runs; ids filter only (no map-point filter, nothing hidden), count has ids only', async () => {
     const response = await run(
       { ...COORDS_Q, sort: 'distance' },
       { countCodes: ['N-HOU'] },
@@ -413,10 +413,10 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     expect(main.query.pinned).toBeUndefined();
     const filter = main.query.bool.filter;
     expect(filter).toContainEqual({ ids: { values: FUSED } });
-    expect(filter).toContainEqual({ exists: { field: 'location.point' } });
     expect(main.sort[0]._geo_distance).toBeDefined();
-    // The lists never see the map-point filter.
+    // No request carries a map-point filter: services with no point stay in.
     const hasPointFilter = { exists: { field: 'location.point' } };
+    expect(filter).not.toContainEqual(hasPointFilter);
     for (const req of lists()) {
       expect(filterOf(req)).not.toContainEqual(hasPointFilter);
     }
