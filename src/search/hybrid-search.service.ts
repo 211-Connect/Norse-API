@@ -451,6 +451,20 @@ type WordRarityEntry = {
 
 const MAX_SPLIT_BUCKETS = 60;
 
+/** Parses `V2_KEYWORD_LOCALES` (comma list). Unset or blank returns `null` (all locales). */
+export function parseKeywordLocales(
+  raw: string | undefined,
+): Set<string> | null {
+  const items = (raw ?? '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter((x) => x.length > 0);
+  // A malformed entry (`en es`, `en;es`) would match no locale and drop the
+  // keyword leg everywhere; ignore it. A list with no valid entry means all.
+  const valid = items.filter((x) => /^[a-z]{2,3}([-_][a-z0-9]{2,8})*$/.test(x));
+  return valid.length > 0 ? new Set(valid) : null;
+}
+
 interface PredictedTaxonomy {
   code: string;
   name: string;
@@ -465,6 +479,8 @@ export class HybridSearchService {
   private readonly runpodApiKey: string;
   private readonly embeddingLocalBaseUrl: string | undefined;
   private readonly needBoostEnabled: boolean;
+  /** Locales whose v2 search keeps the keyword leg. `null` = all (today's behavior). */
+  private readonly keywordLocales: Set<string> | null;
   private wordRarityKeys = new BoundedKeyRegistry(
     MAX_WORD_RARITY_CACHE_ENTRIES,
   );
@@ -497,6 +513,24 @@ export class HybridSearchService {
     );
     this.embeddingCacheTtlMs =
       Number.isInteger(ttl) && ttl > 0 ? ttl : DEFAULT_EMBEDDING_CACHE_TTL_MS;
+    this.keywordLocales = parseKeywordLocales(
+      this.configService.get<string>('V2_KEYWORD_LOCALES'),
+    );
+  }
+
+  /**
+   * Whether the v2 keyword leg runs for this locale. `V2_KEYWORD_LOCALES`
+   * unset or empty keeps it on for every locale. When set (for example
+   * `en,es,ru`), other locales run the vector leg only. A tag matches by its
+   * full form or its primary subtag (`es-MX` matches `es`).
+   */
+  private keywordEnabledForLocale(lang: string): boolean {
+    if (this.keywordLocales === null) return true;
+    const tag = lang.trim().toLowerCase();
+    return (
+      this.keywordLocales.has(tag) ||
+      this.keywordLocales.has(tag.split(/[-_]/)[0])
+    );
   }
 
   /**
@@ -788,6 +822,8 @@ export class HybridSearchService {
     const tenantId = headers['x-tenant-id'];
     const v2 = options.rankingVersion === 'v2';
     const lang = headers['accept-language'] || 'en';
+    // `V2_KEYWORD_LOCALES` (v2 only): a locale outside the list runs the vector leg only.
+    const keywordLocale = !v2 || this.keywordEnabledForLocale(lang);
     const queryStr = typeof query === 'string' ? query : String(query);
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
@@ -894,6 +930,7 @@ export class HybridSearchService {
               filters: [...baseFilters],
               queryStr,
               wordRarity,
+              keyword: keywordLocale,
             }),
           )
         : undefined;
@@ -954,6 +991,9 @@ export class HybridSearchService {
         searchConfigPromise,
         wordRarityPromise,
       ]);
+    // The vector leg is the only signal left when the keyword leg is off for
+    // this locale; if the embedding failed, the keyword leg runs after all.
+    const keyword = keywordLocale || queryVector === undefined;
 
     const pinnedMode =
       SearchUtilsService.resolvePinnedResourcesMode(searchConfig);
@@ -1008,6 +1048,7 @@ export class HybridSearchService {
       rankingPinnedMode,
       gateActive,
       wordRarity,
+      keyword,
       cutoffRequested,
       fuseEligible,
       baseFilters,
@@ -1040,6 +1081,7 @@ export class HybridSearchService {
       rankingPinnedMode,
       gateActive,
       wordRarity,
+      keyword,
       cutoffRequested,
       fuseEligible,
       earlyLists,
@@ -1069,26 +1111,28 @@ export class HybridSearchService {
     // at least one need at or above the gate; otherwise nothing below runs and
     // the request is unchanged.
 
+    // The same inputs for every need-boost top-score request below.
+    const needBoostTopScore = (): Promise<number> =>
+      this.fetchNeedBoostTopScore({
+        index,
+        preference,
+        queryStr,
+        queryVector,
+        predicted: predictedTaxonomies,
+        filters: [...baseFilters],
+        coords,
+        distance: distance ?? 0,
+        pinnedMode: rankingPinnedMode,
+        wordRarity,
+        keyword,
+        v2,
+      });
     // v2 with the cutoff and the boost both active: the cut happens after the
     // boost (ADR 0039, option A). The probe sizes its own boost, so the main
     // search's top-score call no longer needs the cut's ids and starts now, in
     // parallel with the probe's own top-score call. v1 keeps its old order.
     const boostTopScorePromise =
-      cutoffRequested && v2 && boostActive
-        ? this.fetchNeedBoostTopScore({
-            index,
-            preference,
-            queryStr,
-            queryVector,
-            predicted: predictedTaxonomies,
-            filters: [...baseFilters],
-            coords,
-            distance: distance ?? 0,
-            pinnedMode: rankingPinnedMode,
-            wordRarity,
-            v2,
-          })
-        : undefined;
+      cutoffRequested && v2 && boostActive ? needBoostTopScore() : undefined;
     const probeNeeds =
       boostTopScorePromise !== undefined ? activeNeeds : undefined;
 
@@ -1111,6 +1155,7 @@ export class HybridSearchService {
             filters: baseFilters,
             pinnedMode,
             wordRarity,
+            keyword,
             needs: probeNeeds,
           }),
         );
@@ -1169,6 +1214,7 @@ export class HybridSearchService {
           predicted: predictedTaxonomies,
           filters: [...baseFilters],
           wordRarity,
+          keyword,
         })
       : Promise.resolve([]);
 
@@ -1185,19 +1231,7 @@ export class HybridSearchService {
       // top-score request is not sent. The organic tail after the fused top
       // 100 then has no need boost. If the fusion fails, the block after the
       // fusion call restores today's boost.
-      const topScore = await this.fetchNeedBoostTopScore({
-        index,
-        preference,
-        queryStr,
-        queryVector,
-        predicted: predictedTaxonomies,
-        filters: baseFilters,
-        coords,
-        distance: distance ?? 0,
-        pinnedMode: rankingPinnedMode,
-        wordRarity,
-        v2,
-      });
+      const topScore = await needBoostTopScore();
       if (topScore > 0) {
         needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
       }
@@ -1218,6 +1252,7 @@ export class HybridSearchService {
           queryVector,
           predicted: predictedTaxonomies,
           wordRarity,
+          keyword,
           needs: boostActive ? activeNeeds : [],
           earlyLists,
           coords,
@@ -1225,24 +1260,13 @@ export class HybridSearchService {
         }),
       );
       fusedIds = fusedOrder.ids;
-      judges = fusedOrder.judges;
+      // The weak-match test needs the keyword judge; without it no weak match.
+      judges = keyword ? fusedOrder.judges : undefined;
 
       if (fusedIds === undefined && boostActive && !cutoffRequested) {
         // Fusion failed after the top-score request was skipped: fall back
         // to today's summed ranking, need boost included.
-        const topScore = await this.fetchNeedBoostTopScore({
-          index,
-          preference,
-          queryStr,
-          queryVector,
-          predicted: predictedTaxonomies,
-          filters: baseFilters,
-          coords,
-          distance: distance ?? 0,
-          pinnedMode: rankingPinnedMode,
-          wordRarity,
-          v2,
-        });
+        const topScore = await needBoostTopScore();
         if (topScore > 0) {
           needShould = this.buildNeedBoostClauses(activeNeeds, topScore);
         }
@@ -1276,6 +1300,7 @@ export class HybridSearchService {
       sort,
       extraShould: needShould,
       wordRarity,
+      keyword,
       fusedIds,
       orderedByFusion,
       gatedPinnedIds: fusedIds === undefined ? gatedPinnedIds : [],
@@ -1372,9 +1397,12 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[];
     queryStr: string;
     wordRarity: WordRarity;
+    keyword: boolean;
   }): Promise<RankedList> | undefined {
-    const { filters, queryStr, wordRarity } = args;
-    const lexical = this.buildLexicalShouldClauses(queryStr, wordRarity);
+    const { filters, queryStr, wordRarity, keyword } = args;
+    const lexical = keyword
+      ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+      : [];
     if (lexical.length === 0) return undefined;
     return this.runRankedList(args, 'hybrid_rrf_keyword', {
       bool: { filter: filters, should: lexical, minimum_should_match: 1 },
@@ -1488,6 +1516,7 @@ export class HybridSearchService {
     queryVector: number[] | undefined;
     predicted: PredictedTaxonomy[];
     wordRarity: WordRarity;
+    keyword: boolean;
     needs: NeedScore[];
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
@@ -2488,6 +2517,7 @@ export class HybridSearchService {
     filters: QueryDslQueryContainer[];
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    keyword: boolean;
     /** Active needs; set only for v2 with the need boost active (option A). */
     needs?: NeedScore[];
   }): Promise<{ keptIds: string[] | null; cutoff: RelevanceCutoffDto }> {
@@ -2500,11 +2530,14 @@ export class HybridSearchService {
       filters,
       pinnedMode,
       wordRarity,
+      keyword,
       needs,
     } = args;
 
     const should = [
-      ...(queryStr ? this.buildLexicalShouldClauses(queryStr, wordRarity) : []),
+      ...(queryStr && keyword
+        ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+        : []),
       ...this.buildTaxonomyBoostClauses(predicted, queryStr),
       ...(pinnedMode === 'ignore'
         ? []
@@ -2879,6 +2912,7 @@ export class HybridSearchService {
     distance: number;
     pinnedMode: PinnedResourcesMode;
     wordRarity: WordRarity;
+    keyword: boolean;
     v2: boolean;
   }): Promise<number> {
     const { index, preference, ...queryArgs } = args;
@@ -2904,6 +2938,7 @@ export class HybridSearchService {
     predicted: PredictedTaxonomy[];
     filters: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    keyword: boolean;
   }): Promise<string[]> {
     const {
       index,
@@ -2913,6 +2948,7 @@ export class HybridSearchService {
       predicted,
       filters,
       wordRarity,
+      keyword,
     } = args;
     try {
       const innerBool: QueryDslQueryContainer = {
@@ -2920,7 +2956,7 @@ export class HybridSearchService {
           minimum_should_match: 0,
           filter: filters,
           should: [
-            ...(queryStr
+            ...(queryStr && keyword
               ? this.buildLexicalShouldClauses(queryStr, wordRarity)
               : []),
             ...this.buildTaxonomyBoostClauses(predicted, queryStr),
@@ -3072,6 +3108,7 @@ export class HybridSearchService {
     sort: SearchResourcesQueryDto['sort'];
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    keyword: boolean;
     fusedIds?: string[];
     /** With `fusedIds`: the page is in the fused order (sort relevance). */
     orderedByFusion?: boolean;
@@ -3095,6 +3132,7 @@ export class HybridSearchService {
       sort: sortOption,
       extraShould,
       wordRarity,
+      keyword,
       fusedIds,
       orderedByFusion,
       gatedPinnedIds,
@@ -3129,6 +3167,7 @@ export class HybridSearchService {
         pinnedMode,
         extraShould,
         wordRarity,
+        keyword,
         v2,
         gatedPinnedIds,
       });
@@ -3168,6 +3207,7 @@ export class HybridSearchService {
     pinnedMode: PinnedResourcesMode;
     extraShould?: QueryDslQueryContainer[];
     wordRarity: WordRarity;
+    keyword: boolean;
     v2: boolean;
     /** v2 pinned gate: pinned ids that lead on the summed path. */
     gatedPinnedIds?: string[];
@@ -3182,15 +3222,17 @@ export class HybridSearchService {
       pinnedMode,
       extraShould,
       wordRarity,
+      keyword,
       v2,
       gatedPinnedIds,
     } = args;
 
     // Browse mode (empty query): omit lexical should clauses; filters + vector +
     // geo + taxonomy boosts still produce a valid ranked, counted, paginated set.
-    const lexicalShould = queryStr
-      ? this.buildLexicalShouldClauses(queryStr, wordRarity)
-      : [];
+    const lexicalShould =
+      queryStr && keyword
+        ? this.buildLexicalShouldClauses(queryStr, wordRarity)
+        : [];
     const taxonomyShould = this.buildTaxonomyBoostClauses(predicted, queryStr);
     // When pinned_resources_mode is `boost`, pinned becomes a small additive
     // score contribution (constant_score) instead of a hard sort tier. When it

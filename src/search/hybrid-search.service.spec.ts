@@ -6,6 +6,7 @@ import {
   HybridSearchService,
   VIRTUAL_DISTANCE_IN_SCALES,
   virtualDistanceWeight,
+  parseKeywordLocales,
 } from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { SearchUtilsService } from './search-utils.service';
@@ -1077,6 +1078,110 @@ describe('HybridSearchService', () => {
       });
 
       expect(new Set([base, otherText, otherTenant, otherScope]).size).toBe(4);
+    });
+  });
+
+  describe('V2_KEYWORD_LOCALES switch (keyword leg per locale, v2 only)', () => {
+    const isKeywordList = (req: any) =>
+      req.query?.bool?.minimum_should_match === 1 &&
+      Array.isArray(req.query?.bool?.should);
+    const isVectorList = (req: any) => !!req.query?.script_score;
+    const mainHasLexical = () =>
+      JSON.stringify(capturedMainRequest.query).includes('name.edge');
+
+    const run = async (lang: string, extra: any = {}, v2 = true) => {
+      esSearch.mockClear();
+      cacheStore.clear();
+      await service.searchHybrid({
+        headers: { ...headers, 'accept-language': lang },
+        query: { ...baseQuery, ...extra },
+        ...(v2 ? { rankingVersion: 'v2' as const } : {}),
+      });
+      return esSearch.mock.calls.map(([r]) => r);
+    };
+
+    it('unset: fused v2 search runs the keyword and the vector list for every locale', async () => {
+      for (const lang of ['en', 'vi']) {
+        const calls = await run(lang);
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(true);
+      }
+    });
+
+    it('parseKeywordLocales: a malformed entry is ignored; no valid entry means all', () => {
+      expect([...parseKeywordLocales('en es, fr')!]).toEqual(['fr']);
+      expect(parseKeywordLocales('en es;ru')).toBeNull();
+    });
+
+    it('parseKeywordLocales: unset or blank means all locales', () => {
+      expect(parseKeywordLocales(undefined)).toBeNull();
+      expect(parseKeywordLocales('  , ')).toBeNull();
+      expect([...parseKeywordLocales('en, ES')!]).toEqual(['en', 'es']);
+    });
+
+    describe('set to en,es,ru', () => {
+      beforeEach(() => {
+        (service as any).keywordLocales = parseKeywordLocales('en, ES ,ru');
+      });
+
+      it('keeps the keyword leg for listed locales, including a regional tag', async () => {
+        for (const lang of ['en', 'es', 'ru', 'es-MX']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(true);
+        }
+      });
+
+      it('drops the keyword list for other locales and keeps the vector list', async () => {
+        for (const lang of ['vi', 'am']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(false);
+          expect(calls.some(isVectorList)).toBe(true);
+        }
+      });
+
+      it('summed path (coords given): lexical clauses are gone for vi, present for en', async () => {
+        await run('en', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(false);
+      });
+
+      it('embedding failed for vi: the keyword leg runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+      });
+
+      it('returns no weak-match judges when the keyword leg is off', async () => {
+        // The ranked lists are off in this spec (see the esSearch mock), so
+        // the fused order is stubbed with judges; the gate under test is the
+        // keyword leg switch.
+        jest.spyOn(service as any, 'fetchFusedOrder').mockResolvedValue({
+          ids: undefined,
+          judges: { keyword_top: 1, vector_top: 1 },
+        });
+        const off = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(off.judges).toBeUndefined();
+        (service as any).keywordLocales = null;
+        cacheStore.clear();
+        const on = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(on.judges).toBeDefined();
+      });
+
+      it('v1 is unchanged: keyword stays on for vi without rankingVersion', async () => {
+        await run('vi', {}, false);
+        expect(mainHasLexical()).toBe(true);
+      });
     });
   });
 
