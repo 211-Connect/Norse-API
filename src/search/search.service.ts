@@ -26,7 +26,11 @@ import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { OrchestrationConfigService } from 'src/cms-config/orchestration-config.service';
 import { fuzzyFallbackFor } from './internal/text-matching/fuzzy-match';
 import { SearchUtilsService } from './search-utils.service';
-import { HybridSearchService, RankingVersion } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  NeedScore,
+  RankingVersion,
+} from './hybrid-search.service';
 import { FacetConfig } from 'src/cms-config/types/facet-config';
 import { CustomAttribute } from 'src/cms-config/types/custom-attribute';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
@@ -57,6 +61,8 @@ type SearchOptions = {
   area?: AreaFilter;
   /** Set by the v2 routes only; absent means v1 rules. Hybrid pins only. */
   rankingVersion?: RankingVersion;
+  /** Set by the v2 pins route: the need list of the kept set. Hybrid pins only. */
+  needScores?: NeedScore[];
 };
 
 @Injectable()

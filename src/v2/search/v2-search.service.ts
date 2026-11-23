@@ -236,9 +236,11 @@ export class V2SearchService {
 
   /**
    * Map pins for a v2 search: the same membership as `search` (child taxonomy
-   * codes, region), the v1 pins shape. No classify call and no embedding unless
-   * `relevance_cutoff=on` needs scores (the v1 pins rule). The region is
-   * resolved by `SearchService.searchPins`, the same `resolveArea` as `search`.
+   * codes, region, and for a text query the same kept set), the v1 pins
+   * shape. A text query classifies, so the need list matches `search`; an
+   * empty query makes no classify call. The region is resolved by
+   * `SearchService.searchPins`, the same `resolveArea` as `search`. Weak match
+   * is not checked on pins (known limit).
    */
   async pins({
     headers,
@@ -249,11 +251,30 @@ export class V2SearchService {
   }): Promise<SearchPinsResponseDto> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const text = dto.query;
+    let needScores: NeedScore[] | undefined;
+    if (text.trim().length > 0) {
+      const searchConfig = await this.tenantConfig.getSearchConfig(
+        headers['x-tenant-id'],
+      );
+      ({ needScores } = await this.classifyAndDecide({
+        headers,
+        dto,
+        text,
+        searchConfig,
+        aiClassification: tenantAiClassification(searchConfig),
+        topAreasPromise: this.topAreasService.topAreas(
+          headers['x-tenant-id'],
+          headers['accept-language'],
+        ),
+      }));
+    }
     return this.searchService
       .searchPins({
         headers,
         query: { ...v1Fields, query_type: 'hybrid' } as SearchResourcesQueryDto,
         rankingVersion: 'v2',
+        ...(needScores && { needScores }),
       })
       .catch((error: unknown) => {
         if (isIndexNotFound(error)) {
@@ -266,6 +287,82 @@ export class V2SearchService {
         }
         throw error;
       });
+  }
+
+  /**
+   * Classify the text, then run the rules to decide the need boosts. Shared by
+   * `run` and `pins`, so the pins need list equals the search page need list.
+   * Classify never throws; a failure comes back as error signals.
+   */
+  private async classifyAndDecide({
+    headers,
+    dto,
+    text,
+    searchConfig,
+    aiClassification,
+    topAreasPromise,
+  }: {
+    headers: HeadersDto;
+    dto: V2SearchQueryDto;
+    text: string;
+    searchConfig: SearchConfigCache;
+    aiClassification: AiClassificationSetting;
+    topAreasPromise: ReturnType<TopAreasService['topAreas']>;
+  }) {
+    const hasText = text.trim().length > 0;
+    const callerNeeds = dto.needs ?? [];
+    const classified = hasText
+      ? await withSpan('v2.classify', async (classifySpan) => {
+          const result = await this.classifier.classify(
+            cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
+            headers['x-tenant-id'],
+            aiClassification,
+          );
+          // Classify never throws; error signals mark a failed call.
+          classifySpan.setAttribute(
+            'v2.classify.failed',
+            result.signals.emergency?.status === 'error',
+          );
+          return result;
+        })
+      : null;
+    const signals = classified?.signals ?? NO_TEXT_SIGNALS;
+    const scores = classified?.scores ?? {};
+
+    const lang = headers['accept-language'] || 'en';
+    const rulesRequest: RulesRequest = {
+      has_text: hasText,
+      has_content_word: hasContentWord(text, lang),
+      needs: callerNeeds,
+      passed_needs: dto.passed_needs ?? [],
+      urgency: dto.urgency,
+      clarify: dto.clarify ?? 'auto',
+    };
+    const topAreas = await topAreasPromise;
+    const decision = withSpanSync('v2.rules.decide', () =>
+      decide(rulesRequest, signals, {
+        ai_classification: aiClassification,
+        hotlines: tenantHotlines(searchConfig),
+        top_areas: topAreas,
+      }),
+    );
+
+    const needScores: NeedScore[] = [];
+    for (const code of decision.boost_needs) {
+      const tier = isTier1(code) ? 'tier1' : isTier2(code) ? 'tier2' : null;
+      if (!tier) continue;
+      const score = callerNeeds.includes(code) ? 1 : scores[code];
+      if (typeof score !== 'number') continue;
+      needScores.push({ code, tier, score });
+    }
+    return {
+      signals,
+      rulesRequest,
+      topAreas,
+      decision,
+      needScores,
+      modelVersion: classified?.modelVersion ?? null,
+    };
   }
 
   /** One `v2.search` span over the whole pipeline; each step is a child. */
@@ -347,51 +444,22 @@ export class V2SearchService {
     // setting can turn the need guess off.
     const aiClassification = tenantAiClassification(searchConfig);
 
-    // Classify never throws; a failure comes back as error signals.
-    const classified = hasText
-      ? await withSpan('v2.classify', async (classifySpan) => {
-          const result = await this.classifier.classify(
-            cutWholeCharacters(modelText(text), CLASSIFY_MAX_TEXT_LENGTH),
-            headers['x-tenant-id'],
-            aiClassification,
-          );
-          // Classify never throws; error signals mark a failed call.
-          classifySpan.setAttribute(
-            'v2.classify.failed',
-            result.signals.emergency?.status === 'error',
-          );
-          return result;
-        })
-      : null;
-    const signals = classified?.signals ?? NO_TEXT_SIGNALS;
-    const scores = classified?.scores ?? {};
-
     const lang = headers['accept-language'] || 'en';
-    const rulesRequest: RulesRequest = {
-      has_text: hasText,
-      has_content_word: hasContentWord(text, lang),
-      needs: callerNeeds,
-      passed_needs: dto.passed_needs ?? [],
-      urgency: dto.urgency,
-      clarify: dto.clarify ?? 'auto',
-    };
-    const topAreas = await topAreasPromise;
-    const decision = withSpanSync('v2.rules.decide', () =>
-      decide(rulesRequest, signals, {
-        ai_classification: aiClassification,
-        hotlines: tenantHotlines(searchConfig),
-        top_areas: topAreas,
-      }),
-    );
-
-    const needScores: NeedScore[] = [];
-    for (const code of decision.boost_needs) {
-      const tier = isTier1(code) ? 'tier1' : isTier2(code) ? 'tier2' : null;
-      if (!tier) continue;
-      const score = callerNeeds.includes(code) ? 1 : scores[code];
-      if (typeof score !== 'number') continue;
-      needScores.push({ code, tier, score });
-    }
+    const {
+      signals,
+      rulesRequest,
+      topAreas,
+      decision,
+      needScores,
+      modelVersion,
+    } = await this.classifyAndDecide({
+      headers,
+      dto,
+      text,
+      searchConfig,
+      aiClassification,
+      topAreasPromise,
+    });
 
     // clarify=never removes the counting cost (ADR 0039 decision 26).
     const countCodes = dto.clarify === 'never' ? [] : decision.count_codes;
@@ -569,7 +637,7 @@ export class V2SearchService {
       // No top-level emergency block (ADR 0039 Decision 54): the emergency
       // lives only in the emergency question inside `clarification`.
       clarification,
-      model_version: classified?.modelVersion ?? null,
+      model_version: modelVersion,
       rules_version: decision.rules_version,
     };
     // A shared cache may store only band none with no emergency question

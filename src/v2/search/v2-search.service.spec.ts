@@ -1811,8 +1811,31 @@ describe('V2SearchService.pins', () => {
     ]) {
       expect(sent.query).not.toHaveProperty(key);
     }
-    expect(classify).not.toHaveBeenCalled();
+    // A text query classifies, so the need list matches `search` (plan rule 7).
+    expect(classify).toHaveBeenCalledTimes(1);
     expect(startEarlyRetrieval).not.toHaveBeenCalled();
+  });
+
+  it('P8. text pins get the same needScores as search; empty text does not classify', async () => {
+    const classify = jest
+      .fn()
+      .mockResolvedValue(okResult({ 'N-HOU-02': 0.99, 'N-HOU': 0.95 }));
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, searchHybrid } = build({ classify, searchPins });
+
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    await service.search({ headers, query: dto({ query: 'rent' }) });
+    expect(searchPins.mock.calls[0][0].needScores).toEqual(
+      searchHybrid.mock.calls[0][0].needScores,
+    );
+    expect(searchPins.mock.calls[0][0].needScores).toEqual([
+      { code: 'N-HOU-02', tier: 'tier2', score: 0.99 },
+    ]);
+
+    classify.mockClear();
+    await service.pins({ headers, query: dto({ query: '' }) });
+    expect(classify).not.toHaveBeenCalled();
+    expect(searchPins.mock.calls[1][0]).not.toHaveProperty('needScores');
   });
 
   it('turns a missing index into a 400', async () => {
