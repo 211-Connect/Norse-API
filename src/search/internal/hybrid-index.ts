@@ -21,8 +21,7 @@ export interface HybridIndexDeps {
 }
 
 /**
- * The index name a tenant's hybrid reads use: search, count (HybridSearchService)
- * and the v2 start question's top areas (TopAreasService).
+ * The index name a tenant's hybrid reads use: search and count (HybridSearchService).
  *
  * Dagster keeps every tenant in one shared index per language, and publishes a
  * tenant by pointing the tenant's alias, `{tenant}-hybrid_search_resources_{lang}`,

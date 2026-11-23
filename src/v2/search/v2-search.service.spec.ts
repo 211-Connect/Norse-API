@@ -16,7 +16,6 @@ import {
   V2SearchService,
   tenantHotlines,
 } from './v2-search.service';
-import { TopAreasService } from './top-areas.service';
 import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
@@ -76,7 +75,6 @@ function build(opts: {
   searchConfig?: SearchConfigCache;
   getSummaries?: jest.Mock;
   searchPins?: jest.Mock;
-  topAreas?: jest.Mock;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -88,14 +86,12 @@ function build(opts: {
   const searchPins =
     opts.searchPins ??
     jest.fn().mockResolvedValue({ total: 0, truncated: false, pins: [] });
-  const topAreas = opts.topAreas ?? jest.fn().mockResolvedValue([]);
   const service = new V2SearchService(
     { classify } as unknown as SearchClassificationClient,
     { searchHybrid, startEarlyRetrieval } as unknown as HybridSearchService,
     { getSearchConfig } as unknown as TenantConfigService,
     { getSummaries } as unknown as RegionService,
     { searchPins } as unknown as SearchService,
-    { topAreas } as unknown as TopAreasService,
   );
   return {
     searchPins,
@@ -105,7 +101,6 @@ function build(opts: {
     startEarlyRetrieval,
     getSearchConfig,
     getSummaries,
-    topAreas,
   };
 }
 
@@ -1886,31 +1881,36 @@ describe('tenant context (hotlines, top areas)', () => {
     expect(await emergencyHotlines(cfg)).toEqual(DEFAULT_HOTLINES);
   });
 
-  const startOptions = async (topAreas: string[]) => {
-    const { service } = build({
-      topAreas: jest.fn().mockResolvedValue(topAreas),
-    });
+  const startOptions = async () => {
+    const { service } = build({});
     const res = await service.search({ headers, query: dto({ query: '' }) });
     const q = res.clarification.questions.find((x) => x.id === 'start');
     return q?.options.map((o) => o.value);
   };
 
-  it('offers the tenant top areas in the start question', async () => {
-    expect(await startOptions(['N-LEG', 'N-WRK', 'N-HLT', 'N-HOU'])).toEqual([
-      'N-LEG',
-      'N-WRK',
-      'N-HLT',
-    ]);
+  it('offers the global default areas in the start question', async () => {
+    expect(await startOptions()).toEqual(DEFAULT_TOP_AREAS);
+    expect(DEFAULT_TOP_AREAS).toEqual(['N-HOU', 'N-FOD', 'N-MON']);
   });
 
-  it('falls back to the default top areas when TopAreasService gives []', async () => {
-    expect(await startOptions([])).toEqual(DEFAULT_TOP_AREAS);
-  });
-
-  it('passes tenant and language to TopAreasService', async () => {
-    const { service, topAreas } = build({});
-    await service.search({ headers, query: dto({ query: '' }) });
-    expect(topAreas).toHaveBeenCalledWith(headers['x-tenant-id'], 'en');
+  it('gives every tenant the same start areas and reads no tenant count', async () => {
+    const other = {
+      ...headers,
+      'x-tenant-id': '22222222-2222-4222-8222-222222222222',
+    };
+    const a = build({});
+    const b = build({});
+    const ra = await a.service.search({ headers, query: dto({ query: '' }) });
+    const rb = await b.service.search({
+      headers: other,
+      query: dto({ query: '' }),
+    });
+    const opts = (r: typeof ra) =>
+      r.clarification.questions.find((x) => x.id === 'start')?.options;
+    expect(opts(ra)).toEqual(opts(rb));
+    expect(a.searchHybrid).not.toHaveBeenCalledWith(
+      expect.objectContaining({ aggs: expect.anything() }),
+    );
   });
 });
 

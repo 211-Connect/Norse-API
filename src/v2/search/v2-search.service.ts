@@ -33,7 +33,6 @@ import { RegionService } from 'src/region/internal';
 import { SearchService } from 'src/search/search.service';
 import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
 import { resolveArea } from 'src/search/internal/area/resolve-area';
-import { TopAreasService } from './top-areas.service';
 import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
@@ -215,7 +214,6 @@ export class V2SearchService {
     private readonly tenantConfig: TenantConfigService,
     private readonly regionService: RegionService,
     private readonly searchService: SearchService,
-    private readonly topAreasService: TopAreasService,
   ) {}
 
   /**
@@ -267,10 +265,6 @@ export class V2SearchService {
         dto,
         text,
         searchConfig,
-        topAreasPromise: this.topAreasService.topAreas(
-          headers['x-tenant-id'],
-          headers['accept-language'],
-        ),
       }));
     }
     return this.searchService
@@ -303,13 +297,11 @@ export class V2SearchService {
     dto,
     text,
     searchConfig,
-    topAreasPromise,
   }: {
     headers: HeadersDto;
     dto: V2SearchQueryDto;
     text: string;
     searchConfig: SearchConfigCache;
-    topAreasPromise: ReturnType<TopAreasService['topAreas']>;
   }) {
     const hasText = text.trim().length > 0;
     const callerNeeds = dto.needs ?? [];
@@ -353,12 +345,10 @@ export class V2SearchService {
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
     };
-    const topAreas = await topAreasPromise;
     const decision = withSpanSync('v2.rules.decide', () =>
       decide(rulesRequest, signals, {
         ai_classification: aiClassification,
         hotlines: tenantHotlines(searchConfig),
-        top_areas: topAreas,
       }),
     );
 
@@ -373,7 +363,6 @@ export class V2SearchService {
     return {
       signals,
       rulesRequest,
-      topAreas,
       decision,
       needScores,
       modelVersion: classified?.modelVersion ?? null,
@@ -444,13 +433,6 @@ export class V2SearchService {
         ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
         : undefined;
 
-    // Tenant top areas run in parallel with the config read and classify. The
-    // service never throws: a failure is [] (engine default areas).
-    const topAreasPromise = this.topAreasService.topAreas(
-      headers['x-tenant-id'],
-      headers['accept-language'],
-    );
-
     // `off`: one classify call still runs for the emergency check; the rules
     // engine drops its need and urgency guesses (question 14). getSearchConfig
     // never throws: a missing or unreadable value is an empty object (on).
@@ -460,7 +442,6 @@ export class V2SearchService {
     const {
       signals,
       rulesRequest,
-      topAreas,
       decision,
       needScores,
       modelVersion,
@@ -470,7 +451,6 @@ export class V2SearchService {
       dto,
       text,
       searchConfig,
-      topAreasPromise,
     });
 
     // clarify=never removes the counting cost (ADR 0039 decision 26).
@@ -498,7 +478,6 @@ export class V2SearchService {
     const tenantContext = {
       ai_classification: aiClassification,
       hotlines: tenantHotlines(searchConfig),
-      top_areas: topAreas,
     };
     const hybridCall: HybridCall = {
       ...retrievalOptions,
