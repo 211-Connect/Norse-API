@@ -29,6 +29,8 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 
 **Question contract v2** (`V2_QUESTION_RULE_V1=true`; off = the legacy shape above, with `importance`): each question is `{id, type (emergency|urgency|need), placement (popup|before_results|with_results), style (strong|standard|subtle), stem, options, multi_select, allow_other, none_of_these, hotlines?}`. `importance`, `priority`, `value`, `uncertainty`, `reason`, `step` and option `score` are not sent (they stay in the trace attribute `v2.questions`). `clarification.strings` holds `popup_title`, `skip_to_results`, `also_fit_one`. The API reads `asked=` (question ids) and sends no `before_results` question after 3 (the danger question is never cut). No `urgency` question comes beside the danger question. Hotlines go only on the danger question and are omitted once urgency U-1 to U-4 is set. Spec: HANDOFF-ASSETS/v2-search--rules-engine/question-contract-v2.md.
 
+Scope (Lucas, 2026-11-23): `hotlines` and `strings` govern search responses only. Pages with no search response (the landing page, the need form) keep the client's default 911/988 line. `none_of_these` is a flag; the Norse UI draws no button for it and ignores it. `popup_title` is "Are you in danger right now?".
+
 Usage metric: one `norse_search_requests_total` count per request with `search_type="v2"`.
 
 ## Left out of this slice

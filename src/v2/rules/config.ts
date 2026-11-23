@@ -75,7 +75,7 @@ export const LABELS = {
  * `clarification.strings`; `localizedStrings` translates them (English fallback).
  */
 export const UI_STRINGS = {
-  popupTitle: 'Are you safe?',
+  popupTitle: 'Are you in danger right now?',
   skipToResults: 'Skip to results',
   alsoFitOne: 'Does this also fit?',
 };

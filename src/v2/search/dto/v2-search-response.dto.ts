@@ -464,7 +464,11 @@ export class V2QuestionDto {
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;
   @ApiProperty() allow_other: boolean;
-  @ApiProperty() none_of_these: boolean;
+  @ApiProperty({
+    description:
+      "Flag only. The Norse UI draws no 'None of these' button and ignores it (Lucas, 2026-11-23); it stays in the contract for other clients.",
+  })
+  none_of_these: boolean;
   @ApiPropertyOptional({
     type: [V2HotlineDto],
     description:
@@ -474,7 +478,7 @@ export class V2QuestionDto {
 }
 
 export class V2StringsDto {
-  @ApiProperty({ example: 'Are you safe?' }) popup_title: string;
+  @ApiProperty({ example: 'Are you in danger right now?' }) popup_title: string;
   @ApiProperty({ example: 'Skip to results' }) skip_to_results: string;
   @ApiProperty({ example: 'Does this also fit?' }) also_fit_one: string;
 }

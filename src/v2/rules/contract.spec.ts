@@ -248,6 +248,11 @@ describe('question contract v2: rule 5 (words)', () => {
       also_fit_one: UI_STRINGS.alsoFitOne,
     });
   });
+  it('popup title is the danger question, as in the legacy UI (Lucas, 2026-11-23)', () => {
+    expect(localizedStrings('en').popup_title).toBe(
+      'Are you in danger right now?',
+    );
+  });
   it('Spanish strings from the table', () => {
     const es = LOCALE_TABLES.es.strings;
     expect(localizedStrings('es')).toEqual({
