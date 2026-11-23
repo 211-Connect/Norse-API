@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
@@ -693,6 +695,29 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
         asc(F.name),
         asc(F.id),
       ]);
+    });
+  });
+  // v1 must build the same request as origin/development (plan test 9). The
+  // fixtures were recorded from the code before the simple location model.
+  describe('9. v1 request is unchanged by the simple location model', () => {
+    const cases = [
+      ['relevance', { coords: [-93.1, 44.9], distance: 25, sort: 'relevance' }],
+      ['distance', { coords: [-93.1, 44.9], distance: 25, sort: 'distance' }],
+      ['no-coords', { sort: 'relevance' }],
+    ] as const;
+    it.each(cases)('v1 text + %s', async (name, q) => {
+      await run({ ...q }, { rankingVersion: undefined });
+      const file = join(
+        __dirname,
+        '__fixtures__',
+        `v1-hybrid-request-${name}.json`,
+      );
+      const actual = JSON.parse(JSON.stringify(mainRequest()));
+      if (process.env.RECORD_V1_FIXTURE === '1') {
+        writeFileSync(file, JSON.stringify(actual, null, 2) + '\n');
+      }
+      expect(lists()).toHaveLength(0);
+      expect(actual).toEqual(JSON.parse(readFileSync(file, 'utf8')));
     });
   });
 });
