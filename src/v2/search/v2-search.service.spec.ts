@@ -1811,6 +1811,32 @@ describe('V2SearchService.pins', () => {
     expect(startEarlyRetrieval).not.toHaveBeenCalled();
   });
 
+  it('P9. pins with a failed classify: no need boost, the pins still return', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(errorResult()),
+      searchPins,
+    });
+    const result = await service.pins({
+      headers,
+      query: dto({ query: 'rent' }),
+    });
+    expect(result).toBe(pinsResponse);
+    expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+  });
+
+  it('P10. pins with tenant ai_classification off: classify gets off, no need boost', async () => {
+    const searchPins = jest.fn().mockResolvedValue(pinsResponse);
+    const { service, classify } = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-HOU-02': 0.99 })),
+      searchConfig: TENANT_OFF,
+      searchPins,
+    });
+    await service.pins({ headers, query: dto({ query: 'rent' }) });
+    expect(classify.mock.calls[0][2]).toBe('off');
+    expect(searchPins.mock.calls[0][0].needScores ?? []).toEqual([]);
+  });
+
   it('P8. text pins get the same needScores as search; empty text does not classify', async () => {
     const classify = jest
       .fn()
