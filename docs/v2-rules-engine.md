@@ -80,7 +80,6 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 
 The question has no `level` field (Lucas, 2026-11-13). A client reads `importance` and `type` to choose the display. The popup and soft bands of the emergency question give the same `type`, `reason`, stem, options and hotlines; `importance` tells them apart (`critical` = strong band, `high` = soft band).
 
-
 ## Response contract (question contract v2)
 
-`importance` and `priority` are engine-internal. With `V2_QUESTION_RULE_V1=true` the response maps them in `src/v2/rules/contract.ts`: emergency critical = popup/strong; emergency high = before_results/strong; need or urgency high = before_results/standard; medium or low = with_results/subtle. Rules the API owns: no urgency question beside danger; at most 3 `before_results` questions per `asked=` session; no fake "none" option; hotlines; UI words in `clarification.strings`.
+`importance` and `priority` are engine-internal. With `V2_QUESTION_RULE_V1=true` `src/v2/rules/contract.ts` maps them to the response shape: emergency critical = popup/strong; emergency high = before_results/strong; need or urgency critical or high = before_results/standard; medium or low = with_results/subtle. It only maps. The engine decides which questions come: `buildCandidates` (no urgency question beside danger or after its answer; no option that stands for "none"; hotlines) and `finalize` (the guide cap `CUTOFFS.maxBeforeResults`, cut before the top 3, and the R5 notice that needs its question).

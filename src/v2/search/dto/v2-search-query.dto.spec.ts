@@ -2,6 +2,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { SearchResourcesQueryDto } from 'src/search/dto/search-query.dto';
 import { V2SearchQueryDto } from './v2-search-query.dto';
+import { TIER1_CODES } from '../../rules/sune';
 import {
   MAX_QUERY_LENGTH,
   QUERY_TOO_LONG_MESSAGE,
@@ -220,10 +221,41 @@ describe('V2SearchQueryDto asked', () => {
       'x',
     ]);
   });
-  it('rejects text that is not a question id, and more than 20', () => {
-    expect(parse({ asked: 'has space' }).props).toContain('asked');
-    expect(
-      parse({ asked: Array.from({ length: 21 }, (_, i) => `q${i}`) }).props,
-    ).toContain('asked');
+  it('a bad value never fails the search: what is not a question id is left out', () => {
+    for (const asked of [
+      'has space',
+      '<script>',
+      'x'.repeat(41),
+      { a: 'start' },
+      [{ a: 'start' }],
+      ['', ','],
+    ]) {
+      const { dto, props } = parse({ asked } as never);
+      expect(props).not.toContain('asked');
+      expect(dto.asked ?? []).toEqual([]);
+    }
+    expect(parse({ asked: 'start,has space,spread' }).dto.asked).toEqual([
+      'start',
+      'spread',
+    ]);
+  });
+  it('reads at most 20 ids; more is not a 400', () => {
+    const { dto, props } = parse({
+      asked: Array.from({ length: 25 }, (_, i) => `q${i}`).join(','),
+    });
+    expect(props).not.toContain('asked');
+    expect(dto.asked).toHaveLength(20);
+  });
+  it('missing or empty: no cap', () => {
+    expect(parse({}).dto.asked).toBeUndefined();
+    expect(parse({ asked: '' }).dto.asked).toEqual([]);
+  });
+  it('every id the engine sends is a question id', () => {
+    const ids = ['emergency', 'urgency_today', 'urgency_time', 'start'].concat(
+      'spread',
+      'no_match',
+      TIER1_CODES.map((c) => `area:${c}`).slice(0, 14),
+    );
+    expect(parse({ asked: ids.join(',') }).dto.asked).toEqual(ids);
   });
 });

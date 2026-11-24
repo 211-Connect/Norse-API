@@ -17,7 +17,7 @@ export interface RawTable {
   strings?: Partial<Record<UiStringKey, string>>;
 }
 
-export type UiStringKey = 'popupTitle' | 'skipToResults' | 'alsoFitOne';
+export type UiStringKey = 'skipToResults' | 'alsoFitOne';
 
 export type StemKey =
   | 'emergency'

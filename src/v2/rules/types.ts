@@ -179,6 +179,8 @@ export interface FinalizeInput {
   match?: Match;
   /** The text found no good match (the service's weak-match flag). */
   weak?: boolean;
+  /** Question ids already asked for this query (`asked=`); only counted. */
+  asked?: readonly string[];
 }
 export interface Clarification {
   rules_version: string;

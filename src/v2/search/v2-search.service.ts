@@ -770,6 +770,7 @@ export class V2SearchService {
           ...(match && { match }),
           // The pick has its own results: not the no-results rule.
           weak: weak && !weakPick,
+          ...(dto.asked && { asked: dto.asked }),
         }
       : { counts };
     if (ruleV1) {
@@ -782,21 +783,21 @@ export class V2SearchService {
     const localized = withSpanSync('v2.rules.finalize', () =>
       localizeClarification(finalize(clarifyDecision, finalizeInput), lang),
     );
-    // Question contract v2 (on): placement and style, the API-owned rules. The
-    // engine's importance, priority and reason stay in the trace, not the response.
+    // Question contract v2 (on): placement and style. The engine's own measures
+    // stay in the trace, not the response.
     const clarification = ruleV1
       ? withSpanSync('v2.rules.contract', () => {
           span.setAttribute(
             'v2.questions',
             localized.questions
-              .map((q) => `${q.id}:${q.importance}:${q.reason}`)
+              .map((q) =>
+                [q.id, q.importance, q.reason, q.value, q.uncertainty].join(
+                  ':',
+                ),
+              )
               .join(','),
           );
-          return toContractClarification(localized, {
-            urgency: dto.urgency,
-            asked: dto.asked,
-            lang,
-          });
+          return toContractClarification(localized, lang);
         })
       : localized;
 

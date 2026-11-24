@@ -8,6 +8,13 @@ import {
   TaxonomyDto,
 } from '../../../search/dto/search-response.dto';
 import { ShardsInfo } from '../../../search/types';
+import {
+  CONTRACT_TYPES,
+  Placement,
+  PLACEMENTS,
+  Style,
+  STYLES,
+} from '../../rules/contract';
 
 // The v1 response DTOs describe the v1 document and feed the frontend SDK, so
 // they stay as they are. The classes below describe what /v2/search returns,
@@ -389,19 +396,10 @@ export class V2QuestionOptionDto {
     type: Number,
     nullable: true,
     description:
-      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number. An option with count 0 is never offered.',
+      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number, 0 included (V2_QUESTION_RULE_V1 off: an option with count 0 is never offered).',
   })
   // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
   results_count?: number | null;
-
-  @ApiPropertyOptional({
-    type: Number,
-    minimum: 0,
-    maximum: 1.3,
-    description:
-      'Need options only. Formula: classifier confidence for the need (0 when the model gave none) + 0.3 * log(1 + count) / log(1 + max count among this question\'s options). A null count adds 0; a count of 0 adds 0 and the option stays listed. The score can pass 1 (up to confidence + 0.3). Options are sorted by it, high to low; ties keep vocabulary order. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
-  })
-  score?: number;
 }
 
 export class V2HotlineDto {
@@ -419,30 +417,23 @@ export class V2QuestionDto {
   })
   id: string;
   @ApiProperty({
-    enum: [
-      'emergency',
-      'urgency',
-      'need',
-      'confirm_urgency',
-      'find_need',
-      'narrow',
-    ],
+    enum: [...CONTRACT_TYPES, 'confirm_urgency', 'find_need', 'narrow'],
     description:
       'What it asks about: `emergency`, `urgency` or `need`. The legacy names (`confirm_urgency`, `find_need`, `narrow`) come only when V2_QUESTION_RULE_V1 is off.',
   })
   type: string;
   @ApiPropertyOptional({
-    enum: ['popup', 'before_results', 'with_results'],
+    enum: PLACEMENTS,
     description:
       'Where it shows: popup over everything; the find page before results; the refine card beside results. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
   })
-  placement?: 'popup' | 'before_results' | 'with_results';
+  placement?: Placement;
   @ApiPropertyOptional({
-    enum: ['strong', 'standard', 'subtle'],
+    enum: STYLES,
     description:
       'How loud it looks. Independent of `type`. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
   })
-  style?: 'strong' | 'standard' | 'subtle';
+  style?: Style;
   @ApiPropertyOptional({
     enum: ['critical', 'high', 'medium', 'low'],
     description:
@@ -472,7 +463,7 @@ export class V2QuestionDto {
   @ApiPropertyOptional({
     type: [V2HotlineDto],
     description:
-      'Emergency question only: the numbers to show, in display order (tenant numbers, else 988 and 911). Absent when they should hide (a safe urgency answer is set). One tap calls a number.',
+      'Emergency question only: the numbers to show, in display order (tenant numbers, else 988 and 911). A safe urgency answer (U-1 to U-4) removes the question and its numbers. One tap calls a number.',
   })
   hotlines?: V2HotlineDto[];
 }

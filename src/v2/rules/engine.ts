@@ -1,5 +1,6 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
+import { placementAndStyle } from './contract';
 import { likelyAreas, needLevel, openAreas } from './need-level';
 import {
   asksNeeds,
@@ -327,6 +328,17 @@ export function finalize(base: Decision, input: FinalizeInput): Clarification {
     }
   }
 
+  // Guide cap: enough ids asked for this query means no more questions before
+  // the results. The danger question is a safety path and is never cut. Cut
+  // before the top 3, so a question beside the results takes the free place.
+  if (new Set(input.asked ?? []).size >= CUTOFFS.maxBeforeResults) {
+    kept = kept.filter(
+      (q) =>
+        q.type === 'emergency' ||
+        placementAndStyle(q).placement !== 'before_results',
+    );
+  }
+
   for (const q of kept) {
     for (const o of q.options) o.results_count ??= null;
     q.value = valueOf(
@@ -349,7 +361,7 @@ export function finalize(base: Decision, input: FinalizeInput): Clarification {
     kept = orderAreaQuestions(kept, decision);
   }
   // The notice says "pick what you need below": it needs that question. Without
-  // one (clarify=never, AI off, a failed needs call) R5 says nothing.
+  // one (clarify=never, AI off, a failed needs call, the guide cap) R5 says nothing.
   if (rule === 'R5' && !kept.some(asksNeeds)) {
     notice = undefined;
     phone_line = undefined;

@@ -1,12 +1,19 @@
 import {
   localizedStrings,
-  MAX_BEFORE_RESULTS,
   placementAndStyle,
   toContractClarification,
 } from './contract';
-import { DEFAULT_HOTLINES, STEMS, UI_STRINGS } from './config';
+import { req, sig } from '../../common/testing/v2-rules-helpers';
+import { DEFAULT_HOTLINES, PHONE_LINE, STEMS } from './config';
+import { decide, finalize } from './engine';
+import { localizeClarification } from './localize';
 import { LOCALE_TABLES } from './locales';
-import type { Clarification, Question, QuestionImportance } from './types';
+import type {
+  Clarification,
+  FinalizeInput,
+  Question,
+  QuestionImportance,
+} from './types';
 
 const q = (
   over: Partial<Question> & Pick<Question, 'id' | 'type'>,
@@ -114,6 +121,7 @@ describe('question contract v2: mapping rows', () => {
         q({ id: 'urgency_today', type: 'confirm_urgency' }),
         q({ id: 'start', type: 'find_need' }),
       ),
+      'en',
     );
     expect(out.questions.map((x) => x.type)).toEqual(['urgency', 'need']);
   });
@@ -121,6 +129,7 @@ describe('question contract v2: mapping rows', () => {
   it('removes importance, priority, value, uncertainty, reason, step and option score', () => {
     const [out] = toContractClarification(
       clar(q({ id: 'start', type: 'find_need' })),
+      'en',
     ).questions;
     for (const k of [
       'importance',
@@ -137,153 +146,201 @@ describe('question contract v2: mapping rows', () => {
   });
 });
 
-describe('question contract v2: rule 1 (no urgency beside danger)', () => {
-  it('drops the urgency question when the danger question is present', () => {
+describe('question contract v2: hotlines', () => {
+  it('pass through on the danger question; absent elsewhere', () => {
     const out = toContractClarification(
-      clar(
-        emergencyQ('high'),
-        q({ id: 'urgency_today', type: 'confirm_urgency' }),
-      ),
+      clar(emergencyQ('critical'), q({ id: 'start', type: 'find_need' })),
+      'en',
     );
-    expect(out.questions.map((x) => x.id)).toEqual(['emergency']);
-  });
-  it('keeps the urgency question when there is no danger question', () => {
-    const out = toContractClarification(
-      clar(q({ id: 'urgency_today', type: 'confirm_urgency' })),
-    );
-    expect(out.questions.map((x) => x.id)).toEqual(['urgency_today']);
+    expect(out.questions[0].hotlines).toEqual(DEFAULT_HOTLINES);
+    expect(out.questions[1]).not.toHaveProperty('hotlines');
   });
 });
 
-describe('question contract v2: rule 2 (guide cap)', () => {
-  const qs = () =>
-    clar(
-      q({ id: 'start', type: 'find_need' }),
-      q({ id: 'area:N-HOU', type: 'find_need', importance: 'medium' }),
-    );
-  it('sends before_results below the cap', () => {
-    expect(MAX_BEFORE_RESULTS).toBe(3);
-    const out = toContractClarification(qs(), { asked: ['a', 'b'] });
-    expect(out.questions.map((x) => x.id)).toEqual(['start', 'area:N-HOU']);
-  });
-  it('after 3 distinct asked ids, drops before_results and keeps with_results', () => {
-    const out = toContractClarification(qs(), { asked: ['a', 'b', 'c'] });
-    expect(out.questions.map((x) => x.id)).toEqual(['area:N-HOU']);
-  });
-  it('repeated ids count once', () => {
-    const out = toContractClarification(qs(), { asked: ['a', 'a', 'a', 'b'] });
-    expect(out.questions).toHaveLength(2);
-  });
-  it('never cuts the danger question (safety path)', () => {
-    const out = toContractClarification(clar(emergencyQ('high')), {
-      asked: ['a', 'b', 'c', 'd'],
-    });
-    expect(out.questions.map((x) => x.id)).toEqual(['emergency']);
-  });
-});
-
-describe('question contract v2: rule 3 (none of these)', () => {
-  it('sends only the flag: a fake none option is removed', () => {
-    const fake = q({
-      id: 'start',
-      type: 'find_need',
-      options: [
-        { label: 'A', parameter: 'needs', value: 'N-HOU', results_count: 1 },
-        {
-          label: 'None of these',
-          parameter: null,
-          value: 'none_of_these',
-          results_count: null,
-        },
-        {
-          label: 'No match',
-          parameter: 'needs',
-          value: 'no_match',
-          results_count: null,
-        },
-      ],
-    });
-    const [out] = toContractClarification(clar(fake)).questions;
-    expect(out.options.map((o) => o.value)).toEqual(['N-HOU']);
-    expect(out.none_of_these).toBe(true);
-  });
-});
-
-describe('question contract v2: rule 4 (hotlines)', () => {
-  it('sends the hotlines on the danger question', () => {
-    const [out] = toContractClarification(
-      clar(emergencyQ('critical')),
-    ).questions;
-    expect(out.hotlines).toEqual(DEFAULT_HOTLINES);
-  });
-  it('omits them once a safe urgency answer is set (U-1 to U-4)', () => {
-    for (const urgency of ['U-1', 'U-2', 'U-3', 'U-4'] as const) {
-      const [out] = toContractClarification(clar(emergencyQ('critical')), {
-        urgency,
-      }).questions;
-      expect(out).not.toHaveProperty('hotlines');
-    }
-  });
-  it('keeps them for U-0 and U-X', () => {
-    for (const urgency of ['U-0', 'U-X'] as const) {
-      const [out] = toContractClarification(clar(emergencyQ('critical')), {
-        urgency,
-      }).questions;
-      expect(out.hotlines).toEqual(DEFAULT_HOTLINES);
-    }
-  });
-  it('never puts hotlines on another question', () => {
-    const [out] = toContractClarification(
-      clar(q({ id: 'start', type: 'find_need', hotlines: DEFAULT_HOTLINES })),
-    ).questions;
-    expect(out).not.toHaveProperty('hotlines');
-  });
-});
-
-describe('question contract v2: rule 5 (words)', () => {
-  it('English strings', () => {
-    expect(toContractClarification(clar()).strings).toEqual({
-      popup_title: UI_STRINGS.popupTitle,
-      skip_to_results: UI_STRINGS.skipToResults,
-      also_fit_one: UI_STRINGS.alsoFitOne,
+describe('question contract v2: words', () => {
+  it('English', () => {
+    expect(toContractClarification(clar(), 'en').strings).toEqual({
+      popup_title: 'Are you in danger right now?',
+      skip_to_results: 'Skip to results',
+      also_fit_one: 'Does this also fit?',
     });
   });
-  it('popup title is the danger question, as in the legacy UI (Lucas, 2026-11-23)', () => {
-    expect(localizedStrings('en').popup_title).toBe(
-      'Are you in danger right now?',
-    );
+  it('Spanish, also for a region tag', () => {
+    const es = {
+      popup_title: '¿Está en peligro en este momento?',
+      skip_to_results: 'Ir a los resultados',
+      also_fit_one: '¿Esto también se ajusta?',
+    };
+    expect(localizedStrings('es')).toEqual(es);
+    expect(localizedStrings('es-MX')).toEqual(es);
   });
-  it('Spanish strings from the table', () => {
-    const es = LOCALE_TABLES.es.strings;
-    expect(localizedStrings('es')).toEqual({
-      popup_title: es?.popupTitle?.text,
-      skip_to_results: es?.skipToResults?.text,
-      also_fit_one: es?.alsoFitOne?.text,
+  it('Chinese: the popup title is translated, like the question under it; the rest is English', () => {
+    expect(localizedStrings('zh-hans')).toEqual({
+      popup_title: '您现在处于危险中吗？',
+      skip_to_results: 'Skip to results',
+      also_fit_one: 'Does this also fit?',
     });
   });
-  it('a language with no entry falls back to English', () => {
-    expect(localizedStrings('vi').popup_title).toBe(UI_STRINGS.popupTitle);
-    expect(localizedStrings(undefined).skip_to_results).toBe(
-      UI_STRINGS.skipToResults,
-    );
-  });
+  it.each(Object.keys(LOCALE_TABLES))(
+    '%s: the popup title is the stem of the danger question',
+    (lang) => {
+      const [danger] = localizeClarification(
+        clar(emergencyQ('critical')),
+        lang,
+      ).questions;
+      expect(localizedStrings(lang).popup_title).toBe(danger.stem);
+    },
+  );
+  it.each([['zh-hant'], ['de'], [undefined]])(
+    '%s: no table, English',
+    (lang) => {
+      expect(localizedStrings(lang).popup_title).toBe(STEMS.emergency);
+    },
+  );
 });
 
-describe('question contract v2: rule 6 and unchanged parts', () => {
-  it('keeps notice and phone_line', () => {
+describe('question contract v2: unchanged parts', () => {
+  it('keeps notice, phone_line and rules_version', () => {
     const c = {
       ...clar(),
       notice: { kind: 'may_not_match' as const, text: 'n' },
       phone_line: { label: 'Call 211', number: '211' },
     };
-    const out = toContractClarification(c);
-    expect(out.notice).toEqual(c.notice);
-    expect(out.phone_line).toEqual(c.phone_line);
+    expect(toContractClarification(c, 'en')).toMatchObject(c);
   });
   it('does not change its input', () => {
-    const c = clar(emergencyQ('critical'));
+    const c = clar(emergencyQ('critical'), q({ id: 'a', type: 'find_need' }));
     const before = JSON.stringify(c);
-    toContractClarification(c, { urgency: 'U-1', asked: ['a', 'b', 'c'] });
+    toContractClarification(c, 'es');
     expect(JSON.stringify(c)).toBe(before);
+  });
+});
+
+// What the mapping relies on: the engine keeps these rules, not this file.
+describe('question contract v2: rules the engine owns', () => {
+  const total = { total: 10, by_code: null };
+  const ask = (
+    scores: Record<string, number>,
+    o: Parameters<typeof sig>[1] = {},
+    r: Parameters<typeof req>[0] = {},
+    f: Partial<FinalizeInput> = {},
+  ) =>
+    finalize(
+      decide(req({ query: 'x', content_words: ['x'], ...r }), sig(scores, o)),
+      {
+        counts: total,
+        strong_text_match: false,
+        ...f,
+      },
+    );
+  const ids = (c: { questions: { id: string }[] }) =>
+    c.questions.map((x) => x.id);
+  const soft = { status: 'ok' as const, score: 0.5, floor_hit: true };
+  const strong = { status: 'ok' as const, score: 0.9, floor_hit: true };
+  const today = { level: 'U-1' as const, score: 0.85 };
+  const three = ['a', 'b', 'c'];
+  const TWO_AREAS = { 'N-HOU': 0.9, 'N-FOD': 0.85, 'N-MON': 0.82 };
+
+  it('no urgency question beside danger, nor after its answer', () => {
+    expect(ids(ask({}, { urgency: today }))).toContain('urgency_today');
+    for (const emergency of [soft, strong]) {
+      const c = ask({}, { urgency: today, emergency });
+      expect(ids(c)[0]).toBe('emergency');
+      expect(ids(c)).not.toContain('urgency_today');
+    }
+    for (const urgency of ['U-0', 'U-1', 'U-2', 'U-3', 'U-4'] as const) {
+      const c = ask({}, { urgency: today, emergency: strong }, { urgency });
+      expect(ids(c)).not.toContain('urgency_today');
+      // Hotlines go with the danger question: U-0 keeps both, a safe answer neither.
+      const danger = c.questions.find((x) => x.type === 'emergency');
+      expect(!!danger?.hotlines?.length).toBe(urgency === 'U-0');
+    }
+    expect(
+      ask({}, { emergency: strong }, { urgency: 'U-X' }).questions[0].hotlines,
+    ).toEqual(DEFAULT_HOTLINES);
+  });
+
+  it('no option stands for "none": every option writes a value to the URL', () => {
+    for (const c of [
+      ask({}),
+      ask(TWO_AREAS),
+      ask({}, { emergency: strong }),
+      ask({}, { urgency: today }),
+    ]) {
+      for (const x of c.questions) {
+        for (const o of x.options) {
+          expect(o.parameter).not.toBeNull();
+          expect(o.value).toMatch(/^(N|U)-/);
+        }
+      }
+    }
+  });
+
+  it('cap: below 3 distinct ids nothing changes; repeated ids count once', () => {
+    const base = ask(TWO_AREAS);
+    expect(ask(TWO_AREAS, {}, {}, { asked: ['a', 'b'] })).toEqual(base);
+    expect(ask(TWO_AREAS, {}, {}, { asked: ['a', 'a', 'a', 'b'] })).toEqual(
+      base,
+    );
+    expect(ask(TWO_AREAS, {}, {}, { asked: [] })).toEqual(base);
+  });
+
+  it('cap: only questions beside the results stay, and they take the free place', () => {
+    const before = toContractClarification(
+      ask(TWO_AREAS, { urgency: today }),
+      'en',
+    );
+    // 4 candidates, 3 places: one quiet area question does not fit.
+    expect(before.questions.map((x) => x.placement).sort()).toEqual([
+      'before_results',
+      'before_results',
+      'with_results',
+    ]);
+    const after = toContractClarification(
+      ask(TWO_AREAS, { urgency: today }, {}, { asked: three }),
+      'en',
+    );
+    expect(after.questions.map((x) => x.placement)).toEqual([
+      'with_results',
+      'with_results',
+    ]);
+  });
+
+  it.each([
+    ['soft', soft],
+    ['strong', strong],
+  ])('cap: never cuts the danger question (%s band)', (_n, emergency) => {
+    const c = ask({}, { emergency }, {}, { asked: three });
+    expect(ids(c)).toEqual(['emergency']);
+    expect(c.questions[0].hotlines).toEqual(DEFAULT_HOTLINES);
+  });
+
+  it('cap: caller U-0 keeps the hotlines', () => {
+    const c = ask({}, {}, { urgency: 'U-0' }, { asked: three });
+    expect(c.questions[0].hotlines).toEqual(DEFAULT_HOTLINES);
+  });
+
+  it('cap in R5: the notice goes with the question it points to', () => {
+    const r5 = ask({}, {}, {}, { match: 'none' });
+    expect(ids(r5)).toEqual(['start']);
+    expect(r5.notice).toBeDefined();
+    const capped = ask({}, {}, {}, { match: 'none', asked: three });
+    expect(capped.questions).toEqual([]);
+    expect(capped).not.toHaveProperty('notice');
+    expect(capped).not.toHaveProperty('phone_line');
+  });
+
+  it('cap with no results: no question, the phone line stays', () => {
+    const c = ask(
+      {},
+      {},
+      {},
+      {
+        counts: { total: 0, by_code: null },
+        asked: three,
+      },
+    );
+    expect(c.questions).toEqual([]);
+    expect(c.phone_line).toEqual(PHONE_LINE);
   });
 });

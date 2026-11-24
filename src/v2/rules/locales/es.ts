@@ -17,7 +17,6 @@ export const es: RawTable = {
     phoneLine: 'Llame al 211',
   },
   strings: {
-    popupTitle: '¿Está en peligro en este momento?',
     skipToResults: 'Ir a los resultados',
     alsoFitOne: '¿Esto también se ajusta?',
   },

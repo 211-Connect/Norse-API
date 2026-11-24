@@ -24,6 +24,8 @@ export const CUTOFFS = {
   // question is asked for a query of 1 to this many topic words (`coverageTokens`).
   spread: { areaInPlayMin: 0.05, maxContentWords: 2 },
   maxQuestions: 3,
+  // Guide cap (Lucas, 2026-11-23): after this many asked ids no question comes before the results.
+  maxBeforeResults: 3,
   optionsPerQuestion: 3,
 };
 
@@ -71,11 +73,11 @@ export const LABELS = {
 };
 
 /**
- * Words the UI used to hard-code (question contract v2, rule 5). Sent in
+ * Words the UI used to hard-code (question contract v2). Sent in
  * `clarification.strings`; `localizedStrings` translates them (English fallback).
+ * The popup title is `STEMS.emergency`.
  */
 export const UI_STRINGS = {
-  popupTitle: 'Are you in danger right now?',
   skipToResults: 'Skip to results',
   alsoFitOne: 'Does this also fit?',
 };

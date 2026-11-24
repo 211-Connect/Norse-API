@@ -2126,7 +2126,10 @@ describe('question contract v2 in the service', () => {
     const b = build({
       ruleV1,
       classify: jest.fn().mockResolvedValue(okResult(scores)),
-      search: jest.fn().mockImplementation(async () => hybridResponse(10)),
+      search: jest.fn().mockImplementation(async () => ({
+        ...hybridResponse(10),
+        nameClaim: { status: 'ok', org_ids: [], veto: null, pins: [] },
+      })),
     });
     return b.service.search({
       headers,
@@ -2183,9 +2186,192 @@ describe('question contract v2 in the service', () => {
     ).toEqual([]);
   });
 
-  it('off: asked is ignored', async () => {
-    const res: any = await ask('off', { asked: ['a', 'b', 'c'] });
-    expect(res.clarification.questions.length).toBeGreaterThan(0);
+  it.each(['off', 'false', '', 'TRUE'])(
+    'gate %p: asked changes nothing (the development answer, byte for byte)',
+    async (ruleV1) => {
+      const a = await ask(ruleV1);
+      const b = await ask(ruleV1, { asked: ['a', 'b', 'c'] });
+      expect(a.clarification.questions.length).toBeGreaterThan(0);
+      expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    },
+  );
+
+  it('asked never reaches retrieval, classify or the pins', async () => {
+    const b = build({
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+    });
+    const run = (asked?: string[]) =>
+      b.service.search({ headers, query: dto({ query: 'food', asked }) });
+    await run();
+    await run(['a', 'b', 'c']);
+    expect(b.searchHybrid.mock.calls[1]).toEqual(b.searchHybrid.mock.calls[0]);
+    expect(b.classify.mock.calls[1]).toEqual(b.classify.mock.calls[0]);
+    expect(b.startEarlyRetrieval.mock.calls[1]).toEqual(
+      b.startEarlyRetrieval.mock.calls[0],
+    );
+    await b.service.pins({
+      headers,
+      query: dto({ query: 'food', asked: ['a', 'b', 'c'] }),
+    });
+    expect(b.searchPins.mock.calls[0][0].query).not.toHaveProperty('asked');
+  });
+
+  it('asked does not change whether the answer may be cached', async () => {
+    const stored = async (over: Partial<V2SearchQueryDto>) =>
+      !isMarkedNotStorable(await ask('true', over));
+    expect(await stored({})).toBe(true);
+    expect(await stored({ asked: ['a', 'b', 'c'] })).toBe(true);
+    // The cap does not make a degraded or danger answer storable.
+    for (const result of [errorResult(), danger(0.9, true)]) {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(result),
+      });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'help me', asked: ['a', 'b', 'c'] }),
+      });
+      expect(isMarkedNotStorable(res)).toBe(true);
+    }
+  });
+
+  const danger = (score: number, floor_hit: boolean) =>
+    okResult(
+      {},
+      {
+        signals: {
+          needs: { status: 'ok', scores: {} },
+          emergency: { status: 'ok', score, floor_hit },
+        },
+      },
+    );
+  const inLang = (lang: string) =>
+    ({ ...headers, 'accept-language': lang }) as HeadersDto;
+
+  it.each([
+    ['en', 'Are you in danger right now?', 'Skip to results'],
+    ['es', '¿Está en peligro en este momento?', 'Ir a los resultados'],
+    ['zh-hans', '您现在处于危险中吗？', 'Skip to results'],
+    ['zh-hant', 'Are you in danger right now?', 'Skip to results'],
+  ])(
+    '%s: danger on the keyword list is a popup with hotlines and words, past the cap too',
+    async (lang, title, skip) => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(danger(0.9, true)),
+      });
+      const res: any = await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'help me', asked: ['emergency', 'b', 'c'] }),
+      });
+      const [q] = res.clarification.questions;
+      expect(q).toMatchObject({
+        id: 'emergency',
+        type: 'emergency',
+        placement: 'popup',
+        style: 'strong',
+        stem: title,
+        none_of_these: false,
+        hotlines: DEFAULT_HOTLINES,
+      });
+      expect(res.clarification.strings).toMatchObject({
+        popup_title: title,
+        skip_to_results: skip,
+      });
+    },
+  );
+
+  it('es: need labels stay Spanish through the mapping; zh-hans asks no need question', async () => {
+    const run = async (lang: string) => {
+      const { service } = build({
+        classify: jest.fn().mockResolvedValue(okResult(scores)),
+      });
+      return (await service.search({
+        headers: inLang(lang),
+        query: dto({ query: 'comida' }),
+      })) as any;
+    };
+    const es = (await run('es')).clarification;
+    expect(es.questions.length).toBeGreaterThan(0);
+    for (const q of es.questions) {
+      expect(q.stem).toMatch(/¿/);
+      expect(q.none_of_these).toBe(q.type === 'need');
+    }
+    const zh = (await run('zh-hans')).clarification;
+    expect(zh.questions).toEqual([]);
+    expect(zh.strings.popup_title).toBe('您现在处于危险中吗？');
+  });
+
+  it('page 2 and another sort carry the same shape, and no may-not-match notice', async () => {
+    for (const over of [{ page: 2 }, { sort: 'name' as never }]) {
+      const res: any = await ask('true', over);
+      expect(res.clarification.questions.length).toBeGreaterThan(0);
+      for (const q of res.clarification.questions) {
+        expect(q).toHaveProperty('placement');
+        expect(q).not.toHaveProperty('importance');
+      }
+      expect(res.clarification).not.toHaveProperty('notice');
+    }
+  });
+
+  it('no results: no need question; the phone line and the words stay', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+      search: jest.fn().mockResolvedValue({
+        ...hybridResponse(0),
+        totalCounted: true,
+      }),
+    });
+    const { clarification }: any = await service.search({
+      headers,
+      query: dto({ query: 'food' }),
+    });
+    expect(clarification.questions).toEqual([]);
+    expect(clarification.phone_line).toEqual({
+      label: 'Call 211',
+      number: '211',
+    });
+    expect(clarification.strings.skip_to_results).toBe('Skip to results');
+  });
+
+  it('weak match: no_match comes before the results; past the cap only the phone line', async () => {
+    const run = async (asked?: string[]) => {
+      const { service } = build({
+        search: jest.fn().mockResolvedValue({
+          ...hybridResponse(5),
+          judges: { keyword_top: 0.4, vector_top: 0.3 },
+        }),
+      });
+      return (await service.search({
+        headers,
+        query: dto({ query: 'qzxv blorp', ...(asked && { asked }) }),
+      })) as any;
+    };
+    const first = await run();
+    expect(first.weak_match).toBe(true);
+    expect(first.clarification.questions).toEqual([
+      expect.objectContaining({
+        id: 'no_match',
+        type: 'need',
+        placement: 'before_results',
+        style: 'standard',
+        none_of_these: true,
+      }),
+    ]);
+    const capped = await run(['no_match', 'b', 'c']);
+    expect(capped.clarification.questions).toEqual([]);
+    expect(capped.clarification.phone_line.number).toBe('211');
+  });
+
+  it('clarify=never: the danger question only, in the new shape', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(danger(0.5, true)),
+    });
+    const res: any = await service.search({
+      headers,
+      query: dto({ query: 'help me', clarify: 'never' }),
+    });
+    expect(
+      res.clarification.questions.map((q: any) => [q.id, q.placement, q.style]),
+    ).toEqual([['emergency', 'before_results', 'strong']]);
   });
 });
 
