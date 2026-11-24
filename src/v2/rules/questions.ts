@@ -53,27 +53,12 @@ export const MIN_OPTIONS = 2;
 export const COUNT_BONUS_WEIGHT = 0.3;
 
 /**
- * Open point 4.10 Q2, decided by David 2026-11-23 (yes): a need question whose
- * only option with services sits next to 0-count (marked) options is still a
- * real choice. false = count only options with services (null counts count as
- * present).
+ * Whether a need question keeps enough options (finalize). Options with 0
+ * services count too: one option with services next to them is still a real
+ * choice (decided by David 2026-11-23).
  */
-export const ONE_OPTION_WITH_SERVICES_IS_CHOICE = true;
-
-/** Whether a need question keeps enough options (finalize, after the counts). */
-export function hasEnoughOptions(
-  needOpts: { results_count?: number | null }[],
-  oneOptionWithServicesIsChoice: boolean = ONE_OPTION_WITH_SERVICES_IS_CHOICE,
-): boolean {
-  if (needOpts.length < MIN_OPTIONS) return false;
-  if (oneOptionWithServicesIsChoice) return true;
-  const present = needOpts.filter((o) =>
-    o.results_count === null || o.results_count === undefined
-      ? true
-      : o.results_count > 0,
-  );
-  return present.length >= MIN_OPTIONS;
-}
+export const hasEnoughOptions = (options: unknown[]): boolean =>
+  options.length >= MIN_OPTIONS;
 
 /**
  * Tier 1 areas the model puts in play for the query (score of 0.05 or more),

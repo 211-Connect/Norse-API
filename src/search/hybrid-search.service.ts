@@ -509,7 +509,7 @@ type WordRarity = {
    * every content word has more than TYPO_GATE_MAX_DOCS matching documents.
    */
   typoClauses: boolean;
-  /** Content words that no document of the tenant holds. */
+  /** Content words with 0 documents (general recall fields). */
   unknown: string[];
 } | null;
 
@@ -1407,7 +1407,7 @@ export class HybridSearchService {
         ? claimName({
             words: options.nameWords!,
             list: nameHits,
-            unknownWords: wordRarity?.unknown ?? [],
+            unknownWords: wordRarity?.unknown ?? null,
             fusedIds,
           })
         : undefined;
@@ -3535,7 +3535,7 @@ export class HybridSearchService {
   }
 
   /** The tenant's alias when it has one, else the shared index (`resolveHybridIndex`). */
-  resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
+  private resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
     return resolveTenantHybridIndex(
       {
         elasticsearch: this.elasticsearchService,

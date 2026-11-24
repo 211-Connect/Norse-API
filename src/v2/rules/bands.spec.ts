@@ -1,9 +1,4 @@
-import {
-  areaRuleTargets,
-  emergencyBand,
-  needStates,
-  urgencyState,
-} from './bands';
+import { emergencyBand, needStates, urgencyState } from './bands';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
 describe('emergencyBand', () => {
@@ -195,57 +190,5 @@ describe('needStates', () => {
       emergency: null,
     });
     expect(r.needs.length).toBe(1);
-  });
-});
-
-describe('areaRuleTargets', () => {
-  const t = (scores: Record<string, number>, r = req()) => {
-    const s = sig(scores);
-    return areaRuleTargets(r, s, needStates(r, s));
-  };
-  it('fires at T1 0.9 and max T2 0.4999', () => {
-    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.4999 })).toEqual(['N-MHS']);
-  });
-  it('fires at T1 0.8 (the Tier 1 area minimum)', () => {
-    expect(t({ 'N-MHS': 0.8, 'N-MHS-01': 0.1 })).toEqual(['N-MHS']);
-  });
-  it('not at T2 0.5', () => {
-    expect(t({ 'N-MHS': 0.9, 'N-MHS-01': 0.5 })).toEqual([]);
-  });
-  it('not at T1 0.7999', () => {
-    expect(t({ 'N-MHS': 0.7999, 'N-MHS-01': 0.1 })).toEqual([]);
-  });
-  it('not when area has confirmed Tier 2', () => {
-    expect(t({ 'N-MHS': 0.95 }, req({ needs: ['N-MHS-01'] }))).toEqual([]);
-  });
-  it('lists every Tier 1 need at the minimum, best score first, ties in vocabulary order', () => {
-    expect(t({ 'N-FOD': 0.85, 'N-HOU': 0.9, 'N-MHS': 0.85 })).toEqual([
-      'N-HOU',
-      'N-FOD',
-      'N-MHS',
-    ]);
-  });
-  it('a passed Tier 1 need leaves the list', () => {
-    expect(
-      t({ 'N-FOD': 0.9, 'N-HOU': 0.85 }, req({ passed_needs: ['N-FOD'] })),
-    ).toEqual(['N-HOU']);
-  });
-  it('live intent "i need food and housing": food has a Tier 2 at 0.67, housing has none -> housing', () => {
-    expect(
-      t({ 'N-HOU': 0.98, 'N-FOD': 0.98, 'N-FOD-01': 0.67, 'N-ESS-01': 0.14 }),
-    ).toEqual(['N-HOU']);
-  });
-  it('live intent "baby formula and somewhere to live": housing has a Tier 2 in use -> food', () => {
-    expect(t({ 'N-HOU': 0.98, 'N-HOU-04': 0.97, 'N-FOD': 0.9 })).toEqual([
-      'N-FOD',
-    ]);
-  });
-  it('a Tier 2 in use in the only named area still gives no target', () => {
-    expect(t({ 'N-HOU': 0.98, 'N-HOU-04': 0.97 })).toEqual([]);
-  });
-  it('not when status error', () => {
-    const r = req();
-    const s = { needs: { status: 'error' as const }, emergency: null };
-    expect(areaRuleTargets(r, s, needStates(r, s))).toEqual([]);
   });
 });

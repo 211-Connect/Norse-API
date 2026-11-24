@@ -1,5 +1,5 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
-import { CUTOFFS, PHONE_LINE, R3_SCOPE, RULES_VERSION, STEMS } from './config';
+import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
 import { likelyAreas, needLevel, openAreas } from './need-level';
 import {
   areasInPlay,
@@ -351,10 +351,6 @@ export function finalize(base: Decision, input: FinalizeInput): Clarification {
   );
   if (rule === 'R3') {
     kept = orderAreaQuestions(kept, decision);
-    if (R3_SCOPE === 'most_uncertain') {
-      const first = kept.find((q) => q.id.startsWith('area:'));
-      kept = kept.filter((q) => !q.id.startsWith('area:') || q === first);
-    }
   }
   return {
     rules_version: decision.rules_version,

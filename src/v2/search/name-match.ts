@@ -1,4 +1,5 @@
 import type { QueryDslQueryContainer } from '@elastic/elasticsearch/lib/api/types';
+import { queryWords } from '../../search/internal/text-matching/query-words';
 import { fuzzyFallbackFor } from '../../search/internal/text-matching/fuzzy-match';
 import {
   MATCH,
@@ -114,8 +115,8 @@ export function alternateNames(alt: unknown): string[] {
 
 /**
  * One more keyword clause that finds an org by a name with one typo per word.
- * Only for a query with a word no document of the tenant holds (`unknownWords`),
- * so the list of a correctly spelled query does not change. Its boost is the
+ * Only for a query with a word that the tenant's searched text does not hold
+ * (`unknownWords`), so a query of known words keeps its list. Its boost is the
  * typo fallback's: far under the weak-match cutoff on the list's top score.
  */
 export function nameTypoClauses(
@@ -140,11 +141,11 @@ function fixTypos(
   unknownWords: string[],
   names: string[],
 ): string[] {
-  const known = [
-    ...new Set(names.flatMap((n) => n.toLowerCase().match(/[a-z0-9]+/g) ?? [])),
-  ];
+  const known = queryWords(names.join(' '));
   return words.map((w) =>
-    w.length >= MATCH.typoMinLength && unknownWords.includes(w)
+    w.length >= MATCH.typoMinLength &&
+    unknownWords.includes(w) &&
+    !known.includes(w)
       ? (known.find((k) => k.length >= 4 && withinOneEdit(w, k)) ?? w)
       : w,
   );
@@ -175,7 +176,8 @@ const offeredByOthers = (words: string[], hits: NameHit[]): boolean =>
 export function claimName(i: {
   words: string[];
   list: NameHits;
-  unknownWords: string[];
+  /** Null: the word counts failed, so a typo cannot be told from a name. */
+  unknownWords: string[] | null;
   /** The fused order; undefined: the keyword order stands in. */
   fusedIds: string[] | undefined;
 }): NameClaim {
@@ -198,7 +200,8 @@ export function claimName(i: {
   const candidates = [...orgs.values()];
   let words = i.words;
   let named = nameMatch(words, candidates);
-  if (!named && i.unknownWords.length > 0) {
+  if (!named && i.unknownWords === null) return { ...none, status: 'failed' };
+  if (!named && i.unknownWords && i.unknownWords.length > 0) {
     words = fixTypos(
       i.words,
       i.unknownWords,

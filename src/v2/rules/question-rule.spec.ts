@@ -539,16 +539,8 @@ describe('hasEnoughOptions (open point 4.10 Q2, David 2026-11-23: yes)', () => {
     { results_count: 0 },
     { results_count: 0 },
   ];
-  it('true (default): one option with services next to 0-count options is a choice', () => {
-    expect(hasEnoughOptions(opts, true)).toBe(true);
+  it('one option with services next to 0-count options is a choice; one option is not', () => {
     expect(hasEnoughOptions(opts)).toBe(true);
-  });
-  it('false: only options with services count; null counts as present', () => {
-    expect(hasEnoughOptions(opts, false)).toBe(false);
-    expect(
-      hasEnoughOptions([{ results_count: 5 }, { results_count: null }], false),
-    ).toBe(true);
-    expect(hasEnoughOptions([{ results_count: 5 }, {}], false)).toBe(true);
-    expect(hasEnoughOptions([{ results_count: 5 }], true)).toBe(false);
+    expect(hasEnoughOptions([{ results_count: 5 }])).toBe(false);
   });
 });

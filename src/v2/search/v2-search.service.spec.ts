@@ -2515,6 +2515,44 @@ describe('V2SearchService name match (question rule v1)', () => {
     }
   });
 
+  it('the map pins get the same name words as the list; off: none', async () => {
+    for (const [ruleV1, words] of [
+      ['true', ['compass', 'housing']],
+      ['off', undefined],
+    ] as const) {
+      const b = build({ ruleV1 });
+      const query = dto({ query: 'the compass housing' });
+      await b.service.pins({ headers, query });
+      await b.service.search({ headers, query });
+      expect(call(b.searchPins).nameWords).toEqual(words);
+      expect(call(b.searchHybrid).nameWords).toEqual(words);
+    }
+  });
+
+  it('the words held are read on the first relevance page only; a name holds on every page', async () => {
+    const none = claim({ org_ids: [], pins: [] });
+    const at = async (
+      extra: Record<string, unknown>,
+      c: unknown,
+      lang = 'en',
+    ) => {
+      const b = build({
+        search: jest.fn().mockResolvedValue(page({ nameClaim: c })),
+      });
+      const res = await b.service.search({
+        headers: { ...headers, 'accept-language': lang } as never,
+        query: dto({ query: 'zebra', ...extra } as never),
+      });
+      return res.clarification;
+    };
+    expect((await at({}, none)).notice?.kind).toBe('may_not_match');
+    expect((await at({ page: 2 }, none)).notice).toBeUndefined();
+    expect((await at({ sort: 'distance' }, none)).notice).toBeUndefined();
+    expect((await at({ page: 9 }, claim())).questions).toEqual([]);
+    for (const lang of ['ru', 'ko'])
+      expect((await at({}, none, lang)).notice).toBeUndefined();
+  });
+
   it('no name words and no claim: stored (nothing failed)', async () => {
     const r = await ask({ query: 'i need help' });
     expect(isMarkedNotStorable(r.res)).toBe(false);

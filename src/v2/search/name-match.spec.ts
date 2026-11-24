@@ -28,7 +28,7 @@ const claim = (
   q: string,
   hits: NameHit[],
   over: {
-    unknownWords?: string[];
+    unknownWords?: string[] | null;
     fusedIds?: string[];
     state?: NameHits['state'];
   } = {},
@@ -36,7 +36,7 @@ const claim = (
   claimName({
     words: q.split(' '),
     list: { state: over.state ?? 'ok', hits },
-    unknownWords: over.unknownWords ?? [],
+    unknownWords: over.unknownWords === undefined ? [] : over.unknownWords,
     fusedIds: over.fusedIds,
   });
 const named = (...a: Parameters<typeof claim>) => claim(...a).org_ids;
@@ -189,6 +189,24 @@ describe('claimName: typos', () => {
   it('a word that some document holds is not changed', () => {
     expect(named('salvaton army', army())).toEqual([]);
   });
+  it('a word that some org name holds is spelled right', () => {
+    const hits = [
+      svc('Caring Food'),
+      svc('Daring Food'),
+      svc('Yakima Karing Food'),
+    ];
+    expect(named('karing food', hits, { unknownWords: ['karing'] })).toEqual(
+      [],
+    );
+  });
+  it('word counts failed (null): a typo cannot be told, so "no name" is not certain', () => {
+    expect(claim('salvaton army', army(), { unknownWords: null }).status).toBe(
+      'failed',
+    );
+    expect(
+      claim('salvation army', army(), { unknownWords: null }),
+    ).toMatchObject({ status: 'ok', org_ids: ['Salvation Army Longview'] });
+  });
   it('two edits are not put right', () => {
     const r = named('worksource', [svc('Workforce Partnership')], {
       unknownWords: ['worksource'],
@@ -200,7 +218,7 @@ describe('claimName: typos', () => {
     expect(r).toEqual([]);
   });
   it('a typo follows the same name rules', () => {
-    const r = named('fooood bank', [svc('Ballard Food Bank')], {
+    const r = named('foood bank', [svc('Ballard Food Bank')], {
       unknownWords: ['foood'],
     });
     expect(r).toEqual([]);
@@ -264,6 +282,13 @@ describe('claimName: no list', () => {
   it('other scripts have no word to read: no claim', () => {
     expect(named('продукты', [svc('Compass Housing')])).toEqual([]);
     expect(named('食物', [svc('Compass Housing')])).toEqual([]);
+  });
+  it('accents and apostrophes are read as the query words are', () => {
+    expect(named('womens shelter', [svc("Women's Shelter")])).toHaveLength(1);
+    expect(
+      named('childrens home', [svc('Children’s Home Society')]),
+    ).toHaveLength(1);
+    expect(named('ninos unidos', [svc('Niños Unidos')])).toHaveLength(1);
   });
   it('a Spanish query names an org by its name', () => {
     expect(named('caridades catolicas', [svc('Caridades Catolicas')])).toEqual([

@@ -1,3 +1,5 @@
+import { queryWords } from '../../search/internal/text-matching/query-words';
+
 /** What the returned hits say about the query words (the grid's second measure). */
 export type Match = 'concentrated' | 'spread' | 'none';
 
@@ -35,7 +37,8 @@ export interface MatchHit {
 
 const FUNCTION_WORDS = new Set(['the', 'of', 'and', 'for', 'a', 'an', 'in']);
 
-const toks = (s: string): string[] => s.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+// The query words come from the same split: accents folded, apostrophes dropped.
+const toks = queryWords;
 
 /**
  * Words of a request that say nothing about the thing asked for. Hits do not
@@ -262,7 +265,10 @@ export function topicPhrase(words: string[], terms: string[]): boolean {
   );
 }
 
-/** `named`: the keyword list names an org and no veto took the claim. */
+/**
+ * `named`: the keyword list names an org and no veto took the claim. No query
+ * tokens or no hits is no claim about the query (browse): `spread`.
+ */
 export function matchOf(i: {
   words: string[];
   hits: MatchHit[];
@@ -283,8 +289,9 @@ export function matchValue(i: {
   words_held: boolean;
   named: boolean;
 }): Match {
-  // No query tokens or no hits: no claim about the query; browse.
-  if (queryTokens(i.words).length === 0 || i.hit_count === 0) return 'spread';
+  if (queryTokens(i.words).length === 0) return 'spread';
+  // The claim is about the query: a page past the last hit keeps it.
   if (i.named) return 'concentrated';
+  if (i.hit_count === 0) return 'spread';
   return i.words_held ? 'spread' : 'none';
 }

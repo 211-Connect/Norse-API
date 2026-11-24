@@ -47,8 +47,9 @@ describe('matchOf', () => {
     const page = Array.from({ length: 20 }, () => hit('YMCA', 'ymca swim'));
     expect(m(page)).toBe('spread');
   });
-  it('no hits or no query token: spread, also when named', () => {
-    expect(m([], ['ymca'], true)).toBe('spread');
+  it('no hits: spread, unless named; no query token: spread', () => {
+    expect(m([], ['ymca'])).toBe('spread');
+    expect(m([], ['ymca'], true)).toBe('concentrated');
     expect(m([hit('A', 'x')], ['i', 'need'], true)).toBe('spread');
   });
   it('matchValue reads the saved measures the same way', () => {
@@ -61,6 +62,12 @@ describe('matchOf', () => {
     expect(matchValue(v)).toBe('none');
     expect(matchValue({ ...v, words_held: true })).toBe('spread');
     expect(matchValue({ ...v, named: true })).toBe('concentrated');
+    expect(wordCoverage(['ninos'], [hit(null, 'ayuda para niños')])).toEqual([
+      1,
+    ]);
+    expect(wordCoverage(['продукты'], [hit(null, 'продукты питания')])).toEqual(
+      [1],
+    );
     expect(matchValue({ ...v, hit_count: 0 })).toBe('spread');
   });
 });

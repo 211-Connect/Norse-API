@@ -284,6 +284,18 @@ export class V2SearchService {
     private readonly configService: ConfigService,
   ) {}
 
+  /** Question rule v1 switch, read per request (off = development's engine). */
+  private ruleV1(): boolean {
+    return this.configService.get('V2_QUESTION_RULE_V1') === 'true';
+  }
+
+  /** Question rule v1: the words the keyword list may name an org by. The list and the pins use the same. */
+  private orgWordsOf(text: string, headers: HeadersDto): string[] {
+    return this.ruleV1()
+      ? nameWords(contentWords(text, headers['accept-language'] || 'en'))
+      : [];
+  }
+
   /**
    * One hybrid search. The language picks the index; an unknown language has
    * no index. That was a 500 (break run 2026-11-14) and is a caller error.
@@ -315,6 +327,7 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const text = dto.query;
+    const orgWords = this.orgWordsOf(text, headers);
     let needScores: NeedScore[] | undefined;
     let urgencyBoost: HybridCall['urgencyBoost'];
     if (text.trim().length > 0) {
@@ -338,6 +351,7 @@ export class V2SearchService {
         rankingVersion: 'v2',
         ...(needScores && { needScores }),
         ...(urgencyBoost && { urgencyBoost }),
+        ...(orgWords.length > 0 && { nameWords: orgWords }),
       })
       .catch((error: unknown) => throwCallerError(error, headers));
   }
@@ -360,8 +374,7 @@ export class V2SearchService {
   }) {
     const hasText = text.trim().length > 0;
     const callerNeeds = dto.needs ?? [];
-    // Question rule v1 switch, read per request (off = development's engine).
-    const ruleV1 = this.configService.get('V2_QUESTION_RULE_V1') === 'true';
+    const ruleV1 = this.ruleV1();
     const { decide } = ruleV1 ? NEW_ENGINE : LEGACY_ENGINE;
     // Classify is always on for the request (Lucas 2026-11-18): only the tenant
     // setting can turn the need guess off. Full v2 features only for en and es
@@ -468,11 +481,7 @@ export class V2SearchService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
-    // Question rule v1: the keyword list says which org the words name.
-    const orgWords =
-      this.configService.get('V2_QUESTION_RULE_V1') === 'true' && hasText
-        ? nameWords(contentWords(text, lang))
-        : [];
+    const orgWords = this.orgWordsOf(text, headers);
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -684,7 +693,14 @@ export class V2SearchService {
       counts = { total: countedTotal(second), by_code: secondCounts ?? null };
     }
 
-    // Question rule v1: what the returned hits say about the query.
+    // Question rule v1: what the returned hits say about the query. Only the
+    // first relevance page is the top of the kept set; on any other page or
+    // sort the words held say nothing (only a name counts). A limited locale
+    // gets no need question, so no notice either.
+    const topPage =
+      (dto.page ?? 1) === 1 &&
+      (dto.sort ?? 'relevance') === 'relevance' &&
+      isFullV2Locale(lang);
     let match: Match | undefined;
     let nameFailed = false;
     // No text (browse): no match; finalize reads it as `spread`.
@@ -692,7 +708,7 @@ export class V2SearchService {
       nameFailed = orgWords.length > 0 && nameClaim?.status !== 'ok';
       match = matchOf({
         words: rulesRequest.content_words ?? [],
-        hits: matchHits(response),
+        hits: topPage ? matchHits(response) : [],
         named: (nameClaim?.org_ids.length ?? 0) > 0,
       });
       span.setAttributes({

@@ -27,13 +27,6 @@ export const CUTOFFS = {
   optionsPerQuestion: 3,
 };
 
-/**
- * D2 (Lucas 2026-11-23): rule R3 asks about every open area. The most
- * uncertain one keeps importance 'high'; every other open area is 'medium'.
- * 'most_uncertain' keeps only the first question.
- */
-export const R3_SCOPE: 'all' | 'most_uncertain' = 'all';
-
 export const DEFAULT_HOTLINES: Hotline[] = [
   { label: 'Crisis line', number: '988' },
   { label: 'Emergency', number: '911' },
