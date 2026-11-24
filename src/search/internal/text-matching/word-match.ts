@@ -3,8 +3,9 @@ import { queryWords } from './query-words';
 /**
  * Words of a request that say nothing about the thing asked for. Hits do not
  * need to hold them ('i need food and housing' is about food and housing), and
- * they are no part of an org name. The one list for every language: the word
- * coverage and the name match both read it, and a query can mix languages.
+ * they are no part of an org name. The one list, English and Spanish: the word
+ * coverage and the name match both read it, and a query can mix languages. No
+ * joining words ('con', 'para', 'el'): names start with them ('Con Edison').
  * Accents are already removed (`queryWords`).
  */
 const REQUEST_WORDS = new Set([
@@ -49,11 +50,6 @@ const REQUEST_WORDS = new Set([
   'encontrar',
   'favor',
   'cerca',
-  // The words that join them ('ayuda con renta', 'por favor'), for a Spanish
-  // query on an English page. Not articles: 'El Centro' is a name.
-  'por',
-  'para',
-  'con',
   // Stop words: the hits need not hold them either ('i need food and housing').
   'and',
   'or',

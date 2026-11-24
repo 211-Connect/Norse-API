@@ -62,7 +62,7 @@ describe('request words and ZIP codes (grid match fixes)', () => {
       'necesita comida',
       'necesitan comida',
       'buscamos comida',
-      'ayudenme por favor con comida',
+      'ayudenme comida',
       'busca comida',
       'buscando comida',
       'quisiera comida',

@@ -80,12 +80,19 @@ const countedTotal = (response: {
 }): number | null =>
   response.totalCounted === false ? null : hitsTotal(response);
 
-/** The page is cut short (timeout, failed shard), or the count read failed. */
+/** The page is cut short (timeout, failed shard), or its total or the count read failed. */
 const isPartial = ({
   search,
   needCountsFailed,
-}: Pick<HybridSearchResult, 'search' | 'needCountsFailed'>): boolean =>
-  search.timed_out || search._shards.failed > 0 || needCountsFailed === true;
+  totalCounted,
+}: Pick<
+  HybridSearchResult,
+  'search' | 'needCountsFailed' | 'totalCounted'
+>): boolean =>
+  search.timed_out ||
+  search._shards.failed > 0 ||
+  totalCounted === false ||
+  needCountsFailed === true;
 
 // ml-broker rejects classify text longer than 512 characters after stripping
 // (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer

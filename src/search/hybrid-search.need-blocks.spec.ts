@@ -31,7 +31,7 @@ const mainResponse = {
 describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let service: HybridSearchService;
   let requests: any[];
-  let countMode: 'ok' | 'throw' | 'timeout' | 'shard' | 'noaggs';
+  let countMode: 'ok' | 'throw' | 'timeout' | 'shard' | 'noaggs' | 'notenant';
   let searchConfig: Record<string, unknown>;
   let mainHits: any[];
   let mainTotal: unknown;
@@ -60,7 +60,9 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
             _shards: { total: 2, successful: 1, skipped: 0, failed: 1 },
           }),
           aggregations: {
-            tenant_needs: { with_needs: { doc_count: tenantNeedDocs } },
+            ...(countMode !== 'notenant' && {
+              tenant_needs: { with_needs: { doc_count: tenantNeedDocs } },
+            }),
             need_counts: {
               buckets: [
                 { key: 'N-FOD-01', doc_count: 4 },
@@ -229,7 +231,7 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     expect(JSON.stringify(g.aggs.with_needs.filter)).toContain('sune_needs');
   });
 
-  it.each(['throw', 'timeout', 'shard', 'noaggs'] as const)(
+  it.each(['throw', 'timeout', 'shard', 'noaggs', 'notenant'] as const)(
     'counts: %s is a failed read with nullCountsWithoutNeedTags, never a zero; without it nothing new',
     async (mode) => {
       countMode = mode;

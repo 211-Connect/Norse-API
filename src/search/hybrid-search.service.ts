@@ -840,7 +840,8 @@ export class HybridSearchService {
         nullWithoutNeedTags &&
         (data.timed_out ||
           (data._shards?.failed ?? 0) > 0 ||
-          !data.aggregations?.need_counts)
+          !data.aggregations?.need_counts ||
+          !data.aggregations.tenant_needs)
       ) {
         this.logger.warn('Need counts incomplete; treated as not counted');
         return { failed: true };

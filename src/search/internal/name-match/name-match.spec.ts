@@ -321,8 +321,12 @@ describe('claimName: no list', () => {
       }),
     ).toEqual(['Caridades Catolicas']);
   });
-  it("an article stays part of a name ('El Centro')", () => {
-    expect(named('el centro', [svc('El Centro')])).toEqual(['El Centro']);
+  it.each([
+    ['el centro', 'El Centro'],
+    ['con edison', 'Con Edison'],
+    ['para los ninos', 'Para Los Niños'],
+  ])('a joining word stays part of a name: %p', (q, org) => {
+    expect(named(q, [svc(org)])).toEqual([org]);
   });
   // Known weak spot, the same in both languages: a name that is mostly a
   // request word is not claimed, because the word says nothing in a query.
