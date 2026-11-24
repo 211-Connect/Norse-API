@@ -86,7 +86,8 @@ export class NameLookupService {
   }
 }
 
-function alternateNames(alt: unknown): string[] {
+/** An org's alternate names: one string with ';' between names, or a list. */
+export function alternateNames(alt: unknown): string[] {
   const list =
     typeof alt === 'string' ? alt.split(';') : Array.isArray(alt) ? alt : [];
   return list

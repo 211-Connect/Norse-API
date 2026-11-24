@@ -710,20 +710,53 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       expect(logged).not.toContain('secret');
     });
 
-    it('O10. sort=distance: no pin, no veto read, claim still reported (out_of_radius null)', async () => {
-      namedOrgServices = ['x1'];
-      const res = await run(
-        { coords: SEA, sort: 'distance' },
-        { nameOwner: owner({ pinFrom: 'read' }) },
-      );
-      expect(namedRequests()).toHaveLength(0);
-      expect(res.nameMatch).toMatchObject({
-        status: 'ok',
-        strength: 'org',
-        pinned: 0,
-        out_of_radius: null,
-      });
-    });
+    it.each(['distance', 'name'])(
+      'O10. sort=%s, read owner: the radius is checked, nothing is pinned',
+      async (sort) => {
+        const read = (org_ids: string[]) =>
+          run(
+            { coords: SEA, sort },
+            {
+              nameOwner: owner({
+                pinFrom: 'read',
+                claim: jest.fn().mockResolvedValue(orgClaim({ org_ids })),
+              }),
+            },
+          );
+        namedOrgServices = [];
+        expect((await read(['far'])).nameMatch).toMatchObject({
+          strength: 'org',
+          pinned: 0,
+          out_of_radius: true,
+        });
+        namedOrgServices = ['x1'];
+        expect((await read(['far'])).nameMatch).toMatchObject({
+          pinned: 0,
+          out_of_radius: false,
+        });
+        expect(namedRequests()).toHaveLength(2);
+        expect(mainRequest().query.pinned).toBeUndefined();
+        // The keyword hits (same filters) already hold the org: no read.
+        expect((await read(['org-1'])).nameMatch).toMatchObject({
+          pinned: 0,
+          out_of_radius: false,
+        });
+        expect(namedRequests()).toHaveLength(2);
+      },
+    );
+
+    it.each(['distance', 'name'])(
+      'O10b. sort=%s, keyword owner: never a read, nothing pinned',
+      async (sort) => {
+        const res = await run(
+          { coords: SEA, sort },
+          { nameOwner: owner({ pinFrom: 'keyword' }) },
+        );
+        expect(namedRequests()).toHaveLength(0);
+        expect(mainRequest().query.pinned).toBeUndefined();
+        expect(res.nameMatch).toMatchObject({ strength: 'org', pinned: 0 });
+      },
+    );
 
     it('O11. service strength pins nothing', async () => {
       const o = owner({

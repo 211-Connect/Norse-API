@@ -37,12 +37,12 @@ describe('keywordHit', () => {
       service_name: 'Food Pantry',
     });
   });
-  it('accepts a string alternate name; missing fields give null and empty', () => {
+  it('splits a string of alternate names; missing fields give null and empty', () => {
     expect(
-      keywordHit('s2', { organization: { alternate_name: 'Alt' } }),
+      keywordHit('s2', { organization: { alternate_name: 'Alt; Second' } }),
     ).toMatchObject({
       org_id: null,
-      alternate_names: ['Alt'],
+      alternate_names: ['Alt', 'Second'],
       service_name: '',
     });
     expect(keywordHit('s3', undefined)).toMatchObject({
