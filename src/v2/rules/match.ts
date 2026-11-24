@@ -104,7 +104,7 @@ export function matchOf(i: {
   });
 }
 
-/** The match value from saved measures (the judge spec reads these). */
+/** The match value from saved measures (hit count and words). */
 export function matchValue(i: {
   words: string[];
   hit_count: number;
