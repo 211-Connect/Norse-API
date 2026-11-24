@@ -1,4 +1,9 @@
-import { MatchHit } from '../rules/match';
+import {
+  MatchHit,
+  NameCandidate,
+  genericName,
+  nameMatch,
+} from '../rules/match';
 
 /** One hit's `_source` as the match check reads it. */
 export function matchHit(source: unknown): MatchHit {
@@ -72,3 +77,37 @@ export type NameOwner = {
   /** Where the pinned ids come from: an index read or the keyword hits. */
   pinFrom: 'read' | 'keyword';
 };
+
+/**
+ * Today's name lookup (an index read, started with the request) is the one
+ * owner. The keyword hits are not read.
+ */
+export function resolverOwner(
+  words: string[],
+  lookup: Promise<NameCandidate[] | null>,
+): NameOwner {
+  return {
+    pinFrom: 'read',
+    vetoes: (evidence) => genericName(words, evidence),
+    claim: async () => {
+      const candidates = await lookup.catch(() => null);
+      if (candidates === null) {
+        return {
+          status: 'failed',
+          strength: 'none',
+          org_ids: [],
+          service_ids: [],
+          name: null,
+        };
+      }
+      const named = nameMatch(words, candidates);
+      return {
+        status: 'ok',
+        strength: named.named ? 'org' : 'none',
+        org_ids: named.named ? named.org_ids : [],
+        service_ids: [],
+        name: named.named ? named.name : null,
+      };
+    },
+  };
+}

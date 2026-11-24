@@ -89,6 +89,8 @@ function build(opts: {
   ruleV1?: string;
   /** The name lookup. Default: an empty candidate list (the lookup worked, found nothing). */
   lookup?: jest.Mock;
+  /** V2_NAME_MATCH_OWNER. Default unset (off). */
+  nameOwner?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -114,7 +116,11 @@ function build(opts: {
     { searchPins } as unknown as SearchService,
     {
       get: (k: string) =>
-        k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
+        k === 'V2_QUESTION_RULE_V1'
+          ? (opts.ruleV1 ?? 'true')
+          : k === 'V2_NAME_MATCH_OWNER'
+            ? opts.nameOwner
+            : undefined,
     } as unknown as ConfigService,
     { lookup } as unknown as NameLookupService,
   );
@@ -2588,5 +2594,148 @@ describe('V2SearchService name lookup (question rule v1)', () => {
       expect(pinned.clarification.questions).toEqual([]);
       expect(out.clarification.questions.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('V2SearchService resolver name owner (V2_NAME_MATCH_OWNER=resolver)', () => {
+  const orgHit = (id: string, name: string) => ({
+    _source: { name: 'service', organization: { id, name } },
+  });
+  const hits = [orgHit('o1', 'Other One'), orgHit('o2', 'Other Two')];
+  const page = (extra: Record<string, unknown> = {}) =>
+    ({
+      search: {
+        took: 1,
+        timed_out: false,
+        _shards: {},
+        hits: { total: hits.length, hits },
+      },
+      facets: [],
+      ...extra,
+    }) as unknown as SearchResponse;
+  const nm = (over: Record<string, unknown> = {}) => ({
+    status: 'ok',
+    strength: 'org',
+    org_ids: ['o1'],
+    service_ids: [],
+    name: 'Other One',
+    vetoed: false,
+    pinned: 1,
+    out_of_radius: false,
+    ...over,
+  });
+  const ask = (
+    over: {
+      owner?: string;
+      ruleV1?: string;
+      query?: string;
+      result?: unknown;
+      lookup?: jest.Mock;
+    } = {},
+  ) => {
+    const b = build({
+      nameOwner: 'owner' in over ? over.owner : 'resolver',
+      ruleV1: over.ruleV1,
+      lookup: over.lookup,
+      search: jest.fn().mockResolvedValue(over.result ?? page()),
+    });
+    return b.service
+      .search({
+        headers,
+        query: dto({ query: over.query ?? 'compass housing' }),
+      })
+      .then((res) => ({ res, ...b }));
+  };
+  const call = (m: jest.Mock) => m.mock.calls[0][0];
+
+  it('on: the lookup runs once, the owner goes to the early start and the search, no namedOrgIds', async () => {
+    const { searchHybrid, startEarlyRetrieval, lookup } = await ask();
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(call(searchHybrid).nameOwner.pinFrom).toBe('read');
+    expect(call(searchHybrid)).not.toHaveProperty('namedOrgIds');
+    expect(call(startEarlyRetrieval).nameOwner).toBe(
+      call(searchHybrid).nameOwner,
+    );
+  });
+
+  it('the owner claims once from the lookup result (nameMatch runs once)', async () => {
+    const lookup = jest
+      .fn()
+      .mockResolvedValue([
+        { id: 'o2', name: 'Compass Housing Alliance', alternate_names: [] },
+      ]);
+    const { searchHybrid } = await ask({ lookup });
+    const claim = await call(searchHybrid).nameOwner.claim({
+      state: 'ok',
+      hits: [],
+    });
+    expect(claim).toMatchObject({ strength: 'org', org_ids: ['o2'] });
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  it('off (unset, other value, rule v1 off, no text, no token): no owner', async () => {
+    for (const over of [
+      { owner: undefined },
+      { owner: 'keyword' },
+      { ruleV1: 'off' },
+      { query: '' },
+      { query: 'i need' },
+    ]) {
+      const { searchHybrid } = await ask(over);
+      expect(call(searchHybrid)).not.toHaveProperty('nameOwner');
+    }
+  });
+
+  it('org claim in the radius: concentrated; nameMatch never reaches the response', async () => {
+    const { res } = await ask({ result: page({ nameMatch: nm() }) });
+    expect(res.clarification.questions).toEqual([]);
+    expect(JSON.stringify(res)).not.toContain('nameMatch');
+    expect(isMarkedNotStorable(res)).toBe(false);
+  });
+
+  it('out of radius: not concentrated, so the grid asks', async () => {
+    const { res } = await ask({
+      result: page({ nameMatch: nm({ out_of_radius: true, pinned: 0 }) }),
+    });
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+    expect(isMarkedNotStorable(res)).toBe(false);
+  });
+
+  it('no nameMatch (lookup null, pin read failed) or status failed: not storable', async () => {
+    expect(isMarkedNotStorable((await ask()).res)).toBe(true);
+    const failed = await ask({
+      result: page({ nameMatch: nm({ status: 'failed' }) }),
+    });
+    expect(isMarkedNotStorable(failed.res)).toBe(true);
+  });
+
+  it('vetoed claim: not concentrated', async () => {
+    const { res } = await ask({
+      result: page({ nameMatch: nm({ vetoed: true }) }),
+    });
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+  });
+
+  it('the text-free second call (weak match) gets no owner', async () => {
+    const weak = {
+      ...page(),
+      judges: { keyword_top: 0.4, vector_top: 0.3 },
+    };
+    const search = jest
+      .fn()
+      .mockResolvedValueOnce(weak)
+      .mockResolvedValueOnce(page({ needCounts: { 'N-HOU': 10 } }));
+    const b = build({
+      nameOwner: 'resolver',
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+      search,
+    });
+    await b.service.search({
+      headers,
+      query: dto({ query: 'blorptastic zzz' }),
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls[0][0]).toHaveProperty('nameOwner');
+    expect(search.mock.calls[1][0]).not.toHaveProperty('nameOwner');
   });
 });

@@ -1,4 +1,5 @@
-import { keywordHit, matchHit } from './name-owner';
+import { NameCandidate } from '../rules/match';
+import { keywordHit, matchHit, resolverOwner } from './name-owner';
 
 describe('matchHit', () => {
   it('reads org name (string or object) and the lowercased text', () => {
@@ -48,5 +49,63 @@ describe('keywordHit', () => {
       org_id: null,
       alternate_names: [],
     });
+  });
+});
+
+describe('resolverOwner', () => {
+  const cand = (id: string, name: string): NameCandidate => ({
+    id,
+    name,
+    alternate_names: [],
+  });
+  const kw = { state: 'ok' as const, hits: [] };
+  const words = ['compass', 'housing'];
+
+  it('reads from the index', () => {
+    expect(resolverOwner(words, Promise.resolve([])).pinFrom).toBe('read');
+  });
+  it('a null lookup is failed', async () => {
+    const o = resolverOwner(words, Promise.resolve(null));
+    expect((await o.claim(kw)).status).toBe('failed');
+  });
+  it('a named org is org strength with its ids and name', async () => {
+    const o = resolverOwner(
+      words,
+      Promise.resolve([cand('o2', 'Compass Housing Alliance')]),
+    );
+    expect(await o.claim(kw)).toEqual({
+      status: 'ok',
+      strength: 'org',
+      org_ids: ['o2'],
+      service_ids: [],
+      name: 'Compass Housing Alliance',
+    });
+  });
+  it('no org named: none', async () => {
+    const o = resolverOwner(words, Promise.resolve([cand('o1', 'Other')]));
+    expect(await o.claim(kw)).toMatchObject({ status: 'ok', strength: 'none' });
+  });
+  it('ignores the keyword hits and state', async () => {
+    const o = resolverOwner(
+      words,
+      Promise.resolve([cand('o2', 'Compass Housing Alliance')]),
+    );
+    expect((await o.claim({ state: 'skipped', hits: [] })).strength).toBe(
+      'org',
+    );
+  });
+  it('a lookup that rejects is failed', async () => {
+    const o = resolverOwner(words, Promise.reject(new Error('x')));
+    expect((await o.claim(kw)).status).toBe('failed');
+  });
+  it('vetoes a generic word', () => {
+    const o = resolverOwner(['veterans'], Promise.resolve([]));
+    const evidence = Array.from({ length: 8 }, (_, i) => ({
+      ...keywordHit(`s${i}`, {
+        name: 'Veterans help',
+        organization: { id: `o${i}`, name: `Org ${i}` },
+      }),
+    }));
+    expect(o.vetoes(evidence)).toBe(true);
   });
 });
