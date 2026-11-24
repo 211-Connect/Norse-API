@@ -407,7 +407,7 @@ export class V2HotlineDto {
 export class V2QuestionDto {
   @ApiProperty({
     description:
-      'Names the question. Stable across searches, so a client can remember which questions it showed. Read `placement` and `type` for the display.',
+      'Names the question. The same kind of question has the same id in every search, so an id remembered for one query must not hide a question of another query. Read `placement` and `type` for the display.',
   })
   id: string;
   @ApiProperty({

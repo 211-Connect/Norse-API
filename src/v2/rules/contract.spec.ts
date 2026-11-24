@@ -120,6 +120,14 @@ describe('question contract v2: mapping rows', () => {
     for (const o of out.options) expect(o).not.toHaveProperty('score');
     expect(out.options.map((o) => o.results_count)).toEqual([4, null]);
   });
+
+  it('keeps an option description; an option without one has no key', () => {
+    const question = q({ id: 'start', type: 'find_need' });
+    question.options[0].description = 'Rent and shelter';
+    const [out] = toContractClarification(clar(question)).questions;
+    expect(out.options[0].description).toBe('Rent and shelter');
+    expect(out.options[1]).not.toHaveProperty('description');
+  });
 });
 
 describe('question contract v2: hotlines', () => {

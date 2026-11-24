@@ -789,7 +789,7 @@ export class V2SearchService {
         'v2.questions',
         localized.questions
           .map((q) =>
-            [q.id, q.importance, q.reason, q.value, q.uncertainty].join(':'),
+            [q.id, q.importance, q.reason, q.value, q.uncertainty].join('|'),
           )
           .join(','),
       );

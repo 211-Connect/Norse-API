@@ -71,7 +71,7 @@ Each question has a `priority`. The engine sorts high to low, then by id, and ke
 - Effort: `1 - 0.05 x (options - 2)`, between 0.8 and 1. "None of these" does not count as an option.
 - Split: with one counted option, `1 - 2 x |count / total - 0.5|`; with two or more, the normalized entropy of the option counts (even counts give 1, one dominant option gives near 0). Between 0 and 1. It is 1 when no option has a count (urgency questions, or `decide` before `finalize`).
 - `decide` fills `uncertainty`, `value` and `priority` with split 1, and keeps each option's model score in `option_scores` (internal, not in the response). `finalize` recomputes `value` and `priority` after it drops options; when a question lost options, it first recomputes `uncertainty` over the options left, so a question cut to one option has uncertainty 0.
-- The emergency question is always first, in both bands: `finalize` sorts it ahead of every other question before priority. Strong band: importance `critical` (the client shows a popup). Soft band: importance `high` (in-page card). A caller `urgency=U-0` hotline question stays `critical` (Lucas, 2026-11-13).
+- The emergency question is always first, in both bands: `finalize` sorts it ahead of every other question before priority. Strong band: importance `critical` (a popup). Soft band: importance `high` (before the results). The response says it as `placement` with the switch on. A caller `urgency=U-0` hotline question stays `critical` (Lucas, 2026-11-13).
 - `step` stays in the output for information only. It no longer sorts.
 
 ## Tests
@@ -93,7 +93,7 @@ A question is `{id, type, placement, stem, options, multi_select, allow_other, n
 | `confirm_urgency`, `find_need` | `urgency`, `need` | critical or high | `before_results` |
 | `confirm_urgency`, `find_need` | `urgency`, `need` | medium or low | `with_results` |
 
-- `importance`, `priority`, `value`, `uncertainty`, `reason`, `step` and option `score` are not sent. The trace attribute `v2.questions` holds `id:importance:reason:value:uncertainty`.
+- `importance`, `priority`, `value`, `uncertainty`, `reason`, `step` and option `score` are not sent. The trace attribute `v2.questions` holds `id|importance|reason|value|uncertainty`, comma-separated.
 - `hotlines` are on the danger question only; with U-1 to U-4 that question is gone. Pages with no search response keep the client's default line.
 - `none_of_these` is a flag. The Norse UI draws no button for it.
 - An answer holds at most 3 questions. The API keeps no count across answers: a client sets its own limit. Button texts belong to the client.

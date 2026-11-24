@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { errors } from '@elastic/elasticsearch';
+import { trace } from '@opentelemetry/api';
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -1011,9 +1012,8 @@ describe('V2SearchService', () => {
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
       }).service.search({ headers, query: dto({ query: 'help' }) });
       // Lucas 2026-11-13 ("bring back the popup if the model is very sure"):
-      // importance tells the bands apart (strong critical = popup, soft high =
-      // in-page card). Stem, options, reason and hotlines match.
-      // Question contract v2: placement tells the bands apart (popup / before_results).
+      // placement tells the bands apart (strong = popup, soft = before_results).
+      // Stem, options and hotlines match.
       const strip = (q: ReturnType<typeof emergencyQ>) => ({
         ...q,
         placement: undefined,
@@ -1049,6 +1049,7 @@ describe('V2SearchService', () => {
       expect(res.search.hits.total).toEqual(12);
       const q = emergencyQ(res);
       expect(q.options).toEqual([]);
+      expect(q.placement).toBe('popup');
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
       expect(res.clarification.questions[0].id).toBe('emergency');
     });
@@ -2277,6 +2278,28 @@ describe('question contract v2 in the service', () => {
       }),
     ]);
     expect(res.clarification.phone_line.number).toBe('211');
+  });
+
+  it('the trace holds what the response leaves out; nothing new when off', async () => {
+    const setAttribute = jest.fn();
+    const span = { setAttribute, setAttributes: jest.fn(), end: jest.fn() };
+    const spy = jest.spyOn(trace, 'getTracer').mockReturnValue({
+      startActiveSpan: (_n: string, _o: object, fn: (s: object) => unknown) =>
+        fn(span),
+    } as any);
+    const questions = () =>
+      setAttribute.mock.calls.filter(([k]) => k === 'v2.questions');
+    try {
+      await ask('off');
+      expect(questions()).toEqual([]);
+      await ask('true');
+      expect(questions()).toHaveLength(1);
+      expect(questions()[0][1]).toMatch(
+        /^start\|high\|[a-z_]+\|[\d.]+\|[\d.]+$/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('clarify=never: the danger question only, in the new shape', async () => {
