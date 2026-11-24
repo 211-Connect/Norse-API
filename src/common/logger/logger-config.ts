@@ -1,6 +1,7 @@
 import { Params } from 'nestjs-pino';
 import pino from 'pino';
 import { trace } from '@opentelemetry/api';
+import { DEFAULT_API_VERSION, pathVersionOf } from '../versioning/api-version';
 
 // Nest's LOG_LEVEL values mapped onto pino levels.
 const LOG_LEVEL_TO_PINO: Record<string, string> = {
@@ -64,6 +65,8 @@ export function buildLoggerOptions(logLevel: string): Params {
         }) => ({
           method: req.method,
           url: req.url?.split('?')[0],
+          // ISS-2496: the legacy unversioned path is v1.
+          api_version: pathVersionOf(req.url ?? '') ?? DEFAULT_API_VERSION,
           id: req.id,
           tenant_id: req.headers?.['x-tenant-id'],
         }),

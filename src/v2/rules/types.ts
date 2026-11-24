@@ -5,7 +5,13 @@ export interface RulesRequest {
   has_text: boolean; // query non-empty after trim
   needs: string[]; // confirmed, URL order
   passed_needs: string[];
-  urgency?: UrgencyCode; // from the URL
+  urgency?: UrgencyCode; // from the URL; U-X means "time not known" (same as none)
+  /**
+   * The query text has a content word: 2+ letters, not a function word. The
+   * soft emergency card needs one (a floor hit or a score at the popup cutoff
+   * is exempt). Absent means true.
+   */
+  has_content_word?: boolean;
   clarify: 'auto' | 'never';
 }
 export interface NeedsSignal {
@@ -28,9 +34,16 @@ export interface Hotline {
   label: string;
   number: string;
 }
+/**
+ * A tenant's "AI classification" setting (ADR 0039 Decision 52; Lucas
+ * 2026-11-13, question 14). `off`: no need guess, no model urgency and no
+ * optional question; the emergency check always runs. Absent means `on`.
+ */
+export type AiClassificationSetting = 'on' | 'off';
+
 export interface TenantContext {
-  top_areas?: string[]; // Tier 1 codes by service count, desc
   hotlines?: Hotline[];
+  ai_classification?: AiClassificationSetting;
 }
 
 export type EmergencyBand = 'popup' | 'soft' | 'none' | 'unknown';
@@ -49,7 +62,6 @@ export interface UrgencyState {
 
 export type QuestionType =
   'emergency' | 'confirm_urgency' | 'find_need' | 'narrow';
-export type QuestionLevel = 'red' | 'orange' | 'low';
 export type QuestionImportance = 'critical' | 'high' | 'medium' | 'low';
 export type QuestionReason =
   | 'emergency_band'
@@ -57,23 +69,27 @@ export type QuestionReason =
   | 'no_need'
   | 'area_only'
   | 'area_confirmed'
-  | 'unsure_needs';
+  | 'unsure_needs'
+  | 'weak_match';
+/** The URL parameter that a pick of an option adds (ADR 0039 Decision 55). */
+export type OptionParameter = 'needs' | 'passed_needs' | 'urgency';
 export interface QuestionOption {
-  value: string;
   label: string;
-  results_count?: number;
+  /** null with value null: the option writes nothing to the URL (no option does today). */
+  parameter: OptionParameter | null;
+  value: string | null;
+  /** Services that match the option; null = the server did not count (Decision 2026-11-13: null means not counted). Finalize sets it on every option. */
+  results_count?: number | null;
 }
 export interface Question {
   id: string;
   type: QuestionType;
-  level: QuestionLevel;
   importance: QuestionImportance;
   value: number; // within-band importance in [0, 0.999]: model uncertainty x answer effort x result split (rules engine)
   priority: number; // BAND_BASE[importance] + value; questions are ranked by this, high first
   uncertainty: number; // raw model uncertainty in [0, 1] before effort and split
   reason: QuestionReason;
   step: number;
-  parameter: 'urgency' | 'needs';
   stem: string;
   options: QuestionOption[];
   multi_select: boolean;
@@ -89,7 +105,13 @@ export interface Decision {
    * options. Internal: not part of the response.
    */
   option_scores: Record<string, number>;
-  emergency: { band: EmergencyBand; show_hotline: boolean };
+  /**
+   * Band of the emergency check. Internal: not part of the response. The
+   * response shows the emergency only as the emergency question (ADR 0039
+   * Decision 54).
+   */
+  emergency_band: EmergencyBand;
+  /** A shared cache may store the response (ADR 0039 Decision 28). */
   cacheable: boolean;
   needs: NeedState[]; // use + ask only; drops omitted
   boost_needs: string[];
@@ -99,7 +121,8 @@ export interface Decision {
   count_codes: string[]; // every need code that is an option in a needs candidate; sorted, unique; never N-X
 }
 export interface SearchCounts {
-  total: number;
+  /** `null`: the total was not counted (unreadable `hits.total`). Needs questions are kept. */
+  total: number | null;
   /**
    * Results per need code, from the search's count over `sune_needs`.
    * - An object: the codes were counted. A code missing from it has 0 results

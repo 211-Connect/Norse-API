@@ -88,7 +88,17 @@ the text and semantic scores (`boost_mode: sum`):
   Elasticsearch decay function scores a document that lacks the field as 1,
   the same as one at the origin, so before ISS-2755 a result without a point
   got the full +25.
-- A result without a point usually gets **0** from distance. The exception
+- **v2 only (`/v2/search`): a result without a point scores as if it sat at
+  the scale distance** (5 miles by default, else `distance`;
+  `VIRTUAL_DISTANCE_IN_SCALES` = 1). A second function with filter "no
+  `location.point`" adds a flat +12.5. A service closer than the scale still
+  beats a virtual service of equal relevance. Picked on 2026-11-18 from a
+  sweep of 30 real wa211 queries at 4 WA points, against fixed distances of
+  3, 5, 10 and 15 miles. A fixed 10 miles gave +1.6 at the default scale
+  (almost no change) and +22.4 at `distance=25` (almost the full +25). v1
+  keeps the rules below. `sort=distance` does not change: results without a
+  point still sort last.
+- In v1, a result without a point usually gets **0** from distance. The exception
   follows from one Elasticsearch rule: a document that matches **no** score
   function scores 1. Two functions have no filter and match every document:
   - the semantic function, present whenever the query is embedded;
@@ -124,6 +134,30 @@ the text and semantic scores (`boost_mode: sum`):
     `ignore`.
   - Hybrid search: `pinned` then `priority`, only in `top` mode.
 - A final tiebreak on id keeps paging stable.
+
+## v2 simple location model (`/v2/search`, 2026-11-23)
+
+Everything here is v2 with a text query. v1 and an empty query do not change.
+
+- **Filter:** a region filters by its shape, `coords` with `distance` above 0
+  filter by radius, and with neither the tenant is the only scope.
+- **Fusion always:** every text query fuses the keyword, vector, taxonomy and
+  need lists, under every sort, with or without `coords`. A failed list is
+  logged and the other lists fuse. The weak-match judges need the keyword and
+  the vector list both. Only when every list fails does the search fall back
+  to the summed request.
+- **Near you:** with `sort=relevance`, `coords` and no region, a low-weight
+  (0.5) proximity list joins the fusion. Services with no map point get no
+  vote. Region searches have no such list.
+- **Kept set:** the first 100 ids of the fused order. The page request filters
+  to those ids, so `hits.total` is the kept count and a page past the 100th
+  result is empty. There is no summed tail.
+- **Sort only re-orders the kept set:** relevance keeps the fused order,
+  distance with `coords` sorts by miles (services with no map point are not
+  hidden and sort last: their sort value is `Infinity`; the summed path gives them the fixed distance weight), name and organization sort A-Z.
+- **Counts and pins:** the need counts use the base filters plus the kept ids,
+  with no map-point filter on any request. Map pins for a text query use the same kept
+  set. Weak match is not checked on pins.
 
 ## Who sends what
 

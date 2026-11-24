@@ -33,6 +33,13 @@ export interface SortFieldNames {
 
 export type RelevanceMeaning = 'score' | 'proximity';
 
+/**
+ * How ticked values of one facet combine. 'and': every value must match (v1,
+ * v1 hybrid). 'or-within-facet': any value matches, different facets still
+ * AND (v2 search, decision 1A).
+ */
+export type FacetFilterMode = 'and' | 'or-within-facet';
+
 export const STANDARD_SORT_FIELDS: SortFieldNames = {
   id: 'service_at_location_id.raw',
   name: 'name.raw',
@@ -64,6 +71,18 @@ export class SearchUtilsService {
     'organization.summary',
   ];
 
+  /**
+   * organization.name is handled exclusively via the name tier (phrase/exact/
+   * prefix on .clean/.lc). organization.description is mission-statement prose
+   * that matches unrelated need tokens. Both are excluded from the recall
+   * fallback so they don't leak noise at token level. Shared by the v2 recall
+   * clause and the word-rarity document count, so the two cannot drift.
+   */
+  static readonly GENERAL_RECALL_FIELDS: string[] =
+    SearchUtilsService.FIELDS_TO_QUERY.filter(
+      (f) => f !== 'organization.name' && f !== 'organization.description',
+    );
+
   static readonly NESTED_FIELDS_TO_QUERY: string[] = [
     'taxonomies.name',
     'taxonomies.description',
@@ -83,6 +102,7 @@ export class SearchUtilsService {
     geometry: SearchResourcesBodyDto['geometry'],
     organizationId?: string,
     area?: AreaFilter,
+    facetMode: FacetFilterMode = 'and',
   ): QueryDslQueryContainer[] {
     const filters: QueryDslQueryContainer[] = [];
 
@@ -99,15 +119,30 @@ export class SearchUtilsService {
 
       const values = Array.isArray(value) ? value : [value];
 
+      // Each value matches the locale field or the English field.
+      const valueTerms = (item: string): QueryDslQueryContainer[] => [
+        { term: { [localeField]: item } },
+        { term: { [enField]: item } },
+      ];
+
+      if (facetMode === 'or-within-facet') {
+        // One clause per facet: any ticked value matches (OR inside a facet).
+        // Clauses of different facets are still all required (AND across facets).
+        if (values.length > 0) {
+          filters.push({
+            bool: {
+              should: values.flatMap(valueTerms),
+              minimum_should_match: 1,
+            },
+          });
+        }
+        continue;
+      }
+
+      // One clause per value: every ticked value must match (AND).
       for (const item of values) {
         filters.push({
-          bool: {
-            should: [
-              { term: { [localeField]: item } },
-              { term: { [enField]: item } },
-            ],
-            minimum_should_match: 1,
-          },
+          bool: { should: valueTerms(item), minimum_should_match: 1 },
         });
       }
     }

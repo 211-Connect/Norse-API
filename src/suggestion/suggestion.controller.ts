@@ -18,6 +18,7 @@ import {
 import { SuggestionCombinedResponseDto } from './dto/suggestion-response.dto';
 import { SuggestionService } from './suggestion.service';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from 'src/common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Suggestion')
 @Controller('suggestion')
@@ -27,7 +28,7 @@ export class SuggestionController {
   constructor(private readonly suggestionService: SuggestionService) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiResponse({
     status: 200,
     description:
@@ -61,7 +62,7 @@ export class SuggestionController {
   }
 
   @Get('term')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   getTaxonomyTermsByCode(
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
     @Query(new ZodValidationPipe(taxonomyTermsQuerySchema))

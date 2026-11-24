@@ -28,6 +28,7 @@ import {
   PlaceListQueryDto,
   PlaceSlugParamDto,
 } from './dto/place.dto';
+import { V1_AND_LEGACY } from '../../common/versioning/api-version';
 
 /**
  * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024).
@@ -50,7 +51,7 @@ export class RegionController {
   constructor(private readonly regionService: RegionService) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Regions (states, counties, ZIPs) matching typed text, ranked.',
   })
@@ -65,7 +66,7 @@ export class RegionController {
   }
 
   @Get('places')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'List published Place Regions.',
     description:
@@ -84,7 +85,7 @@ export class RegionController {
   }
 
   @Get('places/:slug')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Resolve a published Place by its canonical slug.',
     description:
@@ -104,7 +105,7 @@ export class RegionController {
   }
 
   @Get(':id')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({ summary: 'One Region with its boundary and attribution.' })
   @ApiResponse({ status: 200, type: RegionDetailDto })
   @ApiResponse({ status: 400, description: 'Malformed Region id' })

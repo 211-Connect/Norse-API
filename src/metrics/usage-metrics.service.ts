@@ -9,7 +9,8 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
  * `match_all`, `taxonomy`/`more_like_this` map to themselves, `hybrid` is
  * delegated to `HybridSearchService.searchHybrid()`, and the organization
  * typeahead endpoint is a separate search path (`OrganizationService.search()`,
- * ES operation `organization_search`).
+ * ES operation `organization_search`). `v2` is `GET /v2/search`, whose engine is
+ * always hybrid but is counted apart so v1 and v2 traffic can be compared.
  */
 export const SEARCH_TYPES = [
   'keyword',
@@ -18,6 +19,7 @@ export const SEARCH_TYPES = [
   'more_like_this',
   'hybrid',
   'organization',
+  'v2',
 ] as const;
 
 export type SearchType = (typeof SEARCH_TYPES)[number];

@@ -1,0 +1,306 @@
+{
+  "index": "hybrid_search_resources_en",
+  "preference": "hybrid-c582584833eeb151bea552d3",
+  "from": 0,
+  "size": 25,
+  "track_total_hits": true,
+  "_source": {
+    "excludes": [
+      "embedding",
+      "service_area",
+      "taxonomies.use_references",
+      "taxonomies.see_also_references",
+      "sune_needs",
+      "sune_need_weights",
+      "sune_urgency_weights",
+      "sune_scorecard_version"
+    ]
+  },
+  "aggs": {},
+  "query": {
+    "function_score": {
+      "query": {
+        "bool": {
+          "minimum_should_match": 0,
+          "filter": [
+            {
+              "term": {
+                "tenant_id": "tenant-a"
+              }
+            }
+          ],
+          "should": [
+            {
+              "term": {
+                "name.lc": {
+                  "value": "food shelf",
+                  "boost": 15
+                }
+              }
+            },
+            {
+              "prefix": {
+                "name.lc": {
+                  "value": "food shelf",
+                  "boost": 15
+                }
+              }
+            },
+            {
+              "match": {
+                "name.edge": {
+                  "query": "food shelf",
+                  "boost": 15
+                }
+              }
+            },
+            {
+              "match_phrase": {
+                "name.clean": {
+                  "query": "food shelf",
+                  "boost": 15
+                }
+              }
+            },
+            {
+              "match_phrase_prefix": {
+                "name.clean": {
+                  "query": "food shelf",
+                  "boost": 15
+                }
+              }
+            },
+            {
+              "term": {
+                "service.name.lc": {
+                  "value": "food shelf",
+                  "boost": 10
+                }
+              }
+            },
+            {
+              "prefix": {
+                "service.name.lc": {
+                  "value": "food shelf",
+                  "boost": 10
+                }
+              }
+            },
+            {
+              "match_phrase": {
+                "service.name.clean": {
+                  "query": "food shelf",
+                  "boost": 10
+                }
+              }
+            },
+            {
+              "match_phrase_prefix": {
+                "service.name.clean": {
+                  "query": "food shelf",
+                  "boost": 10
+                }
+              }
+            },
+            {
+              "term": {
+                "organization.name.lc": {
+                  "value": "food shelf",
+                  "boost": 6
+                }
+              }
+            },
+            {
+              "prefix": {
+                "organization.name.lc": {
+                  "value": "food shelf",
+                  "boost": 6
+                }
+              }
+            },
+            {
+              "match_phrase": {
+                "organization.name.clean": {
+                  "query": "food shelf",
+                  "boost": 6
+                }
+              }
+            },
+            {
+              "match_phrase_prefix": {
+                "organization.name.clean": {
+                  "query": "food shelf",
+                  "boost": 6
+                }
+              }
+            },
+            {
+              "multi_match": {
+                "operator": "or",
+                "minimum_should_match": "2<75%",
+                "fields": [
+                  "name",
+                  "description",
+                  "summary",
+                  "service.name",
+                  "service.alternate_name",
+                  "service.description",
+                  "service.summary",
+                  "location.name",
+                  "location.alternate_name",
+                  "location.description",
+                  "location.summary",
+                  "organization.alternate_name",
+                  "organization.summary"
+                ],
+                "query": "food shelf"
+              }
+            },
+            {
+              "multi_match": {
+                "operator": "or",
+                "minimum_should_match": "2<75%",
+                "fields": [
+                  "name",
+                  "description",
+                  "summary",
+                  "service.name",
+                  "service.alternate_name",
+                  "service.description",
+                  "service.summary",
+                  "location.name",
+                  "location.alternate_name",
+                  "location.description",
+                  "location.summary",
+                  "organization.alternate_name",
+                  "organization.summary"
+                ],
+                "query": "food shelf",
+                "fuzziness": "AUTO",
+                "prefix_length": 2,
+                "max_expansions": 50,
+                "boost": 0.01
+              }
+            },
+            {
+              "nested": {
+                "path": "taxonomies",
+                "query": {
+                  "multi_match": {
+                    "analyzer": "standard",
+                    "operator": "or",
+                    "minimum_should_match": "2<75%",
+                    "fields": [
+                      "taxonomies.name",
+                      "taxonomies.description"
+                    ],
+                    "query": "food shelf"
+                  }
+                }
+              }
+            },
+            {
+              "nested": {
+                "path": "taxonomies",
+                "query": {
+                  "multi_match": {
+                    "analyzer": "standard",
+                    "operator": "or",
+                    "minimum_should_match": "2<75%",
+                    "fields": [
+                      "taxonomies.name",
+                      "taxonomies.description"
+                    ],
+                    "query": "food shelf",
+                    "fuzziness": "AUTO",
+                    "prefix_length": 2,
+                    "max_expansions": 50,
+                    "boost": 0.01
+                  }
+                }
+              }
+            },
+            {
+              "nested": {
+                "path": "taxonomies",
+                "query": {
+                  "match": {
+                    "taxonomies.use_references": {
+                      "query": "food shelf",
+                      "operator": "or",
+                      "minimum_should_match": "2<75%",
+                      "boost": 6
+                    }
+                  }
+                },
+                "score_mode": "max"
+              }
+            },
+            {
+              "nested": {
+                "path": "taxonomies",
+                "query": {
+                  "constant_score": {
+                    "filter": {
+                      "term": {
+                        "taxonomies.code": "BH-1800"
+                      }
+                    },
+                    "boost": 67.5
+                  }
+                },
+                "score_mode": "max"
+              }
+            },
+            {
+              "constant_score": {
+                "filter": {
+                  "term": {
+                    "pinned": true
+                  }
+                },
+                "boost": 5
+              }
+            }
+          ]
+        }
+      },
+      "functions": [
+        {
+          "script_score": {
+            "script": {
+              "source": "Math.max(0, cosineSimilarity(params.qv, 'embedding'))",
+              "params": {
+                "qv": [
+                  0.1,
+                  0.2,
+                  0.3,
+                  0.4
+                ]
+              }
+            }
+          },
+          "weight": 100
+        },
+        {
+          "field_value_factor": {
+            "field": "priority",
+            "factor": 1,
+            "modifier": "none",
+            "missing": 0
+          }
+        }
+      ],
+      "score_mode": "sum",
+      "boost_mode": "sum"
+    }
+  },
+  "sort": [
+    "_score",
+    {
+      "service_at_location_id": {
+        "order": "asc"
+      }
+    }
+  ]
+}

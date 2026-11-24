@@ -61,6 +61,7 @@ import {
   TimezoneAnalyticsQueryDto,
   ZeroResultQueriesResponse,
 } from './dto';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -87,7 +88,7 @@ export class AnalyticsController {
   ) {}
 
   @Get('info')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get analytics configuration for the authenticated tenant',
   })
@@ -121,7 +122,7 @@ export class AnalyticsController {
   }
 
   @Get('stats')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get analytics basic stats',
   })
@@ -147,7 +148,7 @@ export class AnalyticsController {
   }
 
   @Get('pageviews')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary:
       'Get pageview metrics per day for date ranges of up to 8 months. For longer date ranges, aggregate the data by month.',
@@ -176,7 +177,7 @@ export class AnalyticsController {
   }
 
   @Get('metrics')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get aggregated analytics metrics',
   })
@@ -203,7 +204,7 @@ export class AnalyticsController {
   }
 
   @Get('resource-metrics')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get number of views per resource',
   })
@@ -229,7 +230,7 @@ export class AnalyticsController {
   }
 
   @Get('searches')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get counts of tracked search events grouped by query type',
     description:
@@ -256,7 +257,7 @@ export class AnalyticsController {
   }
 
   @Get('zero-result-queries')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get search queries that returned zero results',
   })
@@ -282,7 +283,7 @@ export class AnalyticsController {
   }
 
   @Get('language-switches')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get metrics for language switch destination pages',
   })
@@ -308,7 +309,7 @@ export class AnalyticsController {
   }
 
   @Get('resource-by-entry')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get resource view metrics grouped by entry page',
   })
@@ -334,7 +335,7 @@ export class AnalyticsController {
   }
 
   @Get('sessions')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get visitor sessions',
   })
@@ -362,7 +363,7 @@ export class AnalyticsController {
   }
 
   @Get('export-search-data')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get detailed search event data for CSV export',
     description:
@@ -415,7 +416,7 @@ export class AnalyticsController {
   }
 
   @Get('heatmap')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get visitor traffic heatmap points',
     description:
@@ -443,7 +444,7 @@ export class AnalyticsController {
   }
 
   @Get('area-searches')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get search metrics grouped by ZIP code and county',
   })
@@ -469,7 +470,7 @@ export class AnalyticsController {
   }
 
   @Get('event-values')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get distinct values for an event property',
   })
@@ -497,7 +498,7 @@ export class AnalyticsController {
   }
 
   @Get('event-catalog')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get available events and their properties for the tenant',
   })
@@ -518,7 +519,7 @@ export class AnalyticsController {
   }
 
   @Get('blocked-traffic')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get requests blocked as automated traffic for the tenant',
     description:
@@ -544,7 +545,7 @@ export class AnalyticsController {
   }
 
   @Get('crawler-traffic')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Get per-crawler request counts for the tenant',
     description:
@@ -568,7 +569,7 @@ export class AnalyticsController {
   }
 
   @Post('events')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Send a custom event to Umami',
   })
@@ -589,7 +590,7 @@ export class AnalyticsController {
   }
 
   @Post('events/batch')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @ApiOperation({
     summary: 'Send multiple custom events to Umami in a single request',
   })

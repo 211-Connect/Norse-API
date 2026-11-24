@@ -106,6 +106,47 @@ Redacted paths (`[redacted]`): `req.headers.authorization`, `req.headers["x-api-
 `req.params.query`. Never log API keys, tokens, cache keys, search text or full URLs
 with query strings.
 
+## Pipeline spans
+
+Each downstream call that goes through `MetricsService.observeDownstream` gets one span
+named `<dependency> <operation>`, the same two values as the metric labels (for example
+`elasticsearch hybrid_rrf_keyword`, `ml_broker search_classification`, `embedding embed`, `embedding embed_local`).
+The HTTP span of the call is its child. This is what tells the Elasticsearch calls of one
+search apart: they all post to the same `_search` path.
+
+`/v2/search` adds one span per pipeline step
+([src/common/tracing/with-span.ts](../src/common/tracing/with-span.ts)):
+
+| Span | Step |
+| ---- | ---- |
+| `v2.search` | The whole pipeline. Attributes: `v2.has_text`, `v2.ai_classification`, `v2.boost_needs`, `v2.selected_needs`, `v2.count_codes` |
+| `v2.tenant_config` | Tenant search settings read |
+| `v2.classify` | ml-broker classify call and its mapping. `v2.classify.failed` is true when the call gave error signals. `v2.classify.cache_hit` is true when ml-broker was not called |
+| `v2.rules.decide`, `v2.rules.finalize` | Rules engine |
+| `v2.retrieval` | `HybridSearchService.searchHybrid` |
+| `hybrid.prepare` | Everything before the final request. Attributes: `hybrid.fused`, `hybrid.cutoff`, `hybrid.need_counts` |
+| `hybrid.embed` | Query embedding: cache read, API call on a miss. Attribute: `hybrid.embed_cache_hit` (true when the API was not called), `hybrid.embed_winner` (`local`, `remote`, or `none` when both failed; absent on a cache hit or when `EMBEDDING_LOCAL_BASE_URL` is empty) |
+| `hybrid.word_rarity` | Word rarity: cache read, probe, cache write |
+| `hybrid.cutoff_probe` | Relevance cutoff probe; its Elasticsearch calls are `elasticsearch hybrid_cutoff_head`, `_count`, `_kept`, `_widened` |
+| `hybrid.fused_order` | Rank fusion lists that wait for the taxonomy lookup |
+| `hybrid.early_start` | Retrieval stage that starts before classify ends (the part that does not need classify) |
+| `v2.retrieval.weak_counts` | Second retrieval after a weak match: the count requests |
+| `v2.retrieval.weak_pick` | Second retrieval after a weak match: the page request |
+
+Downstream spans carry `downstream.outcome` (`ok`, `error`, `timeout`),
+`downstream.took_ms` (Elasticsearch's own `took`, so span time minus `took` is network
+and response transfer) and `downstream.server_timing` (the `Server-Timing` header of an
+HTTP answer; ml-broker reports slot wait and model time).
+
+TraceQL examples: `{ name = "v2.search" && duration > 800ms }`,
+`{ name =~ "elasticsearch hybrid_.*" && duration > 200ms }`,
+`{ resource.deployment.environment.name = "dev" && name = "v2.classify" }`.
+
+Privacy: a span attribute set by Norse-API code must be on the allowlist in
+[src/tracing-sanitizing-exporter.ts](../src/tracing-sanitizing-exporter.ts), or the
+exporter drops it. Only names, counts, flags and durations go on a span; never search
+text, coordinates or keys. A failed span records the error name, not its message.
+
 ## URL privacy rules
 
 This service fronts a crisis-services directory: search text, locations, coordinates

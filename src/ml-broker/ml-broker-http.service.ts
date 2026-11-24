@@ -1,0 +1,242 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { MetricsService } from 'src/metrics/metrics.service';
+import { MlBrokerError } from './ml-broker.errors';
+
+// Lucas 2026-11-13: "at least 300 ms, or even longer, ml broker is slow".
+const DEFAULT_TIMEOUT_MS = 1000;
+const MIN_TIMEOUT_MS = 100;
+const MAX_TIMEOUT_MS = 5000;
+const SEARCH_CLASSIFICATION = 'search-classification';
+const URGENCY_LEVELS: readonly string[] = ['U-1', 'U-2', 'U-3', 'U-4'];
+
+export interface SearchClassificationRequest {
+  query: string;
+  tenant_id: string;
+  /** Skip the needs model (ml-broker PR #20); sent only when true. */
+  emergency_only?: boolean;
+}
+
+/** ml-broker `search-classification` response, as sent on the wire. */
+export interface SearchClassificationResponse {
+  model_version?: string;
+  needs: {
+    /**
+     * ml-broker PR #24: 'error' when the needs model failed. Missing means
+     * 'ok' (an older ml-broker).
+     */
+    status?: 'ok' | 'error';
+    scores: { code: string; tier: string; score: number }[];
+  };
+  /** null for an `emergency_only` request, and when `needs.status` is 'error'. */
+  urgency: { level: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number } | null;
+  emergency?: {
+    status: 'ok' | 'error';
+    score: number | null;
+    floor_hit: boolean | null;
+    calm_context: boolean | null;
+    dv_shelter: boolean | null;
+  };
+}
+
+// Read `name` rather than test `instanceof Error`: the DOMException that
+// AbortSignal.timeout rejects with is not always an Error of this realm
+// (it is not under Jest), the same reason MetricsService reads `name`.
+const errorName = (error: unknown): string => {
+  const name = (error as { name?: unknown } | null)?.name;
+  return typeof name === 'string' ? name : 'Error';
+};
+
+const isTimeout = (error: unknown) =>
+  errorName(error) === 'TimeoutError' || errorName(error) === 'AbortError';
+
+/** Added to the classify timeout for the hard deadline in classifySearch. */
+const HARD_DEADLINE_MARGIN_MS = 250;
+
+/**
+ * Transport for ml-broker: one method per task. It reads its config on every
+ * call, so a missing ml-broker config never stops the app from booting, and it
+ * throws `MlBrokerError` on every failure. Whether a failure is fatal is the
+ * caller's decision. It never logs and never puts a request or response body
+ * into an error.
+ */
+/** Every need score has a string code, a string tier and a finite number score. */
+function scoresOk(scores: unknown): boolean {
+  return (
+    Array.isArray(scores) &&
+    scores.every((e) => {
+      const entry = e as { code?: unknown; tier?: unknown; score?: unknown };
+      return (
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.code === 'string' &&
+        typeof entry.tier === 'string' &&
+        typeof entry.score === 'number' &&
+        Number.isFinite(entry.score)
+      );
+    })
+  );
+}
+
+@Injectable()
+export class MlBrokerHttpService {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {}
+
+  /**
+   * The abort signal is the normal timeout. The hard deadline is a second
+   * guard: one live search never returned after the response headers arrived
+   * at the same moment as the abort (2026-11-16), so a transport promise that
+   * never settles must not hold the caller.
+   */
+  async classifySearch(
+    request: SearchClassificationRequest,
+  ): Promise<SearchClassificationResponse> {
+    const timeoutMs = this.timeoutMs();
+    const deadlineMs = timeoutMs + HARD_DEADLINE_MARGIN_MS;
+    const work = this.sendClassifySearch(request, timeoutMs);
+    // The race below reports a failure; this only prevents an unhandled one
+    // when the work rejects after the deadline.
+    work.catch(() => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new MlBrokerError(
+              'timeout',
+              SEARCH_CLASSIFICATION,
+              `no answer after ${deadlineMs}ms`,
+            ),
+          ),
+        deadlineMs,
+      );
+    });
+    try {
+      return await Promise.race([work, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async sendClassifySearch(
+    request: SearchClassificationRequest,
+    timeoutMs: number,
+  ): Promise<SearchClassificationResponse> {
+    const task = SEARCH_CLASSIFICATION;
+    const baseUrl = this.configService.get<string>('ML_BROKER_BASE_URL');
+    const apiKey = this.configService.get<string>('ML_BROKER_API_KEY');
+    if (!baseUrl || !apiKey) {
+      throw new MlBrokerError('unconfigured', task, 'not configured');
+    }
+
+    // One signal for the request and the body read, as before.
+    const signal = AbortSignal.timeout(timeoutMs);
+    const fail = (error: unknown): never => {
+      if (isTimeout(error)) {
+        throw new MlBrokerError(
+          'timeout',
+          task,
+          `timed out after ${timeoutMs}ms`,
+        );
+      }
+      throw new MlBrokerError(
+        'network',
+        task,
+        `request failed: ${errorName(error)}`,
+      );
+    };
+
+    let response: Response;
+    try {
+      response = await this.metrics.observeDownstream(
+        'ml_broker',
+        'search_classification',
+        () =>
+          fetch(`${baseUrl}/api/v1/tasks/${task}/predict`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+            },
+            body: JSON.stringify({
+              query: request.query,
+              tenant_id: request.tenant_id,
+              ...(request.emergency_only === true && { emergency_only: true }),
+            }),
+            signal,
+          }),
+        (res) => (res.ok ? 'ok' : 'error'),
+      );
+    } catch (error) {
+      return fail(error);
+    }
+
+    if (!response.ok) {
+      // The response body is not read: it can echo the query.
+      throw new MlBrokerError(
+        'http',
+        task,
+        `status=${response.status}`,
+        response.status,
+      );
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (error) {
+      if (isTimeout(error)) return fail(error);
+      throw new MlBrokerError(
+        'malformed',
+        task,
+        `unparsable body: ${errorName(error)}`,
+      );
+    }
+    return this.assertSearchClassificationShape(
+      body,
+      request.emergency_only === true,
+    );
+  }
+
+  private timeoutMs(): number {
+    const raw = Number.parseInt(
+      String(this.configService.get('V2_CLASSIFY_TIMEOUT_MS') ?? ''),
+      10,
+    );
+    if (!Number.isInteger(raw) || raw <= 0) return DEFAULT_TIMEOUT_MS;
+    return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, raw));
+  }
+
+  /**
+   * Hand-written body check: the one place a schema (zod) will replace.
+   * Checks exactly what the mapping relies on, no more.
+   */
+  private assertSearchClassificationShape(
+    body: unknown,
+    emergencyOnly: boolean,
+  ): SearchClassificationResponse {
+    const b = body as Partial<SearchClassificationResponse> | null;
+    const needsStatus = b?.needs?.status;
+    const statusOk =
+      needsStatus === undefined ||
+      needsStatus === 'ok' ||
+      needsStatus === 'error';
+    // An emergency_only response, or one whose needs model failed, has
+    // `urgency: null` and empty need scores.
+    const urgencyOk =
+      ((emergencyOnly || needsStatus === 'error') && b?.urgency === null) ||
+      (URGENCY_LEVELS.includes(b?.urgency?.level as string) &&
+        typeof b?.urgency?.score === 'number');
+    if (!b || !statusOk || !scoresOk(b.needs?.scores) || !urgencyOk) {
+      throw new MlBrokerError(
+        'malformed',
+        SEARCH_CLASSIFICATION,
+        'unexpected body shape',
+      );
+    }
+    return b as SearchClassificationResponse;
+  }
+}

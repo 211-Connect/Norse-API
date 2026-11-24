@@ -2,8 +2,15 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
 import { ElasticsearchService } from '@nestjs/elasticsearch';
-import { HybridSearchService } from './hybrid-search.service';
+import {
+  HybridSearchService,
+  VIRTUAL_DISTANCE_IN_SCALES,
+  virtualDistanceWeight,
+  parseKeywordLocales,
+} from './hybrid-search.service';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
+import { SearchUtilsService } from './search-utils.service';
+import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 
@@ -47,26 +54,72 @@ describe('HybridSearchService', () => {
   let service: HybridSearchService;
   let esSearch: jest.Mock;
   let esCount: jest.Mock;
+  let esExistsAlias: jest.Mock;
   let capturedMainRequest: any;
+  let rarityRequests: any[];
+  let rarityImpl: (req: any) => Promise<any>;
+  // In-memory stand-in for the per-word rarity cache (getMany / setMany).
+  let cacheStore: Map<string, unknown>;
+  let cacheGetMany: (keys: string[]) => Promise<unknown[]>;
+  let cacheSetMany: (entries: Record<string, unknown>) => Promise<void>;
+
+  // Default: every word appears in 5 of 1000 docs.
+  const defaultRarityResponse = (req: any) => ({
+    hits: { total: { value: 1000, relation: 'eq' }, hits: [] },
+    aggregations: {
+      df: {
+        buckets: Object.fromEntries(
+          Object.keys(req.aggs.df.filters.filters).map((k) => [
+            k,
+            { doc_count: 5 },
+          ]),
+        ),
+      },
+    },
+  });
 
   beforeEach(async () => {
     capturedMainRequest = undefined;
+    rarityRequests = [];
+    rarityImpl = (req) => Promise.resolve(defaultRarityResponse(req));
+    cacheStore = new Map();
+    cacheGetMany = (keys) =>
+      Promise.resolve(keys.map((k) => cacheStore.get(k)));
+    cacheSetMany = (entries) => {
+      Object.entries(entries).forEach(([k, v]) => cacheStore.set(k, v));
+      return Promise.resolve();
+    };
 
     esSearch = jest.fn((req: any) => {
       if (req.index === 'hybrid_taxonomies') {
         return Promise.resolve(taxonomyResponse);
       }
+      if (req.size === 0 && req.aggs?.df) {
+        rarityRequests.push(req);
+        return rarityImpl(req);
+      }
+      // Every ranked list fails, so a v2 text search keeps the summed request
+      // these specs read. The fused path has its own spec (rrf.spec.ts).
+      if (req._source === false && req.size === 100) {
+        return Promise.reject(new Error('lists off in this spec'));
+      }
       capturedMainRequest = req;
       return Promise.resolve(mainResponse);
     });
     esCount = jest.fn().mockResolvedValue({ count: 42 });
+    // Default: no per-tenant hybrid alias, so searches read the shared name.
+    esExistsAlias = jest.fn().mockResolvedValue(false);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         HybridSearchService,
         {
           provide: ElasticsearchService,
-          useValue: { search: esSearch, count: esCount },
+          useValue: {
+            search: esSearch,
+            count: esCount,
+            indices: { existsAlias: esExistsAlias },
+          },
         },
         {
           provide: ConfigService,
@@ -90,6 +143,14 @@ describe('HybridSearchService', () => {
           provide: RequestCacheService,
           useValue: {
             getOrSet: jest.fn((_key, factory) => factory()),
+            getMany: jest.fn((keys: string[]) => cacheGetMany(keys)),
+            setMany: jest.fn((entries: Record<string, unknown>) =>
+              cacheSetMany(entries),
+            ),
+            deleteMany: jest.fn((keys: string[]) => {
+              keys.forEach((k) => cacheStore.delete(k));
+              return Promise.resolve();
+            }),
           },
         },
         {
@@ -115,7 +176,7 @@ describe('HybridSearchService', () => {
   it('runs a single _search (no msearch) with the hybrid scoring shape', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
-    // One taxonomy lookup + one main search; never msearch.
+    // v1: one taxonomy lookup + one main search; never msearch.
     expect(esSearch).toHaveBeenCalledTimes(2);
     expect((service as any).elasticsearchService.msearch).toBeUndefined();
 
@@ -278,6 +339,399 @@ describe('HybridSearchService', () => {
     });
   });
 
+  // Lucas, 2026-11-18: in v2 a service with no map point (virtual, hotline)
+  // scores as if it sat at the scale distance. v1 keeps 0.
+  describe('v2 virtual distance: no-point services score as a fixed distance', () => {
+    const COORDS = [-122.33, 47.61];
+    const mainFunctions = () =>
+      (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+        .function_score.functions;
+    const virtualFns = () =>
+      mainFunctions().filter(
+        (fn: any) =>
+          fn.filter?.bool?.must_not?.[0]?.exists?.field === 'location.point',
+      );
+
+    it('weight is the gauss value of a service one scale away (12.5)', () => {
+      expect(VIRTUAL_DISTANCE_IN_SCALES).toBe(1);
+      expect(virtualDistanceWeight()).toBeCloseTo(12.5, 6);
+    });
+
+    it.each([
+      [0, 5],
+      [10, 10],
+      [25, 25],
+    ])(
+      'v2, distance %p: one flat function on no-point services, scale %p mi',
+      async (distance, scaleMi) => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, distance },
+          rankingVersion: 'v2',
+        });
+
+        const fns = virtualFns();
+        expect(fns).toHaveLength(1);
+        expect(fns[0]).toEqual({
+          filter: {
+            bool: { must_not: [{ exists: { field: 'location.point' } }] },
+          },
+          weight: 12.5,
+        });
+        // The gauss on services with a point is unchanged.
+        const gauss = mainFunctions().filter((fn: any) => fn.gauss);
+        expect(gauss).toHaveLength(1);
+        expect(gauss[0].weight).toBe(25);
+        expect(gauss[0].gauss['location.point'].scale).toBe(`${scaleMi}mi`);
+      },
+    );
+
+    it('v1 with coords: no virtual function (unchanged)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10 },
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+      expect(mainFunctions().filter((fn: any) => fn.gauss)).toHaveLength(1);
+    });
+
+    it('v2 without coords: no virtual function', async () => {
+      await service.searchHybrid({
+        headers,
+        query: baseQuery,
+        rankingVersion: 'v2',
+      });
+
+      expect(virtualFns()).toHaveLength(0);
+    });
+
+    it('v2 sort=distance keeps the distance sort (no-point services last)', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, coords: COORDS, distance: 10, sort: 'distance' },
+        rankingVersion: 'v2',
+      });
+
+      const geoSort = capturedMainRequest.sort.find(
+        (s: any) => s._geo_distance,
+      );
+      expect(geoSort).toBeDefined();
+    });
+
+    describe('v2 sort=distance keeps services with no map point', () => {
+      const mainFilters = (): any[] =>
+        (capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query)
+          .function_score.query.bool.filter;
+      const hasPointFilter = () =>
+        mainFilters().some((f: any) => f.exists?.field === 'location.point');
+      const area = {
+        regionIds: ['region-1'],
+        match: 'located_or_serving',
+        unlocated: 'virtual',
+      } as any;
+
+      it('v2, coords: sorts by distance and hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(false);
+        expect(
+          capturedMainRequest.sort.find((s: any) => s._geo_distance),
+        ).toBeDefined();
+      });
+
+      it('v2 area search, coords: still shows virtual services', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it('a statewide crisis line (no map point) shows under sort=distance, after the nearest services', async () => {
+        const request = (sort: string) => ({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort },
+          rankingVersion: 'v2' as const,
+        });
+        // Stand-in for Elasticsearch: applies an `exists location.point`
+        // filter if the request carries one, and sorts no-point rows last.
+        const rows = [
+          { id: 'crisis-line', dist: Infinity },
+          { id: 'near', dist: 1 },
+          { id: 'far', dist: 9 },
+        ];
+        esSearch.mockImplementation((req: any) => {
+          if (req.index === 'hybrid_taxonomies') {
+            return Promise.resolve(taxonomyResponse);
+          }
+          if (req.size === 0 && req.aggs?.df) {
+            rarityRequests.push(req);
+            return rarityImpl(req);
+          }
+          capturedMainRequest = req;
+          const filters: any[] = (req.query.pinned?.organic ?? req.query)
+            .function_score.query.bool.filter;
+          const needsPoint = filters.some(
+            (f: any) => f.exists?.field === 'location.point',
+          );
+          const kept = rows
+            .filter((r) => !needsPoint || r.dist !== Infinity)
+            .sort((a, b) => a.dist - b.dist);
+          return Promise.resolve({
+            ...mainResponse,
+            hits: {
+              total: { value: kept.length, relation: 'eq' },
+              hits: kept.map((r) => ({
+                _index: 'hybrid_search_resources_en',
+                _id: r.id,
+                _score: 1,
+                _source: { name: r.id, facets: {}, facets_en: {} },
+                sort: [r.dist, r.id],
+                fields: { matched_needs: [] },
+              })),
+            },
+          });
+        });
+
+        const byDistance: any = await service.searchHybrid(request('distance'));
+        const byRelevance: any = await service.searchHybrid(
+          request('relevance'),
+        );
+
+        const ids = (o: any) => o.search.hits.hits.map((h: any) => h._id);
+        expect(ids(byDistance)).toEqual(['near', 'far', 'crisis-line']);
+        expect(ids(byRelevance)).toContain('crisis-line');
+        expect(byDistance.search.hits.total.value).toBe(3);
+      });
+
+      it('v2 area search, no coords: sorts by relevance, hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+          area,
+        } as any);
+
+        expect(hasPointFilter()).toBe(false);
+        expect(capturedMainRequest.sort[0]).toBe('_score');
+      });
+
+      it('v2, no coords: hides nothing', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, sort: 'distance' },
+          rankingVersion: 'v2',
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+
+      it.each(['name', 'organization', 'relevance'] as const)(
+        'v2, coords, sort=%s: no map-point filter',
+        async (sort) => {
+          await service.searchHybrid({
+            headers,
+            query: { ...baseQuery, coords: COORDS, sort },
+            rankingVersion: 'v2',
+          });
+
+          expect(hasPointFilter()).toBe(false);
+        },
+      );
+
+      describe('strict ascending distance, with and without selected needs', () => {
+        const ORIGIN = { lat: 47.61, lon: -122.33 };
+        const points = [
+          { id: 'far', lat: 47.9, lon: -122.0 },
+          { id: 'near', lat: 47.62, lon: -122.32 },
+          { id: 'mid', lat: 47.7, lon: -122.2 },
+        ];
+        const miles = (p: { lat: number; lon: number }) =>
+          SearchUtilsService.haversineDistanceMiles(
+            ORIGIN.lat,
+            ORIGIN.lon,
+            p.lat,
+            p.lon,
+          );
+
+        // Stand-in for Elasticsearch: honours the request's sort tiers.
+        // A _script tier (the need block) would lead, as in production.
+        const useSortingEs = (selected: string[]) => {
+          esSearch.mockImplementation((req: any) => {
+            if (req.index === 'hybrid_taxonomies') {
+              return Promise.resolve(taxonomyResponse);
+            }
+            if (req.size === 0 && req.aggs?.df) {
+              rarityRequests.push(req);
+              return rarityImpl(req);
+            }
+            capturedMainRequest = req;
+            const hasBlock = req.sort.some((s: any) => s._script);
+            const rows = points.map((p, i) => ({
+              _index: 'hybrid_search_resources_en',
+              _id: p.id,
+              _score: 1,
+              _source: { name: p.id, facets: {}, facets_en: {} },
+              // 'far' has every selected need, 'near' none.
+              block: p.id === 'far' ? 2 : p.id === 'mid' ? 1 : 0,
+              dist: miles(p),
+              i,
+            }));
+            rows.sort((a, b) =>
+              hasBlock && selected.length > 0
+                ? b.block - a.block || a.dist - b.dist
+                : a.dist - b.dist,
+            );
+            return Promise.resolve({
+              ...mainResponse,
+              hits: {
+                ...mainResponse.hits,
+                hits: rows.map((r) => ({
+                  _index: r._index,
+                  _id: r._id,
+                  _score: r._score,
+                  _source: r._source,
+                  sort: hasBlock ? [r.block, r.dist, r._id] : [r.dist, r._id],
+                  fields: { matched_needs: [] },
+                })),
+              },
+            });
+          });
+        };
+
+        it.each([[[]], [['N-A', 'N-B']]] as [string[]][])(
+          'selectedNeeds=%j: no need-block tier, geo sort first, ids ascending by haversine',
+          async (selectedNeeds) => {
+            useSortingEs(selectedNeeds);
+            const out: any = await service.searchHybrid({
+              headers,
+              query: {
+                ...baseQuery,
+                coords: [ORIGIN.lon, ORIGIN.lat],
+                sort: 'distance',
+              },
+              rankingVersion: 'v2',
+              selectedNeeds,
+            } as any);
+
+            const sort = capturedMainRequest.sort;
+            expect(sort.some((s: any) => s._script)).toBe(false);
+            expect(sort[0]._geo_distance).toBeDefined();
+
+            const res = out.search;
+            const ids = res.hits.hits.map((h: any) => h._id);
+            const expected = [...points]
+              .sort((a, b) => miles(a) - miles(b))
+              .map((p) => p.id);
+            expect(ids).toEqual(expected);
+            // Returned sort values are the distance first, not the block number.
+            expect(res.hits.hits[0].sort[0]).toBeCloseTo(miles(points[1]), 6);
+          },
+        );
+
+        it('selectedNeeds with sort=relevance still lead as a block tier', async () => {
+          useSortingEs(['N-A']);
+          await service.searchHybrid({
+            headers,
+            query: {
+              ...baseQuery,
+              coords: [ORIGIN.lon, ORIGIN.lat],
+              sort: 'relevance',
+            },
+            rankingVersion: 'v2',
+            selectedNeeds: ['N-A'],
+          } as any);
+
+          expect(capturedMainRequest.sort[0]._script).toBeDefined();
+        });
+      });
+
+      it('v1, coords, sort=distance: unchanged, no map-point filter', async () => {
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, coords: COORDS, sort: 'distance' },
+        });
+
+        expect(hasPointFilter()).toBe(false);
+      });
+    });
+  });
+
+  it("v2 taxonomy lookup uses exact cosine over the tenant's codes (ISS-2692)", async () => {
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+    });
+
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall).toBeDefined();
+    expect(taxonomyCall.knn).toBeUndefined();
+    const scoreQuery = taxonomyCall.query.script_score;
+    expect(scoreQuery.query).toEqual({ term: { tenant_id: 'tenant-a' } });
+    expect(scoreQuery.script.source).toContain(
+      "cosineSimilarity(params.qv, 'embedding')",
+    );
+    expect(scoreQuery.script.params.qv).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expect(taxonomyCall.size).toBe(10);
+  });
+
+  it('uses a provided queryVector and does not embed again', async () => {
+    const embed = service.embedQuery as jest.Mock;
+    embed.mockClear();
+    const vector = [0.5, 0.6, 0.7, 0.8];
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+      queryVector: Promise.resolve(vector),
+    });
+
+    expect(embed).not.toHaveBeenCalled();
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall.query.script_score.script.params.qv).toEqual(vector);
+    // v2 relevance searches wrap the main query in rank fusion's `pinned`.
+    const mainQuery =
+      capturedMainRequest.query.pinned?.organic ?? capturedMainRequest.query;
+    const scriptFn = mainQuery.function_score.functions.find(
+      (f: any) => f.script_score,
+    );
+    expect(scriptFn.script_score.script.params.qv).toEqual(vector);
+  });
+
+  it('a provided queryVector that resolves undefined gives the lexical-only request', async () => {
+    const embed = service.embedQuery as jest.Mock;
+    embed.mockClear();
+    await service.searchHybrid({
+      headers,
+      query: baseQuery,
+      rankingVersion: 'v2',
+      queryVector: Promise.resolve(undefined),
+    });
+
+    expect(embed).not.toHaveBeenCalled();
+    const taxonomyCall = esSearch.mock.calls
+      .map((c) => c[0])
+      .find((req) => req.index === 'hybrid_taxonomies');
+    expect(taxonomyCall).toBeUndefined();
+    // v2 with a query has no pinned priority function (pinned gate), so a
+    // lexical-only main query can be a plain bool with no function_score.
+    const functions = capturedMainRequest.query.function_score?.functions ?? [];
+    expect(functions.find((f: any) => f.script_score)).toBeUndefined();
+  });
+
   it('emits one score-weighted constant_score clause per predicted code', async () => {
     await service.searchHybrid({ headers, query: baseQuery });
 
@@ -372,6 +826,50 @@ describe('HybridSearchService', () => {
       expect(request.size).toBe(10000);
       expect(JSON.stringify(request.query)).toContain('"tenant_id":"tenant-a"');
       expect(JSON.stringify(request.query)).not.toContain('cosineSimilarity');
+    });
+
+    it('v2 pins match taxonomy child codes; v1 pins match the exact code only', async () => {
+      const v1: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+      });
+      const v2: any = await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, taxonomy: ['BH-1800'] },
+        rankingVersion: 'v2',
+      });
+
+      expect(JSON.stringify(v1.query)).toContain(
+        '"terms":{"taxonomies.code":["BH-1800"]}',
+      );
+      expect(JSON.stringify(v1.query)).not.toContain(
+        '"prefix":{"taxonomies.code"',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800."}',
+      );
+      expect(JSON.stringify(v2.query)).toContain(
+        '"prefix":{"taxonomies.code":"BH-1800-"}',
+      );
+    });
+
+    it('v2 pins with text embed the query (the kept set); an empty query skips the embedding', async () => {
+      const embed = jest
+        .spyOn(service, 'embedQuery')
+        .mockResolvedValue([0.1, 0.2]);
+      await service.buildPinsRequest({
+        headers,
+        query: { ...pinsQuery, query: '' },
+        rankingVersion: 'v2',
+      });
+      expect(embed).not.toHaveBeenCalled();
+
+      await service.buildPinsRequest({
+        headers,
+        query: pinsQuery,
+        rankingVersion: 'v2',
+      });
+      expect(embed).toHaveBeenCalledWith('food');
     });
 
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
@@ -586,14 +1084,19 @@ describe('HybridSearchService', () => {
   describe('shard-copy preference', () => {
     const preferencesOf = async (query: any, h: any = headers) => {
       esSearch.mockClear();
-      await service.searchHybrid({ headers: h, query });
+      await service.searchHybrid({
+        headers: h,
+        query,
+        rankingVersion: 'v2',
+      });
       return esSearch.mock.calls.map(([req]) => req.preference);
     };
 
-    it('pins the taxonomy lookup and the main search to one preference', async () => {
+    it('pins the taxonomy lookup, the rarity lookup and the main search to one preference', async () => {
       const preferences = await preferencesOf(baseQuery);
 
-      expect(preferences).toHaveLength(2);
+      // taxonomy, rarity, three rank-fusion lists, pinned gate, main search
+      expect(preferences).toHaveLength(7);
       expect(preferences[0]).toEqual(expect.any(String));
       // A leading underscore is Elasticsearch's reserved preference syntax.
       expect(preferences[0]).not.toMatch(/^_/);
@@ -601,14 +1104,20 @@ describe('HybridSearchService', () => {
     });
 
     it('keeps the same preference for every page, limit and sort of a search', async () => {
+      // The rarity words are cached after the first request; clear between
+      // requests so every request still sends its own rarity probe.
       const preferences = [
         ...(await preferencesOf(baseQuery)),
-        ...(await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
-        ...(await preferencesOf({ ...baseQuery, sort: 'name' })),
+        ...(cacheStore.clear(),
+        await preferencesOf({ ...baseQuery, page: 4, limit: 10 })),
+        ...(cacheStore.clear(),
+        await preferencesOf({ ...baseQuery, sort: 'name' })),
       ];
 
-      // Every search of all three requests, not just the first of each.
-      expect(preferences).toHaveLength(6);
+      // Every search of all three requests, not just the first of each. Every
+      // sort adds three rank-fusion lists; the relevance sorts add a pinned
+      // gate request each (7 + 7 + 6).
+      expect(preferences).toHaveLength(20);
       expect(preferences[0]).toEqual(expect.any(String));
       expect(new Set(preferences).size).toBe(1);
     });
@@ -626,6 +1135,135 @@ describe('HybridSearchService', () => {
       });
 
       expect(new Set([base, otherText, otherTenant, otherScope]).size).toBe(4);
+    });
+  });
+
+  describe('V2_KEYWORD_LOCALES switch (keyword leg per locale, v2 only)', () => {
+    const isKeywordList = (req: any) =>
+      req.query?.bool?.minimum_should_match === 1 &&
+      Array.isArray(req.query?.bool?.should);
+    const isVectorList = (req: any) => !!req.query?.script_score;
+    const mainHasLexical = () =>
+      JSON.stringify(capturedMainRequest.query).includes('name.edge');
+
+    const run = async (lang: string, extra: any = {}, v2 = true) => {
+      esSearch.mockClear();
+      cacheStore.clear();
+      await service.searchHybrid({
+        headers: { ...headers, 'accept-language': lang },
+        query: { ...baseQuery, ...extra },
+        ...(v2 ? { rankingVersion: 'v2' as const } : {}),
+      });
+      return esSearch.mock.calls.map(([r]) => r);
+    };
+
+    it('unset: fused v2 search runs the keyword and the vector list for every locale', async () => {
+      for (const lang of ['en', 'vi']) {
+        const calls = await run(lang);
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(true);
+      }
+    });
+
+    it('parseKeywordLocales: a malformed entry is ignored; no valid entry means all', () => {
+      expect([...parseKeywordLocales('en es, fr')!]).toEqual(['fr']);
+      expect(parseKeywordLocales('en es;ru')).toBeNull();
+    });
+
+    it('parseKeywordLocales: unset or blank means all locales', () => {
+      expect(parseKeywordLocales(undefined)).toBeNull();
+      expect(parseKeywordLocales('  , ')).toBeNull();
+      expect([...parseKeywordLocales('en, ES')!]).toEqual(['en', 'es']);
+    });
+
+    it('parseKeywordLocales: an underscore entry matches the dashed tag', () => {
+      (service as any).keywordLocales = parseKeywordLocales('zh_hans');
+      expect((service as any).keywordEnabledForLocale('zh-Hans')).toBe(true);
+      expect((service as any).keywordEnabledForLocale('zh_Hans')).toBe(true);
+    });
+
+    it('a full tag matches before the primary subtag (zh-hans, es-MX)', () => {
+      (service as any).keywordLocales = parseKeywordLocales('zh-hans,es');
+      const on = (l: string) => (service as any).keywordEnabledForLocale(l);
+      expect(on('zh-hans')).toBe(true);
+      expect(on('ZH_Hans')).toBe(true);
+      expect(on('es-MX')).toBe(true);
+      expect(on('zh-hant')).toBe(false);
+      expect(on('ru')).toBe(false);
+    });
+
+    describe('set to en,es,ru', () => {
+      beforeEach(() => {
+        (service as any).keywordLocales = parseKeywordLocales('en, ES ,ru');
+      });
+
+      it('keeps the keyword leg for listed locales, including a regional tag', async () => {
+        for (const lang of ['en', 'es', 'ru', 'es-MX']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(true);
+        }
+      });
+
+      it('drops the keyword list for other locales and keeps the vector list', async () => {
+        for (const lang of ['vi', 'am']) {
+          const calls = await run(lang);
+          expect(calls.some(isKeywordList)).toBe(false);
+          expect(calls.some(isVectorList)).toBe(true);
+        }
+      });
+
+      it('summed path (coords given): lexical clauses are gone for vi, present for en', async () => {
+        await run('en', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(false);
+      });
+
+      it('embedding failed for vi: the keyword leg runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        await run('vi', { coords: [-122.3, 47.6] });
+        expect(mainHasLexical()).toBe(true);
+      });
+
+      it('embedding failed for vi on the fused path (no coords): the keyword list runs after all', async () => {
+        jest
+          .spyOn(service, 'embedQuery')
+          .mockRejectedValue(new Error('embedding down'));
+        const calls = await run('vi');
+        expect(calls.some(isKeywordList)).toBe(true);
+        expect(calls.some(isVectorList)).toBe(false);
+      });
+
+      it('returns no weak-match judges when the keyword leg is off', async () => {
+        // The ranked lists are off in this spec (see the esSearch mock), so
+        // the fused order is stubbed with judges; the gate under test is the
+        // keyword leg switch.
+        jest.spyOn(service as any, 'fetchFusedOrder').mockResolvedValue({
+          ids: undefined,
+          judges: { keyword_top: 1, vector_top: 1 },
+        });
+        const off = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(off.judges).toBeUndefined();
+        (service as any).keywordLocales = null;
+        cacheStore.clear();
+        const on = await service.searchHybrid({
+          headers: { ...headers, 'accept-language': 'vi' },
+          query: { ...baseQuery },
+          rankingVersion: 'v2' as const,
+        });
+        expect(on.judges).toBeDefined();
+      });
+
+      it('v1 is unchanged: keyword stays on for vi without rankingVersion', async () => {
+        await run('vi', {}, false);
+        expect(mainHasLexical()).toBe(true);
+      });
     });
   });
 
@@ -735,6 +1373,98 @@ describe('HybridSearchService', () => {
     expect(source).not.toHaveProperty('sune_scorecard_version');
   });
 
+  // Dagster publishes a tenant by pointing `{tenant}-hybrid_search_resources_{lang}`
+  // at the tenant's complete temp index while it rewrites the shared index. Reading
+  // the shared name directly sees that rewrite half done: services missing for
+  // minutes, or listed twice.
+  describe('index resolution', () => {
+    it('searches the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(esExistsAlias).toHaveBeenCalledWith({
+        name: 'tenant-a-hybrid_search_resources_en',
+      });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('counts through the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(esCount.mock.calls[0][0].index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('falls back to the shared name when the tenant has no alias', async () => {
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('searches the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      await service.searchHybrid({ headers, query: baseQuery });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+    });
+
+    it('counts through the shared name when the alias check fails', async () => {
+      esExistsAlias.mockRejectedValue(new Error('security_exception'));
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(42);
+      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+    });
+
+    it('does not cache a failed alias check', async () => {
+      // A cache that keeps successes and, like RequestCacheService, drops failures.
+      const store = new Map<string, unknown>();
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        async (key: string, factory: () => Promise<unknown>) => {
+          if (store.has(key)) return store.get(key);
+          const value = await factory();
+          store.set(key, value);
+          return value;
+        },
+      );
+      esExistsAlias
+        .mockRejectedValueOnce(new Error('timeout'))
+        .mockResolvedValueOnce(true);
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+
+      await service.searchHybrid({ headers, query: baseQuery });
+      expect(capturedMainRequest.index).toBe(
+        'tenant-a-hybrid_search_resources_en',
+      );
+    });
+
+    it('serves a cached count without checking the alias', async () => {
+      const cache = (service as any).requestCacheService;
+      cache.getOrSet.mockImplementation(
+        (key: string, factory: () => Promise<unknown>) =>
+          key.startsWith('hybrid_alias_exists:')
+            ? factory()
+            : Promise.resolve(7),
+      );
+
+      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(count).toBe(7);
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getDocumentsCount', () => {
     it('counts by tenant + taxonomy scope only (no query text, no geo)', async () => {
       const count = await service.getDocumentsCount(headers, 'ignored query', [
@@ -791,5 +1521,577 @@ describe('HybridSearchService', () => {
       expect(m.prefix_length).toBe(2);
       expect(m.boost).toBe(0.01);
     }
+  });
+  describe('name match weighted by word rarity (ISS-2739)', () => {
+    const nameEdgeClauses = (node: any, found: any[] = []): any[] => {
+      if (Array.isArray(node)) {
+        node.forEach((n) => nameEdgeClauses(n, found));
+      } else if (node && typeof node === 'object') {
+        if ('name.edge' in node) found.push(node);
+        Object.values(node).forEach((v) => nameEdgeClauses(v, found));
+      }
+      return found;
+    };
+    const idf = (n: number, df: number) =>
+      Math.log(1 + (n - df + 0.5) / (df + 0.5));
+    const q = (query: string) => ({ ...baseQuery, query });
+
+    it('replaces the flat edge match with one idf-weighted clause per content word', async () => {
+      rarityImpl = () =>
+        Promise.resolve({
+          hits: { total: { value: 29181 } },
+          aggregations: {
+            df: {
+              buckets: {
+                w0: { doc_count: 0 },
+                w1: { doc_count: 2 },
+                c0: { doc_count: 0 },
+                c1: { doc_count: 0 },
+              },
+            },
+          },
+        });
+
+      await service.searchHybrid({
+        headers,
+        query: q('my boyfriend hits me'),
+        rankingVersion: 'v2',
+      });
+
+      const clauses = nameEdgeClauses(capturedMainRequest.query);
+      // Only word-level filters remain; no flat `{ query, boost }` match.
+      expect(clauses.map((c) => c['name.edge']).sort()).toEqual([
+        'boyfriend',
+        'hits',
+      ]);
+
+      const walk = (node: any, out: any[] = []): any[] => {
+        if (Array.isArray(node)) node.forEach((n) => walk(n, out));
+        else if (node && typeof node === 'object') {
+          if (node.constant_score?.filter?.match?.['name.edge'] !== undefined) {
+            out.push(node.constant_score);
+          }
+          Object.values(node).forEach((v) => walk(v, out));
+        }
+        return out;
+      };
+      const cs = walk(capturedMainRequest.query);
+      expect(cs).toHaveLength(2);
+      const byWord = Object.fromEntries(
+        cs.map((c) => [c.filter.match['name.edge'], c.boost]),
+      );
+      expect(Object.keys(byWord).sort()).toEqual(['boyfriend', 'hits']);
+      expect(byWord.boyfriend).toBeCloseTo(15 * idf(29181, 0));
+      expect(byWord.hits).toBeCloseTo(15 * idf(29181, 2));
+    });
+
+    it('keeps the flat edge match when the rarity lookup fails', async () => {
+      rarityImpl = () => Promise.reject(new Error('es down'));
+
+      await service.searchHybrid({
+        headers,
+        query: q('my boyfriend hits me'),
+        rankingVersion: 'v2',
+      });
+
+      const clauses = nameEdgeClauses(capturedMainRequest.query);
+      expect(clauses).toEqual([
+        { 'name.edge': { query: 'my boyfriend hits me', boost: 15 } },
+      ]);
+    });
+
+    it('adds no edge clause and sends no rarity request for function-word-only queries', async () => {
+      await service.searchHybrid({
+        headers,
+        query: q('me'),
+        rankingVersion: 'v2',
+      });
+
+      expect(rarityRequests).toHaveLength(0);
+      expect(nameEdgeClauses(capturedMainRequest.query)).toEqual([]);
+    });
+
+    it('sends a size-0 tenant-scoped request with a phrase_prefix filter per word', async () => {
+      await service.searchHybrid({
+        headers,
+        query: q('boyfriend hits'),
+        rankingVersion: 'v2',
+      });
+
+      expect(rarityRequests).toHaveLength(1);
+      const req = rarityRequests[0];
+      expect(req.size).toBe(0);
+      expect(req.query).toEqual({ term: { tenant_id: 'tenant-a' } });
+      const filters = req.aggs.df.filters.filters;
+      expect(Object.keys(filters).filter((k) => k.startsWith('w'))).toEqual([
+        'w0',
+        'w1',
+      ]);
+      expect(filters.w0.multi_match).toMatchObject({
+        query: 'boyfriend',
+        type: 'phrase_prefix',
+      });
+      expect(filters.w1.multi_match.query).toBe('hits');
+    });
+
+    describe('per-word cache', () => {
+      const probedWords = (req: any): string[] =>
+        Object.entries(req.aggs.df.filters.filters)
+          .filter(([k]) => /^w\d+$/.test(k))
+          .map(([, v]: any) => v.multi_match.query);
+
+      it('probes only the words the cache does not hold', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend shelter'),
+          rankingVersion: 'v2',
+        });
+
+        expect(rarityRequests).toHaveLength(2);
+        expect(probedWords(rarityRequests[0])).toEqual(['boyfriend', 'hits']);
+        expect(probedWords(rarityRequests[1])).toEqual(['shelter']);
+      });
+
+      it('makes no Elasticsearch rarity call on a full hit, with the same clauses', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        const first = JSON.stringify(capturedMainRequest.query);
+        await service.searchHybrid({
+          headers,
+          query: q('hits boyfriend'),
+          rankingVersion: 'v2',
+        });
+
+        expect(rarityRequests).toHaveLength(1);
+        // Word order differs, so compare the set of word clauses.
+        expect(nameEdgeClauses(capturedMainRequest.query).length).toBe(
+          nameEdgeClauses(JSON.parse(first)).length,
+        );
+      });
+
+      it('gives a cached word the same idf as a probed word', async () => {
+        rarityImpl = () =>
+          Promise.resolve({
+            hits: { total: { value: 29181 } },
+            aggregations: {
+              df: {
+                buckets: { w0: { doc_count: 2 }, c0: { doc_count: 0 } },
+              },
+            },
+          });
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        const boostFor = () => {
+          const found: any[] = [];
+          const walk = (n: any) => {
+            if (Array.isArray(n)) n.forEach(walk);
+            else if (n && typeof n === 'object') {
+              if (n.constant_score?.filter?.match?.['name.edge'] === 'hits') {
+                found.push(n.constant_score.boost);
+              }
+              Object.values(n).forEach(walk);
+            }
+          };
+          walk(capturedMainRequest.query);
+          return found[0];
+        };
+        const probedBoost = boostFor();
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(boostFor()).toBeCloseTo(probedBoost);
+        expect(probedBoost).toBeCloseTo(15 * idf(29181, 2));
+      });
+
+      it('keeps tenants and languages apart', async () => {
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        await service.searchHybrid({
+          headers: { ...headers, 'x-tenant-id': 'tenant-b' },
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(2);
+      });
+
+      it('caches a split with its word and replays it from the cache', async () => {
+        rarityImpl = (req: any) => {
+          const keys = Object.keys(req.aggs.df.filters.filters);
+          return Promise.resolve({
+            hits: { total: { value: 1000 } },
+            aggregations: {
+              df: {
+                buckets: Object.fromEntries(
+                  keys.map((k) => [
+                    k,
+                    { doc_count: k === 'w0' ? 3 : k === 's0_1' ? 300 : 1 },
+                  ]),
+                ),
+              },
+            },
+          });
+        };
+        await service.searchHybrid({
+          headers,
+          query: q('foodbank'),
+          rankingVersion: 'v2',
+        });
+        const first = JSON.stringify(capturedMainRequest.query);
+        await service.searchHybrid({
+          headers,
+          query: q('foodbank'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(JSON.stringify(capturedMainRequest.query)).toBe(first);
+        expect(first).toContain('food bank');
+      });
+
+      it('does not cache anything when the probe fails', async () => {
+        rarityImpl = () => Promise.reject(new Error('es down'));
+        await service.searchHybrid({
+          headers,
+          query: q('hits'),
+          rankingVersion: 'v2',
+        });
+        expect(cacheStore.size).toBe(0);
+      });
+
+      it('keeps the cached entries under the cap, deleting the oldest first', async () => {
+        (service as any).wordRarityKeys = new BoundedKeyRegistry(2);
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits shelter'),
+          rankingVersion: 'v2',
+        });
+        expect(cacheStore.size).toBe(2);
+        const keys = [...cacheStore.keys()];
+        expect(keys.some((k) => k.includes('boyfriend'))).toBe(false);
+      });
+
+      it('still answers correctly when the cache read fails', async () => {
+        cacheGetMany = (keys) => Promise.resolve(keys.map(() => undefined));
+        cacheSetMany = () => Promise.resolve();
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        expect(rarityRequests).toHaveLength(1);
+        expect(nameEdgeClauses(capturedMainRequest.query)).toHaveLength(2);
+      });
+
+      it('falls back to the flat match when the cache layer itself throws', async () => {
+        cacheGetMany = () => Promise.reject(new Error('redis down'));
+        await service.searchHybrid({
+          headers,
+          query: q('boyfriend hits'),
+          rankingVersion: 'v2',
+        });
+        expect(nameEdgeClauses(capturedMainRequest.query)).toEqual([
+          { 'name.edge': { query: 'boyfriend hits', boost: 15 } },
+        ]);
+      });
+    });
+  });
+
+  describe('query length and logging (ISS-2739 follow-up)', () => {
+    const long = (n: number) => `shelter ${'z'.repeat(n)}`;
+
+    it('v2 rejects a query over 500 characters with a 400', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: long(600) },
+          rankingVersion: 'v2',
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(esSearch).not.toHaveBeenCalled();
+    });
+
+    it('v2 accepts a query of exactly 500 characters', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: 'a'.repeat(500) },
+          rankingVersion: 'v2',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('v1 rejects a query over 500 characters with a 400', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: long(600) },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(esSearch).not.toHaveBeenCalled();
+    });
+
+    it('v1 accepts a query of exactly 500 characters', async () => {
+      await expect(
+        service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: 'a'.repeat(500) },
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['v1', undefined],
+      ['v2', 'v2' as const],
+    ])(
+      '%s info log carries length and id only, never any query text',
+      async (_n, rankingVersion) => {
+        const logSpy = jest.spyOn((service as any).logger, 'log');
+        const text = `help ${'q'.repeat(300)}`;
+        await service.searchHybrid({
+          headers,
+          query: { ...baseQuery, query: text },
+          rankingVersion,
+        });
+        const lines = logSpy.mock.calls.map((c) => String(c[0]));
+        expect(lines.length).toBeGreaterThan(0);
+        for (const line of lines) {
+          expect(line).not.toContain(text);
+          expect(line).not.toContain('help');
+          expect(line).not.toContain('qqqq');
+        }
+        expect(lines.join('\n')).toMatch(/len=305 id=[0-9a-f]{12}(?! start)/);
+      },
+    );
+  });
+
+  it.each([
+    ['v1', undefined],
+    ['v2', 'v2' as const],
+  ])(
+    '%s debug log never carries the full query text',
+    async (_n, rankingVersion) => {
+      const debugSpy = jest.spyOn((service as any).logger, 'debug');
+      const text = `help ${'q'.repeat(300)}`;
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query: text },
+        rankingVersion,
+      });
+      const lines = debugSpy.mock.calls.map((c) => String(c[0]));
+      for (const line of lines) {
+        expect(line).not.toContain(text);
+        expect(line).not.toContain('q'.repeat(41));
+      }
+      expect(lines.join('\n')).toMatch(/len=305 id=[0-9a-f]{12}/);
+    },
+  );
+
+  describe('v1 is unchanged without rankingVersion (/search regression guard)', () => {
+    const collect = (node: any, pred: (n: any) => boolean, out: any[] = []) => {
+      if (Array.isArray(node)) node.forEach((n) => collect(n, pred, out));
+      else if (node && typeof node === 'object') {
+        if (pred(node)) out.push(node);
+        Object.values(node).forEach((v) => collect(v, pred, out));
+      }
+      return out;
+    };
+
+    it('sends no rarity request, keeps approximate knn and the flat name edge match', async () => {
+      await service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query: 'my boyfriend hits me' },
+      });
+
+      expect(rarityRequests).toHaveLength(0);
+      expect(
+        esSearch.mock.calls.some(([r]) => r.size === 0 && r.aggs && r.aggs.df),
+      ).toBe(false);
+
+      const taxonomyCall = esSearch.mock.calls
+        .map((c) => c[0])
+        .find((req) => req.index === 'hybrid_taxonomies');
+      expect(taxonomyCall.knn).toMatchObject({
+        field: 'embedding',
+        query_vector: [0.1, 0.2, 0.3, 0.4],
+        k: 10,
+        num_candidates: 500,
+        filter: [{ term: { tenant_id: 'tenant-a' } }],
+      });
+      expect(taxonomyCall.query?.script_score).toBeUndefined();
+
+      const main = capturedMainRequest.query;
+      expect(
+        collect(main, (n) => 'name.edge' in n && n['name.edge'].query),
+      ).toEqual([
+        { 'name.edge': { query: 'my boyfriend hits me', boost: 15 } },
+      ]);
+      expect(
+        collect(main, (n) => n.constant_score?.filter?.match?.['name.edge']),
+      ).toEqual([]);
+      expect(collect(main, (n) => 'name.clean' in n && 'prefix' in n)).toEqual(
+        [],
+      );
+      expect(
+        collect(main, (n) => n.prefix && 'name.clean' in n.prefix),
+      ).toEqual([]);
+    });
+  });
+
+  describe('run-together words: joins and splits (v2 only)', () => {
+    const N = 29181;
+    const idf = (n: number, df: number) =>
+      Math.log(1 + (n - df + 0.5) / (df + 0.5));
+    const walk = (
+      node: any,
+      pred: (n: any) => boolean,
+      out: any[] = [],
+    ): any[] => {
+      if (Array.isArray(node)) node.forEach((n) => walk(n, pred, out));
+      else if (node && typeof node === 'object') {
+        if (pred(node)) out.push(node);
+        Object.values(node).forEach((v) => walk(v, pred, out));
+      }
+      return out;
+    };
+    const joinedClauses = (node: any) =>
+      walk(node, (n) => n.constant_score?.filter?.prefix?.['name.clean']).map(
+        (n) => n.constant_score,
+      );
+    const splitNameClauses = (node: any) =>
+      walk(
+        node,
+        (n) => n.constant_score?.filter?.match_phrase?.['name.clean'],
+      ).map((n) => n.constant_score);
+    const splitRecallClauses = (node: any) =>
+      walk(
+        node,
+        (n) => n.multi_match?.type === 'phrase' && !n.multi_match.boost,
+      );
+    const respond = (counts: Record<string, number>) => () =>
+      Promise.resolve({
+        hits: { total: { value: N } },
+        aggregations: {
+          df: {
+            buckets: Object.fromEntries(
+              [
+                ...Object.entries(counts),
+                // Document-count buckets for the typo gate: low, so the
+                // clause list keeps its typo clauses as before.
+                ...Object.keys(counts)
+                  .filter((k) => k.startsWith('w'))
+                  .map((k): [string, number] => [`c${k.slice(1)}`, 0]),
+              ].map(([k, v]) => [k, { doc_count: v }]),
+            ),
+          },
+        },
+      });
+    const run = (query: string) =>
+      service.searchHybrid({
+        headers,
+        query: { ...baseQuery, query },
+        rankingVersion: 'v2',
+      });
+
+    it('JOIN: "food bank near me" adds a prefix clause for "foodbank" worth both word rarities', async () => {
+      rarityImpl = respond({
+        w0: 800,
+        w1: 600,
+        w2: 2000,
+      });
+
+      await run('food bank near me');
+
+      const cs = joinedClauses(capturedMainRequest.query);
+      const byJoin = Object.fromEntries(
+        cs.map((c) => [c.filter.prefix['name.clean'], c.boost]),
+      );
+      expect(byJoin.foodbank).toBeCloseTo(15 * (idf(N, 800) + idf(N, 600)));
+      // "me" is a function word and adds 0, so "nearme" is worth "near" only.
+      expect(byJoin.nearme).toBeCloseTo(15 * idf(N, 2000));
+      expect(byJoin.foodbanknear).toBeDefined();
+    });
+
+    it('JOIN: "my free taxes" adds "myfreetaxes" worth the sum of the word rarities', async () => {
+      rarityImpl = respond({ w0: 10, w1: 400 });
+
+      await run('my free taxes');
+
+      const cs = joinedClauses(capturedMainRequest.query);
+      const c = cs.find((x) => x.filter.prefix['name.clean'] === 'myfreetaxes');
+      expect(c).toBeDefined();
+      expect(c.boost).toBeCloseTo(15 * (idf(N, 10) + idf(N, 400)));
+    });
+
+    it('JOIN: adds no joined clause for a single-word query', async () => {
+      await run('myfreetaxes');
+
+      expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
+    });
+
+    it('JOIN: adds no name.edge and no joined clause when every word is a function word', async () => {
+      await run('me and you');
+
+      expect(joinedClauses(capturedMainRequest.query)).toEqual([]);
+      expect(JSON.stringify(capturedMainRequest.query)).not.toContain(
+        'name.edge',
+      );
+    });
+
+    it('SPLIT: "foodbank" adds a name clause and a recall clause for "food bank"', async () => {
+      rarityImpl = respond({ w0: 3, s0_0: 1, s0_1: 1622, s0_2: 2 });
+
+      await run('foodbank');
+
+      const cs = splitNameClauses(capturedMainRequest.query);
+      expect(cs).toHaveLength(1);
+      expect(cs[0].filter).toEqual({
+        match_phrase: { 'name.clean': 'food bank' },
+      });
+      expect(cs[0].boost).toBeCloseTo(15 * idf(N, 1622));
+
+      const recall = splitRecallClauses(capturedMainRequest.query);
+      expect(recall).toHaveLength(1);
+      expect(recall[0].multi_match.query).toBe('food bank');
+    });
+
+    it('SPLIT: adds nothing when no split phrase is more common than the word', async () => {
+      rarityImpl = respond({ w0: 3, s0_0: 1, s0_1: 3, s0_2: 2 });
+
+      await run('foodbank');
+
+      expect(splitNameClauses(capturedMainRequest.query)).toEqual([]);
+      expect(splitRecallClauses(capturedMainRequest.query)).toEqual([]);
+    });
+
+    it('SPLIT: the rarity request carries phrase buckets for the split candidates', async () => {
+      await run('foodbank');
+
+      const filters = rarityRequests[0].aggs.df.filters.filters;
+      expect(filters.s0_1.multi_match).toMatchObject({
+        query: 'food bank',
+        type: 'phrase',
+      });
+      expect(Object.keys(filters).filter((k) => k.startsWith('s0_'))).toEqual([
+        's0_0',
+        's0_1',
+        's0_2',
+      ]);
+    });
   });
 });

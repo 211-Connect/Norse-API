@@ -1,0 +1,2051 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/v2/search": {
+      "get": {
+        "operationId": "DocumentedV2SearchController_getResources",
+        "summary": "Search with intent and clarification questions, the emergency question first (draft)",
+        "description": "Hybrid search plus classification and a rules engine. Behind the `V2_SEARCH_ENABLED` flag; the request and response shapes are a draft until the v2 ADR (ISS-2493).",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "Result offset must stay within Elasticsearch max_result_window: page * limit may not exceed 10000 (ES can only return the first 10000 hits), e.g. with the default limit of 25 the highest page is 400.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "region",
+            "required": false,
+            "in": "query",
+            "description": "Search an area instead of a point: one or more Region ids (comma list, up to 20), e.g. `county:53077` or `county:53077,county:53033` — `state:XX`, `county:<5-digit FIPS>`, `place:<7-digit Census GEOID>` or `zip:<5 digits>`. A resource matching any of them is returned; `area_match` says what matching means. Takes precedence over `coords`: `distance` and `geo_type` are ignored, and `coords`, if sent, only sets the origin for `sort=distance`. Unknown ids are a 400. Ids come from `GET /geocoding/forward` (`region_id`). See docs/area-search.md.",
+            "schema": {
+              "example": "county:53077",
+              "type": "string"
+            }
+          },
+          {
+            "name": "area_match",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. `located`: the resource is located inside the area; resources without a location are left out. `located_or_serving`: a resource with a location must be inside the area, one without a location matches when its service_area overlaps the area. `serving`: located inside the area OR its service_area overlaps it. Absent: the tenant default from the CMS, else `located_or_serving`.",
+            "schema": {
+              "enum": [
+                "located",
+                "located_or_serving",
+                "serving"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "unlocated",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. Which resources with neither a location nor a service_area, which cannot be placed in any area, are also returned in every area search: `none`, `virtual` (only virtual services) or `all`. Absent: the tenant default from the CMS, else `virtual`.",
+            "schema": {
+              "enum": [
+                "none",
+                "virtual",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "filters",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "additionalProperties": true,
+              "default": {},
+              "type": "object"
+            }
+          },
+          {
+            "name": "organization_id",
+            "required": false,
+            "in": "query",
+            "description": "Scope results to resources belonging to a single organization, by its stable organization id (the `organization_id` returned by /suggestion and /organization). Composes with any query_type and with filters.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "taxonomy",
+            "required": false,
+            "in": "query",
+            "description": "HSIS taxonomy scope as comma-delimited string or array",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "distance",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "age",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 300,
+              "default": 25,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "geo_type",
+            "required": false,
+            "in": "query",
+            "description": "distance 0 (the default) means no radius filter. Omitted (default): service_area containment AND distance both required (a result with no map point skips the distance check). 'proximity': a result with a map point needs distance only; a result with no map point needs a service_area containing coords. 'boundary': ignores coords/distance, matches service_area against a POST body geometry.",
+            "schema": {
+              "enum": [
+                "boundary",
+                "proximity"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "relevance",
+              "enum": [
+                "relevance",
+                "distance",
+                "name",
+                "organization"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "relevance_cutoff",
+            "required": false,
+            "in": "query",
+            "description": "`on` trims low-relevance results; `off` (default) returns the full matched set. The cut uses the dynamic ladder only: 0.2 of the top score, tightened stepwise up to 0.5 when more than 1,000 results would survive, and never below the top-20 scores. There is no `relevance_cutoff_fraction` parameter (ADR 0039 Decision 77). The cut reads scores after the need boost (Decision 58). When a cutoff applies, `hits.total` reports the kept count and `relevance_cutoff.matched_before_cutoff` keeps the original.",
+            "schema": {
+              "default": "off",
+              "enum": [
+                "off",
+                "on"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "coords",
+            "required": false,
+            "in": "query",
+            "description": "Comma-delimited longitude,latitude. Longitude -180 to 180, latitude -90 to 90. Anything else is a 400.",
+            "schema": {
+              "example": "-120.740135,47.751076",
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "required": false,
+            "in": "query",
+            "description": "Free text. A repeated parameter or an AND/OR object is a 400.",
+            "schema": {
+              "maxLength": 500,
+              "default": "",
+              "type": "string"
+            }
+          },
+          {
+            "name": "needs",
+            "required": false,
+            "in": "query",
+            "description": "Confirmed need codes. Repeat the parameter (`needs=A&needs=B`) or send a comma-separated list (`needs=A,B`). They never filter. They boost results and order them in blocks: services with every sent need first, then services with some, then the rest.",
+            "schema": {
+              "example": [
+                "N-HOU-02"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "passed_needs",
+            "required": false,
+            "in": "query",
+            "description": "Need codes the caller already declined. They are never offered again. Same formats and codes as `needs`: an unknown code or N-X is a 400 that names it.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "urgency",
+            "required": false,
+            "in": "query",
+            "description": "Urgency the caller confirmed. `U-X` means the time is not yet known and counts as absent. `U-1` to `U-4` hide the emergency card, also on a keyword floor hit.",
+            "schema": {
+              "enum": [
+                "U-0",
+                "U-1",
+                "U-2",
+                "U-3",
+                "U-4",
+                "U-X"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "clarify",
+            "required": false,
+            "in": "query",
+            "description": "`auto` returns clarification questions. `never` keeps only the emergency question.",
+            "schema": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "never"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "locale",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "default": "en"
+            },
+            "description": "Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read."
+          },
+          {
+            "name": "tenant_id",
+            "required": true,
+            "in": "query",
+            "description": "Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2SearchResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
+          }
+        },
+        "tags": [
+          "Search v2"
+        ]
+      },
+      "post": {
+        "operationId": "DocumentedV2SearchController_getResourcesPost",
+        "summary": "Search with a GeoJSON geometry body (draft)",
+        "description": "Same as `GET`, with the v1 POST body (`geometry`). Behind the `V2_SEARCH_ENABLED` flag; the shapes are a draft until the v2 ADR (ISS-2493).",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "Result offset must stay within Elasticsearch max_result_window: page * limit may not exceed 10000 (ES can only return the first 10000 hits), e.g. with the default limit of 25 the highest page is 400.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "region",
+            "required": false,
+            "in": "query",
+            "description": "Search an area instead of a point: one or more Region ids (comma list, up to 20), e.g. `county:53077` or `county:53077,county:53033` — `state:XX`, `county:<5-digit FIPS>`, `place:<7-digit Census GEOID>` or `zip:<5 digits>`. A resource matching any of them is returned; `area_match` says what matching means. Takes precedence over `coords`: `distance` and `geo_type` are ignored, and `coords`, if sent, only sets the origin for `sort=distance`. Unknown ids are a 400. Ids come from `GET /geocoding/forward` (`region_id`). See docs/area-search.md.",
+            "schema": {
+              "example": "county:53077",
+              "type": "string"
+            }
+          },
+          {
+            "name": "area_match",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. `located`: the resource is located inside the area; resources without a location are left out. `located_or_serving`: a resource with a location must be inside the area, one without a location matches when its service_area overlaps the area. `serving`: located inside the area OR its service_area overlaps it. Absent: the tenant default from the CMS, else `located_or_serving`.",
+            "schema": {
+              "enum": [
+                "located",
+                "located_or_serving",
+                "serving"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "unlocated",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. Which resources with neither a location nor a service_area, which cannot be placed in any area, are also returned in every area search: `none`, `virtual` (only virtual services) or `all`. Absent: the tenant default from the CMS, else `virtual`.",
+            "schema": {
+              "enum": [
+                "none",
+                "virtual",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "filters",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "additionalProperties": true,
+              "default": {},
+              "type": "object"
+            }
+          },
+          {
+            "name": "organization_id",
+            "required": false,
+            "in": "query",
+            "description": "Scope results to resources belonging to a single organization, by its stable organization id (the `organization_id` returned by /suggestion and /organization). Composes with any query_type and with filters.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "taxonomy",
+            "required": false,
+            "in": "query",
+            "description": "HSIS taxonomy scope as comma-delimited string or array",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "distance",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "age",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 300,
+              "default": 25,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "geo_type",
+            "required": false,
+            "in": "query",
+            "description": "distance 0 (the default) means no radius filter. Omitted (default): service_area containment AND distance both required (a result with no map point skips the distance check). 'proximity': a result with a map point needs distance only; a result with no map point needs a service_area containing coords. 'boundary': ignores coords/distance, matches service_area against a POST body geometry.",
+            "schema": {
+              "enum": [
+                "boundary",
+                "proximity"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "relevance",
+              "enum": [
+                "relevance",
+                "distance",
+                "name",
+                "organization"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "relevance_cutoff",
+            "required": false,
+            "in": "query",
+            "description": "`on` trims low-relevance results; `off` (default) returns the full matched set. The cut uses the dynamic ladder only: 0.2 of the top score, tightened stepwise up to 0.5 when more than 1,000 results would survive, and never below the top-20 scores. There is no `relevance_cutoff_fraction` parameter (ADR 0039 Decision 77). The cut reads scores after the need boost (Decision 58). When a cutoff applies, `hits.total` reports the kept count and `relevance_cutoff.matched_before_cutoff` keeps the original.",
+            "schema": {
+              "default": "off",
+              "enum": [
+                "off",
+                "on"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "coords",
+            "required": false,
+            "in": "query",
+            "description": "Comma-delimited longitude,latitude. Longitude -180 to 180, latitude -90 to 90. Anything else is a 400.",
+            "schema": {
+              "example": "-120.740135,47.751076",
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "required": false,
+            "in": "query",
+            "description": "Free text. A repeated parameter or an AND/OR object is a 400.",
+            "schema": {
+              "maxLength": 500,
+              "default": "",
+              "type": "string"
+            }
+          },
+          {
+            "name": "needs",
+            "required": false,
+            "in": "query",
+            "description": "Confirmed need codes. Repeat the parameter (`needs=A&needs=B`) or send a comma-separated list (`needs=A,B`). They never filter. They boost results and order them in blocks: services with every sent need first, then services with some, then the rest.",
+            "schema": {
+              "example": [
+                "N-HOU-02"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "passed_needs",
+            "required": false,
+            "in": "query",
+            "description": "Need codes the caller already declined. They are never offered again. Same formats and codes as `needs`: an unknown code or N-X is a 400 that names it.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "urgency",
+            "required": false,
+            "in": "query",
+            "description": "Urgency the caller confirmed. `U-X` means the time is not yet known and counts as absent. `U-1` to `U-4` hide the emergency card, also on a keyword floor hit.",
+            "schema": {
+              "enum": [
+                "U-0",
+                "U-1",
+                "U-2",
+                "U-3",
+                "U-4",
+                "U-X"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "clarify",
+            "required": false,
+            "in": "query",
+            "description": "`auto` returns clarification questions. `never` keeps only the emergency question.",
+            "schema": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "never"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "locale",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "default": "en"
+            },
+            "description": "Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read."
+          },
+          {
+            "name": "tenant_id",
+            "required": true,
+            "in": "query",
+            "description": "Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).",
+            "schema": {}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "geometry": {
+                    "type": "object",
+                    "description": "GeoJSON geometry"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2SearchResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
+          }
+        },
+        "tags": [
+          "Search v2"
+        ]
+      }
+    },
+    "/v2/search/pins": {
+      "get": {
+        "operationId": "DocumentedV2SearchController_getPins",
+        "summary": "Map pins for a v2 search (draft)",
+        "description": "The locations of a v2 search independent of list pagination, up to 10,000. Same membership as `GET /v2/search` (child taxonomy codes, `region`); needs, urgency and clarify are ignored. The query text is classified, as in the list, so need boosts apply to the pins. Matches without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "Result offset must stay within Elasticsearch max_result_window: page * limit may not exceed 10000 (ES can only return the first 10000 hits), e.g. with the default limit of 25 the highest page is 400.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "region",
+            "required": false,
+            "in": "query",
+            "description": "Search an area instead of a point: one or more Region ids (comma list, up to 20), e.g. `county:53077` or `county:53077,county:53033` — `state:XX`, `county:<5-digit FIPS>`, `place:<7-digit Census GEOID>` or `zip:<5 digits>`. A resource matching any of them is returned; `area_match` says what matching means. Takes precedence over `coords`: `distance` and `geo_type` are ignored, and `coords`, if sent, only sets the origin for `sort=distance`. Unknown ids are a 400. Ids come from `GET /geocoding/forward` (`region_id`). See docs/area-search.md.",
+            "schema": {
+              "example": "county:53077",
+              "type": "string"
+            }
+          },
+          {
+            "name": "area_match",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. `located`: the resource is located inside the area; resources without a location are left out. `located_or_serving`: a resource with a location must be inside the area, one without a location matches when its service_area overlaps the area. `serving`: located inside the area OR its service_area overlaps it. Absent: the tenant default from the CMS, else `located_or_serving`.",
+            "schema": {
+              "enum": [
+                "located",
+                "located_or_serving",
+                "serving"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "unlocated",
+            "required": false,
+            "in": "query",
+            "description": "Only with `region`. Which resources with neither a location nor a service_area, which cannot be placed in any area, are also returned in every area search: `none`, `virtual` (only virtual services) or `all`. Absent: the tenant default from the CMS, else `virtual`.",
+            "schema": {
+              "enum": [
+                "none",
+                "virtual",
+                "all"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "filters",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "additionalProperties": true,
+              "default": {},
+              "type": "object"
+            }
+          },
+          {
+            "name": "organization_id",
+            "required": false,
+            "in": "query",
+            "description": "Scope results to resources belonging to a single organization, by its stable organization id (the `organization_id` returned by /suggestion and /organization). Composes with any query_type and with filters.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "taxonomy",
+            "required": false,
+            "in": "query",
+            "description": "HSIS taxonomy scope as comma-delimited string or array",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "distance",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "age",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 300,
+              "default": 25,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "geo_type",
+            "required": false,
+            "in": "query",
+            "description": "distance 0 (the default) means no radius filter. Omitted (default): service_area containment AND distance both required (a result with no map point skips the distance check). 'proximity': a result with a map point needs distance only; a result with no map point needs a service_area containing coords. 'boundary': ignores coords/distance, matches service_area against a POST body geometry.",
+            "schema": {
+              "enum": [
+                "boundary",
+                "proximity"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "relevance",
+              "enum": [
+                "relevance",
+                "distance",
+                "name",
+                "organization"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "relevance_cutoff",
+            "required": false,
+            "in": "query",
+            "description": "`on` trims low-relevance results; `off` (default) returns the full matched set. The cut uses the dynamic ladder only: 0.2 of the top score, tightened stepwise up to 0.5 when more than 1,000 results would survive, and never below the top-20 scores. There is no `relevance_cutoff_fraction` parameter (ADR 0039 Decision 77). The cut reads scores after the need boost (Decision 58). When a cutoff applies, `hits.total` reports the kept count and `relevance_cutoff.matched_before_cutoff` keeps the original.",
+            "schema": {
+              "default": "off",
+              "enum": [
+                "off",
+                "on"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "coords",
+            "required": false,
+            "in": "query",
+            "description": "Comma-delimited longitude,latitude. Longitude -180 to 180, latitude -90 to 90. Anything else is a 400.",
+            "schema": {
+              "example": "-120.740135,47.751076",
+              "type": "string"
+            }
+          },
+          {
+            "name": "query",
+            "required": false,
+            "in": "query",
+            "description": "Free text. A repeated parameter or an AND/OR object is a 400.",
+            "schema": {
+              "maxLength": 500,
+              "default": "",
+              "type": "string"
+            }
+          },
+          {
+            "name": "needs",
+            "required": false,
+            "in": "query",
+            "description": "Confirmed need codes. Repeat the parameter (`needs=A&needs=B`) or send a comma-separated list (`needs=A,B`). They never filter. They boost results and order them in blocks: services with every sent need first, then services with some, then the rest.",
+            "schema": {
+              "example": [
+                "N-HOU-02"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "passed_needs",
+            "required": false,
+            "in": "query",
+            "description": "Need codes the caller already declined. They are never offered again. Same formats and codes as `needs`: an unknown code or N-X is a 400 that names it.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "urgency",
+            "required": false,
+            "in": "query",
+            "description": "Urgency the caller confirmed. `U-X` means the time is not yet known and counts as absent. `U-1` to `U-4` hide the emergency card, also on a keyword floor hit.",
+            "schema": {
+              "enum": [
+                "U-0",
+                "U-1",
+                "U-2",
+                "U-3",
+                "U-4",
+                "U-X"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "clarify",
+            "required": false,
+            "in": "query",
+            "description": "`auto` returns clarification questions. `never` keeps only the emergency question.",
+            "schema": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "never"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "locale",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "default": "en"
+            },
+            "description": "Required. Exactly one supported language code, for example `en` or `es`; a region tag (`en-US`) or a weighted list is a 400. v2 reads it from the URL only; the accept-language header is not read."
+          },
+          {
+            "name": "tenant_id",
+            "required": true,
+            "in": "query",
+            "description": "Tenant UUID. v2 reads it from the URL only; the x-tenant-id header is not read (ADR 0039 Decision 34).",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPinsResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true` (any case), or the tenant in `tenant_id` has `enableV2Api` off."
+          }
+        },
+        "tags": [
+          "Search v2"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Norse API: v2 search (draft)",
+    "description": "Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.\n\nConfirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):\n- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.\n- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.\n- The need boost is on by default.\n- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.\n- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on.",
+    "version": "2.0.0-draft",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "schemas": {
+      "RelevanceCutoffDto": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "Whether results were actually removed. `false` means the strategy ran and declined to cut — not that it failed."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_elbow",
+              "below_min_keep",
+              "cut_too_large"
+            ],
+            "description": "Why nothing was cut, when `applied` is false. `no_elbow`: nothing scored meaningfully below the threshold, so the distribution is flat and returning everything is the honest answer. `below_min_keep`: the matched set is already smaller than the floor. `cut_too_large`: the cut point was located exactly, but keeps more results than are worth enumerating, so nothing was trimmed — \"found it, too big\", not \"could not find it\"."
+          },
+          "kept": {
+            "type": "number",
+            "description": "Results kept. Equals `matched_before_cutoff` when `applied` is false."
+          },
+          "matched_before_cutoff": {
+            "type": "number",
+            "description": "Results the query matched before trimming — the number `hits.total` would have reported with `relevance_cutoff=off`. Kept on the wire because a cutoff hides results rather than reordering them; a consumer needs to be able to say \"18 of 1,200 shown\"."
+          },
+          "cutoff_score": {
+            "type": "number",
+            "nullable": true,
+            "description": "Score of the last kept result **on the cutoff probe’s scale, which is not the scale of `_score` in `hits`**. The probe ranks on semantic and lexical signal only — it omits the distance decay (0–25 points) and the priority boost that the main query adds — so this value is systematically lower than the score of the same document in the response, and the two must not be compared. It is comparable across responses, which is what it is for: evaluating the shipped threshold retroactively against real traffic."
+          },
+          "candidates_examined": {
+            "type": "number",
+            "description": "How many results scored above the threshold — the size of the cut that was located, whether or not it was applied. Counted over the whole matched set, not a fixed window."
+          }
+        },
+        "required": [
+          "applied",
+          "reason",
+          "kept",
+          "matched_before_cutoff",
+          "cutoff_score",
+          "candidates_examined"
+        ]
+      },
+      "LatLngDto": {
+        "type": "object",
+        "properties": {
+          "lat": {
+            "type": "number",
+            "example": 39.0086
+          },
+          "lng": {
+            "type": "number",
+            "example": -94.3462
+          }
+        },
+        "required": [
+          "lat",
+          "lng"
+        ]
+      },
+      "RegionSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "county:29095"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "state",
+              "county",
+              "place",
+              "zip"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "example": "Jackson County, MO"
+          },
+          "state": {
+            "type": "string",
+            "example": "MO",
+            "description": "Postal code of the state."
+          },
+          "centroid": {
+            "description": "A representative point, e.g. to bias an address search.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LatLngDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "name",
+          "state"
+        ]
+      },
+      "ResolvedLocationDto": {
+        "type": "object",
+        "properties": {
+          "regions": {
+            "description": "The Regions searched, in the order asked.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegionSummaryDto"
+            }
+          },
+          "area_match": {
+            "type": "string",
+            "enum": [
+              "located",
+              "located_or_serving",
+              "serving"
+            ],
+            "description": "The `area_match` applied: as sent, else the tenant default."
+          },
+          "unlocated": {
+            "type": "string",
+            "enum": [
+              "none",
+              "virtual",
+              "all"
+            ],
+            "description": "The `unlocated` applied: as sent, else the tenant default."
+          }
+        },
+        "required": [
+          "regions",
+          "area_match",
+          "unlocated"
+        ]
+      },
+      "V2HitsTotalDto": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "number",
+            "example": 29127
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "eq",
+              "gte"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "relation"
+        ]
+      },
+      "ServiceDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "alert": {
+            "type": "string",
+            "nullable": true
+          },
+          "alert_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "alternate_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          },
+          "eligibility": {
+            "type": "string",
+            "nullable": true
+          },
+          "application_process": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "alert",
+          "alert_date",
+          "alternate_name",
+          "description",
+          "summary",
+          "eligibility",
+          "application_process"
+        ]
+      },
+      "V2PointDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "Point"
+            ]
+          },
+          "coordinates": {
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Longitude, then latitude.",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "coordinates"
+        ]
+      },
+      "V2PhysicalAddressDto": {
+        "type": "object",
+        "properties": {
+          "address_1": {
+            "type": "string",
+            "nullable": true
+          },
+          "address_2": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "postal_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "type": {
+            "type": "string",
+            "example": "physical"
+          }
+        },
+        "required": [
+          "address_1",
+          "address_2",
+          "city",
+          "state",
+          "country",
+          "postal_code"
+        ]
+      },
+      "V2LocationDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "alternate_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          },
+          "point": {
+            "nullable": true,
+            "description": "GeoJSON point.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/V2PointDto"
+              }
+            ]
+          },
+          "physical_address": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/V2PhysicalAddressDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "alternate_name",
+          "description",
+          "summary",
+          "point",
+          "physical_address"
+        ]
+      },
+      "OrganizationDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "alternate_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "alternate_name",
+          "description",
+          "summary"
+        ]
+      },
+      "V2TaxonomyDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "old_codes": {
+            "description": "Earlier AIRS/211 codes.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "use_references": {
+            "description": "Other names for the term.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "see_also_references": {
+            "type": "array",
+            "description": "Related terms: a code and a name each.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "description",
+          "old_codes"
+        ]
+      },
+      "V2SearchSourceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "service_at_location_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "service_area_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "schedule": {
+            "type": "string",
+            "nullable": true
+          },
+          "service": {
+            "$ref": "#/components/schemas/ServiceDto"
+          },
+          "location": {
+            "$ref": "#/components/schemas/V2LocationDto"
+          },
+          "organization": {
+            "$ref": "#/components/schemas/OrganizationDto"
+          },
+          "taxonomies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2TaxonomyDto"
+            }
+          },
+          "facets": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Per-document facet values. Often empty."
+          },
+          "taxonomy_names": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Taxonomy code to display names, per language. Often empty."
+          },
+          "attribute_values": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Tenant attribute values. Often empty."
+          },
+          "minimum_age": {
+            "type": "number",
+            "nullable": true
+          },
+          "maximum_age": {
+            "type": "number",
+            "nullable": true
+          },
+          "priority": {
+            "type": "number"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "attribution": {
+            "type": "string",
+            "description": "Source of the listing, for example a 211 name."
+          }
+        },
+        "required": [
+          "id",
+          "service_at_location_id",
+          "service_id",
+          "service_area_id",
+          "tenant_id",
+          "name",
+          "description",
+          "summary",
+          "phone",
+          "url",
+          "email",
+          "schedule",
+          "service",
+          "location",
+          "organization",
+          "taxonomies",
+          "facets",
+          "taxonomy_names",
+          "attribute_values",
+          "minimum_age",
+          "maximum_age",
+          "priority",
+          "pinned",
+          "attribution"
+        ]
+      },
+      "V2SearchHitDto": {
+        "type": "object",
+        "properties": {
+          "_index": {
+            "type": "string",
+            "example": "hybrid_search_resources_en_v1"
+          },
+          "_id": {
+            "type": "string"
+          },
+          "_score": {
+            "type": "number",
+            "nullable": true,
+            "description": "Relevance score. null on a text search (the hybrid ranking sorts on a script). A number on a browse (no text)."
+          },
+          "_source": {
+            "$ref": "#/components/schemas/V2SearchSourceDto"
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Sort values. Present on a browse (no text): a number, then the result id."
+          },
+          "matched_needs": {
+            "description": "Need codes sent in `needs` that this service matches, in sent order. Present only when the request sent `needs`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "_index",
+          "_id",
+          "_score",
+          "_source"
+        ]
+      },
+      "V2SearchHitsDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "$ref": "#/components/schemas/V2HitsTotalDto"
+          },
+          "max_score": {
+            "type": "number",
+            "nullable": true,
+            "description": "null on a text search; the top score on a browse."
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2SearchHitDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "max_score",
+          "hits"
+        ]
+      },
+      "V2SearchBodyDto": {
+        "type": "object",
+        "properties": {
+          "took": {
+            "type": "number",
+            "description": "Elasticsearch time in ms."
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "_shards": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Elasticsearch shard counts."
+          },
+          "hits": {
+            "$ref": "#/components/schemas/V2SearchHitsDto"
+          }
+        },
+        "required": [
+          "took",
+          "timed_out",
+          "_shards",
+          "hits"
+        ]
+      },
+      "V2FacetNameDto": {
+        "type": "object",
+        "properties": {
+          "en": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "en",
+          "locale"
+        ]
+      },
+      "V2FacetValueDto": {
+        "type": "object",
+        "properties": {
+          "en": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "doc_count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "en",
+          "locale",
+          "doc_count"
+        ]
+      },
+      "V2FacetDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/V2FacetNameDto"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2FacetValueDto"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "values"
+        ]
+      },
+      "V2IntentTaxonomyDto": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "example": "BD-1800",
+            "description": "HSIS taxonomy code."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "caller"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ]
+      },
+      "V2IntentNeedDto": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "example": "N-HOU-02",
+            "description": "SUNE need code."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "caller",
+              "inferred"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "use",
+              "ask"
+            ],
+            "description": "`use` boosts results. `ask` is offered as a question option."
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Model score; inferred needs only."
+          }
+        },
+        "required": [
+          "value",
+          "source",
+          "state"
+        ]
+      },
+      "V2IntentUrgencyDto": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "enum": [
+              "U-0",
+              "U-1",
+              "U-2",
+              "U-3",
+              "U-4",
+              "U-X"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "caller",
+              "inferred",
+              "default"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "use",
+              "ask",
+              "drop"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "source",
+          "state"
+        ]
+      },
+      "V2IntentDto": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "nullable": true,
+            "description": "The typed query when it is a string with text, else null."
+          },
+          "taxonomy": {
+            "description": "The `taxonomy` codes the request sent, as sent (not expanded to child codes). Absent when none were sent.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2IntentTaxonomyDto"
+            }
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2IntentNeedDto"
+            }
+          },
+          "urgency": {
+            "$ref": "#/components/schemas/V2IntentUrgencyDto"
+          }
+        },
+        "required": [
+          "query",
+          "needs",
+          "urgency"
+        ]
+      },
+      "V2QuestionOptionDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "Help paying rent"
+          },
+          "parameter": {
+            "type": "string",
+            "enum": [
+              "needs",
+              "passed_needs",
+              "urgency"
+            ],
+            "nullable": true,
+            "description": "The URL parameter that a pick of this option adds. One question can mix kinds. null (with value null): the pick writes nothing to the URL (no option uses it today)."
+          },
+          "value": {
+            "type": "string",
+            "nullable": true,
+            "example": "N-HOU-02",
+            "description": "The value added to that parameter, for example N-HOU-02 or U-0; null when parameter is null."
+          },
+          "results_count": {
+            "type": "number",
+            "nullable": true,
+            "description": "Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number. An option with count 0 is never offered."
+          }
+        },
+        "required": [
+          "label",
+          "parameter",
+          "value",
+          "results_count"
+        ]
+      },
+      "V2HotlineDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "number"
+        ]
+      },
+      "V2QuestionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "emergency",
+              "confirm_urgency",
+              "find_need",
+              "narrow"
+            ]
+          },
+          "importance": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "value": {
+            "type": "number"
+          },
+          "priority": {
+            "type": "number"
+          },
+          "uncertainty": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "step": {
+            "type": "number"
+          },
+          "stem": {
+            "type": "string"
+          },
+          "options": {
+            "description": "Emergency question: \"Yes\" adds `urgency=U-0`; the two \"No, I am safe\" answers add `urgency=U-1` (help today) or `urgency=U-2` (help within a week); empty for a caller `urgency=U-0`.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2QuestionOptionDto"
+            }
+          },
+          "multi_select": {
+            "type": "boolean"
+          },
+          "allow_other": {
+            "type": "boolean"
+          },
+          "none_of_these": {
+            "type": "boolean"
+          },
+          "hotlines": {
+            "description": "Emergency question only. One tap calls a number.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2HotlineDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "importance",
+          "value",
+          "priority",
+          "uncertainty",
+          "reason",
+          "step",
+          "stem",
+          "options",
+          "multi_select",
+          "allow_other",
+          "none_of_these"
+        ]
+      },
+      "V2ClarificationDto": {
+        "type": "object",
+        "properties": {
+          "rules_version": {
+            "type": "string"
+          },
+          "questions": {
+            "description": "At most 3, ranked.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2QuestionDto"
+            }
+          }
+        },
+        "required": [
+          "rules_version",
+          "questions"
+        ]
+      },
+      "V2SearchResponseDto": {
+        "type": "object",
+        "properties": {
+          "relevance_cutoff": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RelevanceCutoffDto"
+              }
+            ]
+          },
+          "resolved_location": {
+            "$ref": "#/components/schemas/ResolvedLocationDto"
+          },
+          "search": {
+            "$ref": "#/components/schemas/V2SearchBodyDto"
+          },
+          "facets": {
+            "description": "Empty unless the tenant defines facets.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/V2FacetDto"
+            }
+          },
+          "weak_match": {
+            "type": "boolean",
+            "description": "True when the text found no good match (ISS-2796). Without `needs` the results are empty and `clarification` asks what the person needs; with `needs` the results are the services that carry those needs, ranked without the text."
+          },
+          "intent": {
+            "$ref": "#/components/schemas/V2IntentDto"
+          },
+          "clarification": {
+            "$ref": "#/components/schemas/V2ClarificationDto"
+          },
+          "model_version": {
+            "type": "string",
+            "nullable": true,
+            "description": "Null when classification was skipped or failed."
+          },
+          "rules_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "search",
+          "facets",
+          "weak_match",
+          "intent",
+          "clarification",
+          "model_version",
+          "rules_version"
+        ]
+      },
+      "V2ErrorDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "number",
+            "example": 400
+          },
+          "message": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "One message, or a list when several validators failed (for example `limit must not be less than 25`)."
+          },
+          "path": {
+            "type": "string",
+            "example": "/v2/search?query=food"
+          },
+          "method": {
+            "type": "string",
+            "example": "GET"
+          },
+          "tenant": {
+            "type": "string",
+            "description": "The tenant id. Absent when the tenant header failed."
+          }
+        },
+        "required": [
+          "status",
+          "message",
+          "path",
+          "method"
+        ]
+      },
+      "PhysicalAddressDto": {
+        "type": "object",
+        "properties": {
+          "address_1": {
+            "type": "string",
+            "nullable": true
+          },
+          "address_2": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "postal_code": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "address_1",
+          "address_2",
+          "city",
+          "state",
+          "country",
+          "postal_code"
+        ]
+      },
+      "SearchPinDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Document id, the same `_id` as a list hit."
+          },
+          "service_at_location_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "physical_address": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PhysicalAddressDto"
+              }
+            ]
+          },
+          "coordinates": {
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Longitude, latitude",
+            "example": [
+              -77.43,
+              37.54
+            ],
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "service_at_location_id",
+          "name",
+          "physical_address",
+          "coordinates"
+        ]
+      },
+      "SearchPinsResponseDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Located documents matching the search. Classic search counts up to 10000."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether matches past the pin limit were cut."
+          },
+          "pins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchPinDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "truncated",
+          "pins"
+        ]
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@ import {
   NestModule,
   RequestMethod,
 } from '@nestjs/common';
+import { RedisWarmupService } from './common/services/cache/redis-warmup.service';
 import { ArcjetModule, cloudflare } from '@arcjet/nest';
 import { TracingShutdownService } from './common/lifecycle/tracing-shutdown.service';
 import { AppController } from './app.controller';
@@ -34,6 +35,8 @@ import { TenantMiddleware } from './common/middleware/TenantMiddleware';
 import { LocaleMiddleware } from './common/middleware/LocaleMiddleware';
 import { TaxonomyController } from './taxonomy/taxonomy.controller';
 import { SearchController } from './search/search.controller';
+import { V2SearchModule } from './v2/search/v2-search.module';
+import { V2SearchController } from './v2/search/v2-search.controller';
 import { ResourceController } from './resource/resource.controller';
 import { FavoriteController } from './favorite/favorite.controller';
 import { FavoriteListController } from './favorite-list/favorite-list.controller';
@@ -111,6 +114,7 @@ const arcjetKey = configuration().ARCJET_KEY;
     }),
     TaxonomyModule,
     SearchModule,
+    V2SearchModule,
     ShortUrlModule,
     HealthModule,
     FavoriteModule,
@@ -130,6 +134,7 @@ const arcjetKey = configuration().ARCJET_KEY;
   controllers: [AppController],
   providers: [
     AppService,
+    RedisWarmupService,
     TracingShutdownService,
     { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
@@ -157,6 +162,7 @@ export class AppModule implements NestModule {
     consumer.apply(TenantMiddleware).forRoutes(
       TaxonomyController,
       SearchController,
+      V2SearchController,
       ResourceController,
       FavoriteController,
       FavoriteListController,
@@ -179,6 +185,7 @@ export class AppModule implements NestModule {
       .forRoutes(
         TaxonomyController,
         SearchController,
+        V2SearchController,
         ResourceController,
         FavoriteListController,
         SuggestionController,
@@ -186,6 +193,9 @@ export class AppModule implements NestModule {
         PrintableDirectoryPublicController,
         PrintableDirectoryDeliveryInternalController,
         OrganizationController,
+        // Checks ?locale= against accept-language on a CDN-cached route that
+        // returns translations (the cache keys on URL, ignoring Vary).
+        ServiceController,
       );
   }
 }

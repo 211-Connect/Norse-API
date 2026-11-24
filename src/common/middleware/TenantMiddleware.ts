@@ -7,6 +7,7 @@ import {
 import { Request, Response, NextFunction } from 'express';
 import { xTenantIdSchema } from '../dto/headers.dto';
 import { requestPathForLog } from '../lib/request-path';
+import { readsTenantFromUrlOnly } from '../versioning/api-version';
 
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -17,6 +18,8 @@ export class TenantMiddleware implements NestMiddleware {
   }
 
   async use(req: Request, res: Response, next: NextFunction) {
+    if (readsTenantFromUrlOnly(req)) return this.useUrlOnly(req, next);
+
     const rawHeader = req.headers['x-tenant-id'];
 
     const validation = xTenantIdSchema.safeParse(rawHeader);
@@ -47,6 +50,25 @@ export class TenantMiddleware implements NestMiddleware {
       }
     }
 
+    next();
+  }
+
+  /**
+   * v2 (ADR 0039 Decision 34): the tenant comes from `tenant_id` in the URL.
+   * The `x-tenant-id` header is not read; it is replaced by the URL value (or
+   * removed), so every later reader of the header sees the URL tenant.
+   * `V2UrlMirrorsGuard` answers the 400 for a missing or invalid value, after
+   * the feature-flag guard, so a disabled route stays a 404.
+   */
+  private useUrlOnly(req: Request, next: NextFunction) {
+    const raw = req.query.tenant_id;
+    const parsed = xTenantIdSchema.safeParse(raw);
+    if (parsed.success) {
+      req.tenantId = parsed.data;
+      req.headers['x-tenant-id'] = parsed.data;
+    } else {
+      delete req.headers['x-tenant-id'];
+    }
     next();
   }
 }

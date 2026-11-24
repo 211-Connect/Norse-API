@@ -43,7 +43,10 @@ import {
 } from './internal/area/area-match';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { SearchResponse } from './dto/search-response.dto';
-import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
+import {
+  RequireCdnUrlMirrors,
+  SetCdnCacheTTL,
+} from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const';
 import { AiSearchReRankResponseDto } from './dto/ai-search-re-rank-response.dto';
 import { AiSearchService } from './ai-search.service';
@@ -59,6 +62,7 @@ import {
   searchTypeFor,
 } from '../metrics/usage-metrics.service';
 import { Request } from 'express';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 // Shared Swagger descriptions for params documented identically on both the GET
 // and POST /search handlers — kept here so the two endpoints can't drift.
@@ -216,9 +220,10 @@ export class SearchController {
   ) {}
 
   @Get()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
+  @RequireCdnUrlMirrors()
   @ApiResponse({
     status: 200,
     type: SearchResponseDto,
@@ -268,7 +273,7 @@ export class SearchController {
   }
 
   @Post()
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @Header('Deprecation', 'true')
@@ -416,9 +421,10 @@ export class SearchController {
   }
 
   @Get('pins')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @UseGuards(ArcjetGuard)
   @SetCdnCacheTTL(ONE_HOUR)
+  @RequireCdnUrlMirrors()
   @ApiOperation({
     summary: 'Map pins for a search',
     description:
@@ -448,8 +454,9 @@ export class SearchController {
   }
 
   @Get('predict')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
+  @RequireCdnUrlMirrors()
   @ApiResponse({
     status: 200,
     description: 'Classify search intent and return UI guidance',
@@ -481,8 +488,9 @@ export class SearchController {
   }
 
   @Get('re-rank')
-  @Version('1')
+  @Version(V1_AND_LEGACY)
   @SetCdnCacheTTL(ONE_HOUR)
+  @RequireCdnUrlMirrors()
   @ApiResponse({
     status: 200,
     description: 'Re-rank taxonomy hits after user-adjusted needs selection',
