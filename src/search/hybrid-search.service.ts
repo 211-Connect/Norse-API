@@ -1663,14 +1663,20 @@ export class HybridSearchService {
       return { nameMatch: failed, ids: [] };
     }
     const base = { ...claim, vetoed, pinned: 0, out_of_radius: null };
-    if (claim.strength !== 'org' || vetoed || !args.pinEligible) {
+    if (claim.strength !== 'org' || vetoed) {
       return { nameMatch: base, ids: [] };
     }
+    const orgs = new Set(claim.org_ids);
+    const found = keyword.hits
+      .filter((h) => h.org_id !== null && orgs.has(h.org_id))
+      .map((h) => h.id);
+    // The radius counts on every sort; the pin is for relevance only. The
+    // keyword hits passed the same filters (radius, area, cut), so an org among
+    // them is inside: then no read is needed to answer a non-relevance sort.
+    if (!args.pinEligible && found.length > 0) {
+      return { nameMatch: { ...base, out_of_radius: false }, ids: [] };
+    }
     if (owner.pinFrom === 'keyword') {
-      const orgs = new Set(claim.org_ids);
-      const found = keyword.hits
-        .filter((h) => h.org_id !== null && orgs.has(h.org_id))
-        .map((h) => h.id);
       const ids = pickNamedLeaders(found, fusedIds, false);
       return { nameMatch: { ...base, pinned: ids.length }, ids };
     }
@@ -1683,7 +1689,9 @@ export class HybridSearchService {
     });
     if (read === null)
       return { nameMatch: { ...failed, ...claim, status: 'failed' }, ids: [] };
-    const ids = pickNamedLeaders(read, fusedIds, coords?.length === 2);
+    const ids = args.pinEligible
+      ? pickNamedLeaders(read, fusedIds, coords?.length === 2)
+      : [];
     return {
       nameMatch: {
         ...base,

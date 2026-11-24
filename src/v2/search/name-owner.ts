@@ -6,6 +6,7 @@ import {
   nameMatch,
   wordCoverage,
 } from '../rules/match';
+import { alternateNames } from './name-lookup.service';
 
 /** One hit's `_source` as the match check reads it. */
 export function matchHit(source: unknown): MatchHit {
@@ -40,14 +41,11 @@ export function keywordHit(id: string, source: unknown): KeywordHit {
   const org = src.organization as
     { id?: unknown; alternate_name?: unknown } | string | undefined;
   const orgObj = typeof org === 'object' && org !== null ? org : {};
-  const alt = orgObj.alternate_name;
   return {
     ...matchHit(source),
     id,
     org_id: typeof orgObj.id === 'string' ? orgObj.id : null,
-    alternate_names: (Array.isArray(alt) ? alt : [alt]).filter(
-      (x): x is string => typeof x === 'string',
-    ),
+    alternate_names: alternateNames(orgObj.alternate_name),
     service_name: typeof src.name === 'string' ? src.name : '',
   };
 }
