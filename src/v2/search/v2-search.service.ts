@@ -353,7 +353,7 @@ export class V2SearchService {
     query: V2SearchQueryDto;
   }): Promise<SearchPinsResponseDto> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, asked, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const text = dto.query;
     const orgWords = this.orgWordsOf(text, headers);
     let needScores: NeedScore[] | undefined;
@@ -510,7 +510,7 @@ export class V2SearchService {
     const selectedNeeds = callerNeeds.filter((c) => c !== 'N-X');
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { needs, passed_needs, urgency, clarify, asked, ...v1Fields } = dto;
+    const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const orgWords = this.orgWordsOf(text, headers);
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
@@ -770,7 +770,6 @@ export class V2SearchService {
           ...(match && { match }),
           // The pick has its own results: not the no-results rule.
           weak: weak && !weakPick,
-          ...(dto.asked && { asked: dto.asked }),
         }
       : { counts };
     if (ruleV1) {
@@ -783,22 +782,20 @@ export class V2SearchService {
     const localized = withSpanSync('v2.rules.finalize', () =>
       localizeClarification(finalize(clarifyDecision, finalizeInput), lang),
     );
-    // Question contract v2 (on): placement and style. The engine's own measures
-    // stay in the trace, not the response.
+    // Question contract v2 (on): the engine's own measures stay in the trace,
+    // not in the response.
+    if (ruleV1) {
+      span.setAttribute(
+        'v2.questions',
+        localized.questions
+          .map((q) =>
+            [q.id, q.importance, q.reason, q.value, q.uncertainty].join(':'),
+          )
+          .join(','),
+      );
+    }
     const clarification = ruleV1
-      ? withSpanSync('v2.rules.contract', () => {
-          span.setAttribute(
-            'v2.questions',
-            localized.questions
-              .map((q) =>
-                [q.id, q.importance, q.reason, q.value, q.uncertainty].join(
-                  ':',
-                ),
-              )
-              .join(','),
-          );
-          return toContractClarification(localized, lang);
-        })
+      ? toContractClarification(localized)
       : localized;
 
     const result: V2SearchResponseDto = {

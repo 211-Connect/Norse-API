@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-24.1';
+export const RULES_VERSION = 'rules-2026-11-24.2';
 
 export const CUTOFFS = {
   emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
@@ -24,8 +24,6 @@ export const CUTOFFS = {
   // question is asked for a query of 1 to this many topic words (`coverageTokens`).
   spread: { areaInPlayMin: 0.05, maxContentWords: 2 },
   maxQuestions: 3,
-  // Guide cap (Lucas, 2026-11-23): after this many asked ids no question comes before the results.
-  maxBeforeResults: 3,
   optionsPerQuestion: 3,
 };
 
@@ -70,14 +68,4 @@ export const LABELS = {
     safeToday: "No, I'm safe, but I need help today",
     safeSoon: "No, I'm safe, I need help soon (within a week)",
   },
-};
-
-/**
- * Words the UI used to hard-code (question contract v2). Sent in
- * `clarification.strings`; `localizedStrings` translates them (English fallback).
- * The popup title is `STEMS.emergency`.
- */
-export const UI_STRINGS = {
-  skipToResults: 'Skip to results',
-  alsoFitOne: 'Does this also fit?',
 };

@@ -8,13 +8,7 @@ import {
   TaxonomyDto,
 } from '../../../search/dto/search-response.dto';
 import { ShardsInfo } from '../../../search/types';
-import {
-  CONTRACT_TYPES,
-  Placement,
-  PLACEMENTS,
-  Style,
-  STYLES,
-} from '../../rules/contract';
+import { CONTRACT_TYPES, Placement, PLACEMENTS } from '../../rules/contract';
 
 // The v1 response DTOs describe the v1 document and feed the frontend SDK, so
 // they stay as they are. The classes below describe what /v2/search returns,
@@ -413,7 +407,7 @@ export class V2HotlineDto {
 export class V2QuestionDto {
   @ApiProperty({
     description:
-      'Names the question. Used only for memory across searches (`asked=`); the UI must not pick titles or behavior from it.',
+      'Names the question. Stable across searches, so a client can remember which questions it showed. Read `placement` and `type` for the display.',
   })
   id: string;
   @ApiProperty({
@@ -429,15 +423,9 @@ export class V2QuestionDto {
   })
   placement?: Placement;
   @ApiPropertyOptional({
-    enum: STYLES,
-    description:
-      'How loud it looks. Independent of `type`. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
-  })
-  style?: Style;
-  @ApiPropertyOptional({
     enum: ['critical', 'high', 'medium', 'low'],
     description:
-      'Legacy shape only (V2_QUESTION_RULE_V1 off). Removed from the new shape: read `placement` and `style`.',
+      'Legacy shape only (V2_QUESTION_RULE_V1 off). Removed from the new shape: read `placement`.',
   })
   importance?: string;
   @ApiPropertyOptional({ description: 'Legacy shape only.' }) value?: number;
@@ -468,12 +456,6 @@ export class V2QuestionDto {
   hotlines?: V2HotlineDto[];
 }
 
-export class V2StringsDto {
-  @ApiProperty({ example: 'Are you in danger right now?' }) popup_title: string;
-  @ApiProperty({ example: 'Skip to results' }) skip_to_results: string;
-  @ApiProperty({ example: 'Does this also fit?' }) also_fit_one: string;
-}
-
 export class V2NoticeDto {
   @ApiProperty({ enum: ['may_not_match'] })
   kind: 'may_not_match';
@@ -484,15 +466,12 @@ export class V2NoticeDto {
 export class V2ClarificationDto {
   @ApiProperty() rules_version: string;
 
-  @ApiProperty({ type: [V2QuestionDto], description: 'At most 3, ranked.' })
-  questions: V2QuestionDto[];
-
-  @ApiPropertyOptional({
-    type: V2StringsDto,
+  @ApiProperty({
+    type: [V2QuestionDto],
     description:
-      'Words the page shows that no question carries, in the request language (English fallback). Absent when V2_QUESTION_RULE_V1 is off.',
+      'At most 3 per answer, ranked. The API keeps no count across answers: a client sets its own limit on the questions one person gets.',
   })
-  strings?: V2StringsDto;
+  questions: V2QuestionDto[];
 
   @ApiPropertyOptional({
     type: V2NoticeDto,

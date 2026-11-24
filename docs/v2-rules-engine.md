@@ -56,7 +56,7 @@ Only the emergency "Yes" option offers `U-0` (Lucas 2026-11-13). A caller `U-1` 
 
 Each option is `{label, parameter, value, results_count}` (ADR 0039 Decision 55). `results_count` is the number of matching services, or `null` when the server did not count (all urgency options; need options when no count ran). Null means not counted; a counted code that is missing means 0, and a 0-count option stays in the question with its 0 (switch off: it is dropped). `parameter` is the URL parameter a pick adds: `needs` (start, spread, area and narrow options) or `urgency` (emergency and time options). The question has no `parameter`. `passed_needs` is in the enum, but no option emits it today: "None of these" stays the `none_of_these` flag, and the client sends the shown codes in `passed_needs`.
 
-Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. Importance tells the client how much a question matters; the engine still returns up to 3, ranked by `priority` (see Order), and never drops a question for low importance. The client (Norse) shows at most 3 questions before results.
+Needs questions allow several picks, an "Other" text box and "None of these". A confirmed Tier 2 need locks its area; a passed need is never offered again; an area with an area question gives no options to a narrow question in the same response. Importance says how much a question matters (the client reads it only with the switch off, see Response contract); the engine still returns up to 3, ranked by `priority` (see Order), and never drops a question for low importance. The client (Norse) shows at most 3 questions before results.
 
 ## Order
 
@@ -82,4 +82,18 @@ The question has no `level` field (Lucas, 2026-11-13). With `V2_QUESTION_RULE_V1
 
 ## Response contract (question contract v2)
 
-`importance` and `priority` are engine-internal. With `V2_QUESTION_RULE_V1=true` `src/v2/rules/contract.ts` maps them to the response shape: emergency critical = popup/strong; emergency high = before_results/strong; need or urgency critical or high = before_results/standard; medium or low = with_results/subtle. It only maps. The engine decides which questions come: `buildCandidates` (no urgency question beside danger or after its answer; no option that stands for "none"; hotlines) and `finalize` (the guide cap `CUTOFFS.maxBeforeResults`, cut before the top 3, and the R5 notice that needs its question).
+With `V2_QUESTION_RULE_V1=true`, `src/v2/rules/contract.ts` maps the engine's question to the response shape. It only maps: `buildCandidates` and `finalize` decide which questions come. Off: the legacy shape, with `importance`.
+
+A question is `{id, type, placement, stem, options, multi_select, allow_other, none_of_these, hotlines?}`.
+
+| Engine type | Response `type` | Importance | `placement` |
+| --- | --- | --- | --- |
+| `emergency` | `emergency` | critical | `popup` |
+| `emergency` | `emergency` | high | `before_results` |
+| `confirm_urgency`, `find_need` | `urgency`, `need` | critical or high | `before_results` |
+| `confirm_urgency`, `find_need` | `urgency`, `need` | medium or low | `with_results` |
+
+- `importance`, `priority`, `value`, `uncertainty`, `reason`, `step` and option `score` are not sent. The trace attribute `v2.questions` holds `id:importance:reason:value:uncertainty`.
+- `hotlines` are on the danger question only; with U-1 to U-4 that question is gone. Pages with no search response keep the client's default line.
+- `none_of_these` is a flag. The Norse UI draws no button for it.
+- An answer holds at most 3 questions. The API keeps no count across answers: a client sets its own limit. Button texts belong to the client.

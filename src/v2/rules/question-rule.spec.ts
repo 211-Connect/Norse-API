@@ -48,7 +48,7 @@ const danger = (scores: Record<string, number>): RulesSignals =>
 
 describe('question rule v1: version and constants', () => {
   it('rules version is bumped', () => {
-    expect(RULES_VERSION).toBe('rules-2026-11-24.1');
+    expect(RULES_VERSION).toBe('rules-2026-11-24.2');
   });
   it('phone line and notice text', () => {
     expect(PHONE_LINE).toEqual({ label: 'Call 211', number: '211' });

@@ -112,21 +112,6 @@ export function toCodeList(value: unknown): unknown {
   return Array.from(new Set(codes));
 }
 
-const QUESTION_ID = /^[a-z0-9_:-]{1,40}$/i;
-const MAX_ASKED_IDS = 20;
-
-/**
- * `asked=` only counts questions. A bad value must never fail the search (it
- * may hold the danger question), so what is not a question id is left out.
- */
-export function toAskedIds(value: unknown): string[] | undefined {
-  const ids = toCodeList(value);
-  if (!Array.isArray(ids)) return undefined;
-  return ids
-    .filter((v): v is string => typeof v === 'string' && QUESTION_ID.test(v))
-    .slice(0, MAX_ASKED_IDS);
-}
-
 /**
  * Query of `GET /v2/search`: the v1 search parameters (location, paging, sort,
  * cutoff, filters) minus `query_type` (v2 always runs hybrid), plus the v2-only
@@ -218,18 +203,6 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @IsArray()
   @Validate(IsSelectableNeedCodeConstraint)
   passed_needs?: string[];
-
-  @ApiPropertyOptional({
-    type: [String],
-    description:
-      'Ids of the questions already asked in this search session (comma-separated or repeated). Only counted: after 3, the API sends no more `before_results` questions (V2_QUESTION_RULE_V1 on; the danger question still comes). Every id counts as one, also `emergency` and a step only the client knows (for example `location`). A client drops the ids when a new search starts. A value that is not a question id is ignored, and at most 20 ids are read; it is never a 400. Ignored when the flag is off.',
-    example: ['start', 'area:N-HOU'],
-  })
-  @IsOptional()
-  @Transform(({ value }) => toAskedIds(value))
-  @IsArray()
-  @IsString({ each: true })
-  asked?: string[];
 
   @ApiPropertyOptional({
     enum: V2_URGENCY_CODES,

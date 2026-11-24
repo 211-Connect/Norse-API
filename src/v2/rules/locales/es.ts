@@ -16,10 +16,6 @@ export const es: RawTable = {
     spread: "¿Qué tipo de '{word}' quiere decir?",
     phoneLine: 'Llame al 211',
   },
-  strings: {
-    skipToResults: 'Ir a los resultados',
-    alsoFitOne: '¿Esto también se ajusta?',
-  },
   urgency: {
     'U-1': 'Hoy',
     'U-2': 'Se acerca una fecha límite',
