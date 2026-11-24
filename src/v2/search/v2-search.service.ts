@@ -17,11 +17,12 @@ import {
   MATCH,
   MatchHit,
   NameCandidate,
+  matchFromName,
   matchOf,
   nameMatch,
   queryTokens,
 } from '../rules/match';
-import { matchHit } from './name-owner';
+import { NameOwner, keywordOwner, matchHit } from './name-owner';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -494,6 +495,15 @@ export class V2SearchService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    // Name owner (V2_NAME_MATCH_OWNER=keyword, question rule v1, text with a
+    // query token): the keyword list names the org; no name lookup runs.
+    const nameOwner: NameOwner | undefined =
+      this.configService.get('V2_QUESTION_RULE_V1') === 'true' &&
+      this.configService.get('V2_NAME_MATCH_OWNER') === 'keyword' &&
+      hasText &&
+      queryTokens(contentWords(text, lang)).length > 0
+        ? keywordOwner(contentWords(text, lang))
+        : undefined;
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -511,6 +521,7 @@ export class V2SearchService {
       rankingVersion: 'v2' as const,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
+      ...(nameOwner && { nameOwner }),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
@@ -527,6 +538,7 @@ export class V2SearchService {
         : undefined;
 
     const nameLookupPromise =
+      !nameOwner &&
       this.configService.get('V2_QUESTION_RULE_V1') === 'true' &&
       hasText &&
       queryTokens(contentWords(text, lang)).length > 0
@@ -612,10 +624,12 @@ export class V2SearchService {
     const {
       early: _early,
       urgencyBoost: _urgencyBoost,
+      nameOwner: _nameOwner,
       ...withoutEarly
     } = hybridCall;
     void _early;
     void _urgencyBoost;
+    void _nameOwner;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );
@@ -625,6 +639,7 @@ export class V2SearchService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       totalCounted: _tc1,
       namedPinned,
+      nameMatch: nameMatchResult,
       ...firstResponse
     } = first;
 
@@ -716,6 +731,8 @@ export class V2SearchService {
         judges: _j,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         totalCounted: _tc2,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        nameMatch: _nm2,
         ...secondResponse
       } = second;
       response = secondResponse;
@@ -733,12 +750,32 @@ export class V2SearchService {
       const pinFailed = namedPinned === NAMED_PIN_FAILED;
       const outOfRadius = namedOrgIds.length > 0 && namedPinned === 0;
       const names = outOfRadius ? [] : lookedUp;
-      nameLookupFailed = names === null || pinFailed;
-      match = matchOf({
-        words: rulesRequest.content_words ?? [],
-        hits: matchHits(response),
-        names,
-      });
+      nameLookupFailed = nameOwner
+        ? !nameMatchResult || nameMatchResult.status === 'failed'
+        : names === null || pinFailed;
+      const words = rulesRequest.content_words ?? [];
+      match = nameOwner
+        ? matchFromName({
+            words,
+            hits: matchHits(response),
+            name: nameMatchResult ?? {
+              strength: 'none',
+              vetoed: false,
+              out_of_radius: null,
+            },
+          })
+        : matchOf({ words, hits: matchHits(response), names });
+      if (nameOwner) {
+        span.setAttributes({
+          'v2.match.name_owner': 'keyword',
+          'v2.match.name_status': nameMatchResult?.status ?? 'failed',
+          'v2.match.name_strength': nameMatchResult?.strength ?? 'none',
+          'v2.match.name_vetoed': nameMatchResult?.vetoed ?? false,
+          'v2.match.name_out_of_radius':
+            nameMatchResult?.out_of_radius ?? 'unknown',
+          'v2.match.name_pinned': nameMatchResult?.pinned ?? 0,
+        });
+      }
       span.setAttributes({
         'v2.match': match.value,
         'v2.match.org_share': match.org_share,

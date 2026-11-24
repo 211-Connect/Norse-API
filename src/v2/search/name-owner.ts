@@ -1,4 +1,11 @@
-import { MatchHit } from '../rules/match';
+import {
+  MATCH,
+  MatchHit,
+  NameCandidate,
+  genericName,
+  nameMatch,
+  wordCoverage,
+} from '../rules/match';
 
 /** One hit's `_source` as the match check reads it. */
 export function matchHit(source: unknown): MatchHit {
@@ -72,3 +79,85 @@ export type NameOwner = {
   /** Where the pinned ids come from: an index read or the keyword hits. */
   pinFrom: 'read' | 'keyword';
 };
+
+const claimOf = (
+  status: NameClaim['status'],
+  over: Partial<NameClaim> = {},
+): NameClaim => ({
+  status,
+  strength: 'none',
+  org_ids: [],
+  service_ids: [],
+  name: null,
+  ...over,
+});
+
+/** A service name without a trailing ' offered by/at ...', ' at ...' or ' | ...'. */
+const SERVICE_SUFFIX = /\s+offered\s+(?:by|at)\s.*$|\s+at\s.*$|\s+\|.*$/i;
+
+const holds = (words: string[], name: string, every: boolean): boolean => {
+  const cov = wordCoverage(words, [
+    { org_name: null, text: name.toLowerCase() },
+  ]);
+  return (
+    cov.length > 0 && (every ? cov.every((c) => c > 0) : cov.some((c) => c > 0))
+  );
+};
+
+/** The keyword list names an org (or a service): the one owner of the name match. */
+export function keywordOwner(words: string[]): NameOwner {
+  return {
+    pinFrom: 'keyword',
+    vetoes: (evidence) => genericName(words, evidence),
+    claim: (keyword) => {
+      if (keyword.state === 'failed') return Promise.resolve(claimOf('failed'));
+      if (keyword.state === 'skipped') {
+        return Promise.resolve(claimOf('skipped'));
+      }
+      const orgs = new Map<string, NameCandidate>();
+      for (const h of keyword.hits) {
+        if (h.org_id && h.org_name && !orgs.has(h.org_id)) {
+          orgs.set(h.org_id, {
+            id: h.org_id,
+            name: h.org_name,
+            alternate_names: h.alternate_names,
+          });
+        }
+      }
+      const named = nameMatch(
+        words,
+        [...orgs.values()].slice(0, MATCH.nameLookupSize),
+      );
+      if (named.named) {
+        const ids = new Set(named.org_ids);
+        return Promise.resolve(
+          claimOf('ok', {
+            strength: 'org',
+            org_ids: named.org_ids,
+            name: named.name,
+            service_ids: keyword.hits
+              .filter(
+                (h) =>
+                  h.org_id !== null &&
+                  ids.has(h.org_id) &&
+                  holds(words, h.service_name, false),
+              )
+              .map((h) => h.id),
+          }),
+        );
+      }
+      const services = keyword.hits.filter((h) =>
+        holds(words, h.service_name.replace(SERVICE_SUFFIX, ''), true),
+      );
+      return Promise.resolve(
+        services.length > 0
+          ? claimOf('ok', {
+              strength: 'service',
+              service_ids: services.map((h) => h.id),
+              name: services[0].service_name,
+            })
+          : claimOf('ok'),
+      );
+    },
+  };
+}
