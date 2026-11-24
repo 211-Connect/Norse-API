@@ -18,7 +18,7 @@ describe('matchOf', () => {
   it('no hits: spread, unless named; no query token: spread', () => {
     expect(m([], ['ymca'])).toBe('spread');
     expect(m([], ['ymca'], true)).toBe('concentrated');
-    expect(m(['x'], ['i', 'need'], true)).toBe('spread');
+    expect(m(['x'], ['i', 'need'])).toBe('spread');
   });
   it('matchValue reads the saved measures the same way', () => {
     const v = {
@@ -50,6 +50,11 @@ describe('request words and ZIP codes (grid match fixes)', () => {
       'housing voucher',
     ];
     expect(m(hits, ['i', 'need', 'food', 'and', 'housing'])).toBe('spread');
+  });
+  it("'necesito comida' is about comida", () => {
+    expect(m(['banco de comida'], ['necesito', 'comida'])).toBe('spread');
+    expect(m(['banco de comida'], ['ayuda'])).toBe('spread');
+    expect(m([], ['ayuda'], true)).toBe('concentrated');
   });
   it('a query of request words only makes no claim (spread)', () => {
     expect(m([food], ['need', 'help'])).toBe('spread');

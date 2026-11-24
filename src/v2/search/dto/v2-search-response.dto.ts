@@ -365,7 +365,7 @@ export class V2QuestionOptionDto {
   @ApiPropertyOptional({
     example: 'You may be behind on rent, or you got an eviction notice.',
     description:
-      'Need options only: the spoken description of the need (ADR 0039 Decision 31), for the tenant and language of the request. Absent on urgency and emergency options.',
+      'Need options only: the spoken description of the need (ADR 0039 Decision 31), for the tenant and language of the request. Absent on urgency and emergency options, and when there is no text in that language (English only today).',
   })
   description?: string;
 

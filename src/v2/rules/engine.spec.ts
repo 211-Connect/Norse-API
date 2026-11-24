@@ -60,7 +60,6 @@ const dec = (
   need_level,
   open_areas: [],
   likely_areas: [],
-  areas_in_play: [],
   candidates,
   count_codes: [],
 });

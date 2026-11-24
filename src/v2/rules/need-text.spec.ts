@@ -1,4 +1,4 @@
-import { needText, setNeedTextOverride } from './need-text';
+import { needDescription, needText, setNeedTextOverride } from './need-text';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
 describe('need text', () => {
@@ -46,5 +46,15 @@ describe('need text', () => {
 
   it('gives an unknown code back as display with no description', () => {
     expect(needText('N-ZZZ')).toEqual({ display: 'N-ZZZ', description: '' });
+  });
+});
+
+describe('needDescription', () => {
+  it('English text for English only; no field without a text', () => {
+    for (const locale of [undefined, 'en', 'en-US'])
+      expect(needDescription('N-HOU', { locale }).description).toBeTruthy();
+    for (const locale of ['es', 'es-MX', 'ru'])
+      expect(needDescription('N-HOU', { locale })).toEqual({});
+    expect(needDescription('N-ZZZ', { locale: 'en' })).toEqual({});
   });
 });

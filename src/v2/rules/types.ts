@@ -159,12 +159,6 @@ export interface Decision {
     likely_areas: string[];
     candidates: Question[];
   };
-  /**
-   * Tier 1 codes with a model score of 0.05 or more that the caller has not
-   * confirmed or passed, best score first. [] when the needs signal failed.
-   * Internal: not part of the response.
-   */
-  areas_in_play: string[];
   candidates: Question[]; // unranked, before counts
   count_codes: string[]; // every need code that is an option in a needs candidate; sorted, unique; never N-X
 }

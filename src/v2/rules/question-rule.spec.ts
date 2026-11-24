@@ -1,6 +1,6 @@
 import { decide, finalize, gridRule, weakMatchDecision } from './engine';
 import { Match } from './match';
-import { hasEnoughOptions } from './questions';
+import { areasInPlay, hasEnoughOptions } from './questions';
 import { clearAreas, needLevel } from './need-level';
 import { childrenOf } from './sune';
 import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
@@ -314,7 +314,6 @@ describe('R4: no clear need, the hits are spread', () => {
   });
   it('no area in play: start only', () => {
     const r = run('seattle', { 'N-HOU': 0.03, 'N-FOD': 0.02 });
-    expect(r.decision.areas_in_play).toEqual([]);
     expect(r.ids).toEqual(['start']);
   });
   it('3 content words: start only', () => {
@@ -514,22 +513,14 @@ describe('other', () => {
     expect(three.decision.candidates.map((q) => q.id)).not.toContain('spread');
   });
 
-  it('areas_in_play: best first, leaves out confirmed and passed codes', () => {
-    const d = decide(
-      req({ query: 'x', content_words: ['x'], passed_needs: ['N-SAF'] }),
-      sig({ 'N-HLT': 0.2, 'N-LRN': 0.3, 'N-SAF': 0.5 }),
-      {},
-    );
-    expect(d.areas_in_play).toEqual(['N-LRN', 'N-HLT']);
-  });
-
-  it('areas_in_play is [] when the needs signal failed', () => {
-    const d = decide(
-      req(),
-      { needs: { status: 'error' }, emergency: null },
-      {},
-    );
-    expect(d.areas_in_play).toEqual([]);
+  it('areasInPlay: best first, leaves out confirmed and passed codes; [] when the needs signal failed', () => {
+    const r = req({ passed_needs: ['N-SAF'] });
+    expect(
+      areasInPlay(r, sig({ 'N-HLT': 0.2, 'N-LRN': 0.3, 'N-SAF': 0.5 })),
+    ).toEqual(['N-LRN', 'N-HLT']);
+    expect(
+      areasInPlay(r, { needs: { status: 'error' }, emergency: null }),
+    ).toEqual([]);
   });
 });
 
@@ -542,5 +533,44 @@ describe('hasEnoughOptions (open point 4.10 Q2, David 2026-11-23: yes)', () => {
   it('one option with services next to 0-count options is a choice; one option is not', () => {
     expect(hasEnoughOptions(opts)).toBe(true);
     expect(hasEnoughOptions([{ results_count: 5 }])).toBe(false);
+  });
+});
+
+describe('R5 without a question to pick from', () => {
+  const clarificationOf = (over: {
+    req?: Parameters<typeof req>[0];
+    tenant?: Parameters<typeof decide>[2];
+    failed?: boolean;
+  }) => {
+    const signals = over.failed
+      ? { needs: { status: 'error' as const }, emergency: null }
+      : sig({});
+    const d = decide(
+      req({ query: 'zebra', content_words: ['zebra'], ...over.req }),
+      signals,
+      over.tenant ?? {},
+    );
+    return finalize(d, {
+      counts: { total: 40, by_code: null },
+      strong_text_match: false,
+      match: 'none',
+      weak: false,
+    });
+  };
+  it('a start question is there: notice and phone line', () => {
+    const c = clarificationOf({});
+    expect(c.questions.map((q) => q.id)).toEqual(['start']);
+    expect(c.notice?.kind).toBe('may_not_match');
+    expect(c.phone_line).toBeDefined();
+  });
+  it.each([
+    ['clarify=never', { req: { clarify: 'never' as const } }],
+    ['AI off', { tenant: { ai_classification: 'off' as const } }],
+    ['needs call failed', { failed: true }],
+  ])('%s: no question, so no notice and no phone line', (_n, over) => {
+    const c = clarificationOf(over);
+    expect(c.questions).toEqual([]);
+    expect(c.notice).toBeUndefined();
+    expect(c.phone_line).toBeUndefined();
   });
 });

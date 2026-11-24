@@ -2558,6 +2558,31 @@ describe('V2SearchService name match (question rule v1)', () => {
     expect(isMarkedNotStorable(r.res)).toBe(false);
   });
 
+  it('a pick after a weak match: its own results, so the follow-up question stays and no phone line', async () => {
+    const search = jest
+      .fn()
+      .mockResolvedValueOnce(
+        page({
+          judges: { keyword_top: 0.4, vector_top: 0.3 },
+          nameClaim: claim({ org_ids: [], pins: [] }),
+        }),
+      )
+      .mockResolvedValueOnce(page({ needCounts: { 'N-HOU-01': 1 } }));
+    const b = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+      search,
+    });
+    const res = await b.service.search({
+      headers,
+      query: dto({ query: 'blorptastic zzz', needs: ['N-HOU'] } as never),
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(res.clarification.questions.map((q) => q.id)).toContain(
+      'area:N-HOU',
+    );
+    expect(res.clarification.phone_line).toBeUndefined();
+  });
+
   it('the text-free second call (weak match) gets no name words', async () => {
     const search = jest
       .fn()

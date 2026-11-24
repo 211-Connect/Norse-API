@@ -15,7 +15,7 @@ import * as legacyRules from '../rules/legacy';
 import { MATCH, Match, matchOf } from '../rules/match';
 import { nameWords } from 'src/search/internal/name-match/name-match';
 import { hitText } from 'src/search/internal/text-matching/hit-text';
-import { needText } from '../rules/need-text';
+import { needDescription } from '../rules/need-text';
 import {
   floorOnlyEmergency,
   isFullV2Locale,
@@ -200,7 +200,7 @@ type HybridCall = Parameters<HybridSearchService['searchHybrid']>[0];
  * The rules engine for this request. `V2_QUESTION_RULE_V1=true` runs the
  * question rule v1 (`../rules`); anything else runs the verbatim copy of
  * development's engine (`../rules/legacy`), so "off" is today's behavior.
- * The legacy types are a subset of the new ones: the cast is at this boundary.
+ * The legacy types differ a little: the cast is at this boundary.
  */
 type RulesEngine = Pick<
   typeof rules,
@@ -703,7 +703,9 @@ export class V2SearchService {
     let match: Match | undefined;
     let nameFailed = false;
     // No text (browse): no match; finalize reads it as `spread`.
-    if (ruleV1 && hasText) {
+    // A pick after a weak match dropped the text: the page says nothing about it.
+    const weakPick = weak && callerNeeds.length > 0;
+    if (ruleV1 && hasText && !weakPick) {
       nameFailed = orgWords.length > 0 && nameClaim?.status !== 'ok';
       match = matchOf({
         words: rulesRequest.content_words ?? [],
@@ -730,7 +732,8 @@ export class V2SearchService {
           counts,
           strong_text_match: false,
           ...(match && { match }),
-          weak,
+          // The pick has its own results: not the no-results rule.
+          weak: weak && !weakPick,
         }
       : { counts, strong_text_match: false };
     if (ruleV1) {
@@ -763,12 +766,11 @@ export class V2SearchService {
           state: n.state,
           ...(n.confidence !== undefined && { confidence: n.confidence }),
           // Need descriptions (ADR 0039 Decision 31) are new behavior: switch on only.
-          ...(ruleV1 && {
-            description: needText(n.code, {
+          ...(ruleV1 &&
+            needDescription(n.code, {
               tenantId: headers['x-tenant-id'],
               locale: lang,
-            }).description,
-          }),
+            })),
         })),
         urgency: {
           value: decision.urgency.value,

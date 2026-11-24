@@ -8,7 +8,7 @@ import {
   STEMS,
 } from './config';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
-import { needText } from './need-text';
+import { needDescription, needText } from './need-text';
 import { scoreOf } from './scores';
 import {
   childrenOf,
@@ -101,13 +101,10 @@ const needOption = (
   score: number,
   tenant: TenantContext,
 ): QuestionOption => {
-  const text = needText(code, {
-    tenantId: tenant.tenant_id,
-    locale: tenant.locale,
-  });
+  const ctx = { tenantId: tenant.tenant_id, locale: tenant.locale };
   return {
-    label: text.display,
-    description: text.description,
+    label: needText(code, ctx).display,
+    ...needDescription(code, ctx),
     parameter: 'needs',
     value: code,
     score,

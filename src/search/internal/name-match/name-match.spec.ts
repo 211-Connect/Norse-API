@@ -293,7 +293,17 @@ describe('claimName: no list', () => {
     expect(
       named('childrens home', [svc('Children’s Home Society')]),
     ).toHaveLength(1);
+    expect(nameHead('Women’s Center')).toEqual(nameHead("Women's Center"));
     expect(named('ninos unidos', [svc('Niños Unidos')])).toHaveLength(1);
+  });
+  it('a Spanish request word can be part of a name', () => {
+    expect(named('ayuda legal', [svc('Ayuda Legal')])).toHaveLength(1);
+    expect(nameWords(['ayuda'])).toEqual(['ayuda']);
+  });
+  it('spaces in a service name are one space', () => {
+    expect(nameHit('1', { name: 'Food   Bank\n at X' }).service_name).toBe(
+      'Food Bank at X',
+    );
   });
   it('a Spanish query names an org by its name', () => {
     expect(named('caridades catolicas', [svc('Caridades Catolicas')])).toEqual([

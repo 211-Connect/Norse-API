@@ -88,7 +88,7 @@ export function nameHit(id: string, source: unknown): NameHit {
     org_id: str(org.id),
     org_name: str(org.name),
     alternate_names: alternateNames(org.alternate_name),
-    service_name: str(src.name) ?? '',
+    service_name: (str(src.name) ?? '').replace(/\s+/g, ' '),
     taxonomy_names: taxonomyNames(src),
   };
 }
@@ -156,7 +156,7 @@ const NAME_FUNCTION = new Set([
   'on',
 ]);
 
-const NAME_SEP = /,|\s[-\u2013]\s|'s\s|\sof\s|\(|:|\sat\s|\//i;
+const NAME_SEP = /,|\s[-\u2013]\s|['’]s\s|\sof\s|\(|:|\sat\s|\//i;
 
 /** The leading part of an org name, without function words, in order. */
 export function nameHead(name: string): string[] {

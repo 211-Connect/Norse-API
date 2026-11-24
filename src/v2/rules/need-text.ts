@@ -32,10 +32,14 @@ export const setNeedTextOverride = (fn: NeedTextOverride | null): void => {
   override = fn;
 };
 
+const isEnglish = (locale: string | undefined): boolean =>
+  !locale || /^en(?:$|[-_,;])/i.test(locale.trim());
+
 /**
  * The text of one need for a tenant and locale: the override when it gives
  * one, else the SUNE default. An unknown code gets the code as display and an
- * empty description. `provider` lets a caller or test pass an override
+ * empty description. The SUNE descriptions are English: another locale gets none
+ * until an override has it. `provider` lets a caller or test pass an override
  * without touching the process-wide one.
  */
 export function needText(
@@ -47,6 +51,19 @@ export function needText(
   const o = provider?.(code, ctx);
   return {
     display: o?.display?.trim() ? o.display : base.display,
-    description: o?.description?.trim() ? o.description : base.description,
+    description: o?.description?.trim()
+      ? o.description
+      : isEnglish(ctx.locale)
+        ? base.description
+        : '',
   };
+}
+
+/** The description field of a need option or intent; absent when there is no text. */
+export function needDescription(
+  code: string,
+  ctx: NeedTextContext,
+): { description?: string } {
+  const { description } = needText(code, ctx);
+  return description ? { description } : {};
 }

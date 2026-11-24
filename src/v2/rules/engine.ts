@@ -2,7 +2,6 @@ import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
 import { likelyAreas, needLevel, openAreas } from './need-level';
 import {
-  areasInPlay,
   asksNeeds,
   hasEnoughOptions,
   COUNT_BONUS_WEIGHT,
@@ -103,7 +102,6 @@ export function decide(
         candidates: noneFinal,
       },
     }),
-    areas_in_play: areasInPlay(req, used),
     candidates,
     count_codes: countCodes,
   };
@@ -146,10 +144,6 @@ export function scoreEntropy(options: { score?: number }[]): number {
 }
 
 /**
- * The grid rule for a decision and the finalize input (rules-signals-2026-11-23.md):
- * step 2 (no results) first, then R1 to R5 by the match and the need level.
- */
-/**
  * The decision for the match found (D1, option D): match 'none' swaps in the
  * need level and candidates computed without the likely kinds.
  */
@@ -159,6 +153,10 @@ function forMatch(decision: Decision, input: FinalizeInput): Decision {
   return { ...decision, ...decision.if_match_none };
 }
 
+/**
+ * The grid rule for a decision and the finalize input (rules-signals-2026-11-23.md):
+ * step 2 (no results) first, then R1 to R5 by the match and the need level.
+ */
 export function gridRule(base: Decision, input: FinalizeInput): GridRule {
   const decision = forMatch(base, input);
   if (input.weak || input.counts.total === 0) return 'no_results';
@@ -351,6 +349,12 @@ export function finalize(base: Decision, input: FinalizeInput): Clarification {
   );
   if (rule === 'R3') {
     kept = orderAreaQuestions(kept, decision);
+  }
+  // The notice says "pick what you need below": it needs that question. Without
+  // one (clarify=never, AI off, a failed needs call) R5 says nothing.
+  if (rule === 'R5' && !kept.some(asksNeeds)) {
+    notice = undefined;
+    phone_line = undefined;
   }
   return {
     rules_version: decision.rules_version,
