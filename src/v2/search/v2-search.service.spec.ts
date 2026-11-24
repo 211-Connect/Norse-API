@@ -2668,9 +2668,9 @@ describe('V2_RULES_MATCH_RRF keyword rerank (experiment)', () => {
     process.env.TMP_NO_PIN = '1';
     const a = await ask({ rrf: 'true' });
     expect(a.search.mock.calls[0][0]).toMatchObject({
-      keywordListWeight: 2.5,
       skipNamedPin: true,
     });
+    expect(a.search.mock.calls[0][0].keywordListWeight()).toBe(2.5);
     process.env.TMP_NO_RERANK = '1';
     process.env.TMP_KW_W = 'abc';
     const b = await ask({ rrf: 'true' });

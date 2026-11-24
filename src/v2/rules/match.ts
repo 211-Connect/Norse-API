@@ -425,6 +425,7 @@ export function nameFirst(
     org_id: string | null;
     service_name: string;
   })[],
+  onTop?: (tier: number) => void,
 ): string[] {
   const ids = hits.map((h) => h.id);
   if (queryTokens(words).length === 0 || genericName(words, hits)) return ids;
@@ -446,8 +447,9 @@ export function nameFirst(
     ]).every((c) => c === 1)
       ? 1
       : 0);
-  return hits
+  const ranked = hits
     .map((h, i) => ({ id: h.id, i, s: score(h) }))
-    .sort((a, b) => b.s - a.s || a.i - b.i)
-    .map((x) => x.id);
+    .sort((a, b) => b.s - a.s || a.i - b.i);
+  onTop?.(ranked[0]?.s ?? 0);
+  return ranked.map((x) => x.id);
 }

@@ -304,7 +304,7 @@ type HybridSearchOptions = {
    */
   keywordRerank?: KeywordRerank;
   /** v2 only, experiment. RRF weight of the keyword list. Default 1. */
-  keywordListWeight?: number;
+  keywordListWeight?: number | (() => number);
   /** v2 only, experiment. The named-org pin leads nothing; `namedPinned` still reports it. */
   skipNamedPin?: boolean;
 };
@@ -1776,7 +1776,7 @@ export class HybridSearchService {
     coords: number[] | undefined;
     nearYou: boolean;
     keywordRerank?: KeywordRerank;
-    keywordListWeight?: number;
+    keywordListWeight?: number | (() => number);
   }): Promise<{ ids?: string[]; judges?: Judges }> {
     const { filters, needs, earlyLists, queryVector } = args;
 
@@ -1834,6 +1834,15 @@ export class HybridSearchService {
           ? {
               keyword_top: keywordList?.top ?? 0,
               vector_top: vectorList.top,
+              // TMP A/B only: the raw lists, so weights can be fitted offline.
+              ...(process.env.DEPLOYMENT_ENVIRONMENT === 'local-matchkw' && {
+                lists: {
+                  keyword: keywordList?.ids,
+                  vector: vectorList.ids,
+                  taxonomy: taxonomyList?.ids,
+                  need: needList?.ids,
+                },
+              }),
             }
           : undefined;
 
@@ -1841,7 +1850,12 @@ export class HybridSearchService {
       const lists: string[][] = [];
       const weights: number[] = [];
       for (const [ids, weight] of [
-        [keywordList?.ids, args.keywordListWeight ?? 1],
+        [
+          keywordList?.ids,
+          typeof args.keywordListWeight === 'function'
+            ? args.keywordListWeight()
+            : (args.keywordListWeight ?? 1),
+        ],
         [vectorList?.ids, 1],
         [taxonomyList?.ids, 1],
         [needList?.ids, RRF_NEED_LIST_WEIGHT],

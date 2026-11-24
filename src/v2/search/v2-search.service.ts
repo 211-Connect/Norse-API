@@ -322,6 +322,7 @@ export class V2SearchService {
   private keywordExperiment(
     text: string,
     lang: string,
+    seen: { tier?: number },
   ): Pick<HybridCall, 'keywordRerank' | 'keywordListWeight' | 'skipNamedPin'> {
     if (
       this.configService.get('V2_RULES_MATCH_RRF') !== 'true' ||
@@ -331,12 +332,16 @@ export class V2SearchService {
       return {};
     }
     const words = contentWords(text, lang);
-    const weight = process.env.TMP_KW_W; // TMP
-    const w = weight === undefined || weight === '' ? NaN : Number(weight);
+    // TMP "3" = always; "3s" = only when the keyword list holds a strong org or
+    // service name match; "3o" = only on an org name match.
+    const weight = /^([\d.]+)([so]?)$/.exec(process.env.TMP_KW_W ?? '');
+    const w = weight ? Number(weight[1]) : NaN;
+    const minTier = weight?.[2] === 's' ? 1 : weight?.[2] === 'o' ? 2 : 0;
+    seen.tier = 0;
     return {
-      ...(process.env.TMP_NO_RERANK !== '1' && {
-        keywordRerank: (hits) =>
-          nameFirst(
+      ...((process.env.TMP_NO_RERANK !== '1' || minTier > 0) && {
+        keywordRerank: (hits) => {
+          const order = nameFirst(
             words,
             hits.map((h) => {
               const src = (h.source ?? {}) as {
@@ -351,9 +356,18 @@ export class V2SearchService {
                 service_name: typeof src.name === 'string' ? src.name : '',
               };
             }),
-          ),
+            (tier) => {
+              seen.tier = tier;
+            },
+          );
+          return process.env.TMP_NO_RERANK === '1'
+            ? hits.map((h) => h.id)
+            : order;
+        },
       }),
-      ...(Number.isFinite(w) && { keywordListWeight: w }), // TMP
+      ...(Number.isFinite(w) && {
+        keywordListWeight: () => ((seen.tier ?? 0) >= minTier ? w : 1), // TMP
+      }),
       ...(process.env.TMP_NO_PIN === '1' && { skipNamedPin: true }), // TMP
     };
   }
@@ -560,6 +574,7 @@ export class V2SearchService {
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
+    const kwSeen: { tier?: number } = {};
     const retrievalOptions = {
       headers,
       query: {
@@ -575,7 +590,7 @@ export class V2SearchService {
       rankingVersion: 'v2' as const,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
-      ...this.keywordExperiment(text, lang),
+      ...this.keywordExperiment(text, lang, kwSeen),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
@@ -845,6 +860,23 @@ export class V2SearchService {
 
     const result: V2SearchResponseDto = {
       ...response,
+      // TMP A/B only.
+      ...(process.env.DEPLOYMENT_ENVIRONMENT === 'local-matchkw' && {
+        _signals: {
+          match,
+          need_level: decision.need_level,
+          nx: decision.nx,
+          needs: decision.needs.map((n) => [n.code, n.state, n.confidence]),
+          need_scores: needScores,
+          boost_needs: decision.boost_needs,
+          name_claim: nameClaim,
+          named_pinned: namedPinned,
+          kw_tier: kwSeen.tier,
+          judges,
+          weak,
+          passed_level: clarifyDecision.need_level,
+        },
+      }),
       weak_match: weak,
       ...(resolved && { resolved_location: resolved }),
       intent: {
