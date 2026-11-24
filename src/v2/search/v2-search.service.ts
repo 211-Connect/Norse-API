@@ -80,9 +80,12 @@ const countedTotal = (response: {
 }): number | null =>
   response.totalCounted === false ? null : hitsTotal(response);
 
-/** Elasticsearch answered 200 with part of the hits: a timeout or a failed shard. */
-const isPartial = ({ search }: Pick<HybridSearchResult, 'search'>): boolean =>
-  search.timed_out || search._shards.failed > 0;
+/** The page is cut short (timeout, failed shard), or the count read failed. */
+const isPartial = ({
+  search,
+  needCountsFailed,
+}: Pick<HybridSearchResult, 'search' | 'needCountsFailed'>): boolean =>
+  search.timed_out || search._shards.failed > 0 || needCountsFailed === true;
 
 // ml-broker rejects classify text longer than 512 characters after stripping
 // (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer
@@ -598,6 +601,8 @@ export class V2SearchService {
       needCounts: firstCounts,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       totalCounted: _tc1,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      needCountsFailed: _cf1,
       nameClaim,
       ...firstResponse
     } = first;
@@ -692,6 +697,8 @@ export class V2SearchService {
         judges: _j,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         totalCounted: _tc2,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        needCountsFailed: _cf2,
         ...secondResponse
       } = second;
       response = secondResponse;

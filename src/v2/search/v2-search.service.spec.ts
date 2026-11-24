@@ -2675,7 +2675,7 @@ describe('V2SearchService name match (question rule v1)', () => {
   it.each([
     ['timed out', { timed_out: true }, true],
     ['a failed shard', { _shards: { failed: 1 } }, true],
-    ['complete', {}, false],
+    ['complete', { _shards: { failed: 0 } }, false],
   ])(
     'the page the question reads: %s; stored only when complete; off: stored',
     async (_n, over, notStored) => {
@@ -2695,8 +2695,71 @@ describe('V2SearchService name match (question rule v1)', () => {
     },
   );
 
+  it.each(['true', 'off'])(
+    'a failed count read (%s): not stored with the rule on; never in the response',
+    async (ruleV1) => {
+      const b = build({
+        ruleV1,
+        search: jest
+          .fn()
+          .mockResolvedValue(
+            page({ nameClaim: claim(), needCountsFailed: true }),
+          ),
+      });
+      const res = await b.service.search({
+        headers,
+        query: dto({ query: 'compass housing' }),
+      });
+      expect(isMarkedNotStorable(res)).toBe(ruleV1 === 'true');
+      expect(res).not.toHaveProperty('needCountsFailed');
+    },
+  );
+
+  it.each([
+    ['counts', undefined, 'page'],
+    ['counts', undefined, 'count'],
+    ['pick', ['N-HOU'], 'page'],
+    ['pick', ['N-HOU'], 'count'],
+  ])(
+    'weak match, second call for the %s (needs %p), %s read cut short: not stored',
+    async (_n, needs, cut) => {
+      const ok = page({ needCounts: { 'N-HOU': 10, 'N-HOU-01': 1 } });
+      const second =
+        cut === 'page'
+          ? { ...ok, search: { ...ok.search, timed_out: true } }
+          : { ...ok, needCountsFailed: true };
+      const stored = async (r: unknown) => {
+        const b = build({
+          classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+          search: jest
+            .fn()
+            .mockResolvedValueOnce(
+              page({
+                judges: { keyword_top: 0.4, vector_top: 0.3 },
+                nameClaim: claim({ org_ids: [], pins: [] }),
+              }),
+            )
+            .mockResolvedValueOnce(r),
+        });
+        const res = await b.service.search({
+          headers,
+          query: dto({
+            query: 'blorptastic zzz',
+            ...(needs && { needs }),
+          } as never),
+        });
+        expect(b.searchHybrid).toHaveBeenCalledTimes(2);
+        expect(res).not.toHaveProperty('needCountsFailed');
+        return !isMarkedNotStorable(res);
+      };
+      expect(await stored(ok)).toBe(true);
+      expect(await stored(second)).toBe(false);
+    },
+  );
+
   it.each([
     ['en', 'necesito ayuda'],
+    ['en', 'necesito ayuda por favor'],
     ['es', 'necesito ayuda por favor'],
     ['es', 'busco asistencia'],
   ])(

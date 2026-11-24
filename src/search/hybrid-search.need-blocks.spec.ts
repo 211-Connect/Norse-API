@@ -31,7 +31,7 @@ const mainResponse = {
 describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
   let service: HybridSearchService;
   let requests: any[];
-  let countMode: 'ok' | 'throw';
+  let countMode: 'ok' | 'throw' | 'timeout' | 'shard' | 'noaggs';
   let searchConfig: Record<string, unknown>;
   let mainHits: any[];
   let mainTotal: unknown;
@@ -51,8 +51,14 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
       requests.push(req);
       if (req.aggs?.need_counts) {
         if (countMode === 'throw') return Promise.reject(new Error('es down'));
+        if (countMode === 'noaggs')
+          return Promise.resolve({ ...mainResponse, aggregations: undefined });
         return Promise.resolve({
           ...mainResponse,
+          ...(countMode === 'timeout' && { timed_out: true }),
+          ...(countMode === 'shard' && {
+            _shards: { total: 2, successful: 1, skipped: 0, failed: 1 },
+          }),
           aggregations: {
             tenant_needs: { with_needs: { doc_count: tenantNeedDocs } },
             need_counts: {
@@ -221,6 +227,32 @@ describe('HybridSearchService - need blocks and counts (ISS-2499)', () => {
     expect(g.global).toEqual({});
     expect(JSON.stringify(g.aggs.with_needs.filter)).toContain('tenant-a');
     expect(JSON.stringify(g.aggs.with_needs.filter)).toContain('sune_needs');
+  });
+
+  it.each(['throw', 'timeout', 'shard', 'noaggs'] as const)(
+    'counts: %s is a failed read with nullCountsWithoutNeedTags, never a zero; without it nothing new',
+    async (mode) => {
+      countMode = mode;
+      const on: any = await run({
+        countCodes: ['N-FOD'],
+        nullCountsWithoutNeedTags: true,
+      });
+      expect(on).not.toHaveProperty('needCounts');
+      expect(on.needCountsFailed).toBe(true);
+      const off: any = await run({ countCodes: ['N-FOD'] });
+      expect(off).not.toHaveProperty('needCountsFailed');
+      expect('needCounts' in off).toBe(mode !== 'throw');
+    },
+  );
+
+  it('counts: a tenant with no need tags is not a failed read', async () => {
+    tenantNeedDocs = 0;
+    const res: any = await run({
+      countCodes: ['N-FOD'],
+      nullCountsWithoutNeedTags: true,
+    });
+    expect(res).not.toHaveProperty('needCounts');
+    expect(res).not.toHaveProperty('needCountsFailed');
   });
 
   it('counts: without nullCountsWithoutNeedTags, the count request has no tenant_needs agg', async () => {

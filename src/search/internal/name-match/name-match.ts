@@ -316,8 +316,9 @@ export function claimName(i: {
   let named = nameMatch(words, candidates);
   if (!named && i.unknownWords === null) return { ...none, status: 'failed' };
   if (!named && i.unknownWords && i.unknownWords.length > 0) {
+    // Not the request words: 'busco' is one edit from 'bosco'.
     words = fixTypos(
-      i.words,
+      queryTokens(i.words),
       i.unknownWords,
       candidates.flatMap((c) => [c.name, ...c.alternate_names]),
     );

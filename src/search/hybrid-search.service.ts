@@ -221,6 +221,11 @@ export function needBlockLeads(
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
   needCounts?: Record<string, number>;
+  /**
+   * Question rule v1 only, internal: the count read failed or was cut short.
+   * Absent for a tenant with no need tags (not a failure).
+   */
+  needCountsFailed?: true;
   /** v2 only, internal (never sent to callers). Present, and false, only when Elasticsearch sent a hits.total that cannot be read; hits.total.value is then 0. */
   totalCounted?: false;
   /**
@@ -691,7 +696,7 @@ export class HybridSearchService {
           options.countCodes ?? [],
           options.nullCountsWithoutNeedTags === true,
         )
-      : Promise.resolve(undefined);
+      : Promise.resolve({ counts: undefined, failed: false });
 
     type Resp = Awaited<
       ReturnType<
@@ -772,7 +777,8 @@ export class HybridSearchService {
       );
     }
 
-    const needCounts = await needCountsPromise;
+    const { counts: needCounts, failed: needCountsFailed } =
+      await needCountsPromise;
 
     return {
       search: {
@@ -795,6 +801,9 @@ export class HybridSearchService {
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
+      ...(needCountsFailed && options.nullCountsWithoutNeedTags === true
+        ? { needCountsFailed: true as const }
+        : {}),
       ...(totalUnreadable ? { totalCounted: false as const } : {}),
       ...(judges ? { judges } : {}),
       ...(nameClaim ? { nameClaim } : {}),
@@ -815,7 +824,7 @@ export class HybridSearchService {
     request: SearchRequest,
     codes: string[],
     nullWithoutNeedTags = false,
-  ): Promise<Record<string, number> | undefined> {
+  ): Promise<{ counts?: Record<string, number>; failed: boolean }> {
     try {
       const data = await this.metrics.observeDownstream(
         'elasticsearch',
@@ -826,13 +835,23 @@ export class HybridSearchService {
             Record<string, AggregationsStringTermsAggregate>
           >(request),
       );
+      // A part of the counts is not a count (question rule v1; off: as before).
+      if (
+        nullWithoutNeedTags &&
+        (data.timed_out ||
+          (data._shards?.failed ?? 0) > 0 ||
+          !data.aggregations?.need_counts)
+      ) {
+        this.logger.warn('Need counts incomplete; treated as not counted');
+        return { failed: true };
+      }
       const tenantNeeds = data.aggregations?.tenant_needs as unknown as
         { with_needs?: { doc_count?: number } } | undefined;
       if (nullWithoutNeedTags && tenantNeeds?.with_needs?.doc_count === 0) {
         this.logger.warn(
           'Tenant index has no docs with sune_needs; need counts treated as not counted',
         );
-        return undefined;
+        return { failed: false };
       }
       const buckets =
         (data.aggregations?.need_counts?.buckets as
@@ -843,10 +862,10 @@ export class HybridSearchService {
       for (const b of buckets) {
         if (b.key in counts) counts[b.key] = b.doc_count;
       }
-      return counts;
+      return { counts, failed: false };
     } catch (error) {
       this.logger.warn(`Need counts skipped: ${(error as Error).message}`);
-      return undefined;
+      return { failed: true };
     }
   }
 

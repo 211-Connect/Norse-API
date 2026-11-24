@@ -20,6 +20,7 @@ const file = resolve(
 const rows = JSON.parse(readFileSync(file, 'utf8'));
 const counts: Record<string, number> = {};
 for (const row of rows) {
+  if (row.rule !== undefined) continue; // recorded: never rewritten
   const e = row.evidence_input;
   const decision = decide(
     {

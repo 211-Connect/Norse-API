@@ -1,4 +1,4 @@
-import { matchLocale } from 'src/common/locales';
+import { matchLocale } from '../../common/locales';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
 /** The words a need shows: the short name on the button and the spoken description under it (ADR 0039 Decision 31). */

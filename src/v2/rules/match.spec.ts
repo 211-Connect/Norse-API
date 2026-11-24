@@ -60,6 +60,9 @@ describe('request words and ZIP codes (grid match fixes)', () => {
   it.each(
     [
       'necesita comida',
+      'necesitan comida',
+      'buscamos comida',
+      'ayudenme por favor con comida',
       'busca comida',
       'buscando comida',
       'quisiera comida',

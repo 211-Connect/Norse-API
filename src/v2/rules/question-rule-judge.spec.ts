@@ -74,15 +74,17 @@ const MIN_PASS = 203;
  */
 const CHANGED_RULES: {
   q: string;
+  tenants: Row['tenant'][];
   from: GridRule;
   to: GridRule;
   why: string;
 }[] = [
   {
     q: 'necesito ayuda',
+    tenants: ['WA', 'IL', 'NY'],
     from: 'R5',
     to: 'R4',
-    why: 'Spanish request words only: it names no thing, so the hits cannot fail to hold it. The same as "help".',
+    why: 'Spanish request words only: it names no thing, so the hits cannot fail to hold it. The same rule as "help".',
   },
 ];
 
@@ -194,7 +196,9 @@ describe('question rule judge spec (labeled per-tenant rows)', () => {
 
   it('the grid rule of every row equals the recorded rule, or a listed change', () => {
     const wrong = rows.filter((r) => {
-      const change = CHANGED_RULES.find((c) => c.q === r.q);
+      const change = CHANGED_RULES.find(
+        (c) => c.q === r.q && c.tenants.includes(r.tenant),
+      );
       if (change) expect(r.rule).toBe(change.from);
       return ruleOf(r) !== (change?.to ?? r.rule);
     });

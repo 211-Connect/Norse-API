@@ -313,6 +313,17 @@ describe('claimName: no list', () => {
     expect(nameHead('Women’s Center')).toEqual(nameHead("Women's Center"));
     expect(named('ninos unidos', [svc('Niños Unidos')])).toHaveLength(1);
   });
+  it('a request word is never read as a typo of a name word', () => {
+    const hits = [svc('Don Bosco'), svc('Caridades Catolicas')];
+    expect(
+      named('busco caridades catolikas', hits, {
+        unknownWords: ['busco', 'catolikas'],
+      }),
+    ).toEqual(['Caridades Catolicas']);
+  });
+  it("an article stays part of a name ('El Centro')", () => {
+    expect(named('el centro', [svc('El Centro')])).toEqual(['El Centro']);
+  });
   // Known weak spot, the same in both languages: a name that is mostly a
   // request word is not claimed, because the word says nothing in a query.
   it.each([
