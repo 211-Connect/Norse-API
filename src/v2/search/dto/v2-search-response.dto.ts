@@ -8,6 +8,7 @@ import {
   TaxonomyDto,
 } from '../../../search/dto/search-response.dto';
 import { ShardsInfo } from '../../../search/types';
+import { CONTRACT_TYPES, Placement, PLACEMENTS } from '../../rules/contract';
 
 // The v1 response DTOs describe the v1 document and feed the frontend SDK, so
 // they stay as they are. The classes below describe what /v2/search returns,
@@ -389,19 +390,10 @@ export class V2QuestionOptionDto {
     type: Number,
     nullable: true,
     description:
-      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number. An option with count 0 is never offered.',
+      'Services that match this option; null when the server did not count (all urgency options, and need options when no count ran). A counted option keeps its number, 0 included (V2_QUESTION_RULE_V1 off: an option with count 0 is never offered).',
   })
   // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
   results_count?: number | null;
-
-  @ApiPropertyOptional({
-    type: Number,
-    minimum: 0,
-    maximum: 1.3,
-    description:
-      'Need options only. Formula: classifier confidence for the need (0 when the model gave none) + 0.3 * log(1 + count) / log(1 + max count among this question\'s options). A null count adds 0; a count of 0 adds 0 and the option stays listed. The score can pass 1 (up to confidence + 0.3). Options are sorted by it, high to low; ties keep vocabulary order. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
-  })
-  score?: number;
 }
 
 export class V2HotlineDto {
@@ -413,18 +405,35 @@ export class V2HotlineDto {
 }
 
 export class V2QuestionDto {
-  @ApiProperty() id: string;
   @ApiProperty({
-    enum: ['emergency', 'confirm_urgency', 'find_need', 'narrow'],
+    description:
+      'Names the question. The same kind of question has the same id in every search, so an id remembered for one query must not hide a question of another query. Read `placement` and `type` for the display.',
+  })
+  id: string;
+  @ApiProperty({
+    enum: [...CONTRACT_TYPES, 'confirm_urgency', 'find_need', 'narrow'],
+    description:
+      'What it asks about: `emergency`, `urgency` or `need`. The legacy names (`confirm_urgency`, `find_need`, `narrow`) come only when V2_QUESTION_RULE_V1 is off.',
   })
   type: string;
-  @ApiProperty({ enum: ['critical', 'high', 'medium', 'low'] })
-  importance: string;
-  @ApiProperty() value: number;
-  @ApiProperty() priority: number;
-  @ApiProperty() uncertainty: number;
-  @ApiProperty() reason: string;
-  @ApiProperty() step: number;
+  @ApiPropertyOptional({
+    enum: PLACEMENTS,
+    description:
+      'Where it shows: popup over everything; the find page before results; the refine card beside results. Absent when V2_QUESTION_RULE_V1 is off (legacy shape).',
+  })
+  placement?: Placement;
+  @ApiPropertyOptional({
+    enum: ['critical', 'high', 'medium', 'low'],
+    description:
+      'Legacy shape only (V2_QUESTION_RULE_V1 off). Removed from the new shape: read `placement`.',
+  })
+  importance?: string;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) value?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) priority?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' })
+  uncertainty?: number;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) reason?: string;
+  @ApiPropertyOptional({ description: 'Legacy shape only.' }) step?: number;
   @ApiProperty() stem: string;
   @ApiProperty({
     type: [V2QuestionOptionDto],
@@ -434,10 +443,15 @@ export class V2QuestionDto {
   options: V2QuestionOptionDto[];
   @ApiProperty() multi_select: boolean;
   @ApiProperty() allow_other: boolean;
-  @ApiProperty() none_of_these: boolean;
+  @ApiProperty({
+    description:
+      "Flag only. The Norse UI draws no 'None of these' button and ignores it (Lucas, 2026-11-23); it stays in the contract for other clients.",
+  })
+  none_of_these: boolean;
   @ApiPropertyOptional({
     type: [V2HotlineDto],
-    description: 'Emergency question only. One tap calls a number.',
+    description:
+      'Emergency question only: the numbers to show, in display order (tenant numbers, else 988 and 911). A safe urgency answer (U-1 to U-4) removes the question and its numbers. One tap calls a number.',
   })
   hotlines?: V2HotlineDto[];
 }
@@ -452,7 +466,11 @@ export class V2NoticeDto {
 export class V2ClarificationDto {
   @ApiProperty() rules_version: string;
 
-  @ApiProperty({ type: [V2QuestionDto], description: 'At most 3, ranked.' })
+  @ApiProperty({
+    type: [V2QuestionDto],
+    description:
+      'At most 3 per answer, ranked. The API keeps no count across answers: a client sets its own limit on the questions one person gets.',
+  })
   questions: V2QuestionDto[];
 
   @ApiPropertyOptional({

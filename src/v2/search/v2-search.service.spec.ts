@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 import { errors } from '@elastic/elasticsearch';
+import { trace } from '@opentelemetry/api';
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -711,9 +712,9 @@ describe('V2SearchService', () => {
       query: dto({ query: 'x' }),
     });
     expect(a.clarification).toEqual(b.clarification);
-    expect(
-      a.clarification.questions.filter((q) => q.type === 'find_need'),
-    ).toEqual([]);
+    expect(a.clarification.questions.filter((q) => q.type === 'need')).toEqual(
+      [],
+    );
   });
 
   it('an unreadable hits.total is not counted (totalCounted false from the hybrid service), keeps needs questions and leaks no totalCounted', async () => {
@@ -739,7 +740,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'x' }),
       });
       const needsQ = (r: typeof a) =>
-        r.clarification.questions.filter((q) => q.type === 'find_need');
+        r.clarification.questions.filter((q) => q.type === 'need');
       expect(needsQ(b)).toEqual([]);
       expect(needsQ(a).length).toBeGreaterThan(0);
       expect('totalCounted' in a).toBe(false);
@@ -878,7 +879,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'food' }),
       });
       const needQs = res.clarification.questions.filter(
-        (q: any) => q.type === 'find_need',
+        (q: any) => q.type === 'need',
       );
       // Tier 1 at 0.9 makes the area clear; the hits hold no query word, so a
       // Tier 2 at 0.5 settles no kind (D1, rule R3): the area question stays,
@@ -1011,17 +1012,17 @@ describe('V2SearchService', () => {
         classify: jest.fn().mockResolvedValue(withEmergency(0.3)),
       }).service.search({ headers, query: dto({ query: 'help' }) });
       // Lucas 2026-11-13 ("bring back the popup if the model is very sure"):
-      // importance tells the bands apart (strong critical = popup, soft high =
-      // in-page card). Stem, options, reason and hotlines match.
-      const strip = (q: ReturnType<typeof emergencyQ>) => {
-        const { value, priority, uncertainty, importance, ...rest } = q;
-        return rest;
-      };
+      // placement tells the bands apart (strong = popup, soft = before_results).
+      // Stem, options and hotlines match.
+      const strip = (q: ReturnType<typeof emergencyQ>) => ({
+        ...q,
+        placement: undefined,
+      });
       expect(strip(emergencyQ(pop))).toEqual(strip(emergencyQ(soft)));
-      expect(emergencyQ(pop).importance).toBe('critical');
-      expect(emergencyQ(soft).importance).toBe('high');
+      expect(emergencyQ(pop).placement).toBe('popup');
+      expect(emergencyQ(soft).placement).toBe('before_results');
+      expect(emergencyQ(pop)).not.toHaveProperty('importance');
       expect(soft.clarification.questions[0].id).toBe('emergency');
-      expect(emergencyQ(pop).reason).toBe('emergency_band');
       expect(emergencyQ(pop)).not.toHaveProperty('level');
       for (const o of emergencyQ(pop).options) {
         expect(o).toHaveProperty('results_count', null);
@@ -1036,7 +1037,7 @@ describe('V2SearchService', () => {
         query: dto({ query: 'help' }),
       });
       expect(res.clarification.questions[0].id).toBe('emergency');
-      expect(emergencyQ(res).importance).toBe('high');
+      expect(emergencyQ(res).placement).toBe('before_results');
     });
     it('caller U-0 with no text -> popup with hotlines, no options; results stay', async () => {
       const { service, searchHybrid } = build({});
@@ -1048,6 +1049,7 @@ describe('V2SearchService', () => {
       expect(res.search.hits.total).toEqual(12);
       const q = emergencyQ(res);
       expect(q.options).toEqual([]);
+      expect(q.placement).toBe('popup');
       expect(q.hotlines.map((h) => h.number)).toEqual(['988', '911']);
       expect(res.clarification.questions[0].id).toBe('emergency');
     });
@@ -2114,6 +2116,203 @@ describe('V2_QUESTION_RULE_V1 switch', () => {
     const { res, call } = await ask('true');
     expect(res.rules_version).toBe(RULES_VERSION);
     expect(call.nullCountsWithoutNeedTags).toBe(true);
+  });
+});
+
+describe('question contract v2 in the service', () => {
+  const scores = { 'N-FOD-01': 0.5 };
+  const ask = async (ruleV1: string, over: Partial<V2SearchQueryDto> = {}) => {
+    const b = build({
+      ruleV1,
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+      search: jest.fn().mockImplementation(async () => ({
+        ...hybridResponse(10),
+        nameClaim: { status: 'ok', org_ids: [], veto: null, pins: [] },
+      })),
+    });
+    return b.service.search({
+      headers,
+      query: dto({ query: 'food', ...over }),
+    });
+  };
+  const LEGACY_ONLY = [
+    'importance',
+    'priority',
+    'value',
+    'uncertainty',
+    'reason',
+    'step',
+  ];
+
+  it('off: legacy shape (importance, no placement), parity with development', async () => {
+    const res: any = await ask('off');
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+    for (const q of res.clarification.questions) {
+      expect(q).toHaveProperty('importance');
+      expect(q).not.toHaveProperty('placement');
+    }
+    // The exact keys of development's answer.
+    expect(Object.keys(res.clarification).sort()).toEqual([
+      'questions',
+      'rules_version',
+    ]);
+    expect(Object.keys(res.clarification.questions[0]).sort()).toEqual([
+      'allow_other',
+      'id',
+      'importance',
+      'multi_select',
+      'none_of_these',
+      'options',
+      'priority',
+      'reason',
+      'stem',
+      'step',
+      'type',
+      'uncertainty',
+      'value',
+    ]);
+    expect(
+      Object.keys(res.clarification.questions[0].options[0]).sort(),
+    ).toEqual(['label', 'parameter', 'results_count', 'value']);
+  });
+
+  it('on: placement, and the exact keys of the contract', async () => {
+    const res: any = await ask('true');
+    expect(res.clarification.questions.length).toBeGreaterThan(0);
+    for (const q of res.clarification.questions) {
+      expect(['popup', 'before_results', 'with_results']).toContain(
+        q.placement,
+      );
+      expect(['emergency', 'urgency', 'need']).toContain(q.type);
+      for (const k of LEGACY_ONLY) expect(q).not.toHaveProperty(k);
+      for (const o of q.options) expect(o).not.toHaveProperty('score');
+    }
+    // This page is R5 (no hit holds the query word): the notice comes with its question.
+    expect(Object.keys(res.clarification).sort()).toEqual([
+      'notice',
+      'phone_line',
+      'questions',
+      'rules_version',
+    ]);
+    expect(Object.keys(res.clarification.questions[0]).sort()).toEqual([
+      'allow_other',
+      'id',
+      'multi_select',
+      'none_of_these',
+      'options',
+      'placement',
+      'stem',
+      'type',
+    ]);
+  });
+
+  const danger = (score: number, floor_hit: boolean) =>
+    okResult(
+      {},
+      {
+        signals: {
+          needs: { status: 'ok', scores: {} },
+          emergency: { status: 'ok', score, floor_hit },
+        },
+      },
+    );
+  const inLang = (lang: string) =>
+    ({ ...headers, 'accept-language': lang }) as HeadersDto;
+
+  it('es: danger on the keyword list is a popup with hotlines, in Spanish', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(danger(0.9, true)),
+    });
+    const res: any = await service.search({
+      headers: inLang('es'),
+      query: dto({ query: 'ayuda' }),
+    });
+    expect(res.clarification.questions[0]).toMatchObject({
+      id: 'emergency',
+      type: 'emergency',
+      placement: 'popup',
+      stem: '¿Está en peligro en este momento?',
+      none_of_these: false,
+      hotlines: DEFAULT_HOTLINES,
+    });
+    expect(isMarkedNotStorable(res)).toBe(true);
+  });
+
+  it('no results: no need question; the phone line stays', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(okResult(scores)),
+      search: jest.fn().mockResolvedValue({
+        ...hybridResponse(0),
+        totalCounted: true,
+      }),
+    });
+    const { clarification }: any = await service.search({
+      headers,
+      query: dto({ query: 'food' }),
+    });
+    expect(clarification.questions).toEqual([]);
+    expect(clarification.phone_line).toEqual({
+      label: 'Call 211',
+      number: '211',
+    });
+  });
+
+  it('weak match: no_match comes before the results, with the phone line', async () => {
+    const { service } = build({
+      search: jest.fn().mockResolvedValue({
+        ...hybridResponse(5),
+        judges: { keyword_top: 0.4, vector_top: 0.3 },
+      }),
+    });
+    const res: any = await service.search({
+      headers,
+      query: dto({ query: 'qzxv blorp' }),
+    });
+    expect(res.weak_match).toBe(true);
+    expect(res.clarification.questions).toEqual([
+      expect.objectContaining({
+        id: 'no_match',
+        type: 'need',
+        placement: 'before_results',
+        none_of_these: true,
+      }),
+    ]);
+    expect(res.clarification.phone_line.number).toBe('211');
+  });
+
+  it('the trace holds what the response leaves out; nothing new when off', async () => {
+    const setAttribute = jest.fn();
+    const span = { setAttribute, setAttributes: jest.fn(), end: jest.fn() };
+    const spy = jest.spyOn(trace, 'getTracer').mockReturnValue({
+      startActiveSpan: (_n: string, _o: object, fn: (s: object) => unknown) =>
+        fn(span),
+    } as any);
+    const questions = () =>
+      setAttribute.mock.calls.filter(([k]) => k === 'v2.questions');
+    try {
+      await ask('off');
+      expect(questions()).toEqual([]);
+      await ask('true');
+      expect(questions()).toHaveLength(1);
+      expect(questions()[0][1]).toMatch(
+        /^start\|high\|[a-z_]+\|[\d.]+\|[\d.]+$/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('clarify=never: the danger question only, in the new shape', async () => {
+    const { service } = build({
+      classify: jest.fn().mockResolvedValue(danger(0.5, true)),
+    });
+    const res: any = await service.search({
+      headers,
+      query: dto({ query: 'help me', clarify: 'never' }),
+    });
+    expect(
+      res.clarification.questions.map((q: any) => [q.id, q.placement]),
+    ).toEqual([['emergency', 'before_results']]);
   });
 });
 

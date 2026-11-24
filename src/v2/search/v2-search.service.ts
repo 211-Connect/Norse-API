@@ -17,6 +17,7 @@ import { MATCH, Match, matchOf } from '../rules/match';
 import { nameWords } from 'src/search/internal/name-match/name-match';
 import { hitText } from 'src/search/internal/text-matching/hit-text';
 import { needDescription } from '../rules/need-text';
+import { toContractClarification } from '../rules/contract';
 import {
   floorOnlyEmergency,
   isFullV2Locale,
@@ -778,9 +779,24 @@ export class V2SearchService {
       );
     }
     // English passes through unchanged; es vi ru ko am zh-hans get a string table.
-    const clarification = withSpanSync('v2.rules.finalize', () =>
+    const localized = withSpanSync('v2.rules.finalize', () =>
       localizeClarification(finalize(clarifyDecision, finalizeInput), lang),
     );
+    // Question contract v2 (on): the engine's own measures stay in the trace,
+    // not in the response.
+    if (ruleV1) {
+      span.setAttribute(
+        'v2.questions',
+        localized.questions
+          .map((q) =>
+            [q.id, q.importance, q.reason, q.value, q.uncertainty].join('|'),
+          )
+          .join(','),
+      );
+    }
+    const clarification = ruleV1
+      ? toContractClarification(localized)
+      : localized;
 
     const result: V2SearchResponseDto = {
       ...response,
