@@ -1,8 +1,9 @@
 import { decide, finalize } from './engine';
-import { LABELS, STEMS } from './config';
+import { LABELS, PHONE_LINE, STEMS } from './config';
+import { needText } from './need-text';
 import { LOCALE_TABLES } from './locales';
 import { isFullV2Locale, localizeClarification } from './localize';
-import { displayOf, TIER1_CODES, TIER2_CODES } from './sune';
+import { TIER1_CODES, TIER2_CODES } from './sune';
 import { Clarification, Question } from './types';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 
@@ -11,7 +12,6 @@ const counts = { total: null, by_code: null };
 const emergency = (): Clarification =>
   finalize(decide(req(), sig({}, { emergency: popup })), {
     counts,
-    strong_text_match: false,
   });
 const clone = <T>(o: T): T => JSON.parse(JSON.stringify(o));
 const find = (c: Clarification, id: string): Question =>
@@ -30,9 +30,13 @@ const hand = (): Clarification => ({
       uncertainty: 0,
       reason: 'area_only',
       step: 3,
-      stem: STEMS.area.replace('{area}', displayOf('N-FOD')),
+      stem: STEMS.area.replace('{area}', needText('N-FOD').display),
       options: [
-        { label: displayOf('N-FOD-01'), parameter: 'needs', value: 'N-FOD-01' },
+        {
+          label: needText('N-FOD-01').display,
+          parameter: 'needs',
+          value: 'N-FOD-01',
+        },
       ],
       multi_select: true,
       allow_other: true,
@@ -254,5 +258,43 @@ describe('isFullV2Locale', () => {
     ['ko', false],
   ])('%p -> %p', (lang, full) => {
     expect(isFullV2Locale(lang)).toBe(full);
+  });
+});
+
+describe('phone line label', () => {
+  const withPhone = (): Clarification => ({
+    rules_version: 'x',
+    questions: [],
+    phone_line: { ...PHONE_LINE },
+  });
+
+  it('es: the label is Spanish, the number is unchanged', () => {
+    const c = withPhone();
+    const out = localizeClarification(c, 'es');
+    expect(out.phone_line).toEqual({
+      label: LOCALE_TABLES.es.stems.phoneLine.text,
+      number: '211',
+    });
+    expect(out.phone_line.label).toBe('Llame al 211');
+    expect(c.phone_line).toEqual(PHONE_LINE); // input not mutated
+  });
+  it('a limited locale (vi) stays English', () => {
+    expect(localizeClarification(withPhone(), 'vi').phone_line).toEqual(
+      PHONE_LINE,
+    );
+  });
+  it('an absent phone_line stays absent', () => {
+    const c = { rules_version: 'x', questions: [] };
+    expect('phone_line' in localizeClarification(c, 'es')).toBe(false);
+  });
+  it('a different label stays', () => {
+    const c: Clarification = {
+      ...withPhone(),
+      phone_line: { label: 'Crisis line', number: '988' },
+    };
+    expect(localizeClarification(c, 'es').phone_line).toEqual({
+      label: 'Crisis line',
+      number: '988',
+    });
   });
 });

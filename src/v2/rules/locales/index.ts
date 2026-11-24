@@ -25,7 +25,8 @@ export type StemKey =
   | 'narrow'
   | 'narrowAlso'
   | 'notice'
-  | 'spread';
+  | 'spread'
+  | 'phoneLine';
 
 /**
  * Every non-English string is machine-translated and waits for WA staff.

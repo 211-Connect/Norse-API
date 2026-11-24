@@ -12,8 +12,7 @@ import { modelText } from '../search/model-text';
  * each with the saved ml-broker scores (needs, urgency, emergency; Hydra
  * R4N-cal, ml-broker search-classification route, saved 2026-11-11) and the
  * acceptable question sequences from the answer key. The test calls no
- * service. Every option count is 10 of 100 and strong_text_match is false,
- * as in the measurement run.
+ * service. Every option count is 10 of 100, as in the measurement run.
  *
  * The answer key is a draft. Lucas has not reviewed it yet. Rows #33
  * (careerlink berks), #38 (night shelters) and #40 (marianna pennsylvania) are
@@ -100,7 +99,6 @@ function run(row: Row) {
   for (const c of decision.count_codes) byCode[c] = 10;
   const clar = finalize(decision, {
     counts: { total: 100, by_code: byCode },
-    strong_text_match: false,
   });
   // A question counts as asked only when it blocks (importance high or
   // critical). A quiet 'medium' or 'low' question shows beside the results, and

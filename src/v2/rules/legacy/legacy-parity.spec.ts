@@ -4,7 +4,7 @@ import { runCase, snapshotCases } from './snapshot-inputs';
 
 /**
  * V2_QUESTION_RULE_V1=off must behave like development. The snapshot holds the
- * decide + finalize output of origin/development's rules engine (0f4e75a) for
+ * decide + finalize output of origin/development's rules engine (8a05bc6) for
  * every gold-set row and golden-scores row, with and without counts. It was
  * generated ONCE from that code (not from this copy) with
  * scripts/v2-legacy-snapshot.ts; the command is in that file's header.

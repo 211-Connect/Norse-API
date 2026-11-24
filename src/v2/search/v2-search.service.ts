@@ -10,6 +10,7 @@ import {
   isBoostableUrgency,
   NeedScore,
 } from 'src/search/hybrid-search.service';
+import { envFlag } from '../../common/config/configuration';
 import * as rules from '../rules';
 import * as legacyRules from '../rules/legacy';
 import { MATCH, Match, matchOf } from '../rules/match';
@@ -221,7 +222,17 @@ type RulesEngine = Pick<
   'decide' | 'finalize' | 'isWeakMatch' | 'weakMatchDecision'
 >;
 const NEW_ENGINE: RulesEngine = rules;
-const LEGACY_ENGINE = legacyRules as unknown as RulesEngine;
+const legacyEngine = legacyRules as unknown as RulesEngine;
+// Development's finalize takes `{ counts, strong_text_match }`; the field is
+// not in the new input. The wrapper adds it (always false), at the cast boundary.
+const LEGACY_ENGINE: RulesEngine = {
+  ...legacyEngine,
+  finalize: (decision, input) =>
+    legacyEngine.finalize(decision, {
+      counts: input.counts,
+      strong_text_match: false,
+    } as FinalizeInput),
+};
 
 /** The texts of a result page's top hits. */
 export function topTexts(response: {
@@ -299,7 +310,10 @@ export class V2SearchService {
 
   /** Question rule v1 switch, read per request (off = development's engine). */
   private ruleV1(): boolean {
-    return this.configService.get('V2_QUESTION_RULE_V1') === 'true';
+    return envFlag(
+      this.configService.get<string>('V2_QUESTION_RULE_V1'),
+      false,
+    );
   }
 
   /** Question rule v1: the words the keyword list may name an org by. The list and the pins use the same. */
@@ -437,7 +451,6 @@ export class V2SearchService {
     const tenantContext: rules.TenantContext = {
       ai_classification: aiClassification,
       hotlines: tenantHotlines(searchConfig),
-      tenant_id: headers['x-tenant-id'],
       locale: lang,
     };
     const decision = withSpanSync('v2.rules.decide', () =>
@@ -749,16 +762,15 @@ export class V2SearchService {
                   : 'none',
       });
     }
-    // Off: development's finalize input, unchanged.
+    // Off: LEGACY_ENGINE reads `counts` only (it adds its own strong_text_match).
     const finalizeInput: FinalizeInput = ruleV1
       ? {
           counts,
-          strong_text_match: false,
           ...(match && { match }),
           // The pick has its own results: not the no-results rule.
           weak: weak && !weakPick,
         }
-      : { counts, strong_text_match: false };
+      : { counts };
     if (ruleV1) {
       span.setAttribute(
         'v2.grid_rule',
@@ -790,10 +802,7 @@ export class V2SearchService {
           ...(n.confidence !== undefined && { confidence: n.confidence }),
           // Need descriptions (ADR 0039 Decision 31) are new behavior: switch on only.
           ...(ruleV1 &&
-            needDescription(n.code, {
-              tenantId: tenantContext.tenant_id,
-              locale: tenantContext.locale,
-            })),
+            needDescription(n.code, { locale: tenantContext.locale })),
         })),
         urgency: {
           value: decision.urgency.value,

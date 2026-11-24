@@ -1,13 +1,11 @@
-import { needDescription, needText, setNeedTextOverride } from './need-text';
+import { needDescription, needText } from './need-text';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
 describe('need text', () => {
-  afterEach(() => setNeedTextOverride(null));
-
   it.each([...SUNE_TIER1, ...SUNE_TIER2].map((e) => [e.code] as const))(
     '%s has a non-empty display and description',
     (code) => {
-      const t = needText(code, { tenantId: 't', locale: 'en' });
+      const t = needText(code, { locale: 'en' });
       expect(t.display.trim()).not.toBe('');
       expect(t.description.trim()).not.toBe('');
     },
@@ -20,28 +18,8 @@ describe('need text', () => {
     );
   });
 
-  it('returns the SUNE default with no override', () => {
+  it('returns the SUNE default', () => {
     expect(needText('N-FOD-05').display).toBe('Safe Drinking Water');
-  });
-
-  it('prefers an override when given, field by field', () => {
-    const ov = (code: string, ctx: { tenantId?: string; locale?: string }) =>
-      code === 'N-FOD-05' && ctx.tenantId === 'acme'
-        ? { display: 'Clean Water', description: '' }
-        : null;
-    const t = needText('N-FOD-05', { tenantId: 'acme', locale: 'en' }, ov);
-    expect(t.display).toBe('Clean Water');
-    expect(t.description).toBe(needText('N-FOD-05').description); // empty override field falls back
-    expect(needText('N-FOD-05', { tenantId: 'other' }, ov).display).toBe(
-      'Safe Drinking Water',
-    );
-  });
-
-  it('uses the process-wide override once set', () => {
-    setNeedTextOverride((code) =>
-      code === 'N-HOU' ? { display: 'Home' } : null,
-    );
-    expect(needText('N-HOU').display).toBe('Home');
   });
 
   it('gives an unknown code back as display with no description', () => {

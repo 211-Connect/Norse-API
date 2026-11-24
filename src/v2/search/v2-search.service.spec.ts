@@ -7,7 +7,6 @@ import { SearchService } from 'src/search/search.service';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
 import { RULES_VERSION } from '../rules';
-import { setNeedTextOverride } from '../rules/need-text';
 import {
   ClassifyResult,
   SearchClassificationClient,
@@ -2100,6 +2099,17 @@ describe('V2_QUESTION_RULE_V1 switch', () => {
     expect((await ask('false')).res.rules_version).toBe('rules-2026-11-23.1');
   });
 
+  it("'TRUE' is on (envFlag ignores case)", async () => {
+    expect((await ask('TRUE')).res.rules_version).toBe(RULES_VERSION);
+  });
+
+  it.each(['true ', '1'])(
+    'the value %j is off: development engine',
+    async (v) => {
+      expect((await ask(v)).res.rules_version).toBe('rules-2026-11-23.1');
+    },
+  );
+
   it("'true': runs question rule v1 and asks retrieval for the new fields", async () => {
     const { res, call } = await ask('true');
     expect(res.rules_version).toBe(RULES_VERSION);
@@ -2617,37 +2627,6 @@ describe('V2SearchService name match (question rule v1)', () => {
       expect(options.some((o) => 'description' in o)).toBe(english);
     },
   );
-
-  it('weak match: the no_match option descriptions are those of the tenant', async () => {
-    const search = jest
-      .fn()
-      .mockResolvedValueOnce(
-        page({
-          judges: { keyword_top: 0.4, vector_top: 0.3 },
-          nameClaim: claim({ org_ids: [], pins: [] }),
-        }),
-      )
-      .mockResolvedValueOnce(page({ needCounts: { 'N-HOU': 10 } }));
-    const seen: unknown[] = [];
-    setNeedTextOverride((_code, ctx) => {
-      seen.push(ctx);
-      return null;
-    });
-    try {
-      await build({
-        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
-        search,
-      }).service.search({
-        headers,
-        query: dto({ query: 'blorptastic zzz' }),
-      });
-    } finally {
-      setNeedTextOverride(null);
-    }
-    const tenantId = (headers as Record<string, string>)['x-tenant-id'];
-    expect(seen.length).toBeGreaterThan(0);
-    for (const ctx of seen) expect(ctx).toEqual({ tenantId, locale: 'en' });
-  });
 
   it.each([
     ['a failed claim', { nameClaim: claim({ status: 'failed', org_ids: [] }) }],

@@ -14,6 +14,7 @@ export const es: RawTable = {
     notice:
       'Es posible que estos resultados no coincidan con lo que escribió. Elija lo que necesita abajo, o pruebe con otras palabras.',
     spread: "¿Qué tipo de '{word}' quiere decir?",
+    phoneLine: 'Llame al 211',
   },
   urgency: {
     'U-1': 'Hoy',

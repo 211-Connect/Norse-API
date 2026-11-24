@@ -148,7 +148,7 @@ export function scoreEntropy(options: { score?: number }[]): number {
  * need level and candidates computed without the likely kinds.
  */
 function forMatch(decision: Decision, input: FinalizeInput): Decision {
-  if (input.weak || input.strong_text_match) return decision;
+  if (input.weak) return decision;
   if (input.match !== 'none' || !decision.if_match_none) return decision;
   return { ...decision, ...decision.if_match_none };
 }
@@ -160,9 +160,7 @@ function forMatch(decision: Decision, input: FinalizeInput): Decision {
 export function gridRule(base: Decision, input: FinalizeInput): GridRule {
   const decision = forMatch(base, input);
   if (input.weak || input.counts.total === 0) return 'no_results';
-  const match: Match = input.strong_text_match
-    ? 'concentrated'
-    : (input.match ?? 'spread');
+  const match: Match = input.match ?? 'spread';
   if (match === 'concentrated') return 'R1';
   if (decision.need_level === 'kind' || decision.need_level === 'likely') {
     return 'R2';

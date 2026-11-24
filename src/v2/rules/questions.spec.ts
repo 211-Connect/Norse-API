@@ -1,4 +1,5 @@
 import { decide, finalize, weakMatchDecision } from './engine';
+import { needText } from './need-text';
 import { noMatchQuestion } from './questions';
 import { TIER1_CODES } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
@@ -77,7 +78,6 @@ describe('emergency question', () => {
     );
     const c = finalize(d, {
       counts: { total: 10, by_code: null },
-      strong_text_match: false,
     });
     const em = c.questions.find((q) => q.id === 'emergency');
     expect(em.importance).toBe('high');
@@ -136,7 +136,6 @@ describe('emergency question', () => {
     });
     const c = finalize(d, {
       counts: { total: 10, by_code: null },
-      strong_text_match: false,
     });
     expect(c.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
     expect(d.urgency.state).toBe('ask');
@@ -325,7 +324,6 @@ describe('emergency question', () => {
       const d = decide(req({ urgency: 'U-0' }), sig());
       const c = finalize(d, {
         counts: { total: 0, by_code: {} },
-        strong_text_match: true,
       });
       expect(c.questions[0].id).toBe('emergency');
       expect(c.questions[0].options).toEqual([]);
@@ -513,7 +511,6 @@ describe('two Tier 1 needs in the text: one which-kind question each, the most u
   const fin = (r: ReturnType<typeof req>, s: ReturnType<typeof sig>, by = {}) =>
     finalize(decide(r, s), {
       counts: { total: 10, by_code: by },
-      strong_text_match: false,
     }).questions.map((q) => q.id);
   it('decide builds a question for each need, best score first', () => {
     expect(ids(decide(req(), sig(both)))).toEqual(['area:N-FOD', 'area:N-HOU']);
@@ -592,6 +589,7 @@ describe('area questions', () => {
     ]);
     expect(d.candidates[0].reason).toBe('area_confirmed');
     expect(d.candidates[0].stem).toBe('Which kind of help with Housing?');
+    expect(d.candidates[0].stem).toContain(needText('N-HOU').display);
   });
   it('confirmed Tier 1 + unsure needs elsewhere: only the area question (no narrow)', () => {
     const d = decide(
@@ -854,7 +852,6 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     q.options = q.options.slice(0, 1);
     const r = finalize(d, {
       counts: { total: 10, by_code: { [q.options[0].value]: 4 } },
-      strong_text_match: false,
     });
     expect(r.questions.find((x) => x.id === 'area:N-HOU')).toBeUndefined();
   });
@@ -862,7 +859,6 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     const d = decide(req({ needs: ['N-HOU'] }), sig(housing));
     const r = finalize(d, {
       counts: { total: by_code ? total : null, by_code },
-      strong_text_match: false,
     });
     return r.questions.find((x) => x.id === 'area:N-HOU');
   };
@@ -909,7 +905,6 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     const d = decide(req({ needs: ['N-HOU'] }), sig({}));
     const r = finalize(d, {
       counts: { total: 10, by_code: { 'N-HOU-01': 5, 'N-HOU-02': 5 } },
-      strong_text_match: false,
     });
     const q = r.questions.find((x) => x.id === 'area:N-HOU');
     expect(q.options.slice(0, 2).map((o) => o.value)).toEqual([
@@ -927,11 +922,27 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
     for (const o of d.candidates[0].options) by[o.value] = 3;
     const r = finalize(d, {
       counts: { total: 10, by_code: by },
-      strong_text_match: false,
     });
     const q = r.questions.find((x) => x.id === 'area:N-HOU');
     expect(q.options.map((o) => o.score)).toEqual(
       [...q.options.map((o) => o.score)].sort((a, b) => b - a),
     );
+  });
+});
+
+describe('need name: option label and area stem read needText', () => {
+  it('an area stem holds the needText name of the area', () => {
+    for (const t1 of TIER1_CODES) {
+      const d = decide(
+        req({ needs: [t1] }),
+        sig({ [`${t1}-01`]: 0.3, [`${t1}-02`]: 0.2 }),
+      );
+      const q = d.candidates.find((c) => c.id === `area:${t1}`);
+      if (q)
+        expect(q.stem).toBe(`Which kind of help with ${needText(t1).display}?`);
+    }
+  });
+  it('an unknown code falls back to the code', () => {
+    expect(needText('N-ZZZ').display).toBe('N-ZZZ');
   });
 });

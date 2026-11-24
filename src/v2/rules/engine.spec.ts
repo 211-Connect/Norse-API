@@ -2,7 +2,8 @@
 import { decide, finalize } from './engine';
 import { LABELS, RULES_VERSION } from './config';
 import { BAND_BASE } from './importance';
-import { displayOf, isTier1, isTier2, NX, tier1Of } from './sune';
+import { needText } from './need-text';
+import { isTier1, isTier2, NX, tier1Of } from './sune';
 import { req, sig } from '../../common/testing/v2-rules-helpers';
 import { Decision } from './types';
 import { asksNeeds } from './questions';
@@ -69,7 +70,7 @@ describe('finalize', () => {
     total,
     by_code,
   });
-  it('strong_text_match keeps emergency + time, drops needs', () => {
+  it('match concentrated keeps emergency + time, drops needs', () => {
     const d = dec([
       mk('emergency', 0, ['U-3'], 'urgency'),
       mk('urgency_today', 1, ['U-1'], 'urgency'),
@@ -77,7 +78,7 @@ describe('finalize', () => {
     ]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 5 }),
-      strong_text_match: true,
+      match: 'concentrated',
     });
     expect(r.questions.map((q) => q.id)).toEqual([
       'emergency',
@@ -90,7 +91,6 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD', 'N-MON'])]);
     const r = finalize(d, {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 0 }),
-      strong_text_match: false,
     });
     expect(
       r.questions[0].options.map((o) => [o.value, o.results_count, o.score]),
@@ -107,7 +107,6 @@ describe('finalize', () => {
     ]);
     const r = finalize(d, {
       counts: counts(10, null),
-      strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual(['emergency', 'start']);
     for (const q of r.questions) {
@@ -118,7 +117,6 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const [q] = finalize(d, {
       counts: counts(10, { 'N-HOU': 4, 'N-FOD': 6 }),
-      strong_text_match: false,
     }).questions;
     expect(q.options.map((o) => o.results_count)).toEqual([6, 4]); // sorted by score: the larger count first
     expect(q).not.toHaveProperty('level');
@@ -131,7 +129,6 @@ describe('finalize', () => {
     });
     const [q] = finalize(d, {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 0, 'N-MON': 5 }),
-      strong_text_match: false,
     }).questions;
     expect(q.options.map((o) => o.value)).toEqual(['N-HOU', 'N-MON', 'N-FOD']);
     expect(q.uncertainty).toBe(0.8);
@@ -140,7 +137,6 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'], 'needs', 0.42)]);
     const [q] = finalize(d, {
       counts: counts(10, { 'N-HOU': 5, 'N-FOD': 5 }),
-      strong_text_match: false,
     }).questions;
     expect(q.uncertainty).toBe(0.42);
   });
@@ -148,7 +144,6 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const r = finalize(d, {
       counts: counts(10, null),
-      strong_text_match: false,
     });
     expect(r.questions[0].options).toEqual([
       {
@@ -171,20 +166,15 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const [q] = finalize(d, {
       counts: counts(10, {}),
-      strong_text_match: false,
     }).questions;
     expect(q.options.map((o) => o.results_count)).toEqual([0, 0]);
-    expect(
-      finalize(d, { counts: counts(10, null), strong_text_match: false })
-        .questions,
-    ).toHaveLength(1);
+    expect(finalize(d, { counts: counts(10, null) }).questions).toHaveLength(1);
   });
   it('drops a question whose options are all equal to total', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 10, 'N-FOD': 10 }),
-        strong_text_match: false,
       }).questions,
     ).toEqual([]);
   });
@@ -192,12 +182,10 @@ describe('finalize', () => {
     const d = dec([mk('start', 2, ['N-HOU', 'N-FOD'])]);
     const r = finalize(d, {
       counts: { total: null, by_code: { 'N-HOU': 5, 'N-FOD': 3 } },
-      strong_text_match: false,
     });
     expect(r.questions).toHaveLength(1);
     const r2 = finalize(d, {
       counts: { total: null, by_code: null },
-      strong_text_match: false,
     });
     expect(r2.questions).toHaveLength(1);
   });
@@ -206,13 +194,9 @@ describe('finalize', () => {
     expect(
       finalize(d, {
         counts: counts(10, { 'N-HOU': 0 }),
-        strong_text_match: false,
       }).questions,
     ).toHaveLength(1);
-    expect(
-      finalize(d, { counts: counts(0, {}), strong_text_match: false })
-        .questions,
-    ).toEqual([]);
+    expect(finalize(d, { counts: counts(0, {}) }).questions).toEqual([]);
   });
   it('ranks by priority, caps at 3', () => {
     const d = dec(
@@ -233,7 +217,6 @@ describe('finalize', () => {
         'N-HOU': 5,
         'N-FOD': 5,
       }),
-      strong_text_match: false,
     });
     // Rule R3 keeps the area questions only (narrow and start are dropped).
     expect(r.questions.map((q) => q.id)).toEqual([
@@ -258,7 +241,6 @@ describe('finalize', () => {
         'N-MON-01': 5,
         'N-MON-02': 5,
       }),
-      strong_text_match: false,
     });
     expect(r2.questions.map((q) => q.id)).toEqual([
       'area:N-C',
@@ -271,15 +253,13 @@ describe('finalize', () => {
     const before = JSON.stringify(d);
     finalize(d, {
       counts: counts(10, { 'N-HOU': 3, 'N-FOD': 0 }),
-      strong_text_match: false,
     });
     expect(JSON.stringify(d)).toBe(before);
   });
   it('carries rules_version', () => {
-    expect(
-      finalize(dec([]), { counts: counts(1, {}), strong_text_match: false })
-        .rules_version,
-    ).toBe(RULES_VERSION);
+    expect(finalize(dec([]), { counts: counts(1, {}) }).rules_version).toBe(
+      RULES_VERSION,
+    );
   });
 });
 
@@ -301,7 +281,6 @@ describe('numeric order', () => {
   const run = (signals: ReturnType<typeof sig>) =>
     finalize(decide(req(), signals), {
       counts: { total: 100, by_code: null },
-      strong_text_match: false,
     }).questions;
 
   it('a near-equal area question ranks before urgency_today', () => {
@@ -346,7 +325,6 @@ describe('numeric order', () => {
           'N-FOD-02': 50,
         },
       },
-      strong_text_match: false,
     });
     expect(r.questions.map((q) => q.id)).toEqual(['area:N-B', 'area:N-A']);
   });
@@ -512,7 +490,7 @@ describe('non-finite need scores read as no score', () => {
 
 describe('N-X is internal (ISS-2499)', () => {
   it('has no person-facing label', () => {
-    expect(displayOf(NX)).toBe('N-X');
+    expect(needText(NX).display).toBe('N-X');
     expect('nx' in LABELS).toBe(false);
   });
   it('finalize never sees an N-X option from decide', () => {
@@ -522,7 +500,6 @@ describe('N-X is internal (ISS-2499)', () => {
     );
     const r = finalize(d, {
       counts: { total: 10, by_code: null },
-      strong_text_match: false,
     });
     const all = r.questions.flatMap((q) => q.options.map((o) => o.value));
     expect(all).not.toContain('N-X');
@@ -622,7 +599,6 @@ describe('tenant AI classification off', () => {
     const d = decide(req(), withAskUrgency(0.9), off);
     const c = finalize(d, {
       counts: { total: 10, by_code: null },
-      strong_text_match: false,
     });
     expect(c.questions.map((q) => q.id)).toEqual(['emergency']);
   });

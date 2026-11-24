@@ -1,4 +1,12 @@
-import { matchOf, matchValue, wordCoverage, wordsHeld } from './match';
+import { contentWords } from '../../search/internal/text-matching/word-rarity';
+import {
+  coverageTokens,
+  matchOf,
+  matchValue,
+  topicText,
+  wordCoverage,
+  wordsHeld,
+} from './match';
 
 const m = (texts: string[], words: string[] = ['ymca'], named = false) =>
   matchOf({ words, texts, named });
@@ -129,5 +137,33 @@ describe('word coverage (typos, long queries)', () => {
     expect(wordsHeld([])).toBe(true);
     expect(wordsHeld([0.2, 0.19])).toBe(false);
     expect(wordsHeld([0.2, 0.5])).toBe(true);
+  });
+});
+
+describe('topicText: the topic words of the query, in the caller own spelling', () => {
+  const topic = (q: string, lang = 'en') => topicText(q, contentWords(q, lang));
+
+  it.each([
+    ['i need food', 'en', 'food'],
+    ['food please help', 'en', 'food'],
+    ['Comida y renta', 'en', 'Comida y renta'],
+    ['Comida y renta', 'es', 'Comida y renta'],
+    ['necesito niños', 'es', 'niños'],
+    ['ayuda con renta', 'en', 'renta'],
+    ['help please', 'en', ''],
+  ])('%j (%s) -> %j', (q, lang, want) => {
+    expect(topic(q, lang)).toBe(want);
+  });
+
+  it('request words only: no topic tokens', () => {
+    expect(coverageTokens(contentWords('help please', 'en'))).toEqual([]);
+  });
+
+  it('no query: the topic tokens joined by a space', () => {
+    expect(topicText(undefined, ['help', 'food', 'rent'])).toBe('food rent');
+  });
+
+  it('no topic token in the query: the topic tokens joined by a space', () => {
+    expect(topicText('zzz', ['food'])).toBe('food');
   });
 });

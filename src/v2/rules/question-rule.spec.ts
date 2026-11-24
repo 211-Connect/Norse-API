@@ -1,6 +1,8 @@
+import { contentWords } from '../../search/internal/text-matching/word-rarity';
 import { decide, finalize, gridRule, weakMatchDecision } from './engine';
 import { Match } from './match';
 import { areasInPlay, hasEnoughOptions } from './questions';
+import { localizeClarification } from './localize';
 import { clearAreas, needLevel } from './need-level';
 import { childrenOf } from './sune';
 import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
@@ -14,7 +16,6 @@ interface Opts {
   match?: Match;
   weak?: boolean;
   total?: number | null;
-  strong?: boolean;
   request?: Partial<RulesRequest>;
   signals?: RulesSignals;
 }
@@ -30,7 +31,6 @@ function run(query: string, scores: Record<string, number>, o: Opts = {}) {
   for (const c of decision.count_codes) by_code[c] = 10;
   const input: FinalizeInput = {
     counts: { total: o.total === undefined ? 100 : o.total, by_code },
-    strong_text_match: o.strong ?? false,
     ...(o.match && { match: o.match }),
     ...(o.weak !== undefined && { weak: o.weak }),
   };
@@ -48,7 +48,7 @@ const danger = (scores: Record<string, number>): RulesSignals =>
 
 describe('question rule v1: version and constants', () => {
   it('rules version is bumped', () => {
-    expect(RULES_VERSION).toBe('rules-2026-11-23.3');
+    expect(RULES_VERSION).toBe('rules-2026-11-24.1');
   });
   it('phone line and notice text', () => {
     expect(PHONE_LINE).toEqual({ label: 'Call 211', number: '211' });
@@ -65,7 +65,6 @@ describe('step 2: no results', () => {
     const w = weakMatchDecision(d, request, {});
     const input: FinalizeInput = {
       counts: { total: 100, by_code: null }, // the text-free count call
-      strong_text_match: false,
       match: 'none',
       weak: true,
     };
@@ -106,11 +105,6 @@ describe('R1: the hits are concentrated', () => {
   it('an unclear need: start is built but dropped', () => {
     const r = run('ymca', { 'N-HLT': 0.02 }, { match: 'concentrated' });
     expect(r.decision.candidates.map((q) => q.id)).toContain('start');
-    expect(r.rule).toBe('R1');
-    expect(r.ids).toEqual([]);
-  });
-  it('strong_text_match counts as concentrated', () => {
-    const r = run('ymca', { 'N-HLT': 0.9 }, { strong: true, match: 'none' });
     expect(r.rule).toBe('R1');
     expect(r.ids).toEqual([]);
   });
@@ -405,7 +399,6 @@ describe('gridRule', () => {
   ): GridRule =>
     gridRule(decide(req({ content_words: ['x'] }), sig(scores), {}), {
       counts: { total: 10, by_code: null },
-      strong_text_match: false,
       ...input,
     });
   it('step 2 wins over match and need', () => {
@@ -552,7 +545,6 @@ describe('R5 without a question to pick from', () => {
     );
     return finalize(d, {
       counts: { total: 40, by_code: null },
-      strong_text_match: false,
       match: 'none',
       weak: false,
     });
@@ -572,5 +564,48 @@ describe('R5 without a question to pick from', () => {
     expect(c.questions).toEqual([]);
     expect(c.notice).toBeUndefined();
     expect(c.phone_line).toBeUndefined();
+  });
+});
+
+describe('spread: stem word and word limit (topic words, not content words)', () => {
+  const two = { 'N-HLT': 0.3, 'N-LRN': 0.2 };
+  const ask = (q: string, lang = 'en') =>
+    run(q, two, {
+      request: { query: q, content_words: contentWords(q, lang) },
+    });
+
+  it("'i need food' asks the spread question about 'food'", () => {
+    const r = ask('i need food');
+    expect(r.ids).toEqual(['spread']);
+    expect(r.clar.questions[0].stem).toBe("Which kind of 'food' do you mean?");
+  });
+  it("'food please help' has 1 topic word: now gets a spread question", () => {
+    const r = ask('food please help');
+    expect(r.ids).toEqual(['spread']);
+    expect(r.clar.questions[0].stem).toBe("Which kind of 'food' do you mean?");
+  });
+  it("'Comida y renta' keeps the joining word between two topics", () => {
+    const r = ask('Comida y renta', 'es');
+    expect(r.clar.questions[0].stem).toBe(
+      "Which kind of 'Comida y renta' do you mean?",
+    );
+  });
+  it("es 'necesito comida': the localized stem names 'comida'", () => {
+    const r = ask('necesito comida', 'es');
+    const es = localizeClarification(r.clar, 'es');
+    expect(es.questions[0].stem).toBe("¿Qué tipo de 'comida' quiere decir?");
+  });
+  it("en 'ayuda con renta': the stem names 'renta'", () => {
+    const r = ask('ayuda con renta');
+    expect(r.clar.questions[0].stem).toBe("Which kind of 'renta' do you mean?");
+  });
+  it('request words only: no spread, no in-play area question; the start question', () => {
+    const r = ask('help please');
+    expect(r.decision.candidates.map((q) => q.id)).not.toContain('spread');
+    expect(r.ids).toEqual(['start']);
+  });
+  it('three topic words: no spread', () => {
+    const r = ask('food housing clothes');
+    expect(r.decision.candidates.map((q) => q.id)).not.toContain('spread');
   });
 });

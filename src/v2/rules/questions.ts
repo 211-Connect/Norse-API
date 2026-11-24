@@ -7,12 +7,12 @@ import {
   LABELS,
   STEMS,
 } from './config';
+import { coverageTokens, topicText } from './match';
 import { effort, priorityOf, uncertainty, valueOf } from './importance';
 import { needDescription, needText } from './need-text';
 import { scoreOf } from './scores';
 import {
   childrenOf,
-  displayOf,
   isTier2,
   isKnownCode,
   needOptions,
@@ -89,7 +89,7 @@ export function areasInPlayForSpread(
   req: RulesRequest,
   signals: RulesSignals,
 ): string[] {
-  const n = req.content_words?.length ?? 0;
+  const n = coverageTokens(req.content_words ?? []).length;
   return n >= 1 && n <= CUTOFFS.spread.maxContentWords
     ? areasInPlay(req, signals)
     : [];
@@ -101,7 +101,7 @@ const needOption = (
   score: number,
   tenant: TenantContext,
 ): QuestionOption => {
-  const ctx = { tenantId: tenant.tenant_id, locale: tenant.locale };
+  const ctx = { locale: tenant.locale };
   return {
     label: needText(code, ctx).display,
     ...needDescription(code, ctx),
@@ -326,7 +326,10 @@ export function buildCandidates(
         importance,
         reason,
         step: 3,
-        stem: STEMS.area.replace('{area}', displayOf(t1)),
+        stem: STEMS.area.replace(
+          '{area}',
+          needText(t1, { locale: tenant.locale }).display,
+        ),
         options,
         ...needsFlags,
       });
@@ -357,7 +360,7 @@ export function buildCandidates(
     if (level === 'unclear') {
       const inPlay = areasInPlayForSpread(req, signals);
       if (inPlay.length >= 2) {
-        const word = req.query ?? req.content_words?.join(' ') ?? '';
+        const word = topicText(req.query, req.content_words ?? []);
         out.push(
           question({
             id: 'spread',

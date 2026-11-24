@@ -24,8 +24,37 @@ export const MATCH = {
  */
 const JOINING_WORDS = new Set(['por', 'para', 'con']);
 
-const coverageTokens = (words: string[]): string[] =>
+/** The query words the hits must hold: no request words, no ZIP, no joining words. */
+export const coverageTokens = (words: string[]): string[] =>
   queryTokens(words).filter((w) => !JOINING_WORDS.has(w));
+
+/**
+ * The words of the caller's query that name the topic, for the spread stem.
+ * The topic is the set of `coverageTokens(contentWords)`. The text runs from the
+ * first to the last topic token of `query`; inside it request words are dropped
+ * and the rest stays ('Comida y renta'), in the caller's spelling. No query, or
+ * no topic token in it: the topic tokens joined by a space.
+ */
+export function topicText(
+  query: string | undefined,
+  contentWords: string[],
+): string {
+  const topicTokens = coverageTokens(contentWords);
+  const topic = new Set(topicTokens);
+  const fallback = topicTokens.join(' ');
+  if (!query) return fallback;
+  const tokens = query.split(/[^\p{L}\p{N}'’]+/u).filter((t) => t.length > 0);
+  const isTopic = (t: string): boolean =>
+    queryWords(t).some((f) => topic.has(f));
+  const first = tokens.findIndex(isTopic);
+  if (first === -1) return fallback;
+  const last = tokens.length - 1 - [...tokens].reverse().findIndex(isTopic);
+  const inContent = new Set(contentWords);
+  return tokens
+    .slice(first, last + 1)
+    .filter((t) => isTopic(t) || !queryWords(t).some((f) => inContent.has(f)))
+    .join(' ');
+}
 
 /** Per query token, the share of hit texts that hold it. */
 export function wordCoverage(words: string[], texts: string[]): number[] {

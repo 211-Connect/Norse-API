@@ -1,6 +1,6 @@
 import { Hotline } from './types';
 
-export const RULES_VERSION = 'rules-2026-11-23.3';
+export const RULES_VERSION = 'rules-2026-11-24.1';
 
 export const CUTOFFS = {
   emergency: { popup: 0.65, soft: 0.217 }, // Argus hard-negative retrain (argus-hn-notok-s0-floor4-2026-11-18) tuned cutoffs
@@ -21,7 +21,7 @@ export const CUTOFFS = {
   // and vector top score < vectorBelow.
   weakMatch: { keywordBelow: 1, needBelow: 0.9, vectorBelow: 0.55 },
   // The spread question (L0 spread): an area is in play from this score; the
-  // question is asked for a query of at most this many content words.
+  // question is asked for a query of 1 to this many topic words (`coverageTokens`).
   spread: { areaInPlayMin: 0.05, maxContentWords: 2 },
   maxQuestions: 3,
   optionsPerQuestion: 3,
@@ -31,8 +31,6 @@ export const DEFAULT_HOTLINES: Hotline[] = [
   { label: 'Crisis line', number: '988' },
   { label: 'Emergency', number: '911' },
 ];
-/** Shown with no results and in rule R5 (Lucas 2026-11-23). */
-export const PHONE_LINE: Hotline = { label: 'Call 211', number: '211' };
 export const DEFAULT_TOP_AREAS = ['N-HOU', 'N-FOD', 'N-MON'];
 
 export const STEMS = {
@@ -49,7 +47,12 @@ export const STEMS = {
   notice:
     'These results may not match what you typed. Pick what you need below, or try different words.',
   spread: "Which kind of '{word}' do you mean?",
+  // The label of PHONE_LINE; localizeClarification translates it by this text.
+  phoneLine: 'Call 211',
 };
+
+/** Shown with no results and in rule R5 (Lucas 2026-11-23). */
+export const PHONE_LINE: Hotline = { label: STEMS.phoneLine, number: '211' };
 
 export const LABELS = {
   urgency: {

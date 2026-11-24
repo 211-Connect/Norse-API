@@ -155,7 +155,6 @@ const inputOf = (row: Row): FinalizeInput => {
   return {
     // Untagged prod index: counts are not counted (null).
     counts: { total: e.total, by_code: null },
-    strong_text_match: false,
     match: matchValue({
       words: row.content_words,
       hit_count: e.hit_count,

@@ -1,7 +1,7 @@
 import { matchLocale } from '../../common/locales';
 import { LOCALE_TABLES } from './locales';
 import { STEMS } from './config';
-import { displayOf } from './sune';
+import { needText } from './need-text';
 import { Clarification, Question, QuestionOption, RulesSignals } from './types';
 
 /** Languages with the full v2 features (Lucas 2026-11-20). Every other locale gets the danger question only. */
@@ -77,7 +77,7 @@ export function localizeClarification(
     let stem = text(table.stems, key);
     if (stem && key === 'area') {
       const t1 = q.id.slice('area:'.length);
-      const area = text(table.needs, t1) ?? displayOf(t1);
+      const area = text(table.needs, t1) ?? needText(t1).display;
       stem = stem.replace('{area}', () => area);
     }
     if (stem && key === 'spread') {
@@ -104,9 +104,17 @@ export function localizeClarification(
     noticeText
       ? { ...clarification.notice, text: noticeText }
       : clarification.notice;
+  const phoneLineText = text(table.stems, 'phoneLine');
+  const phone_line =
+    clarification.phone_line &&
+    clarification.phone_line.label === STEMS.phoneLine &&
+    phoneLineText
+      ? { ...clarification.phone_line, label: phoneLineText }
+      : clarification.phone_line;
   return {
     ...clarification,
     questions: clarification.questions.map(question),
     ...(notice && { notice }),
+    ...(phone_line && { phone_line }),
   };
 }

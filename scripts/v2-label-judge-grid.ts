@@ -54,7 +54,6 @@ for (const row of rows) {
   row.results = e.weak || e.total === 0 ? 'none' : 'some';
   row.rule = gridRule(decision, {
     counts: { total: e.total, by_code: null },
-    strong_text_match: false,
     match: row.match,
     weak: e.weak,
   });

@@ -15,7 +15,7 @@ export interface RulesRequest {
    */
   has_content_word?: boolean;
   clarify: 'auto' | 'never';
-  /** Normalized model text of the query (the `{word}` of the spread stem). */
+  /** Normalized model text of the query (`topicText` cuts the `{word}` of the spread stem from it). */
   query?: string;
   /** `contentWords(text, lang)` of the query: the words left after function words. */
   content_words?: string[];
@@ -48,7 +48,6 @@ export interface Hotline {
 export type AiClassificationSetting = 'on' | 'off';
 
 export interface TenantContext {
-  tenant_id?: string; // for the need text resolver (ISS-2665 seam)
   locale?: string; // for the need text resolver
   hotlines?: Hotline[];
   ai_classification?: AiClassificationSetting;
@@ -176,7 +175,6 @@ export interface SearchCounts {
 }
 export interface FinalizeInput {
   counts: SearchCounts;
-  strong_text_match: boolean;
   /** What the returned hits say about the query (match.ts). Absent = 'spread'. */
   match?: Match;
   /** The text found no good match (the service's weak-match flag). */
