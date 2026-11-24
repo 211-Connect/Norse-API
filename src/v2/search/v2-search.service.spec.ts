@@ -91,6 +91,8 @@ function build(opts: {
   lookup?: jest.Mock;
   /** V2_NAME_MATCH_OWNER. Default unset (off). */
   nameOwner?: string;
+  /** V2_NAME_TOPIC_VETO. Default unset (off). */
+  topicVeto?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -120,7 +122,9 @@ function build(opts: {
           ? (opts.ruleV1 ?? 'true')
           : k === 'V2_NAME_MATCH_OWNER'
             ? opts.nameOwner
-            : undefined,
+            : k === 'V2_NAME_TOPIC_VETO'
+              ? opts.topicVeto
+              : undefined,
     } as unknown as ConfigService,
     { lookup } as unknown as NameLookupService,
   );
@@ -2627,6 +2631,7 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
   const ask = (
     over: {
       owner?: string;
+      topicVeto?: string;
       ruleV1?: string;
       query?: string;
       result?: unknown;
@@ -2636,6 +2641,7 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
     const b = build({
       nameOwner: 'owner' in over ? over.owner : 'keyword',
       ruleV1: over.ruleV1,
+      topicVeto: over.topicVeto,
       search: jest.fn().mockResolvedValue(over.result ?? page()),
     });
     return b.service
@@ -2658,6 +2664,20 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
     expect(call(startEarlyRetrieval).nameOwner).toBe(
       call(searchHybrid).nameOwner,
     );
+  });
+
+  it('V2_NAME_TOPIC_VETO: the owner checks topics only with true', async () => {
+    const hits = [
+      { taxonomy_names: ['Food Banks/Food Distribution Warehouses'] },
+    ];
+    for (const topicVeto of [undefined, 'false']) {
+      const { searchHybrid } = await ask({ topicVeto, query: 'food bank' });
+      expect(call(searchHybrid).nameOwner).not.toHaveProperty('topic');
+    }
+    const on = await ask({ topicVeto: 'true', query: 'food bank' });
+    expect(call(on.searchHybrid).nameOwner.topic(hits)).toBe(true);
+    const noOwner = await ask({ topicVeto: 'true', owner: undefined });
+    expect(call(noOwner.searchHybrid)).not.toHaveProperty('nameOwner');
   });
 
   it('off (unset, other value, rule v1 off, no text, no token): no owner, the lookup path as today', async () => {

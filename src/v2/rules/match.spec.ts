@@ -17,6 +17,7 @@ import {
   withinOneEdit,
   wordCoverage,
   wordsHeld,
+  topicPhrase,
 } from './match';
 
 const hit = (org: string | null, text = ''): MatchHit => ({
@@ -485,5 +486,46 @@ describe('matchFromName (the name owner decides the name claim)', () => {
     expect(r.named).toBe(true);
     expect(r.named_org_ids).toEqual([]);
     expect(run(['swim'], hits, nm('service')).named).toBe(false);
+  });
+});
+
+describe('topicPhrase', () => {
+  const terms = [
+    'Food Pantries',
+    'Food Banks/Food Distribution Warehouses',
+    'General Legal Aid',
+    'Housing Authorities',
+    'Senior Centers',
+    'Homeless Shelter',
+    'Red Cross Disaster Service Centers',
+    'Individual Advocacy * Veterans',
+    'Case/Care Management',
+  ];
+  it.each([
+    'food pantry',
+    'food bank',
+    'legal aid',
+    'housing authority',
+    'senior center',
+    'homeless shelter',
+    'veterans',
+  ])('%s is a term of the directory', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(true);
+  });
+  it.each([
+    'red cross',
+    'ymca',
+    'goodwill',
+    'compass housing',
+    'salvation army',
+    'ballard food bank',
+    'food',
+  ])('%s is not', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(false);
+  });
+  it('no query word, no term: false', () => {
+    expect(topicPhrase(['i', 'need'], terms)).toBe(false);
+    expect(topicPhrase(['food'], [])).toBe(false);
+    expect(topicPhrase(['food'], [' / '])).toBe(false);
   });
 });

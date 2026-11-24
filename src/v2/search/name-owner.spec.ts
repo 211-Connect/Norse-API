@@ -2,11 +2,13 @@ import { MATCH } from '../rules/match';
 import {
   KeywordHit,
   NAME_VARIANTS,
+  NameOwner,
   keywordHit,
   keywordOwner,
   matchHit,
   nameScore,
   parseNameVariants,
+  withTopicVeto,
 } from './name-owner';
 
 describe('matchHit', () => {
@@ -43,6 +45,7 @@ describe('keywordHit', () => {
       org_id: 'o1',
       alternate_names: ['Compass Housing'],
       service_name: 'Food Pantry',
+      taxonomy_names: [],
     });
   });
   it('splits a string of alternate names; missing fields give null and empty', () => {
@@ -73,6 +76,7 @@ describe('keywordOwner', () => {
     org_name: org,
     alternate_names: alt,
     service_name: service,
+    taxonomy_names: [],
     text: service.toLowerCase(),
   });
   const ok = (hits: KeywordHit[]) => ({ state: 'ok' as const, hits });
@@ -271,5 +275,35 @@ describe('David #367 point 1: food bank, keyword owner', () => {
     const owner = keywordOwner(['food', 'bank']);
     expect((await owner.claim({ state: 'ok', hits })).strength).toBe('org');
     expect(owner.vetoes(hits)).toBe(false);
+  });
+});
+
+describe('topic veto (V2_NAME_TOPIC_VETO): food bank, one candidate', () => {
+  const hit = (i: number, terms: string[]) =>
+    keywordHit(`s${i}`, {
+      name: 'Food Bank',
+      taxonomies: terms.map((name) => ({ name })),
+      organization: { id: 'o1', name: 'Ballard Food Bank' },
+    });
+  const page = (terms: string[]) => [0, 1, 2, 3, 4].map((i) => hit(i, terms));
+  const owner = (): NameOwner => keywordOwner(['food', 'bank']);
+  it('claimed and not vetoed by the generic check; the topic check stops it', async () => {
+    const hits = page(['Food Banks/Food Distribution Warehouses']);
+    const o = withTopicVeto(owner(), ['food', 'bank']);
+    expect((await o.claim({ state: 'ok', hits })).strength).toBe('org');
+    expect(o.vetoes(hits)).toBe(false);
+    expect(o.topic?.(hits)).toBe(true);
+  });
+  it('NOT fixed: the hits hold only another term (Food Pantries): still claimed', async () => {
+    const hits = page(['Food Pantries']);
+    const o = withTopicVeto(owner(), ['food', 'bank']);
+    expect((await o.claim({ state: 'ok', hits })).strength).toBe('org');
+    expect(o.topic?.(hits)).toBe(false);
+  });
+  it('off: the owner has no topic check; no taxonomy on the hits: no veto', () => {
+    expect(owner().topic).toBeUndefined();
+    expect(withTopicVeto(owner(), ['food', 'bank']).topic?.(page([]))).toBe(
+      false,
+    );
   });
 });

@@ -1658,7 +1658,9 @@ export class HybridSearchService {
       const evidence = (fusedIds ?? keyword.hits.map((h) => h.id))
         .slice(0, MATCH.topN)
         .flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
-      vetoed = claim.strength === 'org' && owner.vetoes(evidence);
+      vetoed =
+        claim.strength === 'org' &&
+        (owner.vetoes(evidence) || owner.topic?.(keyword.hits) === true);
     } catch (error) {
       this.logger.warn(`Name owner failed: ${(error as Error)?.name}`);
       return { nameMatch: failed, ids: [] };

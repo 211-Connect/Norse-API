@@ -18,6 +18,9 @@ export const MATCH = {
   // `genericNameShareMax` of those have it in the org name.
   genericMinHolders: 5,
   genericNameShareMax: 0.5,
+  // A taxonomy term is the query phrase when the query covers this much of it
+  // (offline 2026-11-24: 0.5 to 0.75 lose no held name, 0.4 loses 'red cross').
+  topicTermMin: 0.6,
   // A query with at least this many words needs `longHeldShareMin` of its
   // words held (each by `textShareMin` of the hits); a shorter one every word.
   longQueryMinWords: 3,
@@ -308,6 +311,31 @@ export function genericName(words: string[], hits: MatchHit[]): boolean {
   return (
     holders.length >= MATCH.genericMinHolders &&
     inName.length / holders.length < MATCH.genericNameShareMax
+  );
+}
+
+const topicWordHit = (t: string, w: string): boolean =>
+  w === t ||
+  (t.length >= 4 &&
+    Math.abs(w.length - t.length) <= 3 &&
+    w.startsWith(t.slice(0, Math.max(4, t.length - 2))));
+
+/**
+ * Is the query a topic the directory itself has a term for ('food bank',
+ * 'housing authority')? A term holds every query word, and the query words
+ * cover most of the term. A '/' or '*' splits a term ('Food Banks/Food
+ * Distribution Warehouses'). No word list: the terms come from the hits.
+ */
+export function topicPhrase(words: string[], terms: string[]): boolean {
+  const qt = queryTokens(words);
+  if (qt.length === 0) return false;
+  return terms.some((term) =>
+    term.split(/[/*]/).some((part) => {
+      const tw = toks(part).filter((w) => !NAME_FUNCTION.has(w));
+      if (!qt.every((t) => tw.some((w) => topicWordHit(t, w)))) return false;
+      const covered = tw.filter((w) => qt.some((t) => topicWordHit(t, w)));
+      return covered.length / tw.length >= MATCH.topicTermMin;
+    }),
   );
 }
 
