@@ -459,7 +459,6 @@ describe('start question', () => {
   });
   it('start option count equals the number of Tier 1 needs', () => {
     const d = decide(req(), sig({ 'N-LEG': 0.35 }));
-    // eslint-disable-next-line no-console
     console.log(`START_OPTION_COUNT=${opts(d, 'start').length}`);
     expect(opts(d, 'start')).toHaveLength(TIER1_CODES.length);
     expect(TIER1_CODES.length).toBeGreaterThan(3);
@@ -827,7 +826,6 @@ describe('which kind: every Tier 2 option, scored (Lucas 2026-11-19)', () => {
   it('option counts for food and housing (all Tier 2 needs)', () => {
     const h = area('N-HOU', {}).options.length;
     const f = area('N-FOD', {}).options.length;
-    // eslint-disable-next-line no-console
     console.log(`OPTION_COUNTS food=${f} housing=${h}`);
     expect(h).toBeGreaterThan(3);
     expect(f).toBeGreaterThan(3);
