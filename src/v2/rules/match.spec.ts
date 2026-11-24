@@ -4,6 +4,7 @@ import {
   NameCandidate,
   capsTokens,
   genericName,
+  matchFromName,
   matchFromShares,
   matchOf,
   nameHead,
@@ -438,5 +439,51 @@ describe('generic word veto and top org back coverage', () => {
   it('topOrgBack: 0 for no match, 1 for a caps token', () => {
     expect(topOrgBack(['police'], [hit('Other')])).toBe(0);
     expect(topOrgBack(['dshs'], [hit('DSHS Community Services')])).toBe(1);
+  });
+});
+
+describe('matchFromName (the name owner decides the name claim)', () => {
+  const hits = [hit('Other One', 'swim lessons'), hit('Other Two', 'swim')];
+  const nm = (
+    strength: 'org' | 'service' | 'none',
+    over: { vetoed?: boolean; out_of_radius?: boolean | null } = {},
+  ) => ({ strength, vetoed: false, out_of_radius: null, ...over });
+  const run = (words: string[], h: MatchHit[], name: ReturnType<typeof nm>) =>
+    matchFromName({ words, hits: h, name });
+
+  it('org strength, not vetoed, not out of radius: concentrated', () => {
+    expect(run(['compass'], hits, nm('org')).value).toBe('concentrated');
+    expect(
+      run(['compass'], hits, nm('org', { out_of_radius: false })).value,
+    ).toBe('concentrated');
+  });
+  it('vetoed or out of radius: not concentrated (spread when the words are held)', () => {
+    expect(run(['swim'], hits, nm('org', { vetoed: true })).value).toBe(
+      'spread',
+    );
+    expect(run(['swim'], hits, nm('org', { out_of_radius: true })).value).toBe(
+      'spread',
+    );
+  });
+  it('words not held: none', () => {
+    expect(run(['zzzz'], hits, nm('org', { vetoed: true })).value).toBe('none');
+  });
+  it('service or no strength never concentrates', () => {
+    expect(run(['swim'], hits, nm('service')).value).toBe('spread');
+    expect(run(['swim'], hits, nm('none')).value).toBe('spread');
+  });
+  it('no query tokens or no hits: spread', () => {
+    expect(run(['i', 'need'], hits, nm('org')).value).toBe('spread');
+    expect(run(['compass'], [], nm('org')).value).toBe('spread');
+  });
+  it('reads only the name: shares are 0, generic is the veto, named is org strength', () => {
+    const r = run(['swim'], hits, nm('org', { vetoed: true }));
+    expect(r.org_share).toBe(0);
+    expect(r.top_org_share).toBe(0);
+    expect(r.top_org_back).toBe(0);
+    expect(r.generic).toBe(true);
+    expect(r.named).toBe(true);
+    expect(r.named_org_ids).toEqual([]);
+    expect(run(['swim'], hits, nm('service')).named).toBe(false);
   });
 });
