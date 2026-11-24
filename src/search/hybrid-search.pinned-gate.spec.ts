@@ -55,6 +55,15 @@ const KEYWORD = ['a', 'b', 'c'];
 const VECTOR = ['b', 'd', 'a'];
 const TAXONOMY = ['c'];
 const NEED = ['n1'];
+// What the keyword list returns when the request asks for a `_source` (name owner).
+const KEYWORD_SOURCES: Record<string, any> = {
+  a: { name: 'A svc', organization: { id: 'org-1', name: 'Org One' } },
+  b: { name: 'B svc', organization: { id: 'org-2', name: 'Org Two' } },
+  c: {
+    name: 'C svc',
+    organization: { id: 'org-1', name: 'Org One', alternate_name: ['One'] },
+  },
+};
 
 describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
   let service: HybridSearchService;
@@ -65,11 +74,15 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
   let taxonomyGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
   let namedOrgServices: string[];
+  let keywordFails = false;
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
   });
-  const isList = (r: any) => r._source === false && r.size === 100;
+  const isList = (r: any) =>
+    (r._source === false || Array.isArray(r._source)) &&
+    r.size === 100 &&
+    r.min_score == null;
   const isGate = (r: any) => r.size === 0 && r.aggs?.pinned && r.aggs?.other;
   const isNamedOrg = (r: any) =>
     r.query?.bool?.filter?.some?.((f: any) => f.terms?.['organization.id']);
@@ -117,6 +130,19 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
 
       if (isList(req)) {
         const kind = kindOf(req);
+        if (kind === 'keyword' && keywordFails) {
+          return Promise.reject(new Error('keyword down'));
+        }
+        if (kind === 'keyword' && Array.isArray(req._source)) {
+          return Promise.resolve({
+            hits: {
+              hits: KEYWORD.map((id) => ({
+                _id: id,
+                _source: KEYWORD_SOURCES[id],
+              })),
+            },
+          });
+        }
         if (kind === 'vector' && mode === 'reject-vector') {
           return Promise.reject(new Error('es down'));
         }
@@ -289,6 +315,7 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     enabled = undefined;
     taxonomyGate = undefined;
     namedOrgServices = [];
+    keywordFails = false;
     searchConfig = { pinned_resources_mode: 'boost' };
     await build();
   });
@@ -511,6 +538,210 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
         'far',
       ]);
       expect(res.namedPinned).toBe(3);
+    });
+  });
+  describe('name owner (v2, internal)', () => {
+    const namedRequests = () => requests.filter(isNamedOrg);
+    const keywordRequests = () =>
+      requests.filter((r) => isList(r) && kindOf(r) === 'keyword');
+    const orgClaim = (over: Record<string, unknown> = {}) => ({
+      status: 'ok',
+      strength: 'org',
+      org_ids: ['org-1'],
+      service_ids: [],
+      name: 'Org One',
+      ...over,
+    });
+    const owner = (
+      over: { claim?: jest.Mock; vetoes?: jest.Mock; pinFrom?: string } = {},
+    ) => ({
+      claim: over.claim ?? jest.fn().mockResolvedValue(orgClaim()),
+      vetoes: over.vetoes ?? jest.fn().mockReturnValue(false),
+      pinFrom: over.pinFrom ?? 'keyword',
+    });
+    // Without the gate's own pinned ids (p1, p2).
+    const pinnedIds = () =>
+      mainRequest().query.pinned.ids.filter((id: string) => !/^p\d$/.test(id));
+
+    beforeEach(async () => {
+      searchConfig = {};
+      await build();
+    });
+
+    it('O1. no owner: keyword request has _source false, no nameMatch in the result', async () => {
+      const res = await run();
+      expect(keywordRequests()[0]._source).toBe(false);
+      expect(res).not.toHaveProperty('nameMatch');
+    });
+
+    it('O2. keyword owner: the keyword request asks for the name fields; claim gets the state and KeywordHits', async () => {
+      const o = owner();
+      await run({}, { nameOwner: o });
+      expect(keywordRequests()[0]._source).toEqual(
+        expect.arrayContaining([
+          'name',
+          'taxonomies.name',
+          'organization.id',
+          'organization.name',
+          'organization.alternate_name',
+        ]),
+      );
+      const kw = o.claim.mock.calls[0][0];
+      expect(kw.state).toBe('ok');
+      expect(kw.hits.map((h: any) => h.id)).toEqual(KEYWORD);
+      expect(kw.hits[2]).toMatchObject({
+        org_id: 'org-1',
+        alternate_names: ['One'],
+        service_name: 'C svc',
+      });
+    });
+
+    it('O3. keyword owner, org claim: keyword hits of the org lead (fused order), no ES read, out_of_radius null', async () => {
+      const res = await run({}, { nameOwner: owner() });
+      expect(pinnedIds().slice(0, 2)).toEqual(['a', 'c']);
+      expect(namedRequests()).toHaveLength(0);
+      expect(res.nameMatch).toEqual({
+        ...orgClaim(),
+        vetoed: false,
+        pinned: 2,
+        out_of_radius: null,
+      });
+    });
+
+    it('O4. the veto reads the fused top ids as keyword hits, once, before the pin', async () => {
+      const vetoes = jest.fn().mockReturnValue(true);
+      const res = await run({}, { nameOwner: owner({ vetoes }) });
+      expect(vetoes).toHaveBeenCalledTimes(1);
+      // fused b, a, c, d: d is not a keyword hit and is dropped
+      expect(vetoes.mock.calls[0][0].map((h: any) => h.id)).toEqual([
+        'b',
+        'a',
+        'c',
+      ]);
+      expect(pinnedIds().slice(0, 3)).toEqual(['b', 'a', 'c']);
+      expect(res.nameMatch).toMatchObject({ vetoed: true, pinned: 0 });
+    });
+
+    it('O5. read owner: a veto sends no pin read; no veto reads once and pins nearest first', async () => {
+      namedOrgServices = ['near', 'mid'];
+      await run(
+        { coords: SEA },
+        {
+          nameOwner: owner({
+            pinFrom: 'read',
+            vetoes: jest.fn().mockReturnValue(true),
+          }),
+        },
+      );
+      expect(namedRequests()).toHaveLength(0);
+      await build();
+      const res = await run(
+        { coords: SEA },
+        { nameOwner: owner({ pinFrom: 'read' }) },
+      );
+      expect(namedRequests()).toHaveLength(1);
+      expect(pinnedIds().slice(0, 2)).toEqual(['near', 'mid']);
+      expect(res.nameMatch).toMatchObject({ pinned: 2, out_of_radius: false });
+    });
+
+    it('O6. read owner: no service in the filters is out of radius; a failed read is a failed status', async () => {
+      namedOrgServices = [];
+      const none = await run({}, { nameOwner: owner({ pinFrom: 'read' }) });
+      expect(none.nameMatch).toMatchObject({
+        status: 'ok',
+        pinned: 0,
+        out_of_radius: true,
+      });
+      const es = (service as any).elasticsearchService;
+      const orig = es.search;
+      es.search = jest.fn((req: any) =>
+        isNamedOrg(req) ? Promise.reject(new Error('es down')) : orig(req),
+      );
+      const failed = await run({}, { nameOwner: owner({ pinFrom: 'read' }) });
+      expect(failed.nameMatch).toMatchObject({
+        status: 'failed',
+        pinned: 0,
+        out_of_radius: null,
+      });
+    });
+
+    it('O7. keyword list failed: status failed, claim not called, nothing pinned', async () => {
+      keywordFails = true;
+      const o = owner();
+      const res = await run({}, { nameOwner: o });
+      expect(o.claim).not.toHaveBeenCalled();
+      expect(res.nameMatch).toMatchObject({ status: 'failed', pinned: 0 });
+      expect(namedRequests()).toHaveLength(0);
+    });
+
+    it('O8. keyword list skipped (locale): claim sees state skipped', async () => {
+      (service as any).keywordLocales = new Set(['es']);
+      const o = owner({
+        claim: jest
+          .fn()
+          .mockResolvedValue(
+            orgClaim({ status: 'skipped', strength: 'none', org_ids: [] }),
+          ),
+      });
+      const res = await run({}, { nameOwner: o });
+      expect(o.claim.mock.calls[0][0]).toEqual({ state: 'skipped', hits: [] });
+      expect(res.nameMatch).toMatchObject({ status: 'skipped', pinned: 0 });
+    });
+
+    it('O9. claim or vetoes throwing: failed, nothing pinned, only the error name is logged', async () => {
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      const bad = jest.fn().mockRejectedValue(new TypeError('secret text'));
+      const r1 = await run({}, { nameOwner: owner({ claim: bad }) });
+      expect(r1.nameMatch).toMatchObject({ status: 'failed', pinned: 0 });
+      const r2 = await run(
+        {},
+        {
+          nameOwner: owner({
+            vetoes: jest.fn(() => {
+              throw new RangeError('secret text');
+            }),
+          }),
+        },
+      );
+      expect(r2.nameMatch).toMatchObject({ status: 'failed', pinned: 0 });
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('|');
+      expect(logged).toContain('TypeError');
+      expect(logged).toContain('RangeError');
+      expect(logged).not.toContain('secret');
+    });
+
+    it('O10. sort=distance: no pin, no veto read, claim still reported (out_of_radius null)', async () => {
+      namedOrgServices = ['x1'];
+      const res = await run(
+        { coords: SEA, sort: 'distance' },
+        { nameOwner: owner({ pinFrom: 'read' }) },
+      );
+      expect(namedRequests()).toHaveLength(0);
+      expect(res.nameMatch).toMatchObject({
+        status: 'ok',
+        strength: 'org',
+        pinned: 0,
+        out_of_radius: null,
+      });
+    });
+
+    it('O11. service strength pins nothing', async () => {
+      const o = owner({
+        claim: jest
+          .fn()
+          .mockResolvedValue(
+            orgClaim({ strength: 'service', org_ids: [], service_ids: ['a'] }),
+          ),
+      });
+      const res = await run({}, { nameOwner: o });
+      expect(pinnedIds().slice(0, 2)).toEqual(['b', 'a']);
+      expect(res.nameMatch).toMatchObject({ strength: 'service', pinned: 0 });
+    });
+
+    it('O12. with an owner the old namedOrgIds option is not used', async () => {
+      namedOrgServices = ['x1'];
+      await run({}, { nameOwner: owner(), namedOrgIds: ['org-9'] });
+      expect(namedRequests()).toHaveLength(0);
     });
   });
 });

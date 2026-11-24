@@ -409,3 +409,40 @@ export function matchOf(i: {
     named_org_ids: decidedByName && nm ? nm.org_ids : [],
   };
 }
+
+/**
+ * The match value when a name owner already decided the name claim. Reads the
+ * name only: no org shares, no name test, no generic test (`vetoed` is it).
+ */
+export function matchFromName(i: {
+  words: string[];
+  hits: MatchHit[];
+  name: {
+    strength: 'org' | 'service' | 'none';
+    vetoed: boolean;
+    out_of_radius: boolean | null;
+  };
+}): ReturnType<typeof matchOf> {
+  const words_held = wordsHeld(wordCoverage(i.words, i.hits));
+  const text_share = textShare(i.words, i.hits);
+  const { strength, vetoed, out_of_radius } = i.name;
+  const value: Match =
+    queryTokens(i.words).length === 0 || i.hits.length === 0
+      ? 'spread'
+      : strength === 'org' && !vetoed && out_of_radius !== true
+        ? 'concentrated'
+        : words_held
+          ? 'spread'
+          : 'none';
+  return {
+    value,
+    org_share: 0,
+    text_share,
+    top_org_share: 0,
+    top_org_back: 0,
+    words_held,
+    named: strength === 'org',
+    generic: vetoed,
+    named_org_ids: [],
+  };
+}

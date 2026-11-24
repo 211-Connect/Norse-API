@@ -21,6 +21,7 @@ import {
   nameMatch,
   queryTokens,
 } from '../rules/match';
+import { matchHit } from './name-owner';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -222,27 +223,9 @@ export function matchHits(
   topN: number = MATCH.topN,
 ): MatchHit[] {
   const hits = response.search?.hits?.hits ?? [];
-  return hits.slice(0, topN).map((h) => {
-    const src = ((h as { _source?: unknown })._source ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const org = src.organization;
-    const orgName =
-      typeof org === 'string'
-        ? org
-        : typeof (org as { name?: unknown } | undefined)?.name === 'string'
-          ? (org as { name: string }).name
-          : null;
-    const taxonomies = Array.isArray(src.taxonomies)
-      ? (src.taxonomies as { name?: unknown }[]).map((t) => t?.name)
-      : [];
-    const text = [src.name, src.description, src.summary, ...taxonomies]
-      .filter((x): x is string => typeof x === 'string')
-      .join(' ')
-      .toLowerCase();
-    return { org_name: orgName, text };
-  });
+  return hits
+    .slice(0, topN)
+    .map((h) => matchHit((h as { _source?: unknown })._source));
 }
 
 /** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
