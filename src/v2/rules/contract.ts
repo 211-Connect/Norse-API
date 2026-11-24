@@ -1,5 +1,6 @@
 import { matchLocale } from '../../common/locales';
 import { STEMS, UI_STRINGS } from './config';
+import { blocksResults } from './importance';
 import { LOCALE_TABLES } from './locales';
 import type {
   Clarification,
@@ -71,7 +72,7 @@ export function placementAndStyle(q: Pick<Question, 'type' | 'importance'>): {
       ? { placement: 'popup', style: 'strong' }
       : { placement: 'before_results', style: 'strong' };
   }
-  return q.importance === 'critical' || q.importance === 'high'
+  return blocksResults(q)
     ? { placement: 'before_results', style: 'standard' }
     : { placement: 'with_results', style: 'subtle' };
 }

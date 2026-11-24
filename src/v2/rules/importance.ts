@@ -9,6 +9,10 @@ export const BAND_BASE: Record<QuestionImportance, number> = {
   low: 0,
 };
 
+/** A question that comes before the results (critical or high); the rest sit beside them. */
+export const blocksResults = (q: Pick<Question, 'importance'>): boolean =>
+  q.importance === 'critical' || q.importance === 'high';
+
 const clamp = (x: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, x));
 

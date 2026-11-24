@@ -1,6 +1,5 @@
 import { emergencyBand, needStates, urgencyState } from './bands';
 import { CUTOFFS, PHONE_LINE, RULES_VERSION, STEMS } from './config';
-import { placementAndStyle } from './contract';
 import { likelyAreas, needLevel, openAreas } from './need-level';
 import {
   asksNeeds,
@@ -13,6 +12,7 @@ import {
 import { Match } from './match';
 import { scoreOf } from './scores';
 import {
+  blocksResults,
   effort,
   priorityOf,
   round3,
@@ -332,11 +332,7 @@ export function finalize(base: Decision, input: FinalizeInput): Clarification {
   // the results. The danger question is a safety path and is never cut. Cut
   // before the top 3, so a question beside the results takes the free place.
   if (new Set(input.asked ?? []).size >= CUTOFFS.maxBeforeResults) {
-    kept = kept.filter(
-      (q) =>
-        q.type === 'emergency' ||
-        placementAndStyle(q).placement !== 'before_results',
-    );
+    kept = kept.filter((q) => q.type === 'emergency' || !blocksResults(q));
   }
 
   for (const q of kept) {

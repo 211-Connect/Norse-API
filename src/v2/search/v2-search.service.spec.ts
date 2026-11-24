@@ -2154,6 +2154,29 @@ describe('question contract v2 in the service', () => {
       expect(q).not.toHaveProperty('style');
     }
     expect(res.clarification).not.toHaveProperty('strings');
+    // The exact keys of development's answer.
+    expect(Object.keys(res.clarification).sort()).toEqual([
+      'questions',
+      'rules_version',
+    ]);
+    expect(Object.keys(res.clarification.questions[0]).sort()).toEqual([
+      'allow_other',
+      'id',
+      'importance',
+      'multi_select',
+      'none_of_these',
+      'options',
+      'priority',
+      'reason',
+      'stem',
+      'step',
+      'type',
+      'uncertainty',
+      'value',
+    ]);
+    expect(
+      Object.keys(res.clarification.questions[0].options[0]).sort(),
+    ).toEqual(['label', 'parameter', 'results_count', 'value']);
   });
 
   it('on: placement and style, none of the engine-only fields, strings present', async () => {

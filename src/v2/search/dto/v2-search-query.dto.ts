@@ -222,7 +222,7 @@ export class V2SearchQueryDto extends OmitType(SearchResourcesQueryDto, [
   @ApiPropertyOptional({
     type: [String],
     description:
-      'Ids of the questions already asked in this search session (comma-separated or repeated). Only counted: after 3, the API sends no more `before_results` questions (V2_QUESTION_RULE_V1 on; the danger question still comes). The client sends the ids of one query and drops them when the query text changes. A value that is not a question id is ignored, and at most 20 ids are read; it is never a 400. Ignored when the flag is off.',
+      'Ids of the questions already asked in this search session (comma-separated or repeated). Only counted: after 3, the API sends no more `before_results` questions (V2_QUESTION_RULE_V1 on; the danger question still comes). Every id counts as one, also `emergency` and a step only the client knows (for example `location`). A client drops the ids when a new search starts. A value that is not a question id is ignored, and at most 20 ids are read; it is never a 400. Ignored when the flag is off.',
     example: ['start', 'area:N-HOU'],
   })
   @IsOptional()
