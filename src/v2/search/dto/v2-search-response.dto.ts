@@ -308,6 +308,12 @@ export class V2IntentNeedDto {
 
   @ApiPropertyOptional({ description: 'Model score; inferred needs only.' })
   confidence?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'The spoken description of the need (ADR 0039 Decision 31), same text as `description` on a question option. Absent when there is no text in the language of the request (English only today).',
+  })
+  description?: string;
 }
 
 export class V2IntentUrgencyDto {
@@ -356,6 +362,13 @@ export class V2QuestionOptionDto {
   @ApiProperty({ example: 'Help paying rent' })
   label: string;
 
+  @ApiPropertyOptional({
+    example: 'You may be behind on rent, or you got an eviction notice.',
+    description:
+      'Need options only: the spoken description of the need (ADR 0039 Decision 31), for the tenant and language of the request. Absent on urgency and emergency options, and when there is no text in that language (English only today).',
+  })
+  description?: string;
+
   @ApiProperty({
     enum: ['needs', 'passed_needs', 'urgency'],
     nullable: true,
@@ -380,6 +393,15 @@ export class V2QuestionOptionDto {
   })
   // Optional in TS only: the rules engine's finalize always sets it (null when not counted).
   results_count?: number | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: 0,
+    maximum: 1.3,
+    description:
+      'Need options only. Formula: classifier confidence for the need (0 when the model gave none) + 0.3 * log(1 + count) / log(1 + max count among this question\'s options). A null count adds 0; a count of 0 adds 0 and the option stays listed. The score can pass 1 (up to confidence + 0.3). Options are sorted by it, high to low; ties keep vocabulary order. The page shows the top ones and puts the rest under "Show more". Absent on urgency options.',
+  })
+  score?: number;
 }
 
 export class V2HotlineDto {
@@ -420,11 +442,32 @@ export class V2QuestionDto {
   hotlines?: V2HotlineDto[];
 }
 
+export class V2NoticeDto {
+  @ApiProperty({ enum: ['may_not_match'] })
+  kind: 'may_not_match';
+
+  @ApiProperty() text: string;
+}
+
 export class V2ClarificationDto {
   @ApiProperty() rules_version: string;
 
   @ApiProperty({ type: [V2QuestionDto], description: 'At most 3, ranked.' })
   questions: V2QuestionDto[];
+
+  @ApiPropertyOptional({
+    type: V2NoticeDto,
+    description:
+      'Set only when the text has no clear need and the hits do not hold the query words (rule R5): the results may not match.',
+  })
+  notice?: V2NoticeDto;
+
+  @ApiPropertyOptional({
+    type: V2HotlineDto,
+    description:
+      'A number to call. Set when the search has no results (weak match or zero results) and in rule R5.',
+  })
+  phone_line?: V2HotlineDto;
 }
 
 /**

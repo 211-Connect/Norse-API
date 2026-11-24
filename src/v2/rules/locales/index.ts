@@ -23,7 +23,10 @@ export type StemKey =
   | 'noMatch'
   | 'area'
   | 'narrow'
-  | 'narrowAlso';
+  | 'narrowAlso'
+  | 'notice'
+  | 'spread'
+  | 'phoneLine';
 
 /**
  * Every non-English string is machine-translated and waits for WA staff.

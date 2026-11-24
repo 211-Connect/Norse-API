@@ -51,7 +51,21 @@ const KEYWORD = ['a', 'b', 'c'];
 const VECTOR = ['b', 'd', 'a'];
 const TAXONOMY = ['c'];
 const NEED = ['n1'];
-
+// What the keyword list returns when the request asks for a `_source` (name match).
+const KEYWORD_SOURCES: Record<string, any> = {
+  a: {
+    name: 'Shelter beds',
+    organization: { id: 'org-1', name: 'Compass Housing Alliance' },
+  },
+  b: {
+    name: 'Laundry',
+    organization: { id: 'org-2', name: 'Other Org' },
+  },
+  c: {
+    name: 'Day center',
+    organization: { id: 'org-1', name: 'Compass Housing Alliance' },
+  },
+};
 describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
   let service: HybridSearchService;
   let requests: any[];
@@ -60,11 +74,15 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
   let enabled: string | undefined;
   let taxonomyGate: Promise<void> | undefined;
   let searchConfig: Record<string, unknown>;
+  let keywordMode: 'ok' | 'reject' | 'timed-out' | 'shard-failed';
 
   const hitsOf = (ids: string[]) => ({
     hits: { hits: ids.map((id) => ({ _id: id })) },
   });
-  const isList = (r: any) => r._source === false && r.size === 100;
+  const isList = (r: any) =>
+    (r._source === false || Array.isArray(r._source)) &&
+    r.size === 100 &&
+    r.min_score == null;
   const isGate = (r: any) => r.size === 0 && r.aggs?.pinned && r.aggs?.other;
   const kindOf = (r: any) =>
     r.query.script_score
@@ -107,6 +125,21 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
 
       if (isList(req)) {
         const kind = kindOf(req);
+        if (kind === 'keyword' && keywordMode === 'reject') {
+          return Promise.reject(new Error('keyword down'));
+        }
+        if (kind === 'keyword' && Array.isArray(req._source)) {
+          return Promise.resolve({
+            timed_out: keywordMode === 'timed-out',
+            _shards: { failed: keywordMode === 'shard-failed' ? 1 : 0 },
+            hits: {
+              hits: KEYWORD.map((id) => ({
+                _id: id,
+                _source: KEYWORD_SOURCES[id],
+              })),
+            },
+          });
+        }
         if (kind === 'vector' && mode === 'reject-vector') {
           return Promise.reject(new Error('es down'));
         }
@@ -278,6 +311,7 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     gateMode = 'ok';
     enabled = undefined;
     taxonomyGate = undefined;
+    keywordMode = 'ok';
     searchConfig = { pinned_resources_mode: 'boost' };
     await build();
   });
@@ -420,5 +454,156 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
     const gateFilter = gates()[0].query.function_score.query.bool
       .filter as any[];
     expect(gateFilter.some((f) => f.ids)).toBe(true);
+  });
+
+  describe('name match (nameWords, question rule v1)', () => {
+    const named = { nameWords: ['compass', 'housing'] };
+    const keywordRequest = () =>
+      requests.find((r) => isList(r) && kindOf(r) === 'keyword');
+    // Without the gate's own pinned ids (p1, p2).
+    const order = () =>
+      mainRequest().query.pinned.ids.filter((id: string) => !/^p\d$/.test(id));
+
+    beforeEach(async () => {
+      searchConfig = {};
+      await build();
+    });
+
+    it('N1. no nameWords, or none: the keyword request is the one from before, no claim', async () => {
+      for (const extra of [{}, { nameWords: [] }]) {
+        requests.length = 0;
+        const res = await run({}, extra);
+        expect(keywordRequest()._source).toBe(false);
+        expect(res).not.toHaveProperty('nameClaim');
+        expect(order().slice(0, 3)).toEqual(['b', 'a', 'c']);
+      }
+    });
+
+    it('N2. v1 (no rankingVersion) ignores nameWords', async () => {
+      const res = await run({}, { ...named, rankingVersion: undefined });
+      expect(res).not.toHaveProperty('nameClaim');
+    });
+
+    it("N3. the named org's services lead in the fused order; no request is added", async () => {
+      await run();
+      const before = requests.length;
+      requests.length = 0;
+      const res = await run({}, named);
+      expect(requests).toHaveLength(before);
+      expect(keywordRequest()._source).toEqual(
+        expect.arrayContaining(['organization.id', 'taxonomies.name']),
+      );
+      expect(order().slice(0, 4)).toEqual(['a', 'c', 'b', 'd']);
+      expect(res.nameClaim).toEqual({
+        status: 'ok',
+        org_ids: ['org-1'],
+        veto: null,
+        pins: ['a', 'c'],
+      });
+    });
+
+    it('N4. page 2 reads the same pinned order', async () => {
+      await run({ page: 2 }, named);
+      const page2 = requests.find((r) => r.query?.pinned);
+      expect(
+        page2.query.pinned.ids
+          .filter((id: string) => !/^p\d$/.test(id))
+          .slice(0, 4),
+      ).toEqual(['a', 'c', 'b', 'd']);
+      expect(page2.from).toBe(25);
+    });
+
+    it.each(['distance', 'name'])(
+      'N5. sort=%s: the claim holds, the order is not changed',
+      async (sort) => {
+        await run({ coords: SEA, sort });
+        const plain = JSON.stringify(mainRequest());
+        requests.length = 0;
+        const res = await run({ coords: SEA, sort }, named);
+        expect(JSON.stringify(mainRequest())).toBe(plain);
+        expect(res.nameClaim.org_ids).toEqual(['org-1']);
+      },
+    );
+
+    it.each(['reject', 'timed-out', 'shard-failed'] as const)(
+      'N6. keyword list %s: status failed, nothing pinned, the page is still there',
+      async (m) => {
+        keywordMode = m;
+        const res = await run({}, named);
+        expect(res.nameClaim).toEqual({
+          status: 'failed',
+          org_ids: [],
+          veto: null,
+          pins: [],
+        });
+        expect(order()[0]).toBe('b');
+      },
+    );
+
+    it('N7. keyword leg off for the locale: no name, not a failure', async () => {
+      (service as any).keywordLocales = new Set(['es']);
+      const res = await run({}, named);
+      expect(res.nameClaim).toMatchObject({ status: 'ok', org_ids: [] });
+    });
+
+    it('N8. a word no document holds adds one name clause with one edit; other queries add none', async () => {
+      const should = () => keywordRequest().query.bool.should as any[];
+      const rarity = (unknown: string[]) =>
+        jest.spyOn(service as any, 'getWordRarity').mockResolvedValue({
+          words: {},
+          splits: [],
+          typoClauses: true,
+          unknown,
+        });
+      rarity([]);
+      await run({ query: 'worksource' }, { nameWords: ['worksource'] });
+      const known = should();
+      requests.length = 0;
+      rarity([]);
+      await run({ query: 'worksource' });
+      expect(should()).toEqual(known);
+      requests.length = 0;
+      rarity(['compas']);
+      await run({ query: 'compas housing' }, { nameWords: named.nameWords });
+      const added = should().filter(
+        (c) =>
+          c.multi_match?.fuzziness === 1 &&
+          c.multi_match.fields[0] === 'organization.name',
+      );
+      expect(added).toHaveLength(1);
+      requests.length = 0;
+      await run({ query: 'compas housing' });
+      expect(JSON.stringify(should())).not.toContain('"fuzziness":1');
+    });
+
+    it('N9. word rarity failed (null): no name clause (a typo cannot be told)', async () => {
+      jest.spyOn(service as any, 'getWordRarity').mockResolvedValue(null);
+      await run({ query: 'compas housing' }, named);
+      expect(JSON.stringify(keywordRequest())).not.toContain('"fuzziness":1');
+    });
+
+    it('N10. a word with 0 documents is unknown, a rare one is not', async () => {
+      jest.spyOn(service as any, 'probeWordRarity').mockResolvedValue(
+        new Map([
+          [
+            'compas',
+            { entry: { idf: 9, docs: 0, split: null }, complete: true },
+          ],
+          [
+            'housing',
+            { entry: { idf: 5, docs: 1, split: null }, complete: true },
+          ],
+        ]),
+      );
+      const r = await (service as any).getWordRarity(
+        'i',
+        't',
+        'en',
+        'compas housing',
+        'p',
+      );
+      expect(r.unknown).toEqual(['compas']);
+      expect(r.typoClauses).toBe(true);
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Span } from '@opentelemetry/api';
 import { withSpan, withSpanSync } from 'src/common/tracing/with-span';
 import { HeadersDto } from 'src/common/dto/headers.dto';
@@ -9,7 +10,13 @@ import {
   isBoostableUrgency,
   NeedScore,
 } from 'src/search/hybrid-search.service';
-import { decide, finalize, isWeakMatch, weakMatchDecision } from '../rules';
+import { envFlag } from '../../common/config/configuration';
+import * as rules from '../rules';
+import * as legacyRules from '../rules/legacy';
+import { MATCH, Match, matchOf } from '../rules/match';
+import { nameWords } from 'src/search/internal/name-match/name-match';
+import { hitText } from 'src/search/internal/text-matching/hit-text';
+import { needDescription } from '../rules/need-text';
 import {
   floorOnlyEmergency,
   isFullV2Locale,
@@ -18,6 +25,7 @@ import {
 import { isTier1, isTier2 } from '../rules/sune';
 import {
   AiClassificationSetting,
+  FinalizeInput,
   RulesRequest,
   RulesSignals,
   Hotline,
@@ -72,6 +80,20 @@ const countedTotal = (response: {
   search?: { hits?: { total?: unknown } };
 }): number | null =>
   response.totalCounted === false ? null : hitsTotal(response);
+
+/** The page is cut short (timeout, failed shard), or its total or the count read failed. */
+const isPartial = ({
+  search,
+  needCountsFailed,
+  totalCounted,
+}: Pick<
+  HybridSearchResult,
+  'search' | 'needCountsFailed' | 'totalCounted'
+>): boolean =>
+  search.timed_out ||
+  search._shards.failed > 0 ||
+  totalCounted === false ||
+  needCountsFailed === true;
 
 // ml-broker rejects classify text longer than 512 characters after stripping
 // (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer
@@ -189,6 +211,38 @@ export function tenantHotlines(
 
 type HybridCall = Parameters<HybridSearchService['searchHybrid']>[0];
 
+/**
+ * The rules engine for this request. `V2_QUESTION_RULE_V1=true` runs the
+ * question rule v1 (`../rules`); anything else runs the verbatim copy of
+ * development's engine (`../rules/legacy`), so "off" is today's behavior.
+ * The legacy types differ a little: the cast is at this boundary.
+ */
+type RulesEngine = Pick<
+  typeof rules,
+  'decide' | 'finalize' | 'isWeakMatch' | 'weakMatchDecision'
+>;
+const NEW_ENGINE: RulesEngine = rules;
+const legacyEngine = legacyRules as unknown as RulesEngine;
+// Development's finalize takes `{ counts, strong_text_match }`; the field is
+// not in the new input. The wrapper adds it (always false), at the cast boundary.
+const LEGACY_ENGINE: RulesEngine = {
+  ...legacyEngine,
+  finalize: (decision, input) =>
+    legacyEngine.finalize(decision, {
+      counts: input.counts,
+      strong_text_match: false,
+    } as FinalizeInput),
+};
+
+/** The texts of a result page's top hits. */
+export function topTexts(response: {
+  search?: { hits?: { hits?: unknown[] } };
+}): string[] {
+  return (response.search?.hits?.hits ?? [])
+    .slice(0, MATCH.topN)
+    .map((h) => hitText((h as { _source?: unknown })._source));
+}
+
 /** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
 function emptyResults<T extends HybridSearchResult>(
   response: Omit<T, 'needCounts' | 'judges'>,
@@ -251,7 +305,23 @@ export class V2SearchService {
     private readonly tenantConfig: TenantConfigService,
     private readonly regionService: RegionService,
     private readonly searchService: SearchService,
+    private readonly configService: ConfigService,
   ) {}
+
+  /** Question rule v1 switch, read per request (off = development's engine). */
+  private ruleV1(): boolean {
+    return envFlag(
+      this.configService.get<string>('V2_QUESTION_RULE_V1'),
+      false,
+    );
+  }
+
+  /** Question rule v1: the words the keyword list may name an org by. The list and the pins use the same. */
+  private orgWordsOf(text: string, headers: HeadersDto): string[] {
+    return this.ruleV1()
+      ? nameWords(contentWords(text, headers['accept-language'] || 'en'))
+      : [];
+  }
 
   /**
    * One hybrid search. The language picks the index; an unknown language has
@@ -284,6 +354,7 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const text = dto.query;
+    const orgWords = this.orgWordsOf(text, headers);
     let needScores: NeedScore[] | undefined;
     let urgencyBoost: HybridCall['urgencyBoost'];
     if (text.trim().length > 0) {
@@ -307,6 +378,7 @@ export class V2SearchService {
         rankingVersion: 'v2',
         ...(needScores && { needScores }),
         ...(urgencyBoost && { urgencyBoost }),
+        ...(orgWords.length > 0 && { nameWords: orgWords }),
       })
       .catch((error: unknown) => throwCallerError(error, headers));
   }
@@ -329,6 +401,8 @@ export class V2SearchService {
   }) {
     const hasText = text.trim().length > 0;
     const callerNeeds = dto.needs ?? [];
+    const ruleV1 = this.ruleV1();
+    const { decide } = ruleV1 ? NEW_ENGINE : LEGACY_ENGINE;
     // Classify is always on for the request (Lucas 2026-11-18): only the tenant
     // setting can turn the need guess off. Full v2 features only for en and es
     // (Lucas 2026-11-20): any other locale runs with AI classification off (no
@@ -368,12 +442,19 @@ export class V2SearchService {
       passed_needs: dto.passed_needs ?? [],
       urgency: dto.urgency,
       clarify: dto.clarify ?? 'auto',
+      ...(ruleV1 && {
+        query: hasText ? modelText(text) : undefined,
+        content_words: contentWords(text, lang),
+      }),
+    };
+    // One context for every rules call of the request (decide, weak match).
+    const tenantContext: rules.TenantContext = {
+      ai_classification: aiClassification,
+      hotlines: tenantHotlines(searchConfig),
+      locale: lang,
     };
     const decision = withSpanSync('v2.rules.decide', () =>
-      decide(rulesRequest, signals, {
-        ai_classification: aiClassification,
-        hotlines: tenantHotlines(searchConfig),
-      }),
+      decide(rulesRequest, signals, tenantContext),
     );
 
     const needScores: NeedScore[] = [];
@@ -391,6 +472,8 @@ export class V2SearchService {
       needScores,
       modelVersion: classified?.modelVersion ?? null,
       aiClassification,
+      tenantContext,
+      ruleV1,
     };
   }
 
@@ -427,6 +510,7 @@ export class V2SearchService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    const orgWords = this.orgWordsOf(text, headers);
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -444,6 +528,7 @@ export class V2SearchService {
       rankingVersion: 'v2' as const,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
+      ...(orgWords.length > 0 && { nameWords: orgWords }),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
@@ -470,6 +555,8 @@ export class V2SearchService {
       needScores,
       modelVersion,
       aiClassification,
+      tenantContext,
+      ruleV1,
     } = await this.classifyAndDecide({
       headers,
       dto,
@@ -502,10 +589,6 @@ export class V2SearchService {
       'v2.count_codes': countCodes.length,
     });
 
-    const tenantContext = {
-      ai_classification: aiClassification,
-      hotlines: tenantHotlines(searchConfig),
-    };
     const hybridCall: HybridCall = {
       ...retrievalOptions,
       ...(early && { early }),
@@ -513,6 +596,9 @@ export class V2SearchService {
       needScores,
       ...(urgencyBoost && { urgencyBoost }),
       ...(countCodes.length > 0 && { countCodes }),
+      // Question rule v1 only: a tenant with no need tags counts as "not
+      // counted".
+      ...(ruleV1 && { nullCountsWithoutNeedTags: true }),
     };
     // The text-free second call (weak match) starts from this call minus the
     // early handle: the early stage was built for the text query.
@@ -521,10 +607,12 @@ export class V2SearchService {
     const {
       early: _early,
       urgencyBoost: _urgencyBoost,
+      nameWords: _nameWords,
       ...withoutEarly
     } = hybridCall;
     void _early;
     void _urgencyBoost;
+    void _nameWords;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );
@@ -533,11 +621,17 @@ export class V2SearchService {
       needCounts: firstCounts,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       totalCounted: _tc1,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      needCountsFailed: _cf1,
+      nameClaim,
       ...firstResponse
     } = first;
 
     // Weak match (ISS-2796, Lucas 2026-11-18): the text found nothing the
     // judges trust. Not weak when the search returned no judges.
+    const { finalize, isWeakMatch, weakMatchDecision } = ruleV1
+      ? NEW_ENGINE
+      : LEGACY_ENGINE;
     const weak = isWeakMatch({
       req: rulesRequest,
       signals,
@@ -552,6 +646,7 @@ export class V2SearchService {
       'needCounts' | 'judges' | 'totalCounted'
     > = firstResponse;
     let clarifyDecision = decision;
+    let partial = isPartial(first);
     let counts: {
       total: number | null;
       by_code: Record<string, number> | null;
@@ -592,6 +687,7 @@ export class V2SearchService {
             headers,
           ),
         );
+        partial ||= isPartial(second);
         counts = {
           total: countedTotal(second),
           by_code: second.needCounts ?? null,
@@ -621,22 +717,69 @@ export class V2SearchService {
         judges: _j,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         totalCounted: _tc2,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        needCountsFailed: _cf2,
         ...secondResponse
       } = second;
       response = secondResponse;
+      partial ||= isPartial(second);
       counts = { total: countedTotal(second), by_code: secondCounts ?? null };
     }
 
-    // strong_text_match is still a placeholder: no retrieval signal yet.
+    // Question rule v1: what the returned hits say about the query. Only the
+    // first relevance page is the top of the kept set; on any other page or
+    // sort the words held say nothing (only a name counts). A limited locale
+    // gets no need question, so no notice either.
+    const topPage =
+      (dto.page ?? 1) === 1 &&
+      (dto.sort ?? 'relevance') === 'relevance' &&
+      isFullV2Locale(lang);
+    let match: Match | undefined;
+    // Read for every answer, also a pick after a weak match: the failed list
+    // decided that it was weak.
+    const nameFailed =
+      ruleV1 && orgWords.length > 0 && nameClaim?.status !== 'ok';
+    // No text (browse): no match; finalize reads it as `spread`.
+    // A pick after a weak match dropped the text: the page says nothing about it.
+    const weakPick = weak && callerNeeds.length > 0;
+    if (ruleV1 && hasText && !weakPick) {
+      match = matchOf({
+        words: rulesRequest.content_words ?? [],
+        texts: topPage ? topTexts(response) : [],
+        named: (nameClaim?.org_ids.length ?? 0) > 0,
+      });
+      span.setAttributes({
+        'v2.match': match,
+        'v2.match.name':
+          orgWords.length === 0
+            ? 'skipped'
+            : nameFailed
+              ? 'failed'
+              : nameClaim!.veto
+                ? `veto_${nameClaim!.veto}`
+                : nameClaim!.org_ids.length > 0
+                  ? 'named'
+                  : 'none',
+      });
+    }
+    // Off: LEGACY_ENGINE reads `counts` only (it adds its own strong_text_match).
+    const finalizeInput: FinalizeInput = ruleV1
+      ? {
+          counts,
+          ...(match && { match }),
+          // The pick has its own results: not the no-results rule.
+          weak: weak && !weakPick,
+        }
+      : { counts };
+    if (ruleV1) {
+      span.setAttribute(
+        'v2.grid_rule',
+        rules.gridRule(clarifyDecision, finalizeInput),
+      );
+    }
     // English passes through unchanged; es vi ru ko am zh-hans get a string table.
     const clarification = withSpanSync('v2.rules.finalize', () =>
-      localizeClarification(
-        finalize(clarifyDecision, {
-          counts,
-          strong_text_match: false,
-        }),
-        lang,
-      ),
+      localizeClarification(finalize(clarifyDecision, finalizeInput), lang),
     );
 
     const result: V2SearchResponseDto = {
@@ -657,6 +800,9 @@ export class V2SearchService {
           source: n.source,
           state: n.state,
           ...(n.confidence !== undefined && { confidence: n.confidence }),
+          // Need descriptions (ADR 0039 Decision 31) are new behavior: switch on only.
+          ...(ruleV1 &&
+            needDescription(n.code, { locale: tenantContext.locale })),
         })),
         urgency: {
           value: decision.urgency.value,
@@ -672,6 +818,9 @@ export class V2SearchService {
     };
     // A shared cache may store only band none with no emergency question
     // (ADR 0039 Decision 28); the controller's TTL covers the rest.
-    return decision.cacheable ? result : markNotStorable(result);
+    // Never cache a degraded result: a failed name match, or a page or count
+    // read that Elasticsearch cut short (the match and the options come from it).
+    const degraded = nameFailed || (ruleV1 && partial);
+    return decision.cacheable && !degraded ? result : markNotStorable(result);
   }
 }

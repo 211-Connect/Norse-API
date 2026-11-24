@@ -27,6 +27,14 @@ import {
 } from './dto/search-response.dto';
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
 import { CUTOFFS } from 'src/v2/rules/config';
+import {
+  NAME_SOURCE,
+  NameClaim,
+  NameHits,
+  claimName,
+  nameHit,
+  nameTypoClauses,
+} from './internal/name-match/name-match';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
@@ -213,6 +221,11 @@ export function needBlockLeads(
 export type HybridSearchResult = SearchResponse & {
   /** Present only when counts were asked for and the count succeeded. */
   needCounts?: Record<string, number>;
+  /**
+   * Question rule v1 only, internal: the count read failed or was cut short.
+   * Absent for a tenant with no need tags (not a failure).
+   */
+  needCountsFailed?: true;
   /** v2 only, internal (never sent to callers). Present, and false, only when Elasticsearch sent a hits.total that cannot be read; hits.total.value is then 0. */
   totalCounted?: false;
   /**
@@ -221,12 +234,22 @@ export type HybridSearchResult = SearchResponse & {
    * The v1 /search never fuses, so it never gets this field.
    */
   judges?: Judges;
+  /**
+   * v2 only, internal (never sent to callers). Present only with `nameWords`
+   * and a fused order: the org the keyword list names.
+   */
+  nameClaim?: NameClaim;
 };
 
 /** Raw top `_score` of the RRF keyword list and of the RRF vector list; 0 when a list has no hit. */
 export type Judges = { keyword_top: number; vector_top: number };
 
-type RankedList = { ids: string[]; top: number };
+type RankedList = {
+  ids: string[];
+  top: number;
+  /** Only with a `_source`: the hits for the name match. */
+  names?: NameHits;
+};
 
 type HybridSearchOptions = {
   headers: HeadersDto;
@@ -250,6 +273,12 @@ type HybridSearchOptions = {
    * `needs=` filter. Every code is returned, 0 when the aggregation omits it.
    */
   countCodes?: string[];
+  /**
+   * v2 only. When true, a tenant index with no docs holding `sune_needs` makes
+   * the need counts "not counted" (a global agg is added to the count request).
+   * Absent or false: the count request is the one from before this option.
+   */
+  nullCountsWithoutNeedTags?: boolean;
   /**
    * v2 only. Hard filter used only for a weak-match pick (ISS-2796): the text
    * was weak, so the need tags decide. The `needs` parameter itself never
@@ -276,6 +305,13 @@ type HybridSearchOptions = {
    * it again. Absent: nothing changes.
    */
   early?: EarlyRetrieval;
+  /**
+   * v2 only. The content words of a text query (question rule v1). The keyword
+   * list then also answers which org they name (`nameClaim`); under sort
+   * relevance (or no sort) that org's services lead. Absent or empty: nothing
+   * changes.
+   */
+  nameWords?: string[];
 };
 
 /**
@@ -478,6 +514,8 @@ type WordRarity = {
    * every content word has more than TYPO_GATE_MAX_DOCS matching documents.
    */
   typoClauses: boolean;
+  /** Content words with 0 documents (general recall fields). */
+  unknown: string[];
 } | null;
 
 /** What one word contributes: its idf and its best split, if any. Cached per word. */
@@ -638,6 +676,7 @@ export class HybridSearchService {
       fused,
       judges,
       fusedOrder,
+      nameClaim,
     } = await withSpan('hybrid.prepare', async (span) => {
       const prepared = await this.prepareHybridSearch(options, {
         rank: true,
@@ -652,8 +691,12 @@ export class HybridSearchService {
     });
 
     const needCountsPromise = countRequest
-      ? this.runNeedCounts(countRequest, options.countCodes ?? [])
-      : Promise.resolve(undefined);
+      ? this.runNeedCounts(
+          countRequest,
+          options.countCodes ?? [],
+          options.nullCountsWithoutNeedTags === true,
+        )
+      : Promise.resolve({ counts: undefined, failed: false });
 
     type Resp = Awaited<
       ReturnType<
@@ -734,7 +777,8 @@ export class HybridSearchService {
       );
     }
 
-    const needCounts = await needCountsPromise;
+    const { counts: needCounts, failed: needCountsFailed } =
+      await needCountsPromise;
 
     return {
       search: {
@@ -757,8 +801,12 @@ export class HybridSearchService {
       // document is unchanged for every existing consumer.
       ...(cutoff ? { relevance_cutoff: cutoff } : {}),
       ...(needCounts ? { needCounts } : {}),
+      ...(needCountsFailed && options.nullCountsWithoutNeedTags === true
+        ? { needCountsFailed: true as const }
+        : {}),
       ...(totalUnreadable ? { totalCounted: false as const } : {}),
       ...(judges ? { judges } : {}),
+      ...(nameClaim ? { nameClaim } : {}),
     };
   }
 
@@ -775,7 +823,8 @@ export class HybridSearchService {
   private async runNeedCounts(
     request: SearchRequest,
     codes: string[],
-  ): Promise<Record<string, number> | undefined> {
+    nullWithoutNeedTags = false,
+  ): Promise<{ counts?: Record<string, number>; failed: boolean }> {
     try {
       const data = await this.metrics.observeDownstream(
         'elasticsearch',
@@ -786,6 +835,25 @@ export class HybridSearchService {
             Record<string, AggregationsStringTermsAggregate>
           >(request),
       );
+      // A part of the counts is not a count (question rule v1; off: as before).
+      if (
+        nullWithoutNeedTags &&
+        (data.timed_out ||
+          (data._shards?.failed ?? 0) > 0 ||
+          !data.aggregations?.need_counts ||
+          !data.aggregations.tenant_needs)
+      ) {
+        this.logger.warn('Need counts incomplete; treated as not counted');
+        return { failed: true };
+      }
+      const tenantNeeds = data.aggregations?.tenant_needs as unknown as
+        { with_needs?: { doc_count?: number } } | undefined;
+      if (nullWithoutNeedTags && tenantNeeds?.with_needs?.doc_count === 0) {
+        this.logger.warn(
+          'Tenant index has no docs with sune_needs; need counts treated as not counted',
+        );
+        return { failed: false };
+      }
       const buckets =
         (data.aggregations?.need_counts?.buckets as
           { key: string; doc_count: number }[] | undefined) ?? [];
@@ -795,10 +863,10 @@ export class HybridSearchService {
       for (const b of buckets) {
         if (b.key in counts) counts[b.key] = b.doc_count;
       }
-      return counts;
+      return { counts, failed: false };
     } catch (error) {
       this.logger.warn(`Need counts skipped: ${(error as Error).message}`);
-      return undefined;
+      return { failed: true };
     }
   }
 
@@ -976,6 +1044,7 @@ export class HybridSearchService {
               queryStr,
               wordRarity,
               keyword: keywordLocale,
+              nameWords: options.nameWords,
             }),
           )
         : undefined;
@@ -1073,6 +1142,7 @@ export class HybridSearchService {
                     queryStr,
                     wordRarity,
                     keyword: true,
+                    nameWords: options.nameWords,
                   })
                 : keywordPromise!,
             vector: vectorPromise!,
@@ -1314,6 +1384,7 @@ export class HybridSearchService {
 
     let fusedIds: string[] | undefined;
     let judges: Judges | undefined;
+    let nameHits: NameHits | undefined;
     if (fuseEligible) {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
@@ -1329,12 +1400,14 @@ export class HybridSearchService {
           wordRarity,
           keyword,
           needs: boostActive ? boostTerms : [],
+          nameWords: options.nameWords,
           earlyLists,
           coords,
           nearYou,
         }),
       );
       fusedIds = fusedOrder.ids;
+      nameHits = fusedOrder.names;
       // The weak-match test needs the keyword judge; without it no weak match.
       judges = keyword ? fusedOrder.judges : undefined;
 
@@ -1348,7 +1421,24 @@ export class HybridSearchService {
       }
     }
 
-    const gatedPinnedIds = await gatePromise;
+    const gatedOnlyIds = await gatePromise;
+    const nameClaim =
+      nameHits && (options.nameWords ?? []).length > 0
+        ? claimName({
+            words: options.nameWords!,
+            list: nameHits,
+            unknownWords: wordRarity?.unknown ?? null,
+            fusedIds,
+          })
+        : undefined;
+    // The claim holds on every sort; only a relevance order is changed by it.
+    const namedIds =
+      (sort ?? 'relevance') === 'relevance' ? (nameClaim?.pins ?? []) : [];
+    const namedSet = new Set(namedIds);
+    const gatedPinnedIds = [
+      ...namedIds,
+      ...gatedOnlyIds.filter((id) => !namedSet.has(id)),
+    ];
     if (gatedPinnedIds.length > 0 && fusedIds !== undefined) {
       const gated = new Set(gatedPinnedIds);
       fusedIds = [
@@ -1406,6 +1496,31 @@ export class HybridSearchService {
               },
             },
             aggs: {
+              // Tenant-wide, ignoring the search filters (a global agg): does
+              // this tenant's index hold any doc with `sune_needs`? If not,
+              // every count would be a false 0, so runNeedCounts reports
+              // "not counted" instead.
+              ...(options.nullCountsWithoutNeedTags && {
+                tenant_needs: {
+                  global: {},
+                  aggs: {
+                    with_needs: {
+                      filter: {
+                        bool: {
+                          filter: [
+                            {
+                              term: {
+                                tenant_id: options.headers['x-tenant-id'],
+                              },
+                            },
+                            { exists: { field: 'sune_needs' } },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
               need_counts: {
                 terms: {
                   field: 'sune_needs',
@@ -1427,6 +1542,7 @@ export class HybridSearchService {
       // The page is in the fused order (pinned query): no sort values to show.
       fusedOrder: fusedIds !== undefined && orderedByFusion,
       judges,
+      ...(nameClaim ? { nameClaim } : {}),
     };
   }
 
@@ -1471,15 +1587,29 @@ export class HybridSearchService {
     queryStr: string;
     wordRarity: WordRarity;
     keyword: boolean;
+    nameWords?: string[];
   }): Promise<RankedList> | undefined {
     const { filters, queryStr, wordRarity, keyword } = args;
     const lexical = keyword
       ? this.buildLexicalShouldClauses(queryStr, wordRarity)
       : [];
     if (lexical.length === 0) return undefined;
-    return this.runRankedList(args, 'hybrid_rrf_keyword', {
-      bool: { filter: filters, should: lexical, minimum_should_match: 1 },
-    });
+    const names = (args.nameWords ?? []).length > 0;
+    const typos = names
+      ? nameTypoClauses(queryStr, wordRarity?.unknown ?? [])
+      : [];
+    return this.runRankedList(
+      args,
+      'hybrid_rrf_keyword',
+      {
+        bool: {
+          filter: filters,
+          should: [...lexical, ...typos],
+          minimum_should_match: 1,
+        },
+      },
+      names,
+    );
   }
 
   /** The vector list: cosine similarity to the query vector. Rejects like the keyword list. */
@@ -1542,6 +1672,7 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
+    names = false,
   ): Promise<RankedList> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
@@ -1549,7 +1680,7 @@ export class HybridSearchService {
           index: args.index,
           preference: args.preference,
           size: RRF_LIST_SIZE,
-          _source: false,
+          _source: names ? NAME_SOURCE : false,
           track_total_hits: false,
           query,
         }),
@@ -1560,6 +1691,18 @@ export class HybridSearchService {
           .filter((id): id is string => id !== undefined),
         // Raw score of the first hit: the weak-match judge (ISS-2796).
         top: response.hits.hits[0]?._score ?? 0,
+        // A timeout inside ES is a 200 with partial hits: not "no org named".
+        ...(names && {
+          names: {
+            state:
+              response.timed_out || (response._shards?.failed ?? 0) > 0
+                ? ('failed' as const)
+                : ('ok' as const),
+            hits: response.hits.hits.flatMap((h) =>
+              h._id === undefined ? [] : [nameHit(h._id, h._source)],
+            ),
+          },
+        }),
       }));
   }
 
@@ -1591,11 +1734,13 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     keyword: boolean;
     needs: NeedScore[];
+    nameWords?: string[];
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
     nearYou: boolean;
-  }): Promise<{ ids?: string[]; judges?: Judges }> {
+  }): Promise<{ ids?: string[]; judges?: Judges; names: NameHits }> {
     const { filters, needs, earlyLists, queryVector } = args;
+    let names: NameHits = { state: 'failed', hits: [] };
 
     try {
       const keyword = earlyLists
@@ -1641,6 +1786,9 @@ export class HybridSearchService {
       const valueOf = (res: PromiseSettledResult<RankedList | undefined>) =>
         res.status === 'fulfilled' ? res.value : undefined;
       const keywordList = valueOf(keywordRes);
+      if (keywordRes.status === 'fulfilled') {
+        names = keywordList?.names ?? { state: 'skipped', hits: [] };
+      }
       const taxonomyList = valueOf(taxonomyRes);
       const needList = valueOf(needRes);
 
@@ -1669,13 +1817,13 @@ export class HybridSearchService {
       }
       if (lists.length === 0) {
         this.logger.warn('RRF every list failed, using summed ranking');
-        return {};
+        return { names };
       }
       const kept = reciprocalRankFusion(lists, RRF_K, weights).slice(
         0,
         RRF_LIST_SIZE,
       );
-      if (kept.length === 0) return { judges };
+      if (kept.length === 0) return { judges, names };
 
       let ordered = kept;
       if (args.nearYou && args.coords?.length === 2) {
@@ -1698,12 +1846,12 @@ export class HybridSearchService {
           ]).filter((id) => inKept.has(id));
         }
       }
-      return { ids: ordered, judges };
+      return { ids: ordered, judges, names };
     } catch (error) {
       this.logger.warn(
         `RRF lists failed, using summed ranking: ${(error as Error).message}`,
       );
-      return {};
+      return { names: { state: 'failed', hits: [] } };
     }
   }
 
@@ -1775,7 +1923,9 @@ export class HybridSearchService {
   ): Promise<WordRarity> {
     if (queryStr.trim().length === 0) return null;
     const words = contentWords(queryStr, lang);
-    if (words.length === 0) return { words: {}, splits: [], typoClauses: true };
+    if (words.length === 0) {
+      return { words: {}, splits: [], typoClauses: true, unknown: [] };
+    }
 
     try {
       const keys = words.map((w) => wordRarityCacheKey(tenantId, lang, w));
@@ -1819,11 +1969,13 @@ export class HybridSearchService {
         words: {},
         splits: [],
         typoClauses: true,
+        unknown: [],
       };
       const docs: number[] = [];
       for (const w of words) {
         const entry = entries.get(w)!;
         docs.push(entry.docs);
+        if (entry.docs === 0) rarity.unknown.push(w);
         rarity.words[w] = entry.idf;
         if (entry.split) rarity.splits.push({ word: w, ...entry.split });
       }

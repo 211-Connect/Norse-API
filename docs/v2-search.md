@@ -8,6 +8,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 - `POST /v2/search` takes the v1 POST body (`geometry`) and the same `Content-Type: application/json` check; the body goes to hybrid search unchanged.
 - **Tenant and language come from the URL only (ADR 0039 Decision 34).** Every v2 search request (`GET` and `POST /v2/search`) needs `tenant_id` and `locale` in the query string. v2 does not read `x-tenant-id` or `accept-language`: on v2 requests `TenantMiddleware` and `LocaleMiddleware` copy the URL values over them. Why: a copied URL alone must reproduce the search, and the CDN keys by URL and ignores `Vary` (on 2026-11-17 a second tenant got another tenant's cached body). A missing or empty value is a `400` that names the param (`V2UrlMirrorsGuard`); an invalid `tenant_id` or a `locale` that is not an exact supported code is a `400` too. Example: `GET /v2/search?query=rent&tenant_id=<tenant uuid>&locale=en`. v1 `/search` does not need them.
 - `V2_SEARCH_ENABLED` must be `true` (any case, no spaces; read by `envFlag`). Anything else answers `404` before validation (`V2SearchEnabledGuard`).
+- `V2_QUESTION_RULE_V1`: question rule v1 (`src/v2/rules`) is on only for `true` (any case, no spaces; read by `envFlag`, per request). Anything else, also `true ` with a space or `1`, runs the old engine (`src/v2/rules/legacy`). See `docs/v2-rules-engine.md`.
 - Tenant gate (`V2SearchEnabledGuard`): when `tenant_id` is a UUID, the tenant needs the Payload flag `enableV2Api` (cache field `enable_v2_api`), else `404`. A `tenant_id` that is not a UUID skips the check and never reaches Redis; `V2UrlMirrorsGuard` answers `400`. When the Redis read fails, the gate uses the last value this pod read for the tenant and the response carries `X-Degraded: tenant-flag-cache` (and is `no-store`). A tenant this pod never read gets `503` with `Retry-After: 5`. A failed read is not cached.
 - `ML_BROKER_EMERGENCY_ONLY_SUPPORTED`: `true` (any case, no spaces) means ml-broker accepts `emergency_only` (ml-broker PR #20). Then a tenant with AI classification off sends `emergency_only: true`: ml-broker skips the needs model and answers `needs.scores: []`, `urgency: null`. The client accepts that shape only when it sent the field, and maps it to need status `ok` with no scores and no urgency (the AI-off "no guess" state). Default off: an older ml-broker may reject the field. The route always calls ml-broker.
 - `NEED_BOOST_ENABLED`: the need boost (need list in rank fusion, summed-ranking fallback) is on by default (Lucas 2026-11-18). Unset means on; only `false` (any case, no spaces) turns it off; a value with spaces reads as the default (on). It needs the `sune_need_weights` rank_features mapping on the index.
@@ -23,7 +24,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 3. `decide(...)` with an empty tenant context.
 4. `boostNeeds` become `NeedScore[]` (tier from the SUNE code; score 1 for a caller need, else the classify score).
 5. Area search (`region`, `area_match`, `unlocated`; PR #313): `resolveArea` (`src/search/internal/area/resolve-area.ts`, shared with v1 `SearchService`) checks each Region exists (unknown: `400`, before the search runs) and fills `area_match`/`unlocated` from the tenant search config. Then `HybridSearchService.searchHybrid` with `query_type: 'hybrid'`, `rankingVersion: 'v2'` and the `area`, if any.
-6. `finalize(...)` with the hits total and the per-need counts (`by_code`). `by_code` is `null` (not counted) when `clarify=never`, no codes were asked, or the count failed; every option is then kept. `strongTextMatch: false` is still a placeholder.
+6. `finalize(...)` with the hits total and the per-need counts (`by_code`). `by_code` is `null` (not counted) when `clarify=never`, no codes were asked, or the count failed; every option is then kept. With the switch on, the input also holds `match` (what the hits say about the query words) and `weak`; see `docs/v2-rules-engine.md`.
 7. Response: the v1 hybrid response plus `resolved_location` (area searches only, same shape as v1), `intent`, `clarification` (snake_case keys), `model_version`, `rules_version`. No top-level `emergency` block (ADR 0039 Decision 54): the emergency is only the emergency question in `clarification` (`importance` `critical` = popup band, `high` = soft band; caller `urgency=U-0` gives a `critical` one with hotlines and no options). Each option is `{label, parameter, value, results_count?}`.
 
 Usage metric: one `norse_search_requests_total` count per request with `search_type="v2"`.
@@ -31,7 +32,7 @@ Usage metric: one `norse_search_requests_total` count per request with `search_t
 ## Left out of this slice
 
 - A `needs=` hard filter: `needs=` never filters. A caller need makes a block and boosts; a model guess only boosts (ADR 0039 Decision 18).
-- `strongTextMatch`: no retrieval signal yet.
+- `strong_text_match`: gone from the new engine; `match` (`concentrated`, `spread`, `none`) replaces it. Only the old engine in `src/v2/rules/legacy` still reads it, and always gets `false`.
 - Tenant context (`hotlines`).
 - The `model_version` param.
 
