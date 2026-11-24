@@ -18,9 +18,18 @@ export const MATCH = {
   longHeldShareMin: 0.5,
 };
 
+/**
+ * Spanish joining words: the hits need not hold them ('ayuda con renta' on an
+ * English page). Only here: in the name match they are name words ('Con Edison').
+ */
+const JOINING_WORDS = new Set(['por', 'para', 'con']);
+
+const coverageTokens = (words: string[]): string[] =>
+  queryTokens(words).filter((w) => !JOINING_WORDS.has(w));
+
 /** Per query token, the share of hit texts that hold it. */
 export function wordCoverage(words: string[], texts: string[]): number[] {
-  const qt = queryTokens(words);
+  const qt = coverageTokens(words);
   if (qt.length === 0 || texts.length === 0) return [];
   const sets = texts.map((t) => new Set(queryWords(t)));
   return qt.map(
@@ -64,6 +73,7 @@ export function matchValue(i: {
 }): Match {
   // The claim is about the query: a page past the last hit keeps it.
   if (i.named) return 'concentrated';
-  if (queryTokens(i.words).length === 0 || i.hit_count === 0) return 'spread';
+  if (coverageTokens(i.words).length === 0 || i.hit_count === 0)
+    return 'spread';
   return i.words_held ? 'spread' : 'none';
 }

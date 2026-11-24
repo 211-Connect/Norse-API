@@ -73,6 +73,16 @@ describe('request words and ZIP codes (grid match fixes)', () => {
     expect(m(['banco de comida'], q.split(' '))).toBe('spread');
     expect(m(['legal clinic'], q.split(' '))).toBe('none');
   });
+  it.each([['ayuda con comida'], ['ayudenme por favor con comida']])(
+    '%p: the hits need not hold a Spanish joining word (English page)',
+    (q) => {
+      expect(m(['banco de comida'], q.split(' '))).toBe('spread');
+      expect(m(['legal clinic'], q.split(' '))).toBe('none');
+    },
+  );
+  it("'necesito ayuda por favor' makes no claim (spread)", () => {
+    expect(m([food], ['necesito', 'ayuda', 'por', 'favor'])).toBe('spread');
+  });
   it('a query of request words only makes no claim (spread)', () => {
     expect(m([food], ['need', 'help'])).toBe('spread');
   });

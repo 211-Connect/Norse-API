@@ -2695,15 +2695,18 @@ describe('V2SearchService name match (question rule v1)', () => {
     },
   );
 
-  it('an unreadable total: not stored', async () => {
-    const r = page({ nameClaim: claim(), totalCounted: false });
-    const b = build({ search: jest.fn().mockResolvedValue(r) });
-    const res = await b.service.search({
-      headers,
-      query: dto({ query: 'compass housing' }),
-    });
-    expect(isMarkedNotStorable(res)).toBe(true);
-  });
+  it.each(['true', 'off'])(
+    'an unreadable total (%s): not stored with the rule on; off as before',
+    async (ruleV1) => {
+      const r = page({ nameClaim: claim(), totalCounted: false });
+      const b = build({ ruleV1, search: jest.fn().mockResolvedValue(r) });
+      const res = await b.service.search({
+        headers,
+        query: dto({ query: 'compass housing' }),
+      });
+      expect(isMarkedNotStorable(res)).toBe(ruleV1 === 'true');
+    },
+  );
 
   it.each(['true', 'off'])(
     'a failed count read (%s): not stored with the rule on; never in the response',

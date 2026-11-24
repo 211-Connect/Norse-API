@@ -5,7 +5,7 @@ import { queryWords } from './query-words';
  * need to hold them ('i need food and housing' is about food and housing), and
  * they are no part of an org name. The one list, English and Spanish: the word
  * coverage and the name match both read it, and a query can mix languages. No
- * joining words ('con', 'para', 'el'): names start with them ('Con Edison').
+ * Spanish joining words ('con', 'para'): names start with them ('Con Edison').
  * Accents are already removed (`queryWords`).
  */
 const REQUEST_WORDS = new Set([
