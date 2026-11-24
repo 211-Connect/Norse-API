@@ -58,7 +58,6 @@ export class OpenCageGeocodingProvider implements IGeocodingProvider {
         opencage.geocode({
           key: this.accessToken,
           q: `${lat},${lng}`,
-          countrycode: 'us',
           language: locale,
         }),
     );

@@ -44,7 +44,6 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
       this.client
         .forwardGeocode({
           query: address,
-          countries: ['US'],
           autocomplete: true,
           language: [locale],
           limit,
@@ -78,7 +77,6 @@ export class MapboxGeocodingProvider implements IGeocodingProvider {
         .reverseGeocode({
           query: [lng, lat],
           types: ['address'],
-          countries: ['US'],
           language: [locale],
           limit: 1,
         })
