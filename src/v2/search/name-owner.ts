@@ -3,6 +3,7 @@ import {
   NameCandidate,
   genericName,
   nameMatch,
+  topicPhrase,
 } from '../rules/match';
 import { alternateNames } from './name-lookup.service';
 
@@ -32,6 +33,7 @@ export type KeywordHit = MatchHit & {
   org_id: string | null;
   alternate_names: string[];
   service_name: string;
+  taxonomy_names: string[];
 };
 
 export function keywordHit(id: string, source: unknown): KeywordHit {
@@ -45,6 +47,12 @@ export function keywordHit(id: string, source: unknown): KeywordHit {
     org_id: typeof orgObj.id === 'string' ? orgObj.id : null,
     alternate_names: alternateNames(orgObj.alternate_name),
     service_name: typeof src.name === 'string' ? src.name : '',
+    taxonomy_names: (Array.isArray(src.taxonomies)
+      ? (src.taxonomies as { name?: unknown }[])
+      : []
+    )
+      .map((t) => t?.name)
+      .filter((n): n is string => typeof n === 'string'),
   };
 }
 
@@ -72,6 +80,11 @@ export type NameOwner = {
   claim(keyword: KeywordList): Promise<NameClaim>;
   /** Evidence: the fused top hits, as keyword hits. True: a common word, not a name. */
   vetoes(evidence: KeywordHit[]): boolean;
+  /**
+   * All keyword hits. True: a taxonomy term of the hits is the query phrase, so
+   * it is a topic and no org is pinned. Absent (V2_NAME_TOPIC_VETO off): no check.
+   */
+  topic?(hits: KeywordHit[]): boolean;
   /** Where the pinned ids come from: an index read or the keyword hits. */
   pinFrom: 'read' | 'keyword';
 };
@@ -109,3 +122,16 @@ export function resolverOwner(
     },
   };
 }
+
+/** The topic check (V2_NAME_TOPIC_VETO=true), the same for every owner. */
+export const withTopicVeto = (
+  owner: NameOwner,
+  words: string[],
+): NameOwner => ({
+  ...owner,
+  topic: (hits) =>
+    topicPhrase(
+      words,
+      hits.flatMap((h) => h.taxonomy_names),
+    ),
+});

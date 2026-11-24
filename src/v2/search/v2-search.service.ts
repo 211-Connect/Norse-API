@@ -22,7 +22,12 @@ import {
   nameMatch,
   queryTokens,
 } from '../rules/match';
-import { NameOwner, matchHit, resolverOwner } from './name-owner';
+import {
+  NameOwner,
+  matchHit,
+  resolverOwner,
+  withTopicVeto,
+} from './name-owner';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -506,11 +511,17 @@ export class V2SearchService {
 
     // Name owner (V2_NAME_MATCH_OWNER=resolver, question rule v1, text with a
     // query token): today's name lookup is the one owner of the name match.
-    const nameOwner: NameOwner | undefined =
+    const claimOwner: NameOwner | undefined =
       nameLookupPromise &&
       this.configService.get('V2_NAME_MATCH_OWNER') === 'resolver'
         ? resolverOwner(contentWords(text, lang), nameLookupPromise)
         : undefined;
+    // V2_NAME_TOPIC_VETO=true: a claim on a phrase that is a taxonomy term of
+    // the keyword hits is vetoed ('food bank' is a topic, not one org).
+    const nameOwner =
+      claimOwner && this.configService.get('V2_NAME_TOPIC_VETO') === 'true'
+        ? withTopicVeto(claimOwner, contentWords(text, lang))
+        : claimOwner;
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {

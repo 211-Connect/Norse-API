@@ -622,6 +622,22 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       expect(res.nameMatch).toMatchObject({ vetoed: true, pinned: 0 });
     });
 
+    it('O4b. a topic claim is vetoed: topic reads every keyword hit; only an org claim asks', async () => {
+      const topic = jest.fn().mockReturnValue(true);
+      const res = await run({}, { nameOwner: { ...owner(), topic } });
+      expect(topic.mock.calls[0][0].map((h: any) => h.id)).toEqual(KEYWORD);
+      expect(pinnedIds().slice(0, 3)).toEqual(['b', 'a', 'c']);
+      expect(res.nameMatch).toMatchObject({ vetoed: true, pinned: 0 });
+
+      await build();
+      const read = await run(
+        {},
+        { nameOwner: { ...owner({ pinFrom: 'read' }), topic } },
+      );
+      expect(namedRequests()).toHaveLength(0);
+      expect(read.nameMatch).toMatchObject({ vetoed: true });
+    });
+
     it('O5. read owner: a veto sends no pin read; no veto reads once and pins nearest first', async () => {
       namedOrgServices = ['near', 'mid'];
       await run(
