@@ -1,3 +1,4 @@
+import { matchLocale } from 'src/common/locales';
 import { SUNE_TIER1, SUNE_TIER2 } from './sune-v1-needs';
 
 /** The words a need shows: the short name on the button and the spoken description under it (ADR 0039 Decision 31). */
@@ -33,7 +34,7 @@ export const setNeedTextOverride = (fn: NeedTextOverride | null): void => {
 };
 
 const isEnglish = (locale: string | undefined): boolean =>
-  !locale || /^en(?:$|[-_,;])/i.test(locale.trim());
+  !locale || matchLocale(locale, (tag) => tag === 'en' || undefined) === true;
 
 /**
  * The text of one need for a tenant and locale: the override when it gives

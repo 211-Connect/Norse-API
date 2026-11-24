@@ -7,6 +7,7 @@ import { SearchService } from 'src/search/search.service';
 import { HybridSearchService } from 'src/search/hybrid-search.service';
 import { SearchResponse } from 'src/search/dto/search-response.dto';
 import { RULES_VERSION } from '../rules';
+import { setNeedTextOverride } from '../rules/need-text';
 import {
   ClassifyResult,
   SearchClassificationClient,
@@ -2582,6 +2583,134 @@ describe('V2SearchService name match (question rule v1)', () => {
     );
     expect(res.clarification.phone_line).toBeUndefined();
   });
+
+  it.each([
+    ['es', false],
+    ['en', true],
+  ])(
+    'weak match, no pick, %s: the no_match options carry an English description: %p',
+    async (lang, english) => {
+      const search = jest
+        .fn()
+        .mockResolvedValueOnce(
+          page({
+            judges: { keyword_top: 0.4, vector_top: 0.3 },
+            nameClaim: claim({ org_ids: [], pins: [] }),
+          }),
+        )
+        .mockResolvedValueOnce(
+          page({ needCounts: { 'N-HOU': 10, 'N-FOD': 10 } }),
+        );
+      const b = build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+        search,
+      });
+      const res = await b.service.search({
+        headers: { ...headers, 'accept-language': lang } as never,
+        query: dto({ query: 'blorptastic zzz' }),
+      });
+      expect(res.weak_match).toBe(true);
+      const options = res.clarification.questions.flatMap((q) =>
+        q.options.filter((o) => o.parameter === 'needs' && o.value !== 'N-X'),
+      );
+      expect(options.length).toBeGreaterThan(0);
+      expect(options.some((o) => 'description' in o)).toBe(english);
+    },
+  );
+
+  it('weak match: the no_match option descriptions are those of the tenant', async () => {
+    const search = jest
+      .fn()
+      .mockResolvedValueOnce(
+        page({
+          judges: { keyword_top: 0.4, vector_top: 0.3 },
+          nameClaim: claim({ org_ids: [], pins: [] }),
+        }),
+      )
+      .mockResolvedValueOnce(page({ needCounts: { 'N-HOU': 10 } }));
+    const seen: unknown[] = [];
+    setNeedTextOverride((_code, ctx) => {
+      seen.push(ctx);
+      return null;
+    });
+    try {
+      await build({
+        classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+        search,
+      }).service.search({
+        headers,
+        query: dto({ query: 'blorptastic zzz' }),
+      });
+    } finally {
+      setNeedTextOverride(null);
+    }
+    const tenantId = (headers as Record<string, string>)['x-tenant-id'];
+    expect(seen.length).toBeGreaterThan(0);
+    for (const ctx of seen) expect(ctx).toEqual({ tenantId, locale: 'en' });
+  });
+
+  it.each([
+    ['a failed claim', { nameClaim: claim({ status: 'failed', org_ids: [] }) }],
+    ['no claim', {}],
+    ['an ok claim', { nameClaim: claim({ org_ids: [], pins: [] }) }],
+  ])('a pick after a weak match with %s', async (name, extra) => {
+    const b = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+      search: jest
+        .fn()
+        .mockResolvedValueOnce(
+          page({ judges: { keyword_top: 0.4, vector_top: 0.3 }, ...extra }),
+        )
+        .mockResolvedValueOnce(page({ needCounts: { 'N-HOU-01': 1 } })),
+    });
+    const res = await b.service.search({
+      headers,
+      query: dto({ query: 'blorptastic zzz', needs: ['N-HOU'] } as never),
+    });
+    expect(b.searchHybrid).toHaveBeenCalledTimes(2);
+    // Never cache a degraded result.
+    expect(isMarkedNotStorable(res)).toBe(name !== 'an ok claim');
+  });
+
+  it.each([
+    ['timed out', { timed_out: true }, true],
+    ['a failed shard', { _shards: { failed: 1 } }, true],
+    ['complete', {}, false],
+  ])(
+    'the page the question reads: %s; stored only when complete; off: stored',
+    async (_n, over, notStored) => {
+      for (const ruleV1 of ['true', 'off']) {
+        const base = page({ nameClaim: claim() });
+        const search = { ...base.search, ...over };
+        const b = build({
+          ruleV1,
+          search: jest.fn().mockResolvedValue({ ...base, search }),
+        });
+        const res = await b.service.search({
+          headers,
+          query: dto({ query: 'compass housing' }),
+        });
+        expect(isMarkedNotStorable(res)).toBe(ruleV1 === 'true' && notStored);
+      }
+    },
+  );
+
+  it.each([
+    ['en', 'necesito ayuda'],
+    ['es', 'necesito ayuda por favor'],
+    ['es', 'busco asistencia'],
+  ])(
+    '%s: %p is request words only, so no name lookup and a stored answer',
+    async (lang, query) => {
+      const b = build({});
+      const res = await b.service.search({
+        headers: { ...headers, 'accept-language': lang } as never,
+        query: dto({ query }),
+      });
+      expect(call(b.searchHybrid)).not.toHaveProperty('nameWords');
+      expect(isMarkedNotStorable(res)).toBe(false);
+    },
+  );
 
   it('the text-free second call (weak match) gets no name words', async () => {
     const search = jest

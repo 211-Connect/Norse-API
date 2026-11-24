@@ -2,7 +2,10 @@ import { queryWords } from './query-words';
 
 /**
  * Words of a request that say nothing about the thing asked for. Hits do not
- * need to hold them ('i need food and housing' is about food and housing).
+ * need to hold them ('i need food and housing' is about food and housing), and
+ * they are no part of an org name. The one list for every language: the word
+ * coverage and the name match both read it, and a query can mix languages.
+ * Accents are already removed (`queryWords`).
  */
 const REQUEST_WORDS = new Set([
   'i',
@@ -21,6 +24,24 @@ const REQUEST_WORDS = new Set([
   'assistance',
   'near',
   'nearby',
+  // Spanish.
+  'necesito',
+  'necesita',
+  'necesitamos',
+  'ayuda',
+  'ayudar',
+  'ayudame',
+  'asistencia',
+  'quiero',
+  'queremos',
+  'quisiera',
+  'busco',
+  'busca',
+  'buscar',
+  'buscando',
+  'encontrar',
+  'favor',
+  'cerca',
   // Stop words: the hits need not hold them either ('i need food and housing').
   'and',
   'or',

@@ -18,31 +18,9 @@ export const MATCH = {
   longHeldShareMin: 0.5,
 };
 
-/**
- * Spanish request words: the hits need not hold them. Only here, because they
- * can be part of an org name ('Ayuda Legal').
- */
-const SPANISH_REQUEST_WORDS = new Set([
-  'necesito',
-  'necesitamos',
-  'ayuda',
-  'ayudar',
-  'quiero',
-  'queremos',
-  'busco',
-  'buscar',
-  'encontrar',
-  'favor',
-  'cerca',
-]);
-
-/** The words the hits must hold: the thing asked for. */
-const askedWords = (words: string[]): string[] =>
-  queryTokens(words).filter((w) => !SPANISH_REQUEST_WORDS.has(w));
-
 /** Per query token, the share of hit texts that hold it. */
 export function wordCoverage(words: string[], texts: string[]): number[] {
-  const qt = askedWords(words);
+  const qt = queryTokens(words);
   if (qt.length === 0 || texts.length === 0) return [];
   const sets = texts.map((t) => new Set(queryWords(t)));
   return qt.map(
@@ -86,6 +64,6 @@ export function matchValue(i: {
 }): Match {
   // The claim is about the query: a page past the last hit keeps it.
   if (i.named) return 'concentrated';
-  if (askedWords(i.words).length === 0 || i.hit_count === 0) return 'spread';
+  if (queryTokens(i.words).length === 0 || i.hit_count === 0) return 'spread';
   return i.words_held ? 'spread' : 'none';
 }

@@ -61,6 +61,23 @@ describe('claimName: a name that starts with the words', () => {
       ['Compass Housing Alliance'],
     );
   });
+  it.each([
+    ['looking caridades catolicas'],
+    ['busco caridades catolicas'],
+    ['necesito ayuda caridades catolicas'],
+    ['buscando caridades catolicas'],
+  ])('the request words are not part of the name: %p', (q) => {
+    expect(named(q, [svc('Caridades Catolicas')])).toEqual([
+      'Caridades Catolicas',
+    ]);
+  });
+  it.each([['necesito ayuda'], ['busco asistencia'], ['need help']])(
+    'request words alone name nothing: %p',
+    (q) => {
+      expect(named(q, [svc('Ayuda Help Center')])).toEqual([]);
+      expect(nameWords(q.split(' '))).toEqual([]);
+    },
+  );
   it('the same name in two orgs names both', () => {
     const hits = [
       svc('YMCA', 'Swim', { org_id: '1' }),
@@ -296,9 +313,13 @@ describe('claimName: no list', () => {
     expect(nameHead('Women’s Center')).toEqual(nameHead("Women's Center"));
     expect(named('ninos unidos', [svc('Niños Unidos')])).toHaveLength(1);
   });
-  it('a Spanish request word can be part of a name', () => {
-    expect(named('ayuda legal', [svc('Ayuda Legal')])).toHaveLength(1);
-    expect(nameWords(['ayuda'])).toEqual(['ayuda']);
+  // Known weak spot, the same in both languages: a name that is mostly a
+  // request word is not claimed, because the word says nothing in a query.
+  it.each([
+    ['legal help', 'Legal Help'],
+    ['ayuda legal', 'Ayuda Legal'],
+  ])('a name that holds a request word is not claimed: %p', (q, org) => {
+    expect(named(q, [svc(org)])).toEqual([]);
   });
   it('spaces in a service name are one space', () => {
     expect(nameHit('1', { name: 'Food   Bank\n at X' }).service_name).toBe(

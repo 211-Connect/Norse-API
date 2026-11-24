@@ -67,6 +67,25 @@ const rows: Row[] = require('./__fixtures__/question-rule-judge.json');
  */
 const MIN_PASS = 203;
 
+/**
+ * Rows whose grid rule is not the recorded one, on purpose. The fixture keeps
+ * the old rule: a change of the rules is written here with its reason, never
+ * into the fixture, or the check only repeats the code.
+ */
+const CHANGED_RULES: {
+  q: string;
+  from: GridRule;
+  to: GridRule;
+  why: string;
+}[] = [
+  {
+    q: 'necesito ayuda',
+    from: 'R5',
+    to: 'R4',
+    why: 'Spanish request words only: it names no thing, so the hits cannot fail to hold it. The same as "help".',
+  },
+];
+
 const ids = (qs: Question[]) => qs.map((q) => q.id);
 const needIds = (qs: Question[]) =>
   qs.filter((q) => q.type === 'find_need').map((q) => q.id);
@@ -170,13 +189,36 @@ describe('question rule judge spec (labeled per-tenant rows)', () => {
     expect(passed).toBeGreaterThanOrEqual(MIN_PASS);
   });
 
-  it('the grid rule of every row equals the labeled rule', () => {
-    const wrong = rows.filter(
-      (r) =>
-        gridRule(decide(reqOf(r), signalsOf(r), {}), inputOf(r)) !== r.rule,
-    );
+  const ruleOf = (r: Row) =>
+    gridRule(decide(reqOf(r), signalsOf(r), {}), inputOf(r));
+
+  it('the grid rule of every row equals the recorded rule, or a listed change', () => {
+    const wrong = rows.filter((r) => {
+      const change = CHANGED_RULES.find((c) => c.q === r.q);
+      if (change) expect(r.rule).toBe(change.from);
+      return ruleOf(r) !== (change?.to ?? r.rule);
+    });
     expect(wrong.map((r) => `${r.q}/${r.tenant}`)).toEqual([]);
   });
+
+  // Independent of the recorded rules: the English query with the same meaning.
+  it.each(['WA', 'IL', 'NY'] as const)(
+    "%s: 'necesito ayuda' follows the rule of 'help'",
+    (tenant) => {
+      const row = (q: string) =>
+        rows.find((r) => r.q === q && r.tenant === tenant)!;
+      const es = row('necesito ayuda');
+      const en = row('help');
+      expect(en.rule).toBe('R4'); // recorded before the Spanish words existed
+      expect(ruleOf(es)).toBe(en.rule);
+      for (const r of [es, en]) {
+        const out = finalize(decide(reqOf(r), signalsOf(r), {}), inputOf(r));
+        expect(needIds(out.questions)).toHaveLength(1);
+        // Not "these results may not match": no thing was asked for.
+        expect(out.notice).toBeUndefined();
+      }
+    },
+  );
 
   it.each([
     'ASK_AREA',

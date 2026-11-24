@@ -311,7 +311,7 @@ export class V2IntentNeedDto {
 
   @ApiPropertyOptional({
     description:
-      'The spoken description of the need (ADR 0039 Decision 31), same text as `description` on a question option.',
+      'The spoken description of the need (ADR 0039 Decision 31), same text as `description` on a question option. Absent when there is no text in the language of the request (English only today).',
   })
   description?: string;
 }

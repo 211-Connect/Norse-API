@@ -51,9 +51,10 @@ describe('need text', () => {
 
 describe('needDescription', () => {
   it('English text for English only; no field without a text', () => {
-    for (const locale of [undefined, 'en', 'en-US'])
+    for (const locale of [undefined, 'en', 'EN', 'en-US', 'en_GB'])
       expect(needDescription('N-HOU', { locale }).description).toBeTruthy();
-    for (const locale of ['es', 'es-MX', 'ru'])
+    // Not a tag of English (the matcher every other locale check uses).
+    for (const locale of ['es', 'es-MX', 'ru', 'enm', 'en,es', 'en;q=0.1'])
       expect(needDescription('N-HOU', { locale })).toEqual({});
     expect(needDescription('N-ZZZ', { locale: 'en' })).toEqual({});
   });

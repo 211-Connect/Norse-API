@@ -2,7 +2,9 @@
  * Adds the grid fields to every row of the judge fixture
  * (src/v2/rules/__fixtures__/question-rule-judge.json): `need` (need level of
  * decide), `match` (matchValue), `results` ('none' when weak or total 0,
- * else 'some') and `rule` (gridRule). Run once after a grid change:
+ * else 'some') and `rule` (gridRule). Run it for NEW rows only: for a rule that
+ * changes on an existing row, list the change and its reason in the spec
+ * (CHANGED_RULES), so the fixture stays a record and not a copy of the code.
  *
  *   npx ts-node --transpile-only scripts/v2-label-judge-grid.ts
  */

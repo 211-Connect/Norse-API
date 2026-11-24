@@ -54,7 +54,21 @@ describe('request words and ZIP codes (grid match fixes)', () => {
   it("'necesito comida' is about comida", () => {
     expect(m(['banco de comida'], ['necesito', 'comida'])).toBe('spread');
     expect(m(['banco de comida'], ['ayuda'])).toBe('spread');
+    // A claim stands whatever the words are.
     expect(m([], ['ayuda'], true)).toBe('concentrated');
+  });
+  it.each(
+    [
+      'necesita comida',
+      'busca comida',
+      'buscando comida',
+      'quisiera comida',
+      'ayudame comida',
+      'asistencia comida',
+    ].map((q) => [q]),
+  )('%p is about comida, however the request is worded', (q) => {
+    expect(m(['banco de comida'], q.split(' '))).toBe('spread');
+    expect(m(['legal clinic'], q.split(' '))).toBe('none');
   });
   it('a query of request words only makes no claim (spread)', () => {
     expect(m([food], ['need', 'help'])).toBe('spread');

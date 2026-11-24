@@ -80,6 +80,10 @@ const countedTotal = (response: {
 }): number | null =>
   response.totalCounted === false ? null : hitsTotal(response);
 
+/** Elasticsearch answered 200 with part of the hits: a timeout or a failed shard. */
+const isPartial = ({ search }: Pick<HybridSearchResult, 'search'>): boolean =>
+  search.timed_out || search._shards.failed > 0;
+
 // ml-broker rejects classify text longer than 512 characters after stripping
 // (422). See ml-broker/src/tasks/search_classification/schemas.py. A longer
 // text would turn into error signals and hide the emergency band, so the text
@@ -419,13 +423,15 @@ export class V2SearchService {
         content_words: contentWords(text, lang),
       }),
     };
+    // One context for every rules call of the request (decide, weak match).
+    const tenantContext: rules.TenantContext = {
+      ai_classification: aiClassification,
+      hotlines: tenantHotlines(searchConfig),
+      tenant_id: headers['x-tenant-id'],
+      locale: lang,
+    };
     const decision = withSpanSync('v2.rules.decide', () =>
-      decide(rulesRequest, signals, {
-        ai_classification: aiClassification,
-        hotlines: tenantHotlines(searchConfig),
-        tenant_id: headers['x-tenant-id'],
-        locale: lang,
-      }),
+      decide(rulesRequest, signals, tenantContext),
     );
 
     const needScores: NeedScore[] = [];
@@ -443,6 +449,7 @@ export class V2SearchService {
       needScores,
       modelVersion: classified?.modelVersion ?? null,
       aiClassification,
+      tenantContext,
       ruleV1,
     };
   }
@@ -525,6 +532,7 @@ export class V2SearchService {
       needScores,
       modelVersion,
       aiClassification,
+      tenantContext,
       ruleV1,
     } = await this.classifyAndDecide({
       headers,
@@ -558,10 +566,6 @@ export class V2SearchService {
       'v2.count_codes': countCodes.length,
     });
 
-    const tenantContext = {
-      ai_classification: aiClassification,
-      hotlines: tenantHotlines(searchConfig),
-    };
     const hybridCall: HybridCall = {
       ...retrievalOptions,
       ...(early && { early }),
@@ -617,6 +621,7 @@ export class V2SearchService {
       'needCounts' | 'judges' | 'totalCounted'
     > = firstResponse;
     let clarifyDecision = decision;
+    let partial = isPartial(first);
     let counts: {
       total: number | null;
       by_code: Record<string, number> | null;
@@ -657,6 +662,7 @@ export class V2SearchService {
             headers,
           ),
         );
+        partial ||= isPartial(second);
         counts = {
           total: countedTotal(second),
           by_code: second.needCounts ?? null,
@@ -689,6 +695,7 @@ export class V2SearchService {
         ...secondResponse
       } = second;
       response = secondResponse;
+      partial ||= isPartial(second);
       counts = { total: countedTotal(second), by_code: secondCounts ?? null };
     }
 
@@ -701,12 +708,14 @@ export class V2SearchService {
       (dto.sort ?? 'relevance') === 'relevance' &&
       isFullV2Locale(lang);
     let match: Match | undefined;
-    let nameFailed = false;
+    // Read for every answer, also a pick after a weak match: the failed list
+    // decided that it was weak.
+    const nameFailed =
+      ruleV1 && orgWords.length > 0 && nameClaim?.status !== 'ok';
     // No text (browse): no match; finalize reads it as `spread`.
     // A pick after a weak match dropped the text: the page says nothing about it.
     const weakPick = weak && callerNeeds.length > 0;
     if (ruleV1 && hasText && !weakPick) {
-      nameFailed = orgWords.length > 0 && nameClaim?.status !== 'ok';
       match = matchOf({
         words: rulesRequest.content_words ?? [],
         texts: topPage ? topTexts(response) : [],
@@ -768,8 +777,8 @@ export class V2SearchService {
           // Need descriptions (ADR 0039 Decision 31) are new behavior: switch on only.
           ...(ruleV1 &&
             needDescription(n.code, {
-              tenantId: headers['x-tenant-id'],
-              locale: lang,
+              tenantId: tenantContext.tenant_id,
+              locale: tenantContext.locale,
             })),
         })),
         urgency: {
@@ -786,7 +795,9 @@ export class V2SearchService {
     };
     // A shared cache may store only band none with no emergency question
     // (ADR 0039 Decision 28); the controller's TTL covers the rest.
-    // A result whose name match failed is not stored (never cache a degraded result).
-    return decision.cacheable && !nameFailed ? result : markNotStorable(result);
+    // Never cache a degraded result: a failed name match, or a page or count
+    // read that Elasticsearch cut short (the match and the options come from it).
+    const degraded = nameFailed || (ruleV1 && partial);
+    return decision.cacheable && !degraded ? result : markNotStorable(result);
   }
 }
