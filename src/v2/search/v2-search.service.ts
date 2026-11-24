@@ -8,19 +8,12 @@ import {
   HybridSearchResult,
   HybridSearchService,
   isBoostableUrgency,
-  NAMED_PIN_FAILED,
   NeedScore,
 } from 'src/search/hybrid-search.service';
 import * as rules from '../rules';
 import * as legacyRules from '../rules/legacy';
-import {
-  MATCH,
-  MatchHit,
-  NameCandidate,
-  matchOf,
-  nameMatch,
-  queryTokens,
-} from '../rules/match';
+import { MATCH, Match, MatchHit, matchOf } from '../rules/match';
+import { matchHit, nameWords } from './name-match';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -41,7 +34,6 @@ import { V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { SearchClassificationClient } from './search-classification.client';
-import { NameLookupService } from './name-lookup.service';
 import { contentWords } from 'src/search/internal/text-matching/word-rarity';
 import { modelText } from './model-text';
 import { RegionService } from 'src/region/internal';
@@ -222,27 +214,9 @@ export function matchHits(
   topN: number = MATCH.topN,
 ): MatchHit[] {
   const hits = response.search?.hits?.hits ?? [];
-  return hits.slice(0, topN).map((h) => {
-    const src = ((h as { _source?: unknown })._source ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const org = src.organization;
-    const orgName =
-      typeof org === 'string'
-        ? org
-        : typeof (org as { name?: unknown } | undefined)?.name === 'string'
-          ? (org as { name: string }).name
-          : null;
-    const taxonomies = Array.isArray(src.taxonomies)
-      ? (src.taxonomies as { name?: unknown }[]).map((t) => t?.name)
-      : [];
-    const text = [src.name, src.description, src.summary, ...taxonomies]
-      .filter((x): x is string => typeof x === 'string')
-      .join(' ')
-      .toLowerCase();
-    return { org_name: orgName, text };
-  });
+  return hits
+    .slice(0, topN)
+    .map((h) => matchHit((h as { _source?: unknown })._source));
 }
 
 /** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
@@ -308,24 +282,7 @@ export class V2SearchService {
     private readonly regionService: RegionService,
     private readonly searchService: SearchService,
     private readonly configService: ConfigService,
-    private readonly nameLookup: NameLookupService,
   ) {}
-
-  /**
-   * Question rule v1: which orgs are named like the query? Never rejects: any
-   * failure (index name, search, timeout) is `null`.
-   */
-  private startNameLookup(
-    tenantId: string,
-    lang: string,
-    text: string,
-    coords?: number[],
-  ): Promise<NameCandidate[] | null> {
-    return this.hybridSearch
-      .resolveHybridIndex(tenantId, lang)
-      .then((index) => this.nameLookup.lookup(tenantId, index, text, coords))
-      .catch(() => null);
-  }
 
   /**
    * One hybrid search. The language picks the index; an unknown language has
@@ -511,6 +468,11 @@ export class V2SearchService {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
+    // Question rule v1: the keyword list says which org the words name.
+    const orgWords =
+      this.configService.get('V2_QUESTION_RULE_V1') === 'true' && hasText
+        ? nameWords(contentWords(text, lang))
+        : [];
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -528,26 +490,18 @@ export class V2SearchService {
       rankingVersion: 'v2' as const,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
+      ...(orgWords.length > 0 && { nameWords: orgWords }),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
     // Redis reads, keyword and vector lists, stats and taxonomy lookup. A
     // failure surfaces inside searchHybrid, where the catch below maps it.
-    // Question rule v1 also starts the org name lookup here (read only, same
-    // index as retrieval); the match step waits for it.
     // An area search resolves its Region after the tenant config read, and the
     // early stage builds its filters without it, so an area search starts
     // nothing early.
     const early =
       hasText && !dto.region
         ? this.hybridSearch.startEarlyRetrieval(retrievalOptions)
-        : undefined;
-
-    const nameLookupPromise =
-      this.configService.get('V2_QUESTION_RULE_V1') === 'true' &&
-      hasText &&
-      queryTokens(contentWords(text, lang)).length > 0
-        ? this.startNameLookup(headers['x-tenant-id'], lang, text, dto.coords)
         : undefined;
 
     // `off`: one classify call still runs for the emergency check; the rules
@@ -600,20 +554,9 @@ export class V2SearchService {
       ai_classification: aiClassification,
       hotlines: tenantHotlines(searchConfig),
     };
-    // The org(s) the query names lead the relevance order (in the radius).
-    // The lookup started with the request and is long done after classify.
-    const lookedUp = nameLookupPromise ? await nameLookupPromise : undefined;
-    const nameClaim = lookedUp
-      ? nameMatch(rulesRequest.content_words ?? [], lookedUp)
-      : null;
-    const namedOrgIds =
-      nameClaim?.named && (dto.sort ?? 'relevance') === 'relevance'
-        ? nameClaim.org_ids
-        : [];
     const hybridCall: HybridCall = {
       ...retrievalOptions,
       ...(early && { early }),
-      ...(namedOrgIds.length > 0 && { namedOrgIds }),
       ...(area && { area }),
       needScores,
       ...(urgencyBoost && { urgencyBoost }),
@@ -629,10 +572,12 @@ export class V2SearchService {
     const {
       early: _early,
       urgencyBoost: _urgencyBoost,
+      nameWords: _nameWords,
       ...withoutEarly
     } = hybridCall;
     void _early;
     void _urgencyBoost;
+    void _nameWords;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );
@@ -641,7 +586,7 @@ export class V2SearchService {
       needCounts: firstCounts,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       totalCounted: _tc1,
-      namedPinned,
+      nameClaim,
       ...firstResponse
     } = first;
 
@@ -740,37 +685,28 @@ export class V2SearchService {
     }
 
     // Question rule v1: what the returned hits say about the query.
-    let match: ReturnType<typeof matchOf> | undefined;
-    let nameLookupFailed = false;
+    let match: Match | undefined;
+    let nameFailed = false;
     // No text (browse): no match; finalize reads it as `spread`.
     if (ruleV1 && hasText) {
-      // The query names an org that has no service inside the radius (the pin
-      // found none): the query names nothing here, and the grid runs as usual.
-      // A failed pin read is not "out of radius": the result is degraded and not stored.
-      const pinFailed = namedPinned === NAMED_PIN_FAILED;
-      const outOfRadius = namedOrgIds.length > 0 && namedPinned === 0;
-      const names = outOfRadius ? [] : lookedUp;
-      nameLookupFailed = names === null || pinFailed;
+      nameFailed = orgWords.length > 0 && nameClaim?.status !== 'ok';
       match = matchOf({
         words: rulesRequest.content_words ?? [],
         hits: matchHits(response),
-        names,
+        named: (nameClaim?.org_ids.length ?? 0) > 0,
       });
       span.setAttributes({
-        'v2.match': match.value,
-        'v2.match.org_share': match.org_share,
-        'v2.match.text_share': match.text_share,
-        'v2.match.top_org_share': match.top_org_share,
-        'v2.match.top_org_back': match.top_org_back,
-        'v2.match.words_held': match.words_held,
-        'v2.match.named': match.named,
-        'v2.match.generic': match.generic,
-        'v2.match.name_lookup': !nameLookupPromise
-          ? 'skipped'
-          : nameLookupFailed
-            ? 'failed'
-            : 'ok',
-        'v2.match.named_pinned': namedPinned ?? -1,
+        'v2.match': match,
+        'v2.match.name':
+          orgWords.length === 0
+            ? 'skipped'
+            : nameFailed
+              ? 'failed'
+              : nameClaim!.veto
+                ? `veto_${nameClaim!.veto}`
+                : nameClaim!.org_ids.length > 0
+                  ? 'named'
+                  : 'none',
       });
     }
     // Off: development's finalize input, unchanged.
@@ -778,7 +714,7 @@ export class V2SearchService {
       ? {
           counts,
           strong_text_match: false,
-          ...(match && { match: match.value }),
+          ...(match && { match }),
           weak,
         }
       : { counts, strong_text_match: false };
@@ -833,9 +769,7 @@ export class V2SearchService {
     };
     // A shared cache may store only band none with no emergency question
     // (ADR 0039 Decision 28); the controller's TTL covers the rest.
-    // A result built without the name lookup is not stored (never cache a degraded result).
-    return decision.cacheable && !nameLookupFailed
-      ? result
-      : markNotStorable(result);
+    // A result whose name match failed is not stored (never cache a degraded result).
+    return decision.cacheable && !nameFailed ? result : markNotStorable(result);
   }
 }

@@ -4,20 +4,20 @@
  * Lucas 2026-11-23): labeled queries per tenant, the gold set stays a floor.
  *
  * Each fixture row is one live call on the prod index (read-only), recorded on
- * 2026-11-23 on branch build, local server, read-only prod ES, for WA_211, IL211
- * and Rochester NY: the model need scores, the content words, and the match
- * inputs (top-20 org share, one-org share, top-org back coverage, text share,
- * words held, named by the org name lookup, generic word; scripts/v2-match-evidence.ts). Scores under 0.001 are left out (no cutoff is that low). Labels are Claude's, for Lucas to review
+ * 2026-11-23 (need scores) and 2026-11-24 (match inputs: hits read, words held,
+ * named by the keyword list) on branch build, local server, for WA_211, IL211
+ * and Rochester NY with coords. Scores under 0.001 are left out (no cutoff is
+ * that low). Labels are Claude's, for Lucas to review
  * (WORK-LOG/HANDOFF-ASSETS/v2-search--rules-engine/question-rule-v1/labels.md).
  *
- * The spec runs the real decide + matchFromShares + finalize on the saved
+ * The spec runs the real decide + matchValue + finalize on the saved
  * inputs, so a rule or cutoff change is judged without a live call. The
  * emergency signal is not recorded: crisis rows carry `emergency_live` (the
  * live response had the danger question) and get a popup-band score.
  */
 import { decide, finalize, gridRule } from './engine';
 import * as legacy from './legacy';
-import { Match, matchFromShares } from './match';
+import { Match, matchValue } from './match';
 import { FinalizeInput, GridRule, Question, RulesSignals } from './types';
 
 type Label =
@@ -49,20 +49,20 @@ interface Row {
     weak: boolean;
     total: number | null;
     hit_count: number;
-    org_share: number;
-    top_org_share: number;
-    top_org_back: number;
-    text_share: number;
     words_held: boolean;
     named: boolean;
-    generic: boolean;
   };
 }
 
 const rows: Row[] = require('./__fixtures__/question-rule-judge.json');
 
-/** Floor: the measured pass count on 2026-11-23 (like MIN_PASS of the gold set). */
-const MIN_PASS = 208;
+/**
+ * Floor: the measured pass count on 2026-11-24 (like MIN_PASS of the gold set).
+ * 208 on the 11-23 inputs. Now 'cocoon house' and 'catholic charities' (WA) have
+ * no service inside the radius, so the grid runs (by design); 'neighborcare' (WA)
+ * lost the removed one-org share test; 'testing center' (WA) has other live hits.
+ */
+const MIN_PASS = 204;
 
 const ids = (qs: Question[]) => qs.map((q) => q.id);
 const needIds = (qs: Question[]) =>
@@ -132,16 +132,11 @@ const inputOf = (row: Row): FinalizeInput => {
     // Untagged prod index: counts are not counted (null).
     counts: { total: e.total, by_code: null },
     strong_text_match: false,
-    match: matchFromShares({
+    match: matchValue({
       words: row.content_words,
       hit_count: e.hit_count,
-      org_share: e.org_share,
-      top_org_share: e.top_org_share,
-      top_org_back: e.top_org_back,
-      text_share: e.text_share,
       words_held: e.words_held,
       named: e.named,
-      generic: e.generic,
     }),
     weak: e.weak,
   };

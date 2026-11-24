@@ -1,221 +1,76 @@
 import {
-  MATCH,
   MatchHit,
   NameCandidate,
   capsTokens,
   genericName,
-  matchFromShares,
+  holdsAllWords,
+  matchValue,
   matchOf,
   nameHead,
   nameMatch,
-  orgShare,
   queryTokens,
-  textShare,
-  topOrgBack,
-  topOrgShare,
   withinOneEdit,
   wordCoverage,
   wordsHeld,
+  topicPhrase,
 } from './match';
 
 const hit = (org: string | null, text = ''): MatchHit => ({
   org_name: org,
   text: text.toLowerCase(),
 });
-describe('orgShare', () => {
-  it("matches 'ymca' to org 'YMCA of Greater Seattle'", () => {
-    expect(orgShare(['ymca'], [hit('YMCA of Greater Seattle')])).toBe(1);
+describe('holdsAllWords', () => {
+  it('a word, or the start of one with 4+ letters', () => {
+    expect(holdsAllWords(['seat'], 'Seattle Org')).toBe(true);
+    expect(holdsAllWords(['sea'], 'Seattle Org')).toBe(false);
+    expect(holdsAllWords(['food', 'bank'], 'Ballard Food Bank')).toBe(true);
+    expect(holdsAllWords(['food', 'bank'], 'Ballard Food Pantry')).toBe(false);
   });
-  it("matches an acronym: 'hra' to 'Health Resource Agency'; stop words skipped", () => {
-    expect(orgShare(['hra'], [hit('Health Resource Agency')])).toBe(1);
-    expect(orgShare(['hra'], [hit('Health and Resource of Agency')])).toBe(1);
-  });
-  it("matches 'dshs' to 'Department of Social and Health Services' (function words skipped only)", () => {
-    expect(
-      orgShare(['dshs'], [hit('Department of Social and Health Services')]),
-    ).toBe(1);
-  });
-  it('matches a prefix of 4+ characters only', () => {
-    expect(orgShare(['sea'], [hit('Seattle Org')])).toBe(0);
-    expect(orgShare(['seat'], [hit('Seattle Org')])).toBe(1);
-  });
-  it('counts hits without an org as no match; divides by all hits', () => {
-    expect(
-      orgShare(['ymca'], [hit('YMCA'), hit(null), hit('Other')]),
-    ).toBeCloseTo(1 / 3);
-  });
-  it('is 0 for no query tokens or no hits', () => {
-    expect(orgShare([], [hit('YMCA')])).toBe(0);
-    expect(orgShare(['a'], [hit('A')])).toBe(0);
-    expect(orgShare(['ymca'], [])).toBe(0);
+  it('no query token: false', () => {
+    expect(holdsAllWords([], 'YMCA')).toBe(false);
+    expect(holdsAllWords(['a'], 'A')).toBe(false);
   });
 });
 
-describe('topOrgShare', () => {
-  it('is the largest per-org count of matching hits over all hits', () => {
-    const hits = [hit('YMCA A'), hit('YMCA A'), hit('YMCA B'), hit('Other')];
-    expect(topOrgShare(['ymca'], hits)).toBe(0.5);
-  });
-  it('counts exact org_name strings, not the match', () => {
-    const hits = [hit('YMCA A'), hit('ymca a')];
-    expect(topOrgShare(['ymca'], hits)).toBe(0.5);
-  });
-  it('is 0 for no match, no query tokens or no hits', () => {
-    expect(topOrgShare(['ymca'], [hit('Other'), hit(null)])).toBe(0);
-    expect(topOrgShare([], [hit('YMCA')])).toBe(0);
-    expect(topOrgShare(['ymca'], [])).toBe(0);
-  });
-});
-
-describe('textShare', () => {
-  it('matches every word in the hit text, with a stem tolerance of 2', () => {
-    expect(
-      textShare(['rent', 'help'], [hit(null, 'rental help program')]),
-    ).toBe(1);
-    expect(textShare(['rent', 'help'], [hit(null, 'food pantry')])).toBe(0);
-  });
-  it('is 0 for no query tokens', () => {
-    expect(textShare([], [hit(null, 'anything')])).toBe(0);
-  });
-});
-
-const m = (hits: MatchHit[], words: string[] = ['ymca']) =>
-  matchOf({ words, hits });
-
-describe('matchFromShares', () => {
-  const shares = {
-    words: ['ymca'],
-    hit_count: 20,
-    org_share: 0,
-    top_org_share: 0,
-    top_org_back: 1,
-    text_share: 1,
-    words_held: true,
-    named: false,
-    generic: false,
-  };
-  it('MATCH constants', () => {
-    expect(MATCH.orgShareMin).toBe(0.5);
-    expect(MATCH.topOrgShareMin).toBe(0.45);
-    expect(MATCH.textShareMin).toBe(0.2);
-    expect(MATCH).toMatchObject({
-      nameBackMin: 0.6,
-      topOrgBackMin: 0.5,
-      genericMinHolders: 5,
-      genericNameShareMax: 0.5,
-      longQueryMinWords: 3,
-      longHeldShareMin: 0.5,
-      nameLookupSize: 5,
-    });
-  });
-  it('no query tokens or no hits: spread (no claim)', () => {
-    expect(matchFromShares({ ...shares, words: [] })).toBe('spread');
-    expect(matchFromShares({ ...shares, words: ['a'] })).toBe('spread');
-    expect(matchFromShares({ ...shares, hit_count: 0, text_share: 0 })).toBe(
-      'spread',
-    );
-  });
-  it('concentrated: org share 0.5 and one-org share 0.45 (boundaries)', () => {
-    const c = { ...shares, org_share: 0.5, top_org_share: 0.45 };
-    expect(matchFromShares(c)).toBe('concentrated');
-    expect(matchFromShares({ ...c, org_share: 0.49 })).toBe('spread');
-    expect(matchFromShares({ ...c, top_org_share: 0.44 })).toBe('spread');
-  });
-  it('none: the words are not held; spread when held', () => {
-    expect(matchFromShares({ ...shares, words_held: false })).toBe('none');
-    expect(matchFromShares({ ...shares, words_held: true })).toBe('spread');
-  });
-  it('named and not generic: concentrated; generic vetoes the name', () => {
-    expect(matchFromShares({ ...shares, named: true })).toBe('concentrated');
-    expect(matchFromShares({ ...shares, named: true, generic: true })).toBe(
-      'spread',
-    );
-  });
-  it('shares need the top org to cover the query (top_org_back >= 0.5)', () => {
-    const c = { ...shares, org_share: 0.5, top_org_share: 0.45 };
-    expect(matchFromShares({ ...c, top_org_back: 0.5 })).toBe('concentrated');
-    expect(matchFromShares({ ...c, top_org_back: 0.49 })).toBe('spread');
-  });
-});
+const m = (hits: MatchHit[], words: string[] = ['ymca'], named = false) =>
+  matchOf({ words, hits, named });
 
 describe('matchOf', () => {
-  it('names null or undefined: named is false', () => {
-    expect(matchOf({ words: ['ymca'], hits: [hit('Other')] }).named).toBe(
-      false,
-    );
-    expect(
-      matchOf({ words: ['ymca'], hits: [hit('Other')], names: null }).named,
-    ).toBe(false);
+  it('named: concentrated, whatever the hits hold', () => {
+    expect(m([hit('A', 'food')], ['ymca'], true)).toBe('concentrated');
   });
-  it('named candidates decide concentrated and give the org ids', () => {
-    const r = matchOf({
-      words: ['compass', 'housing'],
-      hits: [hit('Other', 'food')],
-      names: [cand('o1', 'Compass Housing Alliance')],
-    });
-    expect(r.named).toBe(true);
-    expect(r.value).toBe('concentrated');
-    expect(r.named_org_ids).toEqual(['o1']);
+  it('not named: spread when the words are held, else none', () => {
+    expect(m([hit('YMCA', 'ymca swim')])).toBe('spread');
+    expect(m([hit('YMCA', 'swim')])).toBe('none');
   });
-  it('not named: named_org_ids is empty', () => {
-    const r = matchOf({
+  it('one org that fills the page is not a name by itself', () => {
+    const page = Array.from({ length: 20 }, () => hit('YMCA', 'ymca swim'));
+    expect(m(page)).toBe('spread');
+  });
+  it('no hits or no query token: spread, also when named', () => {
+    expect(m([], ['ymca'], true)).toBe('spread');
+    expect(m([hit('A', 'x')], ['i', 'need'], true)).toBe('spread');
+  });
+  it('matchValue reads the saved measures the same way', () => {
+    const v = {
       words: ['ymca'],
-      hits: [hit('YMCA A', 'ymca')],
-      names: [],
-    });
-    expect(r.named_org_ids).toEqual([]);
-  });
-  it('concentrated: one org holds most hits', () => {
-    const r = m([
-      ...Array.from({ length: 18 }, () => hit('YMCA of Greater Seattle')),
-      hit('Other Org'),
-      hit(null),
-    ]);
-    expect(r.top_org_share).toBeCloseTo(0.9);
-    expect(r.value).toBe('concentrated');
-  });
-  it('concentrated: several words (salvation army)', () => {
-    expect(m([hit('The Salvation Army')], ['salvation', 'army']).value).toBe(
-      'concentrated',
-    );
-  });
-  it("'police' over 10 different police departments (share 1.0, top 0.1) is spread", () => {
-    const hits = Array.from({ length: 10 }, (_, i) =>
-      hit(`City ${i} Police Department`, 'police'),
-    );
-    const r = m(hits, ['police']);
-    expect(r.org_share).toBe(1);
-    expect(r.top_org_share).toBeCloseTo(0.1);
-    expect(r.value).toBe('spread');
-  });
-  it('spread: text share at least 0.1', () => {
-    expect(m([hit('Other', 'portico clinic')], ['portico']).value).toBe(
-      'spread',
-    );
-  });
-  it('none: no hit holds the words', () => {
-    expect(m([hit('Other', 'food pantry')], ['seattle']).value).toBe('none');
-  });
-  it('no hits: spread', () => {
-    expect(m([]).value).toBe('spread');
+      hit_count: 20,
+      words_held: false,
+      named: false,
+    };
+    expect(matchValue(v)).toBe('none');
+    expect(matchValue({ ...v, words_held: true })).toBe('spread');
+    expect(matchValue({ ...v, named: true })).toBe('concentrated');
+    expect(matchValue({ ...v, hit_count: 0 })).toBe('spread');
   });
 });
 
 describe('request words and ZIP codes (grid match fixes)', () => {
   const food = hit('Some Org', 'food pantry and housing help');
-  it("'i need food and housing': textShare ignores 'i', 'need'", () => {
-    expect(textShare(['need', 'food', 'housing'], [food])).toBe(1);
-    expect(textShare(['i', 'need', 'food', 'housing'], [food])).toBe(1);
-  });
-  it("'i need food and housing': 'i', 'need' and 'and' do not lower textShare", () => {
-    const both = hit('Org A', 'food and housing help');
-    const noAnd = hit('Org B', 'food housing');
+  it("'i need food and housing': 'i', 'need' and 'and' are not read", () => {
     const words = ['i', 'need', 'food', 'and', 'housing'];
-    expect(textShare(words, [noAnd])).toBe(1);
-    expect(textShare(words, [both, noAnd])).toBe(1);
-    expect(
-      textShare(words, [hit('Org C', 'food housing'), hit('X', 'taxes')]),
-    ).toBe(0.5);
+    expect(wordCoverage(words, [food])).toEqual([1, 1]);
+    expect(wordCoverage(words, [hit('Org B', 'food housing')])).toEqual([1, 1]);
   });
   it("'i need food and housing' is not match none when hits hold food or housing", () => {
     const hits = [
@@ -223,40 +78,17 @@ describe('request words and ZIP codes (grid match fixes)', () => {
       hit('Org B', 'food bank'),
       hit('Org C', 'housing voucher'),
     ];
-    const m = matchOf({ words: ['i', 'need', 'food', 'and', 'housing'], hits });
-    expect(m.text_share).toBeGreaterThan(0);
-    expect(m.value).not.toBe('none');
+    expect(m(hits, ['i', 'need', 'food', 'and', 'housing'])).toBe('spread');
   });
   it('a query of request words only makes no claim (spread)', () => {
-    expect(textShare(['help'], [food])).toBe(0);
-    expect(
-      matchFromShares({
-        words: ['need', 'help'],
-        hit_count: 20,
-        org_share: 0,
-        top_org_share: 0,
-        top_org_back: 0,
-        text_share: 0,
-        words_held: false,
-        named: false,
-        generic: false,
-      }),
-    ).toBe('spread');
+    expect(m([food], ['need', 'help'])).toBe('spread');
   });
   it('a ZIP-only query makes no claim: browse, not none (no R5 notice)', () => {
-    expect(
-      matchOf({ words: ['98101'], hits: [hit('Org', 'seattle food')] }).value,
-    ).toBe('spread');
+    expect(m([hit('Org', 'seattle food')], ['98101'])).toBe('spread');
   });
   it("a ZIP next to a word: the word decides ('food 98101')", () => {
-    expect(
-      matchOf({ words: ['food', '98101'], hits: [hit('Org', 'food bank')] })
-        .text_share,
-    ).toBe(1);
-    expect(
-      matchOf({ words: ['covid', '98101'], hits: [hit('Org', 'food bank')] })
-        .value,
-    ).toBe('none');
+    expect(m([hit('Org', 'food bank')], ['food', '98101'])).toBe('spread');
+    expect(m([hit('Org', 'food bank')], ['covid', '98101'])).toBe('none');
   });
 });
 
@@ -290,11 +122,7 @@ describe('nameMatch', () => {
   const run = (q: string, c: NameCandidate[]) => nameMatch(q.split(' '), c);
   it('compass housing + Compass Housing Alliance: named', () => {
     const r = run('compass housing', [cand('1', 'Compass Housing Alliance')]);
-    expect(r).toEqual({
-      named: true,
-      org_ids: ['1'],
-      name: 'Compass Housing Alliance',
-    });
+    expect(r).toEqual({ start: true, org_ids: ['1'] });
   });
   it('advocate: not named (three different heads)', () => {
     expect(
@@ -302,13 +130,13 @@ describe('nameMatch', () => {
         cand('1', 'Advocates for Children'),
         cand('2', 'LAW Advocates'),
         cand('3', 'Patient Advocate Foundation'),
-      ]).named,
-    ).toBe(false);
+      ]),
+    ).toBeNull();
   });
   it('dshs: named by the caps token', () => {
     expect(
-      run('dshs', [cand('1', 'DSHS Community Services Offices')]).named,
-    ).toBe(true);
+      run('dshs', [cand('1', 'DSHS Community Services Offices')]),
+    ).toMatchObject({ start: true });
   });
   it('food bank: not named (Auburn / Sequim / Mukilteo)', () => {
     expect(
@@ -316,8 +144,8 @@ describe('nameMatch', () => {
         cand('1', 'Auburn Food Bank'),
         cand('2', 'Sequim Food Bank'),
         cand('3', 'Mukilteo Food Bank'),
-      ]).named,
-    ).toBe(false);
+      ]),
+    ).toBeNull();
   });
   it('red cross (WA): named, regions with the same head word', () => {
     const r = run('red cross', [
@@ -327,41 +155,66 @@ describe('nameMatch', () => {
       cand('4', 'American Red Cross of the Greater Inland Northwest'),
       cand('5', 'American Red Cross, Northwest Washington Chapter'),
     ]);
-    expect(r.named).toBe(true);
-    expect(r.org_ids).toEqual(['1', '4', '5']);
+    // '... Cascades Region' is no separator: it is not a short form of this name.
+    expect(r).toEqual({ start: false, org_ids: ['1', '3', '4', '5'] });
   });
   it('salvation army + Salvation Army Longview: named', () => {
     expect(
-      run('salvation army', [cand('1', 'Salvation Army Longview')]).named,
-    ).toBe(true);
+      run('salvation army', [cand('1', 'Salvation Army Longview')]),
+    ).toMatchObject({ start: true });
   });
   it('police: not named (two cities)', () => {
     expect(
       run('police', [
         cand('1', 'SeaTac Police Department'),
         cand('2', 'Sequim Police Department'),
-      ]).named,
-    ).toBe(false);
+      ]),
+    ).toBeNull();
   });
   it("ymca + 'Tri Town YMCA' with alternate 'YMCA': named", () => {
-    expect(run('ymca', [cand('1', 'Tri Town YMCA', ['YMCA'])]).named).toBe(
-      true,
-    );
+    expect(run('ymca', [cand('1', 'Tri Town YMCA', ['YMCA'])])).toMatchObject({
+      start: true,
+    });
   });
   it('empty tokens or no candidates: not named', () => {
-    expect(run('a', [cand('1', 'A Org')])).toEqual({
-      named: false,
-      org_ids: [],
-      name: null,
-    });
-    expect(run('ymca', []).named).toBe(false);
+    expect(run('a', [cand('1', 'A Org')])).toBeNull();
+    expect(run('ymca', [])).toBeNull();
   });
   it('a prefix match wins over others', () => {
     const r = run('compass housing', [
       cand('1', 'Friends of Compass Housing'),
       cand('2', 'Compass Housing Alliance'),
     ]);
-    expect(r.org_ids).toEqual(['2']);
+    expect(r?.org_ids).toEqual(['2']);
+  });
+  it('one name that only holds the words is not a name; two that agree are', () => {
+    const one = cand('1', 'Ballard Food Bank');
+    expect(run('food bank', [one])).toBeNull();
+    // One org stored twice is one name.
+    expect(run('food bank', [one, cand('2', 'BALLARD FOOD BANK')])).toBeNull();
+    expect(
+      run('food bank', [one, cand('2', 'Ballard Food Bank - Annex')]),
+    ).toEqual({ start: false, org_ids: ['1', '2'] });
+  });
+  it("red cross (Seattle, 2 orgs in reach): 'Serving' ends the name head", () => {
+    const r = run('red cross', [
+      cand('1', 'American Red Cross, Northwest Region'),
+      cand('2', 'American Red Cross Serving King County'),
+    ]);
+    expect(r).toEqual({ start: false, org_ids: ['1', '2'] });
+  });
+  it('the word order of the query does not matter', () => {
+    const c = [cand('1', 'Compass Housing Alliance')];
+    expect(run('housing compass', c)).toEqual(run('compass housing', c));
+  });
+  it('a name that starts with the words is one org', () => {
+    expect(run('food bank', [cand('1', 'Food Bank of X')])).toMatchObject({
+      start: true,
+    });
+  });
+  it('initials of a name are not read (only caps inside a name are)', () => {
+    const dshs = [cand('1', 'Department of Social and Health Services')];
+    expect(run('dshs', dshs)).toBeNull();
   });
 });
 
@@ -388,7 +241,6 @@ describe('word coverage (typos, long queries)', () => {
       ...Array.from({ length: 10 }, () => hit('x', 'housing help')),
     ];
     const w = ['i', 'need', 'food', 'and', 'housing'];
-    expect(textShare(w, hits)).toBe(0);
     expect(wordsHeld(wordCoverage(w, hits))).toBe(true);
   });
   it("'compass housing' where no hit holds 'compass': not held", () => {
@@ -410,7 +262,7 @@ describe('word coverage (typos, long queries)', () => {
   });
 });
 
-describe('generic word veto and top org back coverage', () => {
+describe('generic word veto', () => {
   it("'veterans': 20 hold it, 7 org names do: generic", () => {
     const hits = [
       ...Array.from({ length: 7 }, (_, i) =>
@@ -431,12 +283,45 @@ describe('generic word veto and top org back coverage', () => {
   it('fewer than 5 holders: not generic', () => {
     expect(genericName(['x1y'], [hit('Other', 'x1y')])).toBe(false);
   });
-  it("'police' with top org 'Chicago Police Department': back 1/3", () => {
-    const hits = [hit('Chicago Police Department', 'police')];
-    expect(topOrgBack(['police'], hits)).toBeCloseTo(1 / 3);
+});
+
+describe('topicPhrase', () => {
+  const terms = [
+    'Food Pantries',
+    'Food Banks/Food Distribution Warehouses',
+    'General Legal Aid',
+    'Housing Authorities',
+    'Senior Centers',
+    'Homeless Shelter',
+    'Red Cross Disaster Service Centers',
+    'Individual Advocacy * Veterans',
+    'Case/Care Management',
+  ];
+  it.each([
+    'food pantry',
+    'food bank',
+    'legal aid',
+    'housing authority',
+    'senior center',
+    'homeless shelter',
+    'veterans',
+  ])('%s is a term of the directory', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(true);
   });
-  it('topOrgBack: 0 for no match, 1 for a caps token', () => {
-    expect(topOrgBack(['police'], [hit('Other')])).toBe(0);
-    expect(topOrgBack(['dshs'], [hit('DSHS Community Services')])).toBe(1);
+  it.each([
+    'red cross',
+    'ymca',
+    'goodwill',
+    'compass housing',
+    'salvation army',
+    'ballard food bank',
+    'food',
+  ])('%s is not', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(false);
+  });
+  it('no query word, no term: false', () => {
+    expect(topicPhrase(['i', 'need'], terms)).toBe(false);
+    expect(topicPhrase(['food'], [])).toBe(false);
+    expect(topicPhrase(['food'], [' / '])).toBe(false);
   });
 });

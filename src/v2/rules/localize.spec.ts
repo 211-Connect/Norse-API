@@ -68,7 +68,7 @@ describe('localizeClarification', () => {
           ...hand().questions[0],
           id: 'spread',
           reason: 'several_areas',
-          stem: STEMS.spread.replace('{word}', () => "co$&mida"),
+          stem: STEMS.spread.replace('{word}', () => 'co$&mida'),
         },
       ],
     };

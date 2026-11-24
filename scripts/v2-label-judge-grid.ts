@@ -1,7 +1,7 @@
 /**
  * Adds the grid fields to every row of the judge fixture
  * (src/v2/rules/__fixtures__/question-rule-judge.json): `need` (need level of
- * decide), `match` (matchFromShares), `results` ('none' when weak or total 0,
+ * decide), `match` (matchValue), `results` ('none' when weak or total 0,
  * else 'some') and `rule` (gridRule). Run once after a grid change:
  *
  *   npx ts-node --transpile-only scripts/v2-label-judge-grid.ts
@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { decide, gridRule } from '../src/v2/rules/engine';
-import { matchFromShares } from '../src/v2/rules/match';
+import { matchValue } from '../src/v2/rules/match';
 
 const file = resolve(
   __dirname,
@@ -42,16 +42,11 @@ for (const row of rows) {
     {},
   );
   row.need = decision.need_level;
-  row.match = matchFromShares({
+  row.match = matchValue({
     words: row.content_words,
     hit_count: e.hit_count,
-    org_share: e.org_share,
-    top_org_share: e.top_org_share,
-    top_org_back: e.top_org_back,
-    text_share: e.text_share,
     words_held: e.words_held,
     named: e.named,
-    generic: e.generic,
   });
   row.results = e.weak || e.total === 0 ? 'none' : 'some';
   row.rule = gridRule(decision, {

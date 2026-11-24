@@ -27,6 +27,14 @@ import {
 } from './dto/search-response.dto';
 import { HYBRID_SORT_FIELDS, SearchUtilsService } from './search-utils.service';
 import { CUTOFFS } from 'src/v2/rules/config';
+import {
+  NAME_SOURCE,
+  NameClaim,
+  NameHits,
+  claimName,
+  nameHit,
+  nameTypoClauses,
+} from 'src/v2/search/name-match';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
@@ -222,18 +230,21 @@ export type HybridSearchResult = SearchResponse & {
    */
   judges?: Judges;
   /**
-   * v2 only, internal (never sent to callers). Present only when the request
-   * named orgs (`namedOrgIds`) and the pin ran: how many in-radius services of
-   * those orgs lead the order. 0 means the named org has none in the kept set.
-   * NAMED_PIN_FAILED (-1) means the pin read failed: not the same as 0.
+   * v2 only, internal (never sent to callers). Present only with `nameWords`
+   * and a fused order: the org the keyword list names.
    */
-  namedPinned?: number;
+  nameClaim?: NameClaim;
 };
 
 /** Raw top `_score` of the RRF keyword list and of the RRF vector list; 0 when a list has no hit. */
 export type Judges = { keyword_top: number; vector_top: number };
 
-type RankedList = { ids: string[]; top: number };
+type RankedList = {
+  ids: string[];
+  top: number;
+  /** Only with a `_source`: the hits for the name match. */
+  names?: NameHits;
+};
 
 type HybridSearchOptions = {
   headers: HeadersDto;
@@ -290,21 +301,13 @@ type HybridSearchOptions = {
    */
   early?: EarlyRetrieval;
   /**
-   * v2 only. `organization.id`s the query names (the name lookup of question
-   * rule v1). With a text query and sort relevance (or no sort), their services
-   * inside the request's own filters (radius, area) lead the order, at most
-   * NAMED_ORG_PIN_MAX of them. Under any other sort nothing changes. An org
-   * with no service in the kept set pins nothing.
+   * v2 only. The content words of a text query (question rule v1). The keyword
+   * list then also answers which org they name (`nameClaim`); under sort
+   * relevance (or no sort) that org's services lead. Absent or empty: nothing
+   * changes.
    */
-  namedOrgIds?: string[];
+  nameWords?: string[];
 };
-
-/** Most services of the named org(s) that lead the relevance order. */
-export const NAMED_ORG_PIN_MAX = 5;
-/** `namedPinned` when the pin read failed (not "the org has no service in the filters"). */
-export const NAMED_PIN_FAILED = -1;
-/** Ids of a named org's in-radius services read before the cut to NAMED_ORG_PIN_MAX. */
-const NAMED_ORG_READ_MAX = 100;
 
 /**
  * Opaque handle to the classify-independent part of a hybrid search, started
@@ -323,29 +326,6 @@ export interface EarlyLists {
   keyword: Promise<RankedList | undefined>;
   vector: Promise<RankedList | undefined>;
   taxonomy: Promise<RankedList | undefined>;
-}
-
-/**
- * The named org's services that lead: those already in the fused order come
- * first, in that order; the rest follow in the order read. With `nearestFirst`
- * (coords given) the order read, nearest first, holds. At most
- * NAMED_ORG_PIN_MAX, so a multi-location org cannot take the page.
- */
-export function pickNamedLeaders(
-  orgServiceIds: string[],
-  fusedIds: string[] | undefined,
-  nearestFirst = false,
-): string[] {
-  const unique = [...new Set(orgServiceIds)];
-  // With coords the ids were read nearest first: keep that order, so an org
-  // with branches in other states (no radius set) leads with its nearest one.
-  if (nearestFirst) return unique.slice(0, NAMED_ORG_PIN_MAX);
-  const rank = new Map((fusedIds ?? []).map((id, i) => [id, i]));
-  const inFused = unique
-    .filter((id) => rank.has(id))
-    .sort((a, b) => rank.get(a)! - rank.get(b)!);
-  const rest = unique.filter((id) => !rank.has(id));
-  return [...inFused, ...rest].slice(0, NAMED_ORG_PIN_MAX);
 }
 
 const EMBEDDING_TIMEOUT_MS = 10_000;
@@ -529,6 +509,8 @@ type WordRarity = {
    * every content word has more than TYPO_GATE_MAX_DOCS matching documents.
    */
   typoClauses: boolean;
+  /** Content words that no document of the tenant holds. */
+  unknown: string[];
 } | null;
 
 /** What one word contributes: its idf and its best split, if any. Cached per word. */
@@ -689,7 +671,7 @@ export class HybridSearchService {
       fused,
       judges,
       fusedOrder,
-      namedPinned,
+      nameClaim,
     } = await withSpan('hybrid.prepare', async (span) => {
       const prepared = await this.prepareHybridSearch(options, {
         rank: true,
@@ -815,7 +797,7 @@ export class HybridSearchService {
       ...(needCounts ? { needCounts } : {}),
       ...(totalUnreadable ? { totalCounted: false as const } : {}),
       ...(judges ? { judges } : {}),
-      ...(namedPinned !== undefined ? { namedPinned } : {}),
+      ...(nameClaim ? { nameClaim } : {}),
     };
   }
 
@@ -1042,6 +1024,7 @@ export class HybridSearchService {
               queryStr,
               wordRarity,
               keyword: keywordLocale,
+              nameWords: options.nameWords,
             }),
           )
         : undefined;
@@ -1139,6 +1122,7 @@ export class HybridSearchService {
                     queryStr,
                     wordRarity,
                     keyword: true,
+                    nameWords: options.nameWords,
                   })
                 : keywordPromise!,
             vector: vectorPromise!,
@@ -1359,25 +1343,6 @@ export class HybridSearchService {
         })
       : Promise.resolve([]);
 
-    // A named org (v2, text, relevance sort): its services inside the filters
-    // above (radius, area, cut) lead. Runs in parallel with the fused order.
-    const namedOrgIds = options.namedOrgIds ?? [];
-    const namedActive =
-      v2 &&
-      rank &&
-      queryStr.trim().length > 0 &&
-      (sort ?? 'relevance') === 'relevance' &&
-      namedOrgIds.length > 0;
-    const namedPromise: Promise<string[] | null> = namedActive
-      ? this.fetchNamedOrgServiceIds({
-          index,
-          preference,
-          filters: [...baseFilters],
-          orgIds: namedOrgIds,
-          coords,
-        })
-      : Promise.resolve([]);
-
     let needShould: QueryDslQueryContainer[] = [];
 
     if (boostTopScorePromise) {
@@ -1399,6 +1364,7 @@ export class HybridSearchService {
 
     let fusedIds: string[] | undefined;
     let judges: Judges | undefined;
+    let nameHits: NameHits | undefined;
     if (fuseEligible) {
       // `baseFilters` already holds the relevance-cutoff `ids` filter when the
       // cutoff ran, so the lists only see kept services. The cutoff decides
@@ -1414,12 +1380,14 @@ export class HybridSearchService {
           wordRarity,
           keyword,
           needs: boostActive ? boostTerms : [],
+          nameWords: options.nameWords,
           earlyLists,
           coords,
           nearYou,
         }),
       );
       fusedIds = fusedOrder.ids;
+      nameHits = fusedOrder.names;
       // The weak-match test needs the keyword judge; without it no weak match.
       judges = keyword ? fusedOrder.judges : undefined;
 
@@ -1434,12 +1402,18 @@ export class HybridSearchService {
     }
 
     const gatedOnlyIds = await gatePromise;
-    const namedRead = await namedPromise;
-    const namedIds = pickNamedLeaders(
-      namedRead ?? [],
-      fusedIds,
-      coords?.length === 2,
-    );
+    const nameClaim =
+      nameHits && (options.nameWords ?? []).length > 0
+        ? claimName({
+            words: options.nameWords!,
+            list: nameHits,
+            unknownWords: wordRarity?.unknown ?? [],
+            fusedIds,
+          })
+        : undefined;
+    // The claim holds on every sort; only a relevance order is changed by it.
+    const namedIds =
+      (sort ?? 'relevance') === 'relevance' ? (nameClaim?.pins ?? []) : [];
     const namedSet = new Set(namedIds);
     const gatedPinnedIds = [
       ...namedIds,
@@ -1548,12 +1522,7 @@ export class HybridSearchService {
       // The page is in the fused order (pinned query): no sort values to show.
       fusedOrder: fusedIds !== undefined && orderedByFusion,
       judges,
-      ...(namedActive
-        ? {
-            namedPinned:
-              namedRead === null ? NAMED_PIN_FAILED : namedIds.length,
-          }
-        : {}),
+      ...(nameClaim ? { nameClaim } : {}),
     };
   }
 
@@ -1598,15 +1567,29 @@ export class HybridSearchService {
     queryStr: string;
     wordRarity: WordRarity;
     keyword: boolean;
+    nameWords?: string[];
   }): Promise<RankedList> | undefined {
     const { filters, queryStr, wordRarity, keyword } = args;
     const lexical = keyword
       ? this.buildLexicalShouldClauses(queryStr, wordRarity)
       : [];
     if (lexical.length === 0) return undefined;
-    return this.runRankedList(args, 'hybrid_rrf_keyword', {
-      bool: { filter: filters, should: lexical, minimum_should_match: 1 },
-    });
+    const names = (args.nameWords ?? []).length > 0;
+    const typos = names
+      ? nameTypoClauses(queryStr, wordRarity?.unknown ?? [])
+      : [];
+    return this.runRankedList(
+      args,
+      'hybrid_rrf_keyword',
+      {
+        bool: {
+          filter: filters,
+          should: [...lexical, ...typos],
+          minimum_should_match: 1,
+        },
+      },
+      names,
+    );
   }
 
   /** The vector list: cosine similarity to the query vector. Rejects like the keyword list. */
@@ -1669,6 +1652,7 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
+    names = false,
   ): Promise<RankedList> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
@@ -1676,7 +1660,7 @@ export class HybridSearchService {
           index: args.index,
           preference: args.preference,
           size: RRF_LIST_SIZE,
-          _source: false,
+          _source: names ? NAME_SOURCE : false,
           track_total_hits: false,
           query,
         }),
@@ -1687,6 +1671,18 @@ export class HybridSearchService {
           .filter((id): id is string => id !== undefined),
         // Raw score of the first hit: the weak-match judge (ISS-2796).
         top: response.hits.hits[0]?._score ?? 0,
+        // A timeout inside ES is a 200 with partial hits: not "no org named".
+        ...(names && {
+          names: {
+            state:
+              response.timed_out || (response._shards?.failed ?? 0) > 0
+                ? ('failed' as const)
+                : ('ok' as const),
+            hits: response.hits.hits.flatMap((h) =>
+              h._id === undefined ? [] : [nameHit(h._id, h._source)],
+            ),
+          },
+        }),
       }));
   }
 
@@ -1718,11 +1714,13 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     keyword: boolean;
     needs: NeedScore[];
+    nameWords?: string[];
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
     nearYou: boolean;
-  }): Promise<{ ids?: string[]; judges?: Judges }> {
+  }): Promise<{ ids?: string[]; judges?: Judges; names: NameHits }> {
     const { filters, needs, earlyLists, queryVector } = args;
+    let names: NameHits = { state: 'failed', hits: [] };
 
     try {
       const keyword = earlyLists
@@ -1768,6 +1766,9 @@ export class HybridSearchService {
       const valueOf = (res: PromiseSettledResult<RankedList | undefined>) =>
         res.status === 'fulfilled' ? res.value : undefined;
       const keywordList = valueOf(keywordRes);
+      if (keywordRes.status === 'fulfilled') {
+        names = keywordList?.names ?? { state: 'skipped', hits: [] };
+      }
       const taxonomyList = valueOf(taxonomyRes);
       const needList = valueOf(needRes);
 
@@ -1796,13 +1797,13 @@ export class HybridSearchService {
       }
       if (lists.length === 0) {
         this.logger.warn('RRF every list failed, using summed ranking');
-        return {};
+        return { names };
       }
       const kept = reciprocalRankFusion(lists, RRF_K, weights).slice(
         0,
         RRF_LIST_SIZE,
       );
-      if (kept.length === 0) return { judges };
+      if (kept.length === 0) return { judges, names };
 
       let ordered = kept;
       if (args.nearYou && args.coords?.length === 2) {
@@ -1825,12 +1826,12 @@ export class HybridSearchService {
           ]).filter((id) => inKept.has(id));
         }
       }
-      return { ids: ordered, judges };
+      return { ids: ordered, judges, names };
     } catch (error) {
       this.logger.warn(
         `RRF lists failed, using summed ranking: ${(error as Error).message}`,
       );
-      return {};
+      return { names: { state: 'failed', hits: [] } };
     }
   }
 
@@ -1902,7 +1903,9 @@ export class HybridSearchService {
   ): Promise<WordRarity> {
     if (queryStr.trim().length === 0) return null;
     const words = contentWords(queryStr, lang);
-    if (words.length === 0) return { words: {}, splits: [], typoClauses: true };
+    if (words.length === 0) {
+      return { words: {}, splits: [], typoClauses: true, unknown: [] };
+    }
 
     try {
       const keys = words.map((w) => wordRarityCacheKey(tenantId, lang, w));
@@ -1946,11 +1949,13 @@ export class HybridSearchService {
         words: {},
         splits: [],
         typoClauses: true,
+        unknown: [],
       };
       const docs: number[] = [];
       for (const w of words) {
         const entry = entries.get(w)!;
         docs.push(entry.docs);
+        if (entry.docs === 0) rarity.unknown.push(w);
         rarity.words[w] = entry.idf;
         if (entry.split) rarity.splits.push({ word: w, ...entry.split });
       }
@@ -3226,49 +3231,6 @@ export class HybridSearchService {
     } catch (error) {
       this.logger.warn(`Pinned gate skipped: ${(error as Error).message}`);
       return [];
-    }
-  }
-
-  /**
-   * Ids of the services of the named org(s) inside the request's filters
-   * (radius, area, relevance cut). One small filter-only request, size
-   * NAMED_ORG_READ_MAX. Never rejects: on error [] (no org leads).
-   */
-  private async fetchNamedOrgServiceIds(args: {
-    index: string;
-    preference: string;
-    filters: QueryDslQueryContainer[];
-    orgIds: string[];
-    coords: number[] | undefined;
-  }): Promise<string[] | null> {
-    const { index, preference, filters, orgIds, coords } = args;
-    try {
-      const response = await this.metrics.observeDownstream(
-        'elasticsearch',
-        'hybrid_named_org',
-        () =>
-          this.elasticsearchService.search({
-            index,
-            preference,
-            size: NAMED_ORG_READ_MAX,
-            _source: false,
-            track_total_hits: false,
-            ...(coords?.length === 2 && {
-              sort: [SearchUtilsService.getGeoDistanceSort(coords)],
-            }),
-            query: {
-              bool: {
-                filter: [...filters, { terms: { 'organization.id': orgIds } }],
-              },
-            },
-          }),
-      );
-      return (response.hits?.hits ?? [])
-        .map((h) => h._id)
-        .filter((id): id is string => typeof id === 'string');
-    } catch (error) {
-      this.logger.warn(`Named org pin skipped: ${(error as Error).message}`);
-      return null;
     }
   }
 

@@ -7,7 +7,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { decide, finalize, gridRule } from '../src/v2/rules/engine';
-import { matchFromShares } from '../src/v2/rules/match';
+import { matchValue } from '../src/v2/rules/match';
 
 const rows = JSON.parse(
   readFileSync(
@@ -73,16 +73,11 @@ function run(row: any) {
   const input = {
     counts: { total: e.total, by_code: null },
     strong_text_match: false,
-    match: matchFromShares({
+    match: matchValue({
       words: row.content_words,
       hit_count: e.hit_count,
-      org_share: e.org_share,
-      top_org_share: e.top_org_share,
-      top_org_back: e.top_org_back,
-      text_share: e.text_share,
       words_held: e.words_held,
       named: e.named,
-      generic: e.generic,
     }),
     weak: e.weak,
   };
@@ -92,7 +87,6 @@ function run(row: any) {
 }
 
 const results = rows.map((row: any) => ({ row, ...run(row) }));
-const pct = (n: number) => `${Math.round(n * 100)}%`;
 const top = (scores: Record<string, number>) =>
   Object.entries(scores)
     .sort((a, b) => b[1] - a[1])
@@ -136,7 +130,7 @@ for (const rule of ['R1', 'R2', 'R3', 'R4', 'R5']) {
   all.forEach(add);
   lines.push(`## ${rule} (${all.length} rows in the fixture)\n`);
   lines.push(
-    '| # | Query | Tenant | Top need scores | org / top-org / text share | Cell | Page shows | Label (ok?) | Right? |',
+    '| # | Query | Tenant | Top need scores | Org named | Cell | Page shows | Label (ok?) | Right? |',
   );
   lines.push('|---|---|---|---|---|---|---|---|---|');
   picked.forEach((r, i) => {
@@ -159,7 +153,7 @@ for (const rule of ['R1', 'R2', 'R3', 'R4', 'R5']) {
       .join('<br>');
     const cell = `${r.decision.need_level} x ${r.input.match}${e.weak || e.total === 0 ? ' (no results)' : ''}`;
     lines.push(
-      `| ${rule}.${i + 1} | ${r.row.q} | ${TENANT[r.row.tenant]} | ${top(r.row.scores)} | ${pct(e.org_share)} / ${pct(e.top_org_share)} / ${pct(e.text_share)} | ${cell} | ${page.replace(/\|/g, '/')} | ${r.row.label} (${r.ok ? 'ok' : 'FAIL'}) |  |`,
+      `| ${rule}.${i + 1} | ${r.row.q} | ${TENANT[r.row.tenant]} | ${top(r.row.scores)} | ${e.named ? 'yes' : 'no'} | ${cell} | ${page.replace(/\|/g, '/')} | ${r.row.label} (${r.ok ? 'ok' : 'FAIL'}) |  |`,
     );
   });
   lines.push('');

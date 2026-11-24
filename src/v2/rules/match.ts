@@ -2,28 +2,29 @@
 export type Match = 'concentrated' | 'spread' | 'none';
 
 export const MATCH = {
-  orgShareMin: 0.5,
   // Per query word: the share of hits that hold it (see `wordsHeld`).
   textShareMin: 0.2,
-  // One org holds the query words in at least this share of the top 20
-  // (measured 2026-11-23 on WA_211, IL211, Rochester NY: idf did not separate
-  // names from common words; one-org concentration did).
-  topOrgShareMin: 0.45,
   topN: 20,
   // A name test: the share of the name head the query words cover.
   nameBackMin: 0.6,
-  // The top org's name head must be covered this much by the query words.
-  topOrgBackMin: 0.5,
   // A word is generic when at least this many hits hold it and fewer than
   // `genericNameShareMax` of those have it in the org name.
   genericMinHolders: 5,
   genericNameShareMax: 0.5,
+  // A taxonomy term is the query phrase when the query covers this much of it
+  // (offline 2026-11-24: 0.5 to 0.75 lose no held name, 0.4 loses 'red cross').
+  topicTermMin: 0.6,
   // A query with at least this many words needs `longHeldShareMin` of its
   // words held (each by `textShareMin` of the hits); a shorter one every word.
   longQueryMinWords: 3,
   longHeldShareMin: 0.5,
-  // Candidates the name lookup asks for.
-  nameLookupSize: 5,
+  // Different org names that must agree when none starts with the query words
+  // (decided 2026-11-24: one 'Ballard Food Bank' does not make 'food bank' a name).
+  nonStartNamesMin: 2,
+  // Different orgs read from the keyword list ('dshs' WA is org 7).
+  nameOrgs: 10,
+  // Shortest word that is checked for a typo.
+  typoMinLength: 5,
 };
 
 /** `text` = name + description + summary + taxonomy names, lowercased. */
@@ -31,22 +32,6 @@ export interface MatchHit {
   org_name: string | null;
   text: string;
 }
-
-const STOP = new Set([
-  'the',
-  'of',
-  'and',
-  'for',
-  'a',
-  'an',
-  'in',
-  'inc',
-  'center',
-  'services',
-  'service',
-  'program',
-  'county',
-]);
 
 const FUNCTION_WORDS = new Set(['the', 'of', 'and', 'for', 'a', 'an', 'in']);
 
@@ -97,44 +82,11 @@ export const queryTokens = (words: string[]): string[] =>
 const tokHit = (t: string, ts: string[]): boolean =>
   ts.some((n) => n === t || (t.length >= 4 && n.startsWith(t)));
 
-function orgMatch(qt: string[], org: string): boolean {
-  const nt = toks(org);
-  if (qt.every((t) => tokHit(t, nt))) return true;
-  const j = qt.join('');
-  const acr = nt
-    .filter((t) => !STOP.has(t))
-    .map((t) => t[0])
-    .join('');
-  const acr2 = nt.map((t) => t[0]).join('');
-  // Without function words only: 'dshs' = "Department of Social and Health
-  // Services" (STOP drops 'services', so `acr` gives 'dsh').
-  const acr3 = nt
-    .filter((t) => !FUNCTION_WORDS.has(t))
-    .map((t) => t[0])
-    .join('');
-  return j.length >= 2 && (j === acr || j === acr2 || j === acr3);
-}
-
-/** Share of hits whose organization name matches the query words. */
-export function orgShare(words: string[], hits: MatchHit[]): number {
+/** Every query word is a word, or the start of one, of the text. */
+export function holdsAllWords(words: string[], text: string): boolean {
   const qt = queryTokens(words);
-  if (qt.length === 0) return 0;
-  const n = hits.filter((h) => h.org_name && orgMatch(qt, h.org_name)).length;
-  return n / Math.max(1, hits.length);
-}
-
-/** Share of hits held by the one org name that matches the query words most often. */
-export function topOrgShare(words: string[], hits: MatchHit[]): number {
-  const qt = queryTokens(words);
-  if (qt.length === 0) return 0;
-  const counts = new Map<string, number>();
-  for (const h of hits) {
-    if (h.org_name && orgMatch(qt, h.org_name)) {
-      counts.set(h.org_name, (counts.get(h.org_name) ?? 0) + 1);
-    }
-  }
-  const top = Math.max(0, ...counts.values());
-  return top / Math.max(1, hits.length);
+  const ts = toks(text);
+  return qt.length > 0 && qt.every((t) => tokHit(t, ts));
 }
 
 const NAME_FUNCTION = new Set([
@@ -146,7 +98,7 @@ const NAME_FUNCTION = new Set([
   'on',
 ]);
 
-const NAME_SEP = /,|\s[-\u2013]\s|'s\s|\sof\s|\(|:|\sat\s|\//i;
+const NAME_SEP = /,|\s[-\u2013]\s|'s\s|\sof\s|\(|:|\sat\s|\sserving\s|\//i;
 
 /** The leading part of an org name, without function words, in order. */
 export function nameHead(name: string): string[] {
@@ -170,8 +122,7 @@ export function capsTokens(name: string): string[] {
 
 function nameFits(qt: string[], name: string, prefix: boolean): boolean {
   if (qt.length === 1 && capsTokens(name).includes(qt[0])) return true;
-  const nt = toks(name);
-  if (!qt.every((t) => tokHit(t, nt))) return false;
+  if (!holdsAllWords(qt, name)) return false;
   const head = nameHead(name);
   if (head.length === 0) return false;
   const covered = head.filter((w) => qt.some((t) => headWordHit(w, t)));
@@ -186,45 +137,34 @@ export interface NameCandidate {
 }
 
 /**
- * Does the query name an org? A candidate whose name starts with the query
- * words counts; otherwise several candidates count when they share their first
- * head word ('red cross': two American Red Cross regions).
+ * The candidates the query names, or null. A name that starts with the query
+ * words counts (`start`); otherwise at least `nonStartNamesMin` different names
+ * that share their first head word ('red cross': two American Red Cross regions).
  */
 export function nameMatch(
   words: string[],
   candidates: NameCandidate[],
-): { named: boolean; org_ids: string[]; name: string | null } {
+): { start: boolean; org_ids: string[] } | null {
   const qt = queryTokens(words);
-  const none = { named: false, org_ids: [] as string[], name: null };
-  if (qt.length === 0) return none;
-  const prefix: { id: string; name: string }[] = [];
+  if (qt.length === 0) return null;
+  const start: string[] = [];
   const other: { id: string; name: string; first: string }[] = [];
   for (const c of candidates) {
     const names = [c.name, ...c.alternate_names];
-    const p = names.find((n) => nameFits(qt, n, true));
-    if (p !== undefined) {
-      prefix.push({ id: c.id, name: p });
+    if (names.some((n) => nameFits(qt, n, true))) {
+      start.push(c.id);
       continue;
     }
-    const o = names.find((n) => nameFits(qt, n, false));
-    if (o !== undefined)
-      other.push({ id: c.id, name: o, first: nameHead(o)[0] });
+    const name = names.find((n) => nameFits(qt, n, false));
+    if (name !== undefined)
+      other.push({ id: c.id, name, first: nameHead(name)[0] });
   }
-  if (prefix.length > 0) {
-    return {
-      named: true,
-      org_ids: prefix.map((x) => x.id),
-      name: prefix[0].name,
-    };
-  }
-  if (other.length > 0 && other.every((x) => x.first === other[0].first)) {
-    return {
-      named: true,
-      org_ids: other.map((x) => x.id),
-      name: other[0].name,
-    };
-  }
-  return none;
+  if (start.length > 0) return { start: true, org_ids: start };
+  const different = new Set(other.map((x) => x.name.toLowerCase())).size;
+  return different >= MATCH.nonStartNamesMin &&
+    other.every((x) => x.first === other[0].first)
+    ? { start: false, org_ids: other.map((x) => x.id) }
+    : null;
 }
 
 /** Damerau-Levenshtein distance of at most 1 (insert, delete, substitute, adjacent swap). */
@@ -282,17 +222,6 @@ export function wordsHeld(cov: number[]): boolean {
   return held / cov.length >= MATCH.longHeldShareMin;
 }
 
-/** Share of hits whose text holds every query word (telemetry). */
-export function textShare(words: string[], hits: MatchHit[]): number {
-  const qt = queryTokens(words);
-  if (qt.length === 0) return 0;
-  const n = hits.filter((h) => {
-    const xt = new Set(toks(h.text));
-    return qt.every((t) => holdsWord(t, xt));
-  }).length;
-  return n / Math.max(1, hits.length);
-}
-
 /** Many hits hold the words but few have them in the org name: a common word, not a name. */
 export function genericName(words: string[], hits: MatchHit[]): boolean {
   const qt = queryTokens(words);
@@ -301,111 +230,61 @@ export function genericName(words: string[], hits: MatchHit[]): boolean {
     const xt = new Set(toks(h.text));
     return qt.every((t) => holdsWord(t, xt));
   });
-  const inName = holders.filter((h) => {
-    const nt = toks(h.org_name ?? '');
-    return qt.every((t) => tokHit(t, nt));
-  });
+  const inName = holders.filter((h) => holdsAllWords(words, h.org_name ?? ''));
   return (
     holders.length >= MATCH.genericMinHolders &&
     inName.length / holders.length < MATCH.genericNameShareMax
   );
 }
 
-/** How much of the top org's name head the query words cover. */
-export function topOrgBack(words: string[], hits: MatchHit[]): number {
+const topicWordHit = (t: string, w: string): boolean =>
+  w === t ||
+  (t.length >= 4 &&
+    Math.abs(w.length - t.length) <= 3 &&
+    w.startsWith(t.slice(0, Math.max(4, t.length - 2))));
+
+/**
+ * Is the query a topic the directory itself has a term for ('food bank',
+ * 'housing authority')? A term holds every query word, and the query words
+ * cover most of the term. A '/' or '*' splits a term ('Food Banks/Food
+ * Distribution Warehouses'). No word list: the terms come from the hits.
+ */
+export function topicPhrase(words: string[], terms: string[]): boolean {
   const qt = queryTokens(words);
-  if (qt.length === 0) return 0;
-  const counts = new Map<string, number>();
-  for (const h of hits) {
-    if (h.org_name && orgMatch(qt, h.org_name)) {
-      counts.set(h.org_name, (counts.get(h.org_name) ?? 0) + 1);
-    }
-  }
-  let top: string | null = null;
-  let best = 0;
-  for (const [name, n] of counts) {
-    if (n > best) {
-      best = n;
-      top = name;
-    }
-  }
-  if (top === null) return 0;
-  if (qt.length === 1 && capsTokens(top).includes(qt[0])) return 1;
-  const head = nameHead(top);
-  if (head.length === 0) return 0;
-  const covered = head.filter((w) => qt.some((t) => headWordHit(w, t)));
-  return covered.length / head.length;
+  if (qt.length === 0) return false;
+  return terms.some((term) =>
+    term.split(/[/*]/).some((part) => {
+      const tw = toks(part).filter((w) => !NAME_FUNCTION.has(w));
+      if (!qt.every((t) => tw.some((w) => topicWordHit(t, w)))) return false;
+      const covered = tw.filter((w) => qt.some((t) => topicWordHit(t, w)));
+      return covered.length / tw.length >= MATCH.topicTermMin;
+    }),
+  );
 }
 
-/** The match value from shares already computed (the judge spec reads saved shares). */
-export function matchFromShares(i: {
-  words: string[];
-  hit_count: number;
-  org_share: number;
-  top_org_share: number;
-  top_org_back: number;
-  text_share: number;
-  words_held: boolean;
-  named: boolean;
-  generic: boolean;
-}): Match {
-  // No query tokens or no hits: no claim about the query; browse.
-  if (queryTokens(i.words).length === 0 || i.hit_count === 0) return 'spread';
-  if (i.named && !i.generic) return 'concentrated';
-  if (
-    i.org_share >= MATCH.orgShareMin &&
-    i.top_org_share >= MATCH.topOrgShareMin &&
-    i.top_org_back >= MATCH.topOrgBackMin
-  ) {
-    return 'concentrated';
-  }
-  return i.words_held ? 'spread' : 'none';
-}
-
+/** `named`: the keyword list names an org and no veto took the claim. */
 export function matchOf(i: {
   words: string[];
   hits: MatchHit[];
-  names?: NameCandidate[] | null;
-}): {
-  value: Match;
-  org_share: number;
-  text_share: number;
-  top_org_share: number;
-  top_org_back: number;
-  words_held: boolean;
   named: boolean;
-  generic: boolean;
-  named_org_ids: string[];
-} {
-  const org_share = orgShare(i.words, i.hits);
-  const text_share = textShare(i.words, i.hits);
-  const top_org_share = topOrgShare(i.words, i.hits);
-  const top_org_back = topOrgBack(i.words, i.hits);
-  const words_held = wordsHeld(wordCoverage(i.words, i.hits));
-  const generic = genericName(i.words, i.hits);
-  const nm = i.names ? nameMatch(i.words, i.names) : null;
-  const named = nm?.named ?? false;
-  const value = matchFromShares({
+}): Match {
+  return matchValue({
     words: i.words,
     hit_count: i.hits.length,
-    org_share,
-    top_org_share,
-    top_org_back,
-    text_share,
-    words_held,
-    named,
-    generic,
+    words_held: wordsHeld(wordCoverage(i.words, i.hits)),
+    named: i.named,
   });
-  const decidedByName = named && !generic && value === 'concentrated';
-  return {
-    value,
-    org_share,
-    text_share,
-    top_org_share,
-    top_org_back,
-    words_held,
-    named,
-    generic,
-    named_org_ids: decidedByName && nm ? nm.org_ids : [],
-  };
+}
+
+/** The match value from saved measures (the judge spec reads these). */
+export function matchValue(i: {
+  words: string[];
+  hit_count: number;
+  words_held: boolean;
+  named: boolean;
+}): Match {
+  // No query tokens or no hits: no claim about the query; browse.
+  if (queryTokens(i.words).length === 0 || i.hit_count === 0) return 'spread';
+  if (i.named) return 'concentrated';
+  return i.words_held ? 'spread' : 'none';
 }
