@@ -60,6 +60,43 @@ const hand = (): Clarification => ({
 });
 
 describe('localizeClarification', () => {
+  it('es: the spread stem is Spanish and keeps the word; other locales stay English', () => {
+    const c: Clarification = {
+      ...hand(),
+      questions: [
+        {
+          ...hand().questions[0],
+          id: 'spread',
+          reason: 'several_areas',
+          stem: STEMS.spread.replace('{word}', () => "co$&mida"),
+        },
+      ],
+    };
+    const es = localizeClarification(c, 'es');
+    expect(es.questions[0].stem).toBe("¿Qué tipo de 'co$&mida' quiere decir?");
+    // no table: English stays
+    expect(localizeClarification(c, 'zh-hant').questions[0].stem).toBe(
+      c.questions[0].stem,
+    );
+    // limited locale table without a spread string: English stays
+    expect(localizeClarification(c, 'ko').questions[0].stem).toBe(
+      c.questions[0].stem,
+    );
+  });
+
+  it('es: the may-not-match notice is Spanish; other locales stay English', () => {
+    const c: Clarification = {
+      ...hand(),
+      notice: { kind: 'may_not_match', text: STEMS.notice },
+    };
+    expect(localizeClarification(c, 'es').notice).toEqual({
+      kind: 'may_not_match',
+      text: LOCALE_TABLES.es.stems.notice.text,
+    });
+    expect(localizeClarification(c, 'ko').notice).toEqual(c.notice);
+    expect(localizeClarification(c, 'zh-hant').notice).toEqual(c.notice);
+  });
+
   it('en: returns the same object, unchanged', () => {
     const c = emergency();
     const before = clone(c);

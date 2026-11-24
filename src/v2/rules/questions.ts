@@ -383,7 +383,7 @@ export function buildCandidates(
             importance: 'high',
             reason: 'several_areas',
             step: 2,
-            stem: STEMS.spread.replace('{word}', word),
+            stem: STEMS.spread.replace('{word}', () => word),
             options: inPlay.map((c) => needOption(c, sc(c), tenant)),
             ...needsFlags,
           }),

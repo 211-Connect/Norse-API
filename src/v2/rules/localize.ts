@@ -51,6 +51,7 @@ export function localizeClarification(
 
   const stemKeyOf = (q: Question): string | null => {
     if (q.id.startsWith('area:')) return 'area';
+    if (q.id === 'spread') return 'spread';
     for (const [k, en] of Object.entries(STEMS)) {
       if (en === q.stem) return k;
     }
@@ -79,6 +80,16 @@ export function localizeClarification(
       const area = text(table.needs, t1) ?? displayOf(t1);
       stem = stem.replace('{area}', () => area);
     }
+    if (stem && key === 'spread') {
+      // The English stem already holds the caller's word; cut it out by the template's text.
+      const [head, tail] = STEMS.spread.split('{word}');
+      const word =
+        q.stem.startsWith(head) && q.stem.endsWith(tail)
+          ? q.stem.slice(head.length, q.stem.length - tail.length)
+          : null;
+      if (word === null) stem = undefined;
+      else stem = stem.replace('{word}', () => word);
+    }
     return {
       ...q,
       stem: stem ?? q.stem,
@@ -86,5 +97,16 @@ export function localizeClarification(
     };
   };
 
-  return { ...clarification, questions: clarification.questions.map(question) };
+  const noticeText = text(table.stems, 'notice');
+  const notice =
+    clarification.notice &&
+    clarification.notice.text === STEMS.notice &&
+    noticeText
+      ? { ...clarification.notice, text: noticeText }
+      : clarification.notice;
+  return {
+    ...clarification,
+    questions: clarification.questions.map(question),
+    ...(notice && { notice }),
+  };
 }
