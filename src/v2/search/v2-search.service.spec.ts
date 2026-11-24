@@ -2630,6 +2630,7 @@ describe('V2SearchService resolver name owner (V2_NAME_MATCH_OWNER=resolver)', (
       ruleV1?: string;
       query?: string;
       result?: unknown;
+      sort?: string;
       lookup?: jest.Mock;
     } = {},
   ) => {
@@ -2642,7 +2643,10 @@ describe('V2SearchService resolver name owner (V2_NAME_MATCH_OWNER=resolver)', (
     return b.service
       .search({
         headers,
-        query: dto({ query: over.query ?? 'compass housing' }),
+        query: dto({
+          query: over.query ?? 'compass housing',
+          ...(over.sort && { sort: over.sort as never }),
+        }),
       })
       .then((res) => ({ res, ...b }));
   };
@@ -2700,6 +2704,17 @@ describe('V2SearchService resolver name owner (V2_NAME_MATCH_OWNER=resolver)', (
     expect(res.clarification.questions.length).toBeGreaterThan(0);
     expect(isMarkedNotStorable(res)).toBe(false);
   });
+
+  it.each(['distance', 'name'])(
+    'sort=%s, the named org is outside the radius: the grid asks',
+    async (sort) => {
+      const { res } = await ask({
+        sort,
+        result: page({ nameMatch: nm({ out_of_radius: true, pinned: 0 }) }),
+      });
+      expect(res.clarification.questions.length).toBeGreaterThan(0);
+    },
+  );
 
   it('no nameMatch (lookup null, pin read failed) or status failed: not storable', async () => {
     expect(isMarkedNotStorable((await ask()).res)).toBe(true);

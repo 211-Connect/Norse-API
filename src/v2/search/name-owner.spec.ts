@@ -109,3 +109,34 @@ describe('resolverOwner', () => {
     expect(o.vetoes(evidence)).toBe(true);
   });
 });
+
+describe('David #367 point 1: food bank, resolver owner', () => {
+  const lookup = Promise.resolve([
+    { id: 'o1', name: 'Ballard Food Bank', alternate_names: [] },
+  ]);
+  const page = (names: string[]) =>
+    names.map((n, i) =>
+      keywordHit(`s${i}`, {
+        name: 'Food Bank',
+        organization: { id: `o${i}`, name: n },
+      }),
+    );
+  const owner = resolverOwner(['food', 'bank'], lookup);
+  it('claimed, then vetoed when few services that hold the words have them in the org name', async () => {
+    expect((await owner.claim({ state: 'ok', hits: [] })).strength).toBe('org');
+    expect(
+      owner.vetoes(
+        page([
+          'Ballard Food Bank',
+          'Hopelink',
+          'YMCA',
+          'Solid Ground',
+          'El Centro',
+        ]),
+      ),
+    ).toBe(true);
+  });
+  it('NOT fixed: a page of food-bank orgs (claimed, not vetoed)', () => {
+    expect(owner.vetoes(page(Array(5).fill('Ballard Food Bank')))).toBe(false);
+  });
+});
