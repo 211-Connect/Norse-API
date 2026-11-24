@@ -297,7 +297,30 @@ type HybridSearchOptions = {
    * with no service in the kept set pins nothing.
    */
   namedOrgIds?: string[];
+  /**
+   * v2 only, experiment. Reorders the keyword list's ids (hits carry the
+   * fields the match rules read). `keyword_top` stays the raw top score. A
+   * throw keeps the raw order. Absent: the keyword request is unchanged.
+   */
+  keywordRerank?: KeywordRerank;
+  /** v2 only, experiment. RRF weight of the keyword list. Default 1. */
+  keywordListWeight?: number;
+  /** v2 only, experiment. The named-org pin leads nothing; `namedPinned` still reports it. */
+  skipNamedPin?: boolean;
 };
+
+export type KeywordRerank = (
+  hits: { id: string; source: unknown }[],
+) => string[];
+
+const KEYWORD_RERANK_SOURCE = [
+  'name',
+  'description',
+  'summary',
+  'taxonomies.name',
+  'organization.id',
+  'organization.name',
+];
 
 /** Most services of the named org(s) that lead the relevance order. */
 export const NAMED_ORG_PIN_MAX = 5;
@@ -1042,6 +1065,7 @@ export class HybridSearchService {
               queryStr,
               wordRarity,
               keyword: keywordLocale,
+              keywordRerank: options.keywordRerank,
             }),
           )
         : undefined;
@@ -1139,6 +1163,7 @@ export class HybridSearchService {
                     queryStr,
                     wordRarity,
                     keyword: true,
+                    keywordRerank: options.keywordRerank,
                   })
                 : keywordPromise!,
             vector: vectorPromise!,
@@ -1414,6 +1439,8 @@ export class HybridSearchService {
           wordRarity,
           keyword,
           needs: boostActive ? boostTerms : [],
+          keywordRerank: options.keywordRerank,
+          keywordListWeight: options.keywordListWeight,
           earlyLists,
           coords,
           nearYou,
@@ -1435,11 +1462,12 @@ export class HybridSearchService {
 
     const gatedOnlyIds = await gatePromise;
     const namedRead = await namedPromise;
-    const namedIds = pickNamedLeaders(
+    const pinnedRead = pickNamedLeaders(
       namedRead ?? [],
       fusedIds,
       coords?.length === 2,
     );
+    const namedIds = options.skipNamedPin ? [] : pinnedRead;
     const namedSet = new Set(namedIds);
     const gatedPinnedIds = [
       ...namedIds,
@@ -1551,7 +1579,7 @@ export class HybridSearchService {
       ...(namedActive
         ? {
             namedPinned:
-              namedRead === null ? NAMED_PIN_FAILED : namedIds.length,
+              namedRead === null ? NAMED_PIN_FAILED : pinnedRead.length,
           }
         : {}),
     };
@@ -1598,15 +1626,19 @@ export class HybridSearchService {
     queryStr: string;
     wordRarity: WordRarity;
     keyword: boolean;
+    keywordRerank?: KeywordRerank;
   }): Promise<RankedList> | undefined {
     const { filters, queryStr, wordRarity, keyword } = args;
     const lexical = keyword
       ? this.buildLexicalShouldClauses(queryStr, wordRarity)
       : [];
     if (lexical.length === 0) return undefined;
-    return this.runRankedList(args, 'hybrid_rrf_keyword', {
-      bool: { filter: filters, should: lexical, minimum_should_match: 1 },
-    });
+    return this.runRankedList(
+      args,
+      'hybrid_rrf_keyword',
+      { bool: { filter: filters, should: lexical, minimum_should_match: 1 } },
+      args.keywordRerank,
+    );
   }
 
   /** The vector list: cosine similarity to the query vector. Rejects like the keyword list. */
@@ -1669,6 +1701,7 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
+    rerank?: KeywordRerank,
   ): Promise<RankedList> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
@@ -1676,18 +1709,39 @@ export class HybridSearchService {
           index: args.index,
           preference: args.preference,
           size: RRF_LIST_SIZE,
-          _source: false,
+          _source: rerank ? KEYWORD_RERANK_SOURCE : false,
           track_total_hits: false,
           query,
         }),
       )
-      .then((response) => ({
-        ids: response.hits.hits
+      .then((response) => {
+        const ids = response.hits.hits
           .map((h) => h._id)
-          .filter((id): id is string => id !== undefined),
-        // Raw score of the first hit: the weak-match judge (ISS-2796).
-        top: response.hits.hits[0]?._score ?? 0,
-      }));
+          .filter((id): id is string => id !== undefined);
+        return {
+          ids: rerank ? this.rerankIds(rerank, response.hits.hits) : ids,
+          // Raw score of the first hit: the weak-match judge (ISS-2796).
+          top: response.hits.hits[0]?._score ?? 0,
+        };
+      });
+  }
+
+  /** The reranked ids; a throw keeps the raw order (error name only in the log). */
+  private rerankIds(
+    rerank: KeywordRerank,
+    hits: { _id?: string; _source?: unknown }[],
+  ): string[] {
+    const withId = hits.flatMap((h) =>
+      h._id === undefined ? [] : [{ id: h._id, source: h._source }],
+    );
+    try {
+      return rerank(withId);
+    } catch (error) {
+      this.logger.warn(
+        `RRF keyword rerank failed, raw order: ${(error as Error)?.name}`,
+      );
+      return withId.map((h) => h.id);
+    }
   }
 
   /**
@@ -1721,6 +1775,8 @@ export class HybridSearchService {
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
     nearYou: boolean;
+    keywordRerank?: KeywordRerank;
+    keywordListWeight?: number;
   }): Promise<{ ids?: string[]; judges?: Judges }> {
     const { filters, needs, earlyLists, queryVector } = args;
 
@@ -1785,7 +1841,7 @@ export class HybridSearchService {
       const lists: string[][] = [];
       const weights: number[] = [];
       for (const [ids, weight] of [
-        [keywordList?.ids, 1],
+        [keywordList?.ids, args.keywordListWeight ?? 1],
         [vectorList?.ids, 1],
         [taxonomyList?.ids, 1],
         [needList?.ids, RRF_NEED_LIST_WEIGHT],

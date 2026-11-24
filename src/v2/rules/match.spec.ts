@@ -6,6 +6,7 @@ import {
   genericName,
   matchFromShares,
   matchOf,
+  nameFirst,
   nameHead,
   nameMatch,
   orgShare,
@@ -438,5 +439,49 @@ describe('generic word veto and top org back coverage', () => {
   it('topOrgBack: 0 for no match, 1 for a caps token', () => {
     expect(topOrgBack(['police'], [hit('Other')])).toBe(0);
     expect(topOrgBack(['dshs'], [hit('DSHS Community Services')])).toBe(1);
+  });
+});
+
+describe('nameFirst', () => {
+  const h = (id: string, org: string, service: string) => ({
+    id,
+    org_id: `org-${org}`,
+    org_name: org,
+    service_name: service,
+    text: `${service} ${org}`.toLowerCase(),
+  });
+  const mixed = [
+    h('1', 'Other Group', 'Food pantry'),
+    h('2', 'Hope', 'Food pantry'),
+    h('3', 'Other Group', 'Hope outreach'),
+  ];
+
+  it('puts the named org first, then a service name that holds the words', () => {
+    expect(nameFirst(['hope'], mixed)).toEqual(['2', '3', '1']);
+  });
+  it('a typo still finds the service name', () => {
+    const hits = [h('1', 'Zed', 'Food pantry'), h('2', 'Zed', 'Shelter')];
+    expect(nameFirst(['sehlter'], hits)).toEqual(['2', '1']);
+  });
+  it('an org name after "offered by" does not count as a service name', () => {
+    const hits = [
+      h('1', 'Zed Group', 'Meals offered by Hope'),
+      h('2', 'Zed Group', 'Hope meals'),
+    ];
+    expect(nameFirst(['hope'], hits)).toEqual(['2', '1']);
+  });
+  it('stop words and request words are ignored: no tokens leaves the order', () => {
+    expect(nameFirst(['the', 'i', 'need'], mixed)).toEqual(['1', '2', '3']);
+  });
+  it('a generic word leaves the order', () => {
+    const hits = [
+      ...['a', 'b', 'c', 'd', 'e'].map((o, i) => h(`${i + 1}`, o, 'Food')),
+      h('6', 'Food Bank', 'Other'),
+    ];
+    expect(genericName(['food'], hits)).toBe(true);
+    expect(nameFirst(['food'], hits)).toEqual(['1', '2', '3', '4', '5', '6']);
+  });
+  it('keeps every id', () => {
+    expect([...nameFirst(['hope'], mixed)].sort()).toEqual(['1', '2', '3']);
   });
 });

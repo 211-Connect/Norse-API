@@ -89,6 +89,8 @@ function build(opts: {
   ruleV1?: string;
   /** The name lookup. Default: an empty candidate list (the lookup worked, found nothing). */
   lookup?: jest.Mock;
+  /** V2_RULES_MATCH_RRF (experiment). Default: unset. */
+  rrf?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -114,7 +116,11 @@ function build(opts: {
     { searchPins } as unknown as SearchService,
     {
       get: (k: string) =>
-        k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
+        k === 'V2_QUESTION_RULE_V1'
+          ? (opts.ruleV1 ?? 'true')
+          : k === 'V2_RULES_MATCH_RRF'
+            ? opts.rrf
+            : undefined,
     } as unknown as ConfigService,
     { lookup } as unknown as NameLookupService,
   );
@@ -2588,5 +2594,109 @@ describe('V2SearchService name lookup (question rule v1)', () => {
       expect(pinned.clarification.questions).toEqual([]);
       expect(out.clarification.questions.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('V2_RULES_MATCH_RRF keyword rerank (experiment)', () => {
+  const ask = async (over: {
+    rrf?: string;
+    ruleV1?: string;
+    query?: string;
+    search?: jest.Mock;
+  }) => {
+    const search =
+      over.search ?? jest.fn().mockResolvedValue(hybridResponse(10));
+    const { service, startEarlyRetrieval } = build({
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.5 })),
+      search,
+      rrf: over.rrf,
+      ruleV1: over.ruleV1,
+    });
+    await service.search({
+      headers,
+      query: dto({ query: over.query ?? 'hope center' }),
+    });
+    return { search, startEarlyRetrieval };
+  };
+  const knobs = ['keywordRerank', 'keywordListWeight', 'skipNamedPin'];
+  const savedEnv = { ...process.env };
+  afterEach(() => {
+    process.env = { ...savedEnv };
+  });
+
+  it('flag off: no option reaches the early or the final call, and the TMP knobs are ignored', async () => {
+    process.env.TMP_KW_W = '3';
+    process.env.TMP_NO_PIN = '1';
+    const { search, startEarlyRetrieval } = await ask({});
+    for (const o of [
+      startEarlyRetrieval.mock.calls[0][0],
+      search.mock.calls[0][0],
+    ]) {
+      for (const k of knobs) expect(o).not.toHaveProperty(k);
+    }
+  });
+
+  it('flag on without question rule v1, or without text: no option', async () => {
+    const a = await ask({ rrf: 'true', ruleV1: 'off' });
+    expect(a.search.mock.calls[0][0]).not.toHaveProperty('keywordRerank');
+    const b = await ask({ rrf: 'true', query: '' });
+    expect(b.search.mock.calls[0][0]).not.toHaveProperty('keywordRerank');
+  });
+
+  it('flag on: early and final calls get the rerank; it puts the named org first', async () => {
+    const { search, startEarlyRetrieval } = await ask({ rrf: 'true' });
+    const early = startEarlyRetrieval.mock.calls[0][0];
+    const final = search.mock.calls[0][0];
+    expect(early.keywordRerank).toEqual(expect.any(Function));
+    expect(final.keywordRerank).toEqual(expect.any(Function));
+    const src = (id: string, org: string) => ({
+      id,
+      source: {
+        name: 'Pantry',
+        organization: { id: `org-${org}`, name: org },
+      },
+    });
+    expect(
+      early.keywordRerank([src('1', 'Other'), src('2', 'Hope Center')]),
+    ).toEqual(['2', '1']);
+    expect(early).not.toHaveProperty('keywordListWeight');
+    expect(early).not.toHaveProperty('skipNamedPin');
+  });
+
+  it('flag on: TMP knobs set weight, skip the pin, or drop the rerank', async () => {
+    process.env.TMP_KW_W = '2.5';
+    process.env.TMP_NO_PIN = '1';
+    const a = await ask({ rrf: 'true' });
+    expect(a.search.mock.calls[0][0]).toMatchObject({
+      keywordListWeight: 2.5,
+      skipNamedPin: true,
+    });
+    process.env.TMP_NO_RERANK = '1';
+    process.env.TMP_KW_W = 'abc';
+    const b = await ask({ rrf: 'true' });
+    expect(b.search.mock.calls[0][0]).not.toHaveProperty('keywordRerank');
+    expect(b.search.mock.calls[0][0]).not.toHaveProperty('keywordListWeight');
+  });
+
+  it('the text-free weak-match second call has no keywordRerank', async () => {
+    const weak = {
+      search: {
+        took: 1,
+        timed_out: false,
+        _shards: {},
+        hits: { total: { value: 7, relation: 'eq' }, hits: [] },
+      },
+      facets: [],
+      judges: { keyword_top: 0.4, vector_top: 0.3 },
+    };
+    const search = jest
+      .fn()
+      .mockResolvedValueOnce(weak)
+      .mockResolvedValueOnce({ ...weak, judges: undefined });
+    await ask({ rrf: 'true', query: 'blorptastic zzz', search });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls[0][0].keywordRerank).toEqual(expect.any(Function));
+    expect(search.mock.calls[1][0].query.query).toBe('');
+    expect(search.mock.calls[1][0]).not.toHaveProperty('keywordRerank');
   });
 });

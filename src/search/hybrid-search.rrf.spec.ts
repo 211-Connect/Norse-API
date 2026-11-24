@@ -87,7 +87,10 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
     !r.query?.bool?.should &&
     r.query?.bool?.filter?.some?.((f: any) => f.ids);
   const isList = (r: any) =>
-    r._source === false && r.size === 100 && !Array.isArray(r.sort);
+    (r._source === false || Array.isArray(r._source)) &&
+    r.size === 100 &&
+    r.min_score == null &&
+    !Array.isArray(r.sort);
   // The filter of the main page request, whatever the sort made of the query.
   const mainFilterOf = (r: any) =>
     r.query.pinned ? r.query.pinned.organic.bool.filter : r.query.bool.filter;
@@ -852,6 +855,68 @@ describe('HybridSearchService — rank fusion (ISS-2766)', () => {
       }
       expect(lists()).toHaveLength(0);
       expect(actual).toEqual(JSON.parse(readFileSync(file, 'utf8')));
+    });
+  });
+  describe('keyword list rerank (experiment)', () => {
+    const rerank = jest.fn((hits: { id: string }[]) =>
+      hits.map((h) => h.id).reverse(),
+    );
+    const keywordRequests = () =>
+      lists().filter((r) => kindOf(r) === 'keyword');
+    const fusedOf = () => mainRequest().query.pinned.ids;
+
+    beforeEach(() => rerank.mockClear());
+
+    it("K1. absent: the keyword request has _source false and the order is today's", async () => {
+      await run();
+      expect(keywordRequests()[0]._source).toBe(false);
+      expect(fusedOf()).toEqual(FUSED);
+    });
+
+    it('K2. present: asks for the fields it needs, reorders the fused ids, keeps keyword_top raw', async () => {
+      const res = await run({}, { keywordRerank: rerank });
+      expect(keywordRequests()[0]._source).toEqual(
+        expect.arrayContaining([
+          'name',
+          'organization.id',
+          'organization.name',
+        ]),
+      );
+      expect(rerank.mock.calls[0][0].map((h) => h.id)).toEqual(KEYWORD);
+      // keyword c, b, a (reversed) fuses to c, b, a, d
+      expect(fusedOf()).toEqual(['c', 'b', 'a', 'd']);
+      expect(res.judges).toEqual({ keyword_top: 12.5, vector_top: 0.61 });
+    });
+
+    it('K3. the early path gets the same request and order', async () => {
+      const options = {
+        headers,
+        query: { ...baseQuery },
+        rankingVersion: 'v2',
+        keywordRerank: rerank,
+      } as any;
+      const early = service.startEarlyRetrieval(options);
+      await service.searchHybrid({ ...options, early } as any);
+      expect(keywordRequests()).toHaveLength(1);
+      expect(keywordRequests()[0]._source).toEqual(expect.any(Array));
+      expect(fusedOf()).toEqual(['c', 'b', 'a', 'd']);
+    });
+
+    it('K4. a throwing callback keeps the raw order and logs only the error name', async () => {
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      const bad = jest.fn(() => {
+        throw new TypeError('secret query text');
+      });
+      await run({}, { keywordRerank: bad });
+      expect(fusedOf()).toEqual(FUSED);
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('|');
+      expect(logged).toContain('TypeError');
+      expect(logged).not.toContain('secret');
+    });
+
+    it('K5. keywordListWeight scales the keyword list in the fusion', async () => {
+      await run({}, { keywordListWeight: 10 });
+      expect(fusedOf()).toEqual(['a', 'b', 'c', 'd']);
     });
   });
 });

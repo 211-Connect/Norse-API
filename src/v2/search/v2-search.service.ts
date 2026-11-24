@@ -18,6 +18,7 @@ import {
   MatchHit,
   NameCandidate,
   matchOf,
+  nameFirst,
   nameMatch,
   queryTokens,
 } from '../rules/match';
@@ -216,33 +217,35 @@ type RulesEngine = Pick<
 const NEW_ENGINE: RulesEngine = rules;
 const LEGACY_ENGINE = legacyRules as unknown as RulesEngine;
 
+/** One hit's `_source` as the match check reads it. */
+export function matchHit(source: unknown): MatchHit {
+  const src = (source ?? {}) as Record<string, unknown>;
+  const org = src.organization;
+  const orgName =
+    typeof org === 'string'
+      ? org
+      : typeof (org as { name?: unknown } | undefined)?.name === 'string'
+        ? (org as { name: string }).name
+        : null;
+  const taxonomies = Array.isArray(src.taxonomies)
+    ? (src.taxonomies as { name?: unknown }[]).map((t) => t?.name)
+    : [];
+  const text = [src.name, src.description, src.summary, ...taxonomies]
+    .filter((x): x is string => typeof x === 'string')
+    .join(' ')
+    .toLowerCase();
+  return { org_name: orgName, text };
+}
+
 /** The top hits of a result page as the match check reads them. */
 export function matchHits(
   response: { search?: { hits?: { hits?: unknown[] } } },
   topN: number = MATCH.topN,
 ): MatchHit[] {
   const hits = response.search?.hits?.hits ?? [];
-  return hits.slice(0, topN).map((h) => {
-    const src = ((h as { _source?: unknown })._source ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const org = src.organization;
-    const orgName =
-      typeof org === 'string'
-        ? org
-        : typeof (org as { name?: unknown } | undefined)?.name === 'string'
-          ? (org as { name: string }).name
-          : null;
-    const taxonomies = Array.isArray(src.taxonomies)
-      ? (src.taxonomies as { name?: unknown }[]).map((t) => t?.name)
-      : [];
-    const text = [src.name, src.description, src.summary, ...taxonomies]
-      .filter((x): x is string => typeof x === 'string')
-      .join(' ')
-      .toLowerCase();
-    return { org_name: orgName, text };
-  });
+  return hits
+    .slice(0, topN)
+    .map((h) => matchHit((h as { _source?: unknown })._source));
 }
 
 /** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
@@ -310,6 +313,50 @@ export class V2SearchService {
     private readonly configService: ConfigService,
     private readonly nameLookup: NameLookupService,
   ) {}
+
+  /**
+   * Experiment, `V2_RULES_MATCH_RRF=true` with question rule v1 and a text
+   * query: the keyword list puts the named org's services first. The TMP_*
+   * knobs are for A/B runs only and are ignored when the flag is off.
+   */
+  private keywordExperiment(
+    text: string,
+    lang: string,
+  ): Pick<HybridCall, 'keywordRerank' | 'keywordListWeight' | 'skipNamedPin'> {
+    if (
+      this.configService.get('V2_RULES_MATCH_RRF') !== 'true' ||
+      this.configService.get('V2_QUESTION_RULE_V1') !== 'true' ||
+      text.trim().length === 0
+    ) {
+      return {};
+    }
+    const words = contentWords(text, lang);
+    const weight = process.env.TMP_KW_W; // TMP
+    const w = weight === undefined || weight === '' ? NaN : Number(weight);
+    return {
+      ...(process.env.TMP_NO_RERANK !== '1' && {
+        keywordRerank: (hits) =>
+          nameFirst(
+            words,
+            hits.map((h) => {
+              const src = (h.source ?? {}) as {
+                name?: unknown;
+                organization?: { id?: unknown };
+              };
+              const orgId = src.organization?.id;
+              return {
+                ...matchHit(h.source),
+                id: h.id,
+                org_id: typeof orgId === 'string' ? orgId : null,
+                service_name: typeof src.name === 'string' ? src.name : '',
+              };
+            }),
+          ),
+      }),
+      ...(Number.isFinite(w) && { keywordListWeight: w }), // TMP
+      ...(process.env.TMP_NO_PIN === '1' && { skipNamedPin: true }), // TMP
+    };
+  }
 
   /**
    * Question rule v1: which orgs are named like the query? Never rejects: any
@@ -528,6 +575,7 @@ export class V2SearchService {
       rankingVersion: 'v2' as const,
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
+      ...this.keywordExperiment(text, lang),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
@@ -629,10 +677,12 @@ export class V2SearchService {
     const {
       early: _early,
       urgencyBoost: _urgencyBoost,
+      keywordRerank: _keywordRerank,
       ...withoutEarly
     } = hybridCall;
     void _early;
     void _urgencyBoost;
+    void _keywordRerank;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );

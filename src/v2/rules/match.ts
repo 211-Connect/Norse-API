@@ -409,3 +409,45 @@ export function matchOf(i: {
     named_org_ids: decidedByName && nm ? nm.org_ids : [],
   };
 }
+
+/** "X offered by ORG" and "X at ORG" name the org, not the service. */
+const ORG_SUFFIX = /\s+(offered (by|at)|at)\s+.*$/i;
+
+/**
+ * Experiment: the keyword list's ids, hits whose org the query names first,
+ * then hits whose service name holds every query word. Stable; nothing is
+ * dropped or added. A generic word or an empty query leaves the order alone.
+ */
+export function nameFirst(
+  words: string[],
+  hits: (MatchHit & {
+    id: string;
+    org_id: string | null;
+    service_name: string;
+  })[],
+): string[] {
+  const ids = hits.map((h) => h.id);
+  if (queryTokens(words).length === 0 || genericName(words, hits)) return ids;
+  const orgs = new Map<string, NameCandidate>();
+  for (const h of hits) {
+    if (h.org_id !== null && h.org_name !== null && !orgs.has(h.org_id)) {
+      orgs.set(h.org_id, {
+        id: h.org_id,
+        name: h.org_name,
+        alternate_names: [],
+      });
+    }
+  }
+  const named = new Set(nameMatch(words, [...orgs.values()]).org_ids);
+  const score = (h: (typeof hits)[number]): number =>
+    (h.org_id !== null && named.has(h.org_id) ? 2 : 0) +
+    (wordCoverage(words, [
+      { org_name: null, text: h.service_name.replace(ORG_SUFFIX, '') },
+    ]).every((c) => c === 1)
+      ? 1
+      : 0);
+  return hits
+    .map((h, i) => ({ id: h.id, i, s: score(h) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.id);
+}

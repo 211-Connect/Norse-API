@@ -512,5 +512,21 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       ]);
       expect(res.namedPinned).toBe(3);
     });
+
+    it('N7. skipNamedPin: nothing leads, namedPinned still counts what the read found', async () => {
+      searchConfig = {};
+      await build();
+      namedOrgServices = ['near', 'mid', 'far'];
+      const res = await run(
+        { coords: SEA },
+        { namedOrgIds: ['org-1'], skipNamedPin: true },
+      );
+      expect(mainRequest().query.pinned.ids.slice(0, 3)).not.toEqual([
+        'near',
+        'mid',
+        'far',
+      ]);
+      expect(res.namedPinned).toBe(3);
+    });
   });
 });
