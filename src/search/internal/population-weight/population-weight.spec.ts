@@ -421,3 +421,46 @@ describe('applyPopulationWeight: compound codes (c1 vs c2)', () => {
     }
   });
 });
+
+describe('applyPopulationWeight: violence stems that start ordinary words (David, PR #299)', () => {
+  const older = () => [
+    code('YB-1000.1000', 'Older Adults', 0.8, ['Elderly', 'Seniors']),
+  ];
+  const score = (q: string) => applyPopulationWeight(older(), q, 'en')[0].score;
+  it.each([
+    ['stab', 'my elderly mother needs stable housing'],
+    ['stab', 'my elderly dad needs stability and care'],
+    ['grab', 'where can seniors grab free meals'],
+    ['kick', 'my elderly mother needs a kickboxing class'],
+    ['punch', 'my elderly dad needs a punchline book'],
+    ['hit', 'my elderly mother needs a hitch ride'],
+    ['shov', 'my elderly mother needs a shovel for snow'],
+    ['slap', 'my elderly dad likes slapstick movie nights'],
+    ['beat', 'my elderly mother needs a beatific retreat'],
+    ['hurt', 'my elderly dad needs to hurtle to the clinic'],
+    ['kill', 'my elderly mother needs a killjoy-free club'],
+  ])('%s does not match an ordinary word: "%s"', (_stem, q) => {
+    expect(score(q)).toBe(0.8);
+  });
+  it.each([
+    'my elderly dad stabs me',
+    'he grabbed my elderly mother',
+    'my elderly father kicked me',
+    'my elderly father punched me',
+    'my elderly father hit me',
+    'my elderly father shoved me',
+    'my elderly father slapped me',
+    'my elderly father beat me',
+    'my elderly father attacked me',
+  ])('real violence still removes the boost: "%s"', (q) => {
+    expect(score(q)).toBe(0);
+  });
+  it.each(['heart', 'panic', 'anxiety', 'asthma'])(
+    '"%s attack" is medical and keeps the boost',
+    (w) => {
+      expect(score(`my elderly dad had a ${w} attack and needs care`)).toBe(
+        0.8,
+      );
+    },
+  );
+});

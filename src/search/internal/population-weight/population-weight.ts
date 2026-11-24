@@ -228,16 +228,22 @@ const COMPARATIVES = set('older younger young old adult little big grown');
  * similar words.
  */
 const VIOLENCE_RE = new RegExp(
-  '^(hit|hits|hitting|beat|beats|beating|beaten|attack|threat|abus|hurt|' +
-    'harass|stalk|assault|violen|punch|slap|chok|strangl|molest|kick|shov|' +
-    'grab|stab|shoot|kill|afraid|follow(s|ed|ing)?$|' +
+  '^(hit(s|ting)?$|beat(s|ing|en)?$|attack|threat|abus|hurt(s|ing|ful)?$|' +
+    'harass|stalk|assault|violen|punch(es|ed|ing)?$|slap(s|ped|ping)?$|chok|' +
+    'strangl|molest|kick(s|ed|ing)?$|shov(e|es|ed|ing)$|' +
+    'grab(s|bed|bing)$|stab(s|bed|bing)?$|shoot|kill(s|ed|er|ers|ing)?$|' +
+    'afraid|follow(s|ed|ing)?$|' +
     'rap(e|es|ed|ing|ist|ists)$|scar(e|es|ed|y|ing)$|shot$)',
 );
 const NOT_THAT_SHOT = set('flu covid booster vaccine tetanus allergy free');
+/** "heart attack" is a medical event, not an assault. */
+const NOT_THAT_ATTACK = set('heart panic anxiety asthma');
 const isViolence = (t: Tok[], k: number): boolean => {
   const raw = t[k].raw;
   if (!VIOLENCE_RE.test(raw)) return false;
-  return !(raw === 'shot' && NOT_THAT_SHOT.has(t[k - 1]?.raw ?? ''));
+  if (raw === 'shot') return !NOT_THAT_SHOT.has(t[k - 1]?.raw ?? '');
+  if (/^attacks?$/.test(raw)) return !NOT_THAT_ATTACK.has(t[k - 1]?.raw ?? '');
+  return true;
 };
 /** Violence words that are not excused for this mention (see excusedFor). */
 const hasViolence = (
@@ -509,7 +515,7 @@ function isDescribing(raw: string): boolean {
 const AUX = set('can do does will should could may');
 const WH = set('where how what who when which');
 const Q_VERBS = set(
-  'get find apply stay qualify access receive use sleep eat go',
+  'get grab find apply stay qualify access receive use sleep eat go',
 );
 const TAKE_VERBS = set(
   'take takes accept accepts allow allows house houses serve serves admit admits welcome',

@@ -5424,5 +5424,55 @@
     "tester_actual": null,
     "tester_result": "new",
     "status": "assert"
+  },
+  {
+    "cat": "r4-word-start",
+    "query": "my elderly mother needs stable housing",
+    "code": "older",
+    "expected": "keep",
+    "reason": "stab is not stable (David, PR #299)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r4-word-start",
+    "query": "my veteran husband needs stable housing",
+    "code": "vets",
+    "expected": "keep",
+    "reason": "stab is not stable (David, PR #299)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r4-word-start",
+    "query": "where can seniors grab free meals",
+    "code": "older",
+    "expected": "keep",
+    "reason": "grab as a plain verb (David, PR #299)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r4-word-start",
+    "query": "my elderly dad had a heart attack and needs care",
+    "code": "older",
+    "expected": "keep",
+    "reason": "heart attack is medical (David, PR #299)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
+  },
+  {
+    "cat": "r4-word-start",
+    "query": "my elderly father attacked me",
+    "code": "older",
+    "expected": "zero",
+    "reason": "real attack stays zero (David, PR #299)",
+    "tester_actual": null,
+    "tester_result": "new",
+    "status": "assert"
   }
 ]
