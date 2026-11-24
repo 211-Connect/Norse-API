@@ -43,7 +43,7 @@ export default () => ({
   URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,
   // /v2/search (ISS-2499); on only for the exact string `true`.
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
-  // Question rule v1 for /v2/search; on only for the exact string `true` (any case; read by envFlag).
+  // Question rule v1 for /v2/search; on only for `true` (any case, no spaces; read by envFlag).
   V2_QUESTION_RULE_V1: process.env.V2_QUESTION_RULE_V1,
   // Timeout of the /v2/search classify call, in ms (integer; default 1000).
   V2_CLASSIFY_TIMEOUT_MS: process.env.V2_CLASSIFY_TIMEOUT_MS,

@@ -166,4 +166,14 @@ describe('topicText: the topic words of the query, in the caller own spelling', 
   it('no topic token in the query: the topic tokens joined by a space', () => {
     expect(topicText('zzz', ['food'])).toBe('food');
   });
+
+  it('a repeated topic word shows once and leaves no loose word', () => {
+    expect(topicText('food, food', ['food'])).toBe('food');
+    expect(topicText('food and food', ['food'])).toBe('food');
+    expect(topic('rent food rent')).toBe('rent food');
+  });
+
+  it('a decomposed (NFD) accent stays on its word', () => {
+    expect(topic('niño ayuda'.normalize('NFD'), 'es')).toBe('niño');
+  });
 });

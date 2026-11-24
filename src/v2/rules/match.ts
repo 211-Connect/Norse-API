@@ -43,9 +43,20 @@ export function topicText(
   const topic = new Set(topicTokens);
   const fallback = topicTokens.join(' ');
   if (!query) return fallback;
-  const tokens = query.split(/[^\p{L}\p{N}'’]+/u).filter((t) => t.length > 0);
   const isTopic = (t: string): boolean =>
     queryWords(t).some((f) => topic.has(f));
+  const seen = new Set<string>();
+  // A repeated topic word shows once ('food, food').
+  const tokens = query
+    .normalize('NFC')
+    .split(/[^\p{L}\p{M}\p{N}'’]+/u)
+    .filter((t) => {
+      if (t.length === 0) return false;
+      const key = queryWords(t).join(' ');
+      if (isTopic(t) && seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   const first = tokens.findIndex(isTopic);
   if (first === -1) return fallback;
   const last = tokens.length - 1 - [...tokens].reverse().findIndex(isTopic);
