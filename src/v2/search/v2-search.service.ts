@@ -22,7 +22,12 @@ import {
   nameMatch,
   queryTokens,
 } from '../rules/match';
-import { NameOwner, keywordOwner, matchHit } from './name-owner';
+import {
+  NameOwner,
+  keywordOwner,
+  matchHit,
+  parseNameVariants,
+} from './name-owner';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -502,7 +507,11 @@ export class V2SearchService {
       this.configService.get('V2_NAME_MATCH_OWNER') === 'keyword' &&
       hasText &&
       queryTokens(contentWords(text, lang)).length > 0
-        ? keywordOwner(contentWords(text, lang))
+        ? keywordOwner(
+            contentWords(text, lang),
+            text,
+            parseNameVariants(this.configService.get('V2_NAME_MATCH_VARIANTS')),
+          )
         : undefined;
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.

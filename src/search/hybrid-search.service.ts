@@ -34,6 +34,7 @@ import {
   NameMatch,
   NameOwner,
   keywordHit,
+  nameScore,
 } from 'src/v2/search/name-owner';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
@@ -1075,7 +1076,7 @@ export class HybridSearchService {
               queryStr,
               wordRarity,
               keyword: keywordLocale,
-              keywordSource: !!options.nameOwner,
+              nameOwner: options.nameOwner,
             }),
           )
         : undefined;
@@ -1173,7 +1174,7 @@ export class HybridSearchService {
                     queryStr,
                     wordRarity,
                     keyword: true,
-                    keywordSource: !!options.nameOwner,
+                    nameOwner: options.nameOwner,
                   })
                 : keywordPromise!,
             vector: vectorPromise!,
@@ -1450,7 +1451,7 @@ export class HybridSearchService {
           wordRarity,
           keyword,
           needs: boostActive ? boostTerms : [],
-          keywordSource: !!options.nameOwner,
+          nameOwner: options.nameOwner,
           earlyLists,
           coords,
           nearYou,
@@ -1743,18 +1744,25 @@ export class HybridSearchService {
     queryStr: string;
     wordRarity: WordRarity;
     keyword: boolean;
-    keywordSource?: boolean;
+    nameOwner?: NameOwner;
   }): Promise<RankedList> | undefined {
     const { filters, queryStr, wordRarity, keyword } = args;
     const lexical = keyword
       ? this.buildLexicalShouldClauses(queryStr, wordRarity)
       : [];
     if (lexical.length === 0) return undefined;
+    const named = args.nameOwner?.clauses?.(wordRarity) ?? [];
     return this.runRankedList(
       args,
       'hybrid_rrf_keyword',
-      { bool: { filter: filters, should: lexical, minimum_should_match: 1 } },
-      args.keywordSource,
+      {
+        bool: {
+          filter: filters,
+          should: [...lexical, ...named],
+          minimum_should_match: 1,
+        },
+      },
+      { source: !!args.nameOwner, scores: named.length > 0 },
     );
   }
 
@@ -1818,7 +1826,7 @@ export class HybridSearchService {
     args: { index: string; preference: string },
     name: string,
     query: QueryDslQueryContainer,
-    withSource = false,
+    owner: { source?: boolean; scores?: boolean } = {},
   ): Promise<RankedList> {
     return this.metrics
       .observeDownstream('elasticsearch', name, () =>
@@ -1826,7 +1834,8 @@ export class HybridSearchService {
           index: args.index,
           preference: args.preference,
           size: RRF_LIST_SIZE,
-          _source: withSource ? NAME_OWNER_SOURCE : false,
+          _source: owner.source ? NAME_OWNER_SOURCE : false,
+          ...(owner.scores && { include_named_queries_score: true }),
           track_total_hits: false,
           query,
         }),
@@ -1836,10 +1845,29 @@ export class HybridSearchService {
           .map((h) => h._id)
           .filter((id): id is string => id !== undefined),
         // Raw score of the first hit: the weak-match judge (ISS-2796).
-        top: response.hits.hits[0]?._score ?? 0,
-        ...(withSource && {
+        // The name clauses of an owner are taken out: the cutoff was measured
+        // without them.
+        top: owner.scores
+          ? Math.max(
+              0,
+              ...response.hits.hits.map(
+                (h) => (h._score ?? 0) - (nameScore(h.matched_queries) ?? 0),
+              ),
+            )
+          : (response.hits.hits[0]?._score ?? 0),
+        ...(owner.source && {
           hits: response.hits.hits.flatMap((h) =>
-            h._id === undefined ? [] : [keywordHit(h._id, h._source)],
+            h._id === undefined
+              ? []
+              : [
+                  {
+                    ...keywordHit(h._id, h._source),
+                    ...(owner.scores && {
+                      name_score: nameScore(h.matched_queries),
+                      score: h._score ?? 0,
+                    }),
+                  },
+                ],
           ),
         }),
       }));
@@ -1873,7 +1901,7 @@ export class HybridSearchService {
     wordRarity: WordRarity;
     keyword: boolean;
     needs: NeedScore[];
-    keywordSource?: boolean;
+    nameOwner?: NameOwner;
     earlyLists?: EarlyLists;
     coords: number[] | undefined;
     nearYou: boolean;

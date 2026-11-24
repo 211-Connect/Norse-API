@@ -2630,6 +2630,7 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
       ruleV1?: string;
       query?: string;
       result?: unknown;
+      sort?: string;
     } = {},
   ) => {
     const b = build({
@@ -2640,7 +2641,10 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
     return b.service
       .search({
         headers,
-        query: dto({ query: over.query ?? 'compass housing' }),
+        query: dto({
+          query: over.query ?? 'compass housing',
+          ...(over.sort && { sort: over.sort as never }),
+        }),
       })
       .then((res) => ({ res, ...b }));
   };
@@ -2693,6 +2697,20 @@ describe('V2SearchService keyword name owner (V2_NAME_MATCH_OWNER=keyword)', () 
     });
     expect(res.clarification.questions.length).toBeGreaterThan(0);
   });
+
+  it.each(['distance', 'name'])(
+    'sort=%s, the named org is outside the radius (no keyword hit of it): the grid asks, no lookup',
+    async (sort) => {
+      const { res, lookup } = await ask({
+        sort,
+        result: page({
+          nameMatch: nm({ strength: 'none', org_ids: [], pinned: 0 }),
+        }),
+      });
+      expect(res.clarification.questions.length).toBeGreaterThan(0);
+      expect(lookup).not.toHaveBeenCalled();
+    },
+  );
 
   it('service strength changes nothing against no strength', async () => {
     const a = await ask({

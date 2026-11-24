@@ -758,6 +758,22 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       },
     );
 
+    it('O13. owner clauses join the keyword list only, with named scores; without clauses the request has neither', async () => {
+      const clause = {
+        match: { name: { query: 'x', _name: 'name_owner:boost' } },
+      };
+      await run({}, { nameOwner: { ...owner(), clauses: () => [clause] } });
+      const [kw] = keywordRequests();
+      expect(kw.include_named_queries_score).toBe(true);
+      expect(kw.query.bool.should).toContainEqual(clause);
+      expect(JSON.stringify(mainRequest())).not.toContain('name_owner:');
+      requests.length = 0;
+      await run({}, { nameOwner: owner() });
+      expect(keywordRequests()[0]).not.toHaveProperty(
+        'include_named_queries_score',
+      );
+    });
+
     it('O11. service strength pins nothing', async () => {
       const o = owner({
         claim: jest

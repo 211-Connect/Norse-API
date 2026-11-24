@@ -1,5 +1,13 @@
 import { MATCH } from '../rules/match';
-import { KeywordHit, keywordHit, keywordOwner, matchHit } from './name-owner';
+import {
+  KeywordHit,
+  NAME_VARIANTS,
+  keywordHit,
+  keywordOwner,
+  matchHit,
+  nameScore,
+  parseNameVariants,
+} from './name-owner';
 
 describe('matchHit', () => {
   it('reads org name (string or object) and the lowercased text', () => {
@@ -144,5 +152,124 @@ describe('keywordOwner', () => {
     }));
     expect(generic.vetoes(evidence)).toBe(true);
     expect(generic.vetoes([])).toBe(false);
+  });
+});
+
+describe('keywordOwner variants (V2_NAME_MATCH_VARIANTS, off by default)', () => {
+  const hit = (id: string, org: string, over: Partial<KeywordHit> = {}) => ({
+    ...keywordHit(id, {
+      name: 'svc',
+      organization: { id: `o-${id}`, name: org },
+    }),
+    ...over,
+  });
+  const claim = (words: string[], hits: KeywordHit[], v: string) =>
+    keywordOwner(words, words.join(' '), parseNameVariants(v)).claim({
+      state: 'ok',
+      hits,
+    });
+  const clauses = (v: string, typoClauses = true) =>
+    JSON.stringify(
+      keywordOwner(['compass'], 'compass', parseNameVariants(v)).clauses?.({
+        words: { compass: 6 },
+        typoClauses,
+      }) ?? [],
+    );
+
+  it('parses known values only; none gives no clauses function', () => {
+    expect(parseNameVariants(undefined)).toEqual([]);
+    expect(parseNameVariants(' typo, nope,boost')).toEqual(['boost', 'typo']);
+    expect(keywordOwner(['a'], 'a').clauses).toBeUndefined();
+  });
+
+  it('each variant adds its own clauses, all of them named', () => {
+    for (const v of NAME_VARIANTS.filter((x) => x !== 'metric')) {
+      expect(clauses(v)).toContain(`name_owner:${v}`);
+      for (const other of NAME_VARIANTS.filter((x) => x !== v)) {
+        expect(clauses(v)).not.toContain(`name_owner:${other}`);
+      }
+    }
+    expect(clauses('metric')).toContain('name_owner:boost');
+    expect(clauses('metric')).toContain('name_owner:phrase');
+    expect(clauses('rare')).toContain('"boost":36');
+    expect(clauses('typo', false)).toBe('[]');
+    expect(clauses('typo')).toContain('fuzziness');
+  });
+
+  it('nameScore sums the name clauses only; names without scores give null', () => {
+    expect(nameScore(undefined)).toBe(0);
+    expect(nameScore({ 'name_owner:boost:name': 2, other: 9 })).toBe(2);
+    expect(nameScore(['name_owner:alias'])).toBeNull();
+  });
+
+  it('metric: the org with most of its score from its name; no name text is read', async () => {
+    const r = await claim(
+      ['zzz'],
+      [
+        hit('1', 'Compass', { name_score: 8, score: 10 }),
+        hit('2', 'Other', { name_score: 1, score: 10 }),
+      ],
+      'metric',
+    );
+    expect(r).toMatchObject({ strength: 'org', org_ids: ['o-1'], metric: 0.8 });
+  });
+
+  it('metric: words common to many org names name nothing; no scores is a failure', async () => {
+    const many = Array.from({ length: 6 }, (_, i) =>
+      hit(String(i), `Town ${i} Food Bank`, { name_score: 8, score: 10 }),
+    );
+    expect((await claim(['food', 'bank'], many, 'metric')).strength).toBe(
+      'none',
+    );
+    expect(
+      (await claim(['x'], [hit('1', 'X', { name_score: null })], 'metric'))
+        .status,
+    ).toBe('failed');
+  });
+
+  it('typo: a one-edit typo of an org name claims it, and the veto reads the corrected words', async () => {
+    const hits = Array.from({ length: 5 }, (_, i) =>
+      hit(String(i), 'Hopelink', { org_id: 'h', text: 'hopelink help' }),
+    );
+    expect((await claim(['hopelnik'], hits, '')).strength).toBe('none');
+    const owner = keywordOwner(['hopelnik'], 'hopelnik', ['typo']);
+    const r = await owner.claim({ state: 'ok', hits });
+    expect(r).toMatchObject({ strength: 'org', org_ids: ['h'] });
+    expect(owner.vetoes(hits)).toBe(false);
+  });
+});
+
+describe('David #367 point 1: food bank, keyword owner', () => {
+  const orgs = (names: string[]) =>
+    names.map((n, i) =>
+      keywordHit(`s${i}`, {
+        name: 'Food Bank',
+        organization: { id: `o${i}`, name: n },
+      }),
+    );
+  it('two three-word food banks with different first words: no org is named', async () => {
+    const r = await keywordOwner(['food', 'bank']).claim({
+      state: 'ok',
+      hits: orgs(['Ballard Food Bank', 'Edmonds Food Bank', 'North Helpline']),
+    });
+    expect(r.strength).not.toBe('org');
+  });
+  it('one food-bank org among services that only mention it: claimed, then vetoed', async () => {
+    const hits = orgs([
+      'Ballard Food Bank',
+      'Hopelink',
+      'YMCA',
+      'Solid Ground',
+      'El Centro',
+    ]);
+    const owner = keywordOwner(['food', 'bank']);
+    expect((await owner.claim({ state: 'ok', hits })).strength).toBe('org');
+    expect(owner.vetoes(hits)).toBe(true);
+  });
+  it('NOT fixed: one food-bank org fills the page (claimed, not vetoed)', async () => {
+    const hits = orgs(Array(5).fill('Ballard Food Bank'));
+    const owner = keywordOwner(['food', 'bank']);
+    expect((await owner.claim({ state: 'ok', hits })).strength).toBe('org');
+    expect(owner.vetoes(hits)).toBe(false);
   });
 });
