@@ -12,8 +12,9 @@ import {
 } from 'src/search/hybrid-search.service';
 import * as rules from '../rules';
 import * as legacyRules from '../rules/legacy';
-import { MATCH, Match, MatchHit, matchOf } from '../rules/match';
-import { matchHit, nameWords } from './name-match';
+import { MATCH, Match, matchOf } from '../rules/match';
+import { nameWords } from 'src/search/internal/name-match/name-match';
+import { hitText } from 'src/search/internal/text-matching/hit-text';
 import { needText } from '../rules/need-text';
 import {
   floorOnlyEmergency,
@@ -208,15 +209,13 @@ type RulesEngine = Pick<
 const NEW_ENGINE: RulesEngine = rules;
 const LEGACY_ENGINE = legacyRules as unknown as RulesEngine;
 
-/** The top hits of a result page as the match check reads them. */
-export function matchHits(
-  response: { search?: { hits?: { hits?: unknown[] } } },
-  topN: number = MATCH.topN,
-): MatchHit[] {
-  const hits = response.search?.hits?.hits ?? [];
-  return hits
-    .slice(0, topN)
-    .map((h) => matchHit((h as { _source?: unknown })._source));
+/** The texts of a result page's top hits. */
+export function topTexts(response: {
+  search?: { hits?: { hits?: unknown[] } };
+}): string[] {
+  return (response.search?.hits?.hits ?? [])
+    .slice(0, MATCH.topN)
+    .map((h) => hitText((h as { _source?: unknown })._source));
 }
 
 /** A weak match shows no results, no facets and no relevance cut (Lucas 2026-11-18). */
@@ -708,7 +707,7 @@ export class V2SearchService {
       nameFailed = orgWords.length > 0 && nameClaim?.status !== 'ok';
       match = matchOf({
         words: rulesRequest.content_words ?? [],
-        hits: topPage ? matchHits(response) : [],
+        texts: topPage ? topTexts(response) : [],
         named: (nameClaim?.org_ids.length ?? 0) > 0,
       });
       span.setAttributes({

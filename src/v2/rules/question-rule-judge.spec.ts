@@ -7,7 +7,8 @@
  * 2026-11-23 (need scores) and 2026-11-24 (match inputs: hits read, words held,
  * named by the keyword list) on branch build, local server, for WA_211, IL211
  * and Rochester NY with coords. Scores under 0.001 are left out (no cutoff is
- * that low). Labels are Claude's, for Lucas to review
+ * that low). `named` is what this code answered on that run: a regression check
+ * of the grid, not a proof of the name match. Labels are Claude's, for Lucas to review
  * (WORK-LOG/HANDOFF-ASSETS/v2-search--rules-engine/question-rule-v1/labels.md).
  *
  * The spec runs the real decide + matchValue + finalize on the saved
@@ -58,11 +59,13 @@ const rows: Row[] = require('./__fixtures__/question-rule-judge.json');
 
 /**
  * Floor: the measured pass count on 2026-11-24 (like MIN_PASS of the gold set).
- * 208 on the 11-23 inputs. Now 'cocoon house' and 'catholic charities' (WA) have
- * no service inside the radius, so the grid runs (by design); 'neighborcare' (WA)
- * lost the removed one-org share test; 'testing center' (WA) has other live hits.
+ * 208 on the 11-23 inputs. The 5 rows, all WA: 'cocoon house' and 'catholic
+ * charities' have no service inside the radius, so the grid runs (by design);
+ * 'red cross' has one org name in the radius that the words cover (live base
+ * asks the same question); 'neighborcare' lost the removed one-org share test;
+ * 'testing center' has other live hits.
  */
-const MIN_PASS = 204;
+const MIN_PASS = 203;
 
 const ids = (qs: Question[]) => qs.map((q) => q.id);
 const needIds = (qs: Question[]) =>

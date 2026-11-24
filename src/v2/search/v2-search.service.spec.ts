@@ -16,7 +16,7 @@ import {
   hasContentWord,
   V2SearchService,
   tenantHotlines,
-  matchHits,
+  topTexts,
 } from './v2-search.service';
 import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
@@ -2173,7 +2173,7 @@ describe('match in the service (flag on)', () => {
     expect('notice' in r1).toBe(false);
     expect('phone_line' in r1).toBe(false);
   });
-  it('matchHits reads org, text (name, description, summary, taxonomy names) and caps at 20', () => {
+  it('topTexts reads the text (name, description, summary, taxonomy names) and caps at 20', () => {
     const hits = Array.from({ length: 25 }, (_, i) => ({
       _source: {
         name: `N${i}`,
@@ -2183,9 +2183,9 @@ describe('match in the service (flag on)', () => {
         taxonomies: [{ name: 'Tx' }],
       },
     }));
-    const out = matchHits({ search: { hits: { hits } } });
+    const out = topTexts({ search: { hits: { hits } } });
     expect(out).toHaveLength(20);
-    expect(out[0]).toEqual({ org_name: 'Org', text: 'n0 d s tx' });
+    expect(out[0]).toBe('N0 D S Tx');
   });
 });
 

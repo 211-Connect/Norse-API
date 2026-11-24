@@ -34,7 +34,7 @@ import {
   claimName,
   nameHit,
   nameTypoClauses,
-} from 'src/v2/search/name-match';
+} from './internal/name-match/name-match';
 import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';

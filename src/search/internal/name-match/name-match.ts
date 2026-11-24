@@ -1,17 +1,13 @@
 import type { QueryDslQueryContainer } from '@elastic/elasticsearch/lib/api/types';
-import { queryWords } from '../../search/internal/text-matching/query-words';
-import { fuzzyFallbackFor } from '../../search/internal/text-matching/fuzzy-match';
+import { fuzzyFallbackFor } from '../text-matching/fuzzy-match';
+import { hitText, taxonomyNames } from '../text-matching/hit-text';
+import { queryWords } from '../text-matching/query-words';
 import {
-  MATCH,
-  MatchHit,
-  NameCandidate,
-  genericName,
   holdsAllWords,
-  nameMatch,
+  holdsWord,
   queryTokens,
-  topicPhrase,
   withinOneEdit,
-} from '../rules/match';
+} from '../text-matching/word-match';
 
 /**
  * Does the query name an org? The keyword list answers (question rule v1): its
@@ -19,6 +15,27 @@ import {
  * area, cutoff), so a named org is inside them on every sort and no other read
  * is needed.
  */
+
+const NAME = {
+  // The share of the name head the query words cover.
+  headCoverMin: 0.6,
+  // Different org names that must agree when none starts with the query words
+  // (decided 2026-11-24: one 'Ballard Food Bank' does not make 'food bank' a name).
+  nonStartNamesMin: 2,
+  // Different orgs read from the keyword list ('dshs' WA is org 7).
+  orgs: 10,
+  // The fused top hits the common-word check reads.
+  topN: 20,
+  // A word is generic when at least this many hits hold it and fewer than
+  // `genericNameShareMax` of those have it in the org name.
+  genericMinHolders: 5,
+  genericNameShareMax: 0.5,
+  // A taxonomy term is the query phrase when the query covers this much of it
+  // (offline 2026-11-24: 0.5 to 0.75 lose no held name, 0.4 loses 'red cross').
+  topicTermMin: 0.6,
+  // Shortest word that is checked for a typo.
+  typoMinLength: 5,
+};
 
 /** What the keyword list returns per hit for the name match. */
 export const NAME_SOURCE = [
@@ -34,9 +51,11 @@ export const NAME_SOURCE = [
 /** Most services of the named org(s) that lead the relevance order. */
 export const NAMED_ORG_PIN_MAX = 3;
 
-export type NameHit = MatchHit & {
+export type NameHit = {
   id: string;
+  text: string;
   org_id: string | null;
+  org_name: string | null;
   alternate_names: string[];
   service_name: string;
   taxonomy_names: string[];
@@ -59,48 +78,19 @@ export type NameClaim = {
   pins: string[];
 };
 
-/** One hit's `_source` as the match check reads it. */
-export function matchHit(source: unknown): MatchHit {
-  const src = (source ?? {}) as Record<string, unknown>;
-  const org = src.organization;
-  const orgName =
-    typeof org === 'string'
-      ? org
-      : typeof (org as { name?: unknown } | undefined)?.name === 'string'
-        ? (org as { name: string }).name
-        : null;
-  const text = [
-    src.name,
-    src.description,
-    src.summary,
-    ...taxonomyNames(src.taxonomies),
-  ]
-    .filter((x): x is string => typeof x === 'string')
-    .join(' ')
-    .toLowerCase();
-  return { org_name: orgName, text };
-}
-
 export function nameHit(id: string, source: unknown): NameHit {
   const src = (source ?? {}) as Record<string, unknown>;
-  const org = (src.organization ?? {}) as {
-    id?: unknown;
-    alternate_name?: unknown;
-  };
+  const org = (src.organization ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
   return {
-    ...matchHit(source),
     id,
-    org_id: typeof org.id === 'string' && org.id !== '' ? org.id : null,
+    text: hitText(source),
+    org_id: str(org.id),
+    org_name: str(org.name),
     alternate_names: alternateNames(org.alternate_name),
-    service_name: typeof src.name === 'string' ? src.name : '',
-    taxonomy_names: taxonomyNames(src.taxonomies),
+    service_name: str(src.name) ?? '',
+    taxonomy_names: taxonomyNames(src),
   };
-}
-
-function taxonomyNames(taxonomies: unknown): string[] {
-  return (Array.isArray(taxonomies) ? taxonomies : [])
-    .map((t) => (t as { name?: unknown } | null)?.name)
-    .filter((n): n is string => typeof n === 'string');
 }
 
 /** An org's alternate names: one string with ';' between names, or a list. */
@@ -143,11 +133,135 @@ function fixTypos(
 ): string[] {
   const known = queryWords(names.join(' '));
   return words.map((w) =>
-    w.length >= MATCH.typoMinLength &&
+    w.length >= NAME.typoMinLength &&
     unknownWords.includes(w) &&
     !known.includes(w)
       ? (known.find((k) => k.length >= 4 && withinOneEdit(w, k)) ?? w)
       : w,
+  );
+}
+
+const NAME_FUNCTION = new Set([
+  'the',
+  'of',
+  'and',
+  'for',
+  'a',
+  'an',
+  'in',
+  'inc',
+  'llc',
+  'at',
+  'to',
+  'on',
+]);
+
+const NAME_SEP = /,|\s[-\u2013]\s|'s\s|\sof\s|\(|:|\sat\s|\//i;
+
+/** The leading part of an org name, without function words, in order. */
+export function nameHead(name: string): string[] {
+  const head = queryWords(name.split(NAME_SEP)[0]).filter(
+    (w) => !NAME_FUNCTION.has(w),
+  );
+  return head.filter((w, i) => head.indexOf(w) === i);
+}
+
+const headWordHit = (w: string, t: string): boolean =>
+  w === t ||
+  w === t + 's' ||
+  t === w + 's' ||
+  (t.length >= 5 && w.startsWith(t));
+
+/** Lowercased all-caps tokens of 3+ letters ('DSHS'); none when the whole name is caps. */
+export function capsTokens(name: string): string[] {
+  if (name.toUpperCase() === name) return [];
+  return (name.match(/\b[A-Z]{3,}\b/g) ?? []).map((w) => w.toLowerCase());
+}
+
+function nameFits(qt: string[], name: string, prefix: boolean): boolean {
+  if (qt.length === 1 && capsTokens(name).includes(qt[0])) return true;
+  if (!holdsAllWords(qt, name)) return false;
+  const head = nameHead(name);
+  if (head.length === 0) return false;
+  const covered = head.filter((w) => qt.some((t) => headWordHit(w, t)));
+  if (covered.length / head.length < NAME.headCoverMin) return false;
+  return !prefix || covered.includes(head[0]);
+}
+
+export interface NameCandidate {
+  id: string;
+  name: string;
+  alternate_names: string[];
+}
+
+/**
+ * The candidates the query names, or null. A name that starts with the query
+ * words counts (`start`); otherwise at least `nonStartNamesMin` different names
+ * that share their first head word ('red cross': two American Red Cross regions).
+ */
+export function nameMatch(
+  words: string[],
+  candidates: NameCandidate[],
+): { start: boolean; org_ids: string[] } | null {
+  const qt = queryTokens(words);
+  if (qt.length === 0) return null;
+  const start: string[] = [];
+  const other: { id: string; name: string; first: string }[] = [];
+  for (const c of candidates) {
+    const names = [c.name, ...c.alternate_names];
+    if (names.some((n) => nameFits(qt, n, true))) {
+      start.push(c.id);
+      continue;
+    }
+    const name = names.find((n) => nameFits(qt, n, false));
+    if (name !== undefined)
+      other.push({ id: c.id, name, first: nameHead(name)[0] });
+  }
+  if (start.length > 0) return { start: true, org_ids: start };
+  const different = new Set(other.map((x) => x.name.toLowerCase())).size;
+  return different >= NAME.nonStartNamesMin &&
+    other.every((x) => x.first === other[0].first)
+    ? { start: false, org_ids: other.map((x) => x.id) }
+    : null;
+}
+
+/** Many hits hold the words but few have them in the org name: a common word, not a name. */
+export function genericName(words: string[], hits: NameHit[]): boolean {
+  const qt = queryTokens(words);
+  if (qt.length === 0) return false;
+  const holders = hits.filter((h) => {
+    const xt = new Set(queryWords(h.text));
+    return qt.every((t) => holdsWord(t, xt));
+  });
+  const inName = holders.filter((h) => holdsAllWords(words, h.org_name ?? ''));
+  return (
+    holders.length >= NAME.genericMinHolders &&
+    inName.length / holders.length < NAME.genericNameShareMax
+  );
+}
+
+const topicWordHit = (t: string, w: string): boolean =>
+  w === t ||
+  (t.length >= 4 &&
+    Math.abs(w.length - t.length) <= 3 &&
+    w.startsWith(t.slice(0, Math.max(4, t.length - 2))));
+
+/**
+ * Is the query a topic the directory itself has a term for ('food bank',
+ * 'housing authority')? A term holds every query word, and the query words
+ * cover most of the term. A '/' or '*' splits a term ('Food Banks/Food
+ * Distribution Warehouses'). No word list: the terms come from the hits.
+ */
+export function topicPhrase(words: string[], terms: string[]): boolean {
+  const qt = queryTokens(words);
+  if (qt.length === 0) return false;
+  return terms.some((term) =>
+    term.split(/[/*]/).some((part) => {
+      const tw = queryWords(part).filter((w) => !NAME_FUNCTION.has(w));
+      if (!qt.every((t) => tw.some((w) => topicWordHit(t, w)))) return false;
+      const covered = tw.filter((w) => qt.some((t) => topicWordHit(t, w)));
+      return covered.length / tw.length >= NAME.topicTermMin;
+    }),
   );
 }
 
@@ -188,7 +302,7 @@ export function claimName(i: {
   }
   const orgs = new Map<string, NameCandidate>();
   for (const h of hits) {
-    if (orgs.size >= MATCH.nameOrgs) break;
+    if (orgs.size >= NAME.orgs) break;
     if (h.org_id && h.org_name && !orgs.has(h.org_id)) {
       orgs.set(h.org_id, {
         id: h.org_id,
@@ -221,7 +335,7 @@ export function claimName(i: {
   }
   const byId = new Map(hits.map((h) => [h.id, h]));
   const order = i.fusedIds ?? hits.map((h) => h.id);
-  const top = order.slice(0, MATCH.topN).flatMap((id) => byId.get(id) ?? []);
+  const top = order.slice(0, NAME.topN).flatMap((id) => byId.get(id) ?? []);
   if (genericName(words, top)) return { ...none, veto: 'generic' };
 
   const ids = new Set(named.org_ids);

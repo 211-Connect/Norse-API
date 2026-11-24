@@ -1,9 +1,14 @@
 import {
+  NameCandidate,
   NameHit,
   NameHits,
   alternateNames,
+  capsTokens,
   claimName,
-  matchHit,
+  genericName,
+  nameHead,
+  nameMatch,
+  topicPhrase,
   nameHit,
   nameTypoClauses,
   nameWords,
@@ -326,9 +331,8 @@ describe('reading a hit', () => {
       alternate_names: ['Y', 'Y Camp'],
       service_name: 'Swim',
       taxonomy_names: ['Sports'],
-      text: 'swim pool sports',
+      text: 'Swim Pool Sports',
     });
-    expect(matchHit({ organization: 'Org' }).org_name).toBe('Org');
   });
   it('alternate names: a list, a string with ";", nothing', () => {
     expect(alternateNames('A; B;')).toEqual(['A', 'B']);
@@ -338,5 +342,185 @@ describe('reading a hit', () => {
   it('nameWords: empty when there is no word to match', () => {
     expect(nameWords(['food', 'bank'])).toEqual(['food', 'bank']);
     expect(nameWords(['i', 'need', '98101'])).toEqual([]);
+  });
+});
+
+const cand = (
+  id: string,
+  name: string,
+  alternate_names: string[] = [],
+): NameCandidate => ({ id, name, alternate_names });
+
+describe('name helpers', () => {
+  it('nameHead cuts at the first separator, drops function words', () => {
+    expect(nameHead('American Red Cross, Northwest Region')).toEqual([
+      'american',
+      'red',
+      'cross',
+    ]);
+    expect(nameHead('YMCA of Greater Seattle')).toEqual(['ymca']);
+    expect(nameHead("Mary's House Inc")).toEqual(['mary']);
+    expect(nameHead('Red Red Cross')).toEqual(['red', 'cross']);
+  });
+  it('capsTokens: none for an all-caps name', () => {
+    expect(capsTokens('CENTREVILLE POLICE DEPARTMENT')).toEqual([]);
+    expect(capsTokens('DSHS Community Services Offices')).toEqual(['dshs']);
+  });
+});
+
+describe('nameMatch', () => {
+  const run = (q: string, c: NameCandidate[]) => nameMatch(q.split(' '), c);
+  it('compass housing + Compass Housing Alliance: named', () => {
+    const r = run('compass housing', [cand('1', 'Compass Housing Alliance')]);
+    expect(r).toEqual({ start: true, org_ids: ['1'] });
+  });
+  it('advocate: not named (three different heads)', () => {
+    expect(
+      run('advocate', [
+        cand('1', 'Advocates for Children'),
+        cand('2', 'LAW Advocates'),
+        cand('3', 'Patient Advocate Foundation'),
+      ]),
+    ).toBeNull();
+  });
+  it('dshs: named by the caps token', () => {
+    expect(
+      run('dshs', [cand('1', 'DSHS Community Services Offices')]),
+    ).toMatchObject({ start: true });
+  });
+  it('food bank: not named (Auburn / Sequim / Mukilteo)', () => {
+    expect(
+      run('food bank', [
+        cand('1', 'Auburn Food Bank'),
+        cand('2', 'Sequim Food Bank'),
+        cand('3', 'Mukilteo Food Bank'),
+      ]),
+    ).toBeNull();
+  });
+  it('red cross (WA): named, regions with the same head word', () => {
+    const r = run('red cross', [
+      cand('1', 'American Red Cross, Northwest Region'),
+      cand('2', 'American Red Cross Cascades Region'),
+      cand('3', 'American Red Cross Serving King County'),
+      cand('4', 'American Red Cross of the Greater Inland Northwest'),
+      cand('5', 'American Red Cross, Northwest Washington Chapter'),
+    ]);
+    expect(r).toEqual({ start: false, org_ids: ['1', '4', '5'] });
+  });
+  it('salvation army + Salvation Army Longview: named', () => {
+    expect(
+      run('salvation army', [cand('1', 'Salvation Army Longview')]),
+    ).toMatchObject({ start: true });
+  });
+  it('police: not named (two cities)', () => {
+    expect(
+      run('police', [
+        cand('1', 'SeaTac Police Department'),
+        cand('2', 'Sequim Police Department'),
+      ]),
+    ).toBeNull();
+  });
+  it("ymca + 'Tri Town YMCA' with alternate 'YMCA': named", () => {
+    expect(run('ymca', [cand('1', 'Tri Town YMCA', ['YMCA'])])).toMatchObject({
+      start: true,
+    });
+  });
+  it('empty tokens or no candidates: not named', () => {
+    expect(run('a', [cand('1', 'A Org')])).toBeNull();
+    expect(run('ymca', [])).toBeNull();
+  });
+  it('a prefix match wins over others', () => {
+    const r = run('compass housing', [
+      cand('1', 'Friends of Compass Housing'),
+      cand('2', 'Compass Housing Alliance'),
+    ]);
+    expect(r?.org_ids).toEqual(['2']);
+  });
+  it('one name that only holds the words is not a name; two that agree are', () => {
+    const one = cand('1', 'Ballard Food Bank');
+    expect(run('food bank', [one])).toBeNull();
+    // One org stored twice is one name.
+    expect(run('food bank', [one, cand('2', 'BALLARD FOOD BANK')])).toBeNull();
+    expect(
+      run('food bank', [one, cand('2', 'Ballard Food Bank - Annex')]),
+    ).toEqual({ start: false, org_ids: ['1', '2'] });
+  });
+  it('the word order of the query does not matter', () => {
+    const c = [cand('1', 'Compass Housing Alliance')];
+    expect(run('housing compass', c)).toEqual(run('compass housing', c));
+  });
+  it('a name that starts with the words is one org', () => {
+    expect(run('food bank', [cand('1', 'Food Bank of X')])).toMatchObject({
+      start: true,
+    });
+  });
+  it('initials of a name are not read (only caps inside a name are)', () => {
+    const dshs = [cand('1', 'Department of Social and Health Services')];
+    expect(run('dshs', dshs)).toBeNull();
+  });
+});
+
+describe('generic word veto', () => {
+  const page = (org: string, text: string) => svc(org, 'x', { text });
+  it("'veterans': 20 hold it, 7 org names do: generic", () => {
+    const hits = [
+      ...Array.from({ length: 7 }, (_, i) =>
+        page(`Veterans Org ${i}`, 'veterans help'),
+      ),
+      ...Array.from({ length: 13 }, (_, i) =>
+        page(`Other ${i}`, 'veterans aid'),
+      ),
+    ];
+    expect(genericName(['veterans'], hits)).toBe(true);
+  });
+  it("'salvation army' 16 of 16: not generic", () => {
+    const hits = Array.from({ length: 16 }, () =>
+      page('Salvation Army', 'salvation army'),
+    );
+    expect(genericName(['salvation', 'army'], hits)).toBe(false);
+  });
+  it('fewer than 5 holders: not generic', () => {
+    expect(genericName(['x1y'], [page('Other', 'x1y')])).toBe(false);
+  });
+});
+
+describe('topicPhrase', () => {
+  const terms = [
+    'Food Pantries',
+    'Food Banks/Food Distribution Warehouses',
+    'General Legal Aid',
+    'Housing Authorities',
+    'Senior Centers',
+    'Homeless Shelter',
+    'Red Cross Disaster Service Centers',
+    'Individual Advocacy * Veterans',
+    'Case/Care Management',
+  ];
+  it.each([
+    'food pantry',
+    'food bank',
+    'legal aid',
+    'housing authority',
+    'senior center',
+    'homeless shelter',
+    'veterans',
+  ])('%s is a term of the directory', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(true);
+  });
+  it.each([
+    'red cross',
+    'ymca',
+    'goodwill',
+    'compass housing',
+    'salvation army',
+    'ballard food bank',
+    'food',
+  ])('%s is not', (q) => {
+    expect(topicPhrase(q.split(' '), terms)).toBe(false);
+  });
+  it('no query word, no term: false', () => {
+    expect(topicPhrase(['i', 'need'], terms)).toBe(false);
+    expect(topicPhrase(['food'], [])).toBe(false);
+    expect(topicPhrase(['food'], [' / '])).toBe(false);
   });
 });
