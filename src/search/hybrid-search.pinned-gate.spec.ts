@@ -56,6 +56,7 @@ const KEYWORD_SOURCES: Record<string, any> = {
   a: {
     name: 'Shelter beds',
     organization: { id: 'org-1', name: 'Compass Housing Alliance' },
+    taxonomies: [{ name: 'Transitional Programs' }],
   },
   b: {
     name: 'Laundry',
@@ -64,6 +65,7 @@ const KEYWORD_SOURCES: Record<string, any> = {
   c: {
     name: 'Day center',
     organization: { id: 'org-1', name: 'Compass Housing Alliance' },
+    taxonomies: [{ name: 'Transitional Programs' }],
   },
 };
 describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
@@ -544,6 +546,93 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       (service as any).keywordLocales = new Set(['es']);
       const res = await run({}, named);
       expect(res.nameClaim).toMatchObject({ status: 'ok', org_ids: [] });
+    });
+
+    describe('service name (serviceNames)', () => {
+      const svc = { nameWords: ['shelter', 'beds'] };
+      const bodies = () => JSON.stringify(requests);
+
+      // Every word is known: an unknown word would also start a typo read.
+      beforeEach(() => {
+        jest.spyOn(service as any, 'getWordRarity').mockResolvedValue({
+          words: {},
+          splits: [],
+          typoClauses: true,
+          unknown: [],
+        });
+      });
+
+      it('N11. on, a service name: that service leads under relevance, no request is added', async () => {
+        await run({}, svc);
+        const before = requests.length;
+        expect(order().slice(0, 2)).toEqual(['b', 'a']);
+        requests.length = 0;
+        const res = await run({}, { ...svc, serviceNames: true });
+        expect(requests).toHaveLength(before);
+        expect(order().slice(0, 2)).toEqual(['a', 'b']);
+        expect(res.nameClaim).toEqual({
+          status: 'ok',
+          org_ids: [],
+          veto: null,
+          pins: ['a'],
+          service_ids: ['a'],
+        });
+      });
+
+      it.each(['distance', 'name'])(
+        'N12. sort=%s: the claim holds, the order is not changed',
+        async (sort) => {
+          await run({ coords: SEA, sort }, svc);
+          const plain = JSON.stringify(mainRequest());
+          requests.length = 0;
+          const res = await run(
+            { coords: SEA, sort },
+            { ...svc, serviceNames: true },
+          );
+          expect(JSON.stringify(mainRequest())).toBe(plain);
+          expect(res.nameClaim.service_ids).toEqual(['a']);
+        },
+      );
+
+      it('N13. off: the requests and the claim are those without the option', async () => {
+        const plain = await run({}, svc);
+        const plainBodies = bodies();
+        requests.length = 0;
+        const off = await run({}, { ...svc, serviceNames: false });
+        expect(bodies()).toBe(plainBodies);
+        expect(off.nameClaim).toEqual(plain.nameClaim);
+        expect(off.nameClaim).not.toHaveProperty('service_ids');
+      });
+
+      it.each([
+        ['an org named', { nameWords: ['compass', 'housing'] }],
+        ['nothing named', { nameWords: ['zebra', 'crossing'] }],
+      ])('N14. on, %s: the same requests as off', async (_n, extra) => {
+        const off = await run({}, extra);
+        const offBodies = bodies();
+        requests.length = 0;
+        const on = await run({}, { ...extra, serviceNames: true });
+        expect(bodies()).toBe(offBodies);
+        expect(on.nameClaim).toEqual(off.nameClaim);
+      });
+
+      it('N15. the pins request leads with the named service', async () => {
+        const pinsOf = async (extra: Record<string, unknown>) => {
+          requests.length = 0;
+          const request = await service.buildPinsRequest({
+            headers,
+            query: baseQuery,
+            rankingVersion: 'v2',
+            ...extra,
+          } as any);
+          return JSON.stringify(request);
+        };
+        const off = await pinsOf(svc);
+        expect(await pinsOf({ ...svc, serviceNames: false })).toBe(off);
+        const on = await pinsOf({ ...svc, serviceNames: true });
+        expect(on).not.toBe(off);
+        expect(on.indexOf('"a"')).toBeLessThan(on.indexOf('"b"'));
+      });
     });
 
     it('N8. a word no document holds adds one name clause with one edit; other queries add none', async () => {

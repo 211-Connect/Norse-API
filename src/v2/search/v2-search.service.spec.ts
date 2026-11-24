@@ -86,6 +86,8 @@ function build(opts: {
   searchPins?: jest.Mock;
   /** V2_QUESTION_RULE_V1. Default 'true': the suites below test question rule v1. Any other value (or 'off') runs development's engine. */
   ruleV1?: string;
+  /** V2_SERVICE_NAME_MATCH. Default: unset. */
+  serviceNames?: string;
 }) {
   const classify = opts.classify ?? jest.fn().mockResolvedValue(okResult({}));
   const searchHybrid =
@@ -108,7 +110,11 @@ function build(opts: {
     { searchPins } as unknown as SearchService,
     {
       get: (k: string) =>
-        k === 'V2_QUESTION_RULE_V1' ? (opts.ruleV1 ?? 'true') : undefined,
+        k === 'V2_QUESTION_RULE_V1'
+          ? (opts.ruleV1 ?? 'true')
+          : k === 'V2_SERVICE_NAME_MATCH'
+            ? opts.serviceNames
+            : undefined,
     } as unknown as ConfigService,
   );
   return {
@@ -2634,6 +2640,7 @@ describe('V2SearchService name match (question rule v1)', () => {
   const ask = async (
     over: {
       ruleV1?: string;
+      serviceNames?: string;
       query?: string;
       claim?: unknown;
       sort?: string;
@@ -2641,6 +2648,7 @@ describe('V2SearchService name match (question rule v1)', () => {
   ) => {
     const b = build({
       ruleV1: over.ruleV1,
+      serviceNames: over.serviceNames,
       search: jest
         .fn()
         .mockResolvedValue(
@@ -2986,5 +2994,87 @@ describe('V2SearchService name match (question rule v1)', () => {
     expect(search).toHaveBeenCalledTimes(2);
     expect(search.mock.calls[0][0]).toHaveProperty('nameWords');
     expect(search.mock.calls[1][0]).not.toHaveProperty('nameWords');
+  });
+
+  it.each([undefined, '', 'false', '1', 'true '])(
+    'V2_SERVICE_NAME_MATCH %p: no serviceNames key on any call',
+    async (serviceNames) => {
+      const b = build({ serviceNames });
+      const query = dto({ query: 'compass closet' });
+      await b.service.search({ headers, query });
+      await b.service.pins({ headers, query });
+      expect(call(b.searchHybrid)).not.toHaveProperty('serviceNames');
+      expect(call(b.startEarlyRetrieval)).not.toHaveProperty('serviceNames');
+      expect(call(b.searchPins)).not.toHaveProperty('serviceNames');
+    },
+  );
+
+  it('V2_SERVICE_NAME_MATCH on, question rule v1 off: no serviceNames key', async () => {
+    const b = build({ serviceNames: 'true', ruleV1: 'off' });
+    const query = dto({ query: 'compass closet' });
+    await b.service.search({ headers, query });
+    await b.service.pins({ headers, query });
+    expect(call(b.searchHybrid)).not.toHaveProperty('serviceNames');
+    expect(call(b.startEarlyRetrieval)).not.toHaveProperty('serviceNames');
+    expect(call(b.searchPins)).not.toHaveProperty('serviceNames');
+  });
+
+  it('both flags on: serviceNames on the list, the early start and the pins', async () => {
+    const b = build({ serviceNames: 'TRUE' });
+    const query = dto({ query: 'compass closet' });
+    await b.service.search({ headers, query });
+    await b.service.pins({ headers, query });
+    expect(call(b.searchHybrid).serviceNames).toBe(true);
+    expect(call(b.startEarlyRetrieval).serviceNames).toBe(true);
+    expect(call(b.searchPins).serviceNames).toBe(true);
+  });
+
+  it('both flags on, no name words: no serviceNames key', async () => {
+    const b = build({ serviceNames: 'true' });
+    await b.service.search({ headers, query: dto({ query: 'i need help' }) });
+    expect(call(b.searchHybrid)).not.toHaveProperty('serviceNames');
+  });
+
+  it('a named service: no question, stored; a failed claim still asks, not stored', async () => {
+    const svcClaim = claim({
+      org_ids: [],
+      pins: ['s1'],
+      service_ids: ['s1'],
+    });
+    const named = await ask({ serviceNames: 'true', claim: svcClaim });
+    expect(asked(named)).toBe(0);
+    expect(isMarkedNotStorable(named.res)).toBe(false);
+    expect(JSON.stringify(named.res)).not.toContain('nameClaim');
+    expect(JSON.stringify(named.res)).not.toContain('service_ids');
+    const failed = await ask({
+      serviceNames: 'true',
+      claim: claim({ status: 'failed', org_ids: [], pins: [] }),
+    });
+    expect(asked(failed)).toBeGreaterThan(0);
+    expect(isMarkedNotStorable(failed.res)).toBe(true);
+  });
+
+  it('the text-free second call (weak match) gets no serviceNames', async () => {
+    const search = jest
+      .fn()
+      .mockResolvedValueOnce(
+        page({
+          judges: { keyword_top: 0.4, vector_top: 0.3 },
+          nameClaim: claim({ org_ids: [], pins: [] }),
+        }),
+      )
+      .mockResolvedValueOnce(page({ needCounts: { 'N-HOU': 10 } }));
+    const b = build({
+      serviceNames: 'true',
+      classify: jest.fn().mockResolvedValue(okResult({ 'N-FOD': 0.1 })),
+      search,
+    });
+    await b.service.search({
+      headers,
+      query: dto({ query: 'blorptastic zzz' }),
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls[0][0].serviceNames).toBe(true);
+    expect(search.mock.calls[1][0]).not.toHaveProperty('serviceNames');
   });
 });

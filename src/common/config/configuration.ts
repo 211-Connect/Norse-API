@@ -45,6 +45,8 @@ export default () => ({
   V2_SEARCH_ENABLED: process.env.V2_SEARCH_ENABLED,
   // Question rule v1 for /v2/search; on only for `true` (any case, no spaces; read by envFlag).
   V2_QUESTION_RULE_V1: process.env.V2_QUESTION_RULE_V1,
+  // Service name match for /v2/search (needs V2_QUESTION_RULE_V1); on only for `true` (read by envFlag, per request).
+  V2_SERVICE_NAME_MATCH: process.env.V2_SERVICE_NAME_MATCH,
   // Timeout of the /v2/search classify call, in ms (integer; default 1000).
   V2_CLASSIFY_TIMEOUT_MS: process.env.V2_CLASSIFY_TIMEOUT_MS,
   // ml-broker accepts `emergency_only` on search-classification (ml-broker
