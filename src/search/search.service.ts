@@ -67,8 +67,6 @@ type SearchOptions = {
   urgencyBoost?: { code: 'U-1' | 'U-2' | 'U-3' | 'U-4'; score: number };
   /** Set by the v2 pins route: the words of a named org of the kept set. Hybrid pins only. */
   nameWords?: string[];
-  /** Set by the v2 routes with `nameWords`: a service name counts as a named org. */
-  serviceNames?: boolean;
 };
 
 @Injectable()

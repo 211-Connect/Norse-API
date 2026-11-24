@@ -312,12 +312,6 @@ type HybridSearchOptions = {
    * changes.
    */
   nameWords?: string[];
-  /**
-   * v2 only, with `nameWords`. A query that is the (near) full name of one
-   * org's service counts as a named org: its services lead a relevance order.
-   * Absent or false: nothing changes.
-   */
-  serviceNames?: boolean;
 };
 
 /**
@@ -1435,7 +1429,6 @@ export class HybridSearchService {
             list: nameHits,
             unknownWords: wordRarity?.unknown ?? null,
             fusedIds,
-            ...(options.serviceNames && { serviceNames: true }),
           })
         : undefined;
     // The claim holds on every sort; only a relevance order is changed by it.

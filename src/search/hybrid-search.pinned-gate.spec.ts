@@ -548,9 +548,8 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       expect(res.nameClaim).toMatchObject({ status: 'ok', org_ids: [] });
     });
 
-    describe('service name (serviceNames)', () => {
+    describe('service name', () => {
       const svc = { nameWords: ['shelter', 'beds'] };
-      const bodies = () => JSON.stringify(requests);
 
       // Every word is known: an unknown word would also start a typo read.
       beforeEach(() => {
@@ -562,12 +561,12 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
         });
       });
 
-      it('N11. on, a service name: that service leads under relevance, no request is added', async () => {
-        await run({}, svc);
+      it('N11. a service name: that service leads under relevance, no request is added', async () => {
+        await run({}, {});
         const before = requests.length;
         expect(order().slice(0, 2)).toEqual(['b', 'a']);
         requests.length = 0;
-        const res = await run({}, { ...svc, serviceNames: true });
+        const res = await run({}, svc);
         expect(requests).toHaveLength(before);
         expect(order().slice(0, 2)).toEqual(['a', 'b']);
         expect(res.nameClaim).toEqual({
@@ -582,41 +581,16 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
       it.each(['distance', 'name'])(
         'N12. sort=%s: the claim holds, the order is not changed',
         async (sort) => {
-          await run({ coords: SEA, sort }, svc);
+          await run({ coords: SEA, sort }, {});
           const plain = JSON.stringify(mainRequest());
           requests.length = 0;
-          const res = await run(
-            { coords: SEA, sort },
-            { ...svc, serviceNames: true },
-          );
+          const res = await run({ coords: SEA, sort }, svc);
           expect(JSON.stringify(mainRequest())).toBe(plain);
           expect(res.nameClaim.service_ids).toEqual(['a']);
         },
       );
 
-      it('N13. off: the requests and the claim are those without the option', async () => {
-        const plain = await run({}, svc);
-        const plainBodies = bodies();
-        requests.length = 0;
-        const off = await run({}, { ...svc, serviceNames: false });
-        expect(bodies()).toBe(plainBodies);
-        expect(off.nameClaim).toEqual(plain.nameClaim);
-        expect(off.nameClaim).not.toHaveProperty('service_ids');
-      });
-
-      it.each([
-        ['an org named', { nameWords: ['compass', 'housing'] }],
-        ['nothing named', { nameWords: ['zebra', 'crossing'] }],
-      ])('N14. on, %s: the same requests as off', async (_n, extra) => {
-        const off = await run({}, extra);
-        const offBodies = bodies();
-        requests.length = 0;
-        const on = await run({}, { ...extra, serviceNames: true });
-        expect(bodies()).toBe(offBodies);
-        expect(on.nameClaim).toEqual(off.nameClaim);
-      });
-
-      it('N15. the pins request leads with the named service', async () => {
+      it('N13. the pins request leads with the named service', async () => {
         const pinsOf = async (extra: Record<string, unknown>) => {
           requests.length = 0;
           const request = await service.buildPinsRequest({
@@ -627,9 +601,8 @@ describe('HybridSearchService — v2 pinned gate (Lucas 2026-11-18)', () => {
           } as any);
           return JSON.stringify(request);
         };
-        const off = await pinsOf(svc);
-        expect(await pinsOf({ ...svc, serviceNames: false })).toBe(off);
-        const on = await pinsOf({ ...svc, serviceNames: true });
+        const off = await pinsOf({});
+        const on = await pinsOf(svc);
         expect(on).not.toBe(off);
         expect(on.indexOf('"a"')).toBeLessThan(on.indexOf('"b"'));
       });

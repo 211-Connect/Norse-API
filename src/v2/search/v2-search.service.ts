@@ -317,14 +317,6 @@ export class V2SearchService {
     );
   }
 
-  /** Service name match switch, read per request. It works only with question rule v1. */
-  private serviceNamesOn(): boolean {
-    return envFlag(
-      this.configService.get<string>('V2_SERVICE_NAME_MATCH'),
-      false,
-    );
-  }
-
   /** Question rule v1: the words the keyword list may name an org by. The list and the pins use the same. */
   private orgWordsOf(text: string, headers: HeadersDto): string[] {
     return this.ruleV1()
@@ -364,7 +356,6 @@ export class V2SearchService {
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const text = dto.query;
     const orgWords = this.orgWordsOf(text, headers);
-    const serviceNames = this.serviceNamesOn();
     let needScores: NeedScore[] | undefined;
     let urgencyBoost: HybridCall['urgencyBoost'];
     if (text.trim().length > 0) {
@@ -389,7 +380,6 @@ export class V2SearchService {
         ...(needScores && { needScores }),
         ...(urgencyBoost && { urgencyBoost }),
         ...(orgWords.length > 0 && { nameWords: orgWords }),
-        ...(serviceNames && orgWords.length > 0 && { serviceNames: true }),
       })
       .catch((error: unknown) => throwCallerError(error, headers));
   }
@@ -522,7 +512,6 @@ export class V2SearchService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { needs, passed_needs, urgency, clarify, ...v1Fields } = dto;
     const orgWords = this.orgWordsOf(text, headers);
-    const serviceNames = this.serviceNamesOn();
     // What retrieval gets that does not depend on classify. It is built once:
     // the early start and the final call use the same values.
     const retrievalOptions = {
@@ -541,7 +530,6 @@ export class V2SearchService {
       ...(selectedNeeds.length > 0 && { selectedNeeds }),
       body,
       ...(orgWords.length > 0 && { nameWords: orgWords }),
-      ...(serviceNames && orgWords.length > 0 && { serviceNames: true }),
     };
     // Everything in retrieval that does not read the classify result starts
     // now, in parallel with the tenant config read and classify: the embedding,
@@ -621,13 +609,11 @@ export class V2SearchService {
       early: _early,
       urgencyBoost: _urgencyBoost,
       nameWords: _nameWords,
-      serviceNames: _serviceNames,
       ...withoutEarly
     } = hybridCall;
     void _early;
     void _urgencyBoost;
     void _nameWords;
-    void _serviceNames;
     const first = await withSpan('v2.retrieval', () =>
       this.runSearch(hybridCall, headers),
     );

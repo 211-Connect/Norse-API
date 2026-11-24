@@ -15,7 +15,7 @@ import {
  * area, cutoff), so a named org is inside them on every sort and no other read
  * is needed.
  *
- * With `serviceNames` the list also answers a second question: is the query
+ * The list also answers a second question: is the query
  * the (near) full name of one service of one org? That counts like a named
  * org. The org rule goes first. The service rule runs only when no org is
  * named and no veto fired.
@@ -93,7 +93,7 @@ export type NameClaim = {
   pins: string[];
   /**
    * The services the query names, in the fused order. Present only when a
-   * service is named (`serviceNames`); `org_ids` is then empty.
+   * service is named; `org_ids` is then empty.
    */
   service_ids?: string[];
 };
@@ -407,7 +407,7 @@ function serviceClaim(
  * questions stay as they are. A claim is dropped when the words are a topic of
  * the directory or a common word in the top hits.
  *
- * With `serviceNames`, a query that names no org may name one service of one
+ * A query that names no org may name one service of one
  * org (`service_ids`). The org rule wins, and a veto of the org rule is final.
  */
 export function claimName(i: {
@@ -417,8 +417,6 @@ export function claimName(i: {
   unknownWords: string[] | null;
   /** The fused order; undefined: the keyword order stands in. */
   fusedIds: string[] | undefined;
-  /** Also look for the full name of one service. Absent: orgs only. */
-  serviceNames?: boolean;
 }): NameClaim {
   const none: NameClaim = { status: 'ok', org_ids: [], veto: null, pins: [] };
   const { hits, state } = i.list;
@@ -452,7 +450,7 @@ export function claimName(i: {
   const byId = byIdOf(hits);
   const order = i.fusedIds ?? hits.map((h) => h.id);
   if (!named || (!named.start && offeredByOthers(words, hits))) {
-    const service = i.serviceNames ? serviceClaim(i.words, hits, order) : null;
+    const service = serviceClaim(i.words, hits, order);
     if (!service) return none;
     return {
       ...none,
