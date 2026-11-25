@@ -40,6 +40,13 @@ Required env vars:
 - `ML_BROKER_BASE_URL`
 - `ML_BROKER_API_KEY`
 
+Optional, v1 only (`/ai-search`, needs-classification):
+
+- `ML_BROKER_V1_BASE_URL`: broker for v1 predict and re-rank. Unset or empty: v1 uses `ML_BROKER_BASE_URL`.
+- `ML_BROKER_V1_API_KEY`: key for that broker. Unset or empty: v1 uses `ML_BROKER_API_KEY`.
+
+`/v2/search` never reads the two `ML_BROKER_V1_*` settings.
+
 Runtime constants:
 
 - `top_k = 250` for predict and re-rank.
