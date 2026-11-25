@@ -73,6 +73,22 @@ describe('logger config', () => {
       ).toBe('warn');
     });
 
+    it('ignores Nest context in pretty development logs', () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'development';
+        const options = buildLoggerOptions('log')
+          .pinoHttp as pino.LoggerOptions;
+        expect(options.transport).toMatchObject({
+          target: 'pino-pretty',
+          options: { ignore: 'context' },
+        });
+      } finally {
+        if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalNodeEnv;
+      }
+    });
+
     it('emits one JSON object per line with string level and ISO time and msg key', () => {
       const line = logLine(
         buildLoggerOptions('log').pinoHttp as pino.LoggerOptions,

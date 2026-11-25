@@ -45,6 +45,16 @@ export function buildLoggerOptions(logLevel: string): Params {
   return {
     pinoHttp: {
       level,
+      ...(process.env.NODE_ENV === 'development' && {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            ignore: 'context,pid,hostname',
+            translateTime: 'SYS:standard',
+          },
+        },
+      }),
       messageKey: 'msg',
       // pino's default timestamp is already ISO 8601.
       timestamp: pino.stdTimeFunctions.isoTime,
