@@ -3,7 +3,11 @@ import { RequestCacheService } from './request-cache.service';
 describe('RequestCacheService many-key calls', () => {
   const build = (cache: Record<string, jest.Mock>) => {
     const metrics = { recordCacheAccess: jest.fn() };
-    const service = new RequestCacheService(cache as any, metrics as any);
+    const service = new RequestCacheService(
+      cache as any,
+      metrics as any,
+      { get: () => undefined } as any,
+    );
     return { service, metrics };
   };
 

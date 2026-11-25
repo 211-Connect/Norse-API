@@ -18,6 +18,8 @@ export interface HybridIndexDeps {
   cache: Pick<RequestCacheService, 'getOrSet'>;
   metrics: Pick<MetricsService, 'observeDownstream'>;
   logger: Pick<Logger, 'warn'>;
+  /** Longest wait for the alias check, in ms; unset = the client default. */
+  aliasCheckLimitMs?: number;
 }
 
 /**
@@ -49,7 +51,13 @@ export async function resolveHybridIndex(
         deps.metrics.observeDownstream(
           'elasticsearch',
           'hybrid_alias_exists',
-          () => deps.elasticsearch.indices.existsAlias({ name: alias }),
+          () =>
+            deps.aliasCheckLimitMs === undefined
+              ? deps.elasticsearch.indices.existsAlias({ name: alias })
+              : deps.elasticsearch.indices.existsAlias(
+                  { name: alias },
+                  { requestTimeout: deps.aliasCheckLimitMs },
+                ),
         ),
       HYBRID_ALIAS_EXISTS_TTL_MS,
     );

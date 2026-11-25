@@ -39,6 +39,10 @@ import { EmbeddingResponse, Aggregations } from './types';
 import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { PinnedResourcesMode } from '../cms-config/types/search-config-cache';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import {
+  HYBRID_ALIAS_CHECK_LIMIT_MS,
+  requestCacheLimitEnabled,
+} from 'src/common/services/cache/request-cache-limit';
 import { hybridDocumentsCountCacheKey } from './internal/cache-key/hybrid-documents-count-cache-key';
 import { envFlag } from 'src/common/config/configuration';
 import { matchLocale } from 'src/common/locales';
@@ -568,6 +572,7 @@ export class HybridSearchService {
 
   private readonly embeddingCacheEnabled: boolean;
   private readonly embeddingCacheTtlMs: number;
+  private readonly aliasCheckLimitMs: number | undefined;
 
   constructor(
     private readonly elasticsearchService: ElasticsearchService,
@@ -602,6 +607,9 @@ export class HybridSearchService {
     );
     this.embeddingCacheTtlMs =
       Number.isInteger(ttl) && ttl > 0 ? ttl : DEFAULT_EMBEDDING_CACHE_TTL_MS;
+    this.aliasCheckLimitMs = requestCacheLimitEnabled(this.configService)
+      ? HYBRID_ALIAS_CHECK_LIMIT_MS
+      : undefined;
     this.keywordLocales = parseKeywordLocales(
       this.configService.get<string>('V2_KEYWORD_LOCALES'),
     );
@@ -3574,6 +3582,7 @@ export class HybridSearchService {
         cache: this.requestCacheService,
         metrics: this.metrics,
         logger: this.logger,
+        aliasCheckLimitMs: this.aliasCheckLimitMs,
       },
       tenantId,
       lang,

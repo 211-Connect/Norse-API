@@ -80,6 +80,7 @@ describe('SearchClassificationClient cache', () => {
       new RequestCacheService(
         cacheManager as any,
         metrics as unknown as MetricsService,
+        configService,
       ),
     );
   };

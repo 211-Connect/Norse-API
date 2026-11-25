@@ -1,20 +1,57 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ConfigService } from '@nestjs/config';
 import { Cache } from 'cache-manager';
 import { MetricsService } from 'src/metrics/metrics.service';
+import {
+  REQUEST_CACHE_LIMIT_MS,
+  requestCacheLimitEnabled,
+} from './request-cache-limit';
 
 const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000;
+
+/** Redis did not answer within `REQUEST_CACHE_LIMIT_MS`. */
+class RequestCacheTimeout extends Error {
+  constructor() {
+    super(`no answer within ${REQUEST_CACHE_LIMIT_MS} ms`);
+  }
+}
 
 @Injectable()
 export class RequestCacheService {
   private readonly logger = new Logger(RequestCacheService.name);
+
+  private readonly limitEnabled: boolean;
 
   private readonly inflight = new Map<string, Promise<unknown>>();
 
   constructor(
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly metrics: MetricsService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.limitEnabled = requestCacheLimitEnabled(config);
+  }
+
+  /**
+   * Runs one Redis call. With the limit on, a call with no answer rejects and
+   * the caller goes on as after any Redis error; the late answer is ignored.
+   */
+  private async limited<T>(call: () => Promise<T>): Promise<T> {
+    if (!this.limitEnabled) return call();
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new RequestCacheTimeout()),
+        REQUEST_CACHE_LIMIT_MS,
+      );
+    });
+    try {
+      return await Promise.race([call(), limit]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async getOrSet<T>(
     key: string,
@@ -47,14 +84,16 @@ export class RequestCacheService {
     factory: () => Promise<T>,
     ttlMs: number,
   ): Promise<T> {
+    let readTimedOut = false;
     try {
-      const cacheHit = await this.cacheManager.get<T>(key);
+      const cacheHit = await this.limited(() => this.cacheManager.get<T>(key));
       if (cacheHit !== undefined && cacheHit !== null) {
         this.logger.debug(`Redis cache hit: ${key}`);
         this.metrics.recordCacheAccess('request-redis', 'hit');
         return cacheHit;
       }
     } catch (error) {
+      readTimedOut = error instanceof RequestCacheTimeout;
       this.logger.warn(`Redis cache get failed for ${key}: ${error}`);
       this.metrics.recordCacheAccess('request-redis', 'get-error');
     }
@@ -62,9 +101,11 @@ export class RequestCacheService {
     this.logger.debug(`Redis cache miss: ${key}`);
     this.metrics.recordCacheAccess('request-redis', 'miss');
     const result = await factory();
+    // Redis just hung: do not hold the answer for a second limit.
+    if (readTimedOut) return result;
 
     try {
-      await this.cacheManager.set(key, result, ttlMs);
+      await this.limited(() => this.cacheManager.set(key, result, ttlMs));
     } catch (error) {
       this.logger.warn(`Redis cache set failed for ${key}: ${error}`);
     }
@@ -79,7 +120,7 @@ export class RequestCacheService {
   async getMany<T>(keys: string[]): Promise<Array<T | undefined>> {
     if (keys.length === 0) return [];
     try {
-      const values = await this.cacheManager.mget<T>(keys);
+      const values = await this.limited(() => this.cacheManager.mget<T>(keys));
       return keys.map((key, i) => {
         const value = values[i];
         if (value === undefined || value === null) {
@@ -111,7 +152,7 @@ export class RequestCacheService {
     }));
     if (list.length === 0) return;
     try {
-      await this.cacheManager.mset(list);
+      await this.limited(() => this.cacheManager.mset(list));
     } catch (error) {
       this.logger.warn(
         `Redis cache mset failed for ${list.length} keys: ${error}`,
@@ -123,7 +164,7 @@ export class RequestCacheService {
   async deleteMany(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
     try {
-      await this.cacheManager.mdel(keys);
+      await this.limited(() => this.cacheManager.mdel(keys));
     } catch (error) {
       this.logger.warn(
         `Redis cache mdel failed for ${keys.length} keys: ${error}`,

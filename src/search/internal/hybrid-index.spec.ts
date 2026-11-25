@@ -43,6 +43,18 @@ describe('resolveHybridIndex', () => {
     });
   });
 
+  it('passes the alias check limit to Elasticsearch when one is set', async () => {
+    const existsAlias = jest.fn().mockResolvedValue(true);
+    const { d } = deps(existsAlias);
+    await expect(
+      resolveHybridIndex({ ...d, aliasCheckLimitMs: 1000 }, TENANT, 'en'),
+    ).resolves.toBe(`${TENANT}-hybrid_search_resources_en`);
+    expect(existsAlias).toHaveBeenCalledWith(
+      { name: `${TENANT}-hybrid_search_resources_en` },
+      { requestTimeout: 1000 },
+    );
+  });
+
   it('returns the shared name when the tenant has no alias', async () => {
     const { d } = deps(jest.fn().mockResolvedValue(false));
     await expect(resolveHybridIndex(d, TENANT, 'en')).resolves.toBe(

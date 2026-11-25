@@ -12,6 +12,7 @@ import { TenantConfigService } from '../cms-config/tenant-config.service';
 import { SearchUtilsService } from './search-utils.service';
 import { BoundedKeyRegistry } from './internal/cache-key/bounded-key-registry';
 import { RequestCacheService } from 'src/common/services/cache/request-cache.service';
+import { HYBRID_ALIAS_CHECK_LIMIT_MS } from 'src/common/services/cache/request-cache-limit';
 import { MetricsService } from 'src/metrics/metrics.service';
 
 const headers = {
@@ -1383,9 +1384,10 @@ describe('HybridSearchService', () => {
 
       await service.searchHybrid({ headers, query: baseQuery });
 
-      expect(esExistsAlias).toHaveBeenCalledWith({
-        name: 'tenant-a-hybrid_search_resources_en',
-      });
+      expect(esExistsAlias).toHaveBeenCalledWith(
+        { name: 'tenant-a-hybrid_search_resources_en' },
+        { requestTimeout: HYBRID_ALIAS_CHECK_LIMIT_MS },
+      );
       expect(capturedMainRequest.index).toBe(
         'tenant-a-hybrid_search_resources_en',
       );

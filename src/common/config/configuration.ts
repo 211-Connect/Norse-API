@@ -38,6 +38,9 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
+  // Limit on each request-Redis call and on the hybrid alias check; default in
+  // src/common/services/cache/request-cache-limit.ts.
+  REQUEST_CACHE_LIMIT_ENABLED: process.env.REQUEST_CACHE_LIMIT_ENABLED,
   // Need boost on hybrid search (ISS-2745); on unless `false` (any case; read by envFlag).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,
