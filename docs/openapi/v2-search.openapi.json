@@ -5,7 +5,7 @@
       "get": {
         "operationId": "DocumentedV2SearchController_getResources",
         "summary": "Search with intent and clarification questions, the emergency question first (draft)",
-        "description": "Hybrid search plus classification and a rules engine. Always on; the request and response shapes are a draft until the v2 ADR (ISS-2493).",
+        "description": "Hybrid search plus classification and a rules engine. Behind the `V2_SEARCH_ENABLED` flag; the request and response shapes are a draft until the v2 ADR (ISS-2493).",
         "parameters": [
           {
             "name": "page",
@@ -282,6 +282,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -291,7 +294,7 @@
       "post": {
         "operationId": "DocumentedV2SearchController_getResourcesPost",
         "summary": "Search with a GeoJSON geometry body (draft)",
-        "description": "Same as `GET`, with the v1 POST body (`geometry`). The shapes are a draft until the v2 ADR (ISS-2493).",
+        "description": "Same as `GET`, with the v1 POST body (`geometry`). Behind the `V2_SEARCH_ENABLED` flag; the shapes are a draft until the v2 ADR (ISS-2493).",
         "parameters": [
           {
             "name": "page",
@@ -584,6 +587,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -595,7 +601,7 @@
       "get": {
         "operationId": "DocumentedV2SearchController_getPins",
         "summary": "Map pins for a v2 search (draft)",
-        "description": "The locations of a v2 search independent of list pagination, up to 10,000. Same membership as `GET /v2/search` (child taxonomy codes, `region`); needs, urgency and clarify are ignored. The query text is classified, as in the list, so need boosts apply to the pins. Matches without coordinates are left out.",
+        "description": "The locations of a v2 search independent of list pagination, up to 10,000. Same membership as `GET /v2/search` (child taxonomy codes, `region`); needs, urgency and clarify are ignored. The query text is classified, as in the list, so need boosts apply to the pins. Matches without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.",
         "parameters": [
           {
             "name": "page",
@@ -872,6 +878,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -882,7 +891,7 @@
   },
   "info": {
     "title": "Norse API: v2 search (draft)",
-    "description": "Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.\n\nConfirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):\n- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.\n- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.\n- The need boost is on by default.\n- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.\n- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on. Both choose the search Norse's own pages use; neither gates `/v2/search`, which is always on for every tenant a key may read.",
+    "description": "Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.\n\nConfirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):\n- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.\n- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.\n- The need boost is on by default.\n- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.\n- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on. Both choose the search Norse's own pages use.\n\nChanged 2026-11-25 (replaces the per-tenant gate on `/v2/search` of Decisions 81 and 91): `enableV2Api` does not gate the API. One deployment switch, `V2_SEARCH_ENABLED`, turns the route on for every tenant a key may read.",
     "version": "2.0.0-draft",
     "contact": {}
   },

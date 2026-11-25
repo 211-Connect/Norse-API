@@ -12,6 +12,7 @@ import { LRUCache } from 'lru-cache';
 import qs from 'qs';
 import { CmsRedisService } from './cms-redis.service';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 import {
   FacetConfig,
   FacetsConfigCache,
@@ -202,7 +203,9 @@ export class TenantConfigService {
   /**
    * Reads tenant search configuration written by PayloadCMS to Redis DB 2 under
    * `search_config:${tenantId}`. Returns an empty object when missing or on
-   * error so callers can safely fall back to default search behavior.
+   * error so callers can safely fall back to default search behavior. The
+   * object for a failed read is marked not storable (`isMarkedNotStorable`):
+   * a caller must not let a shared cache keep an answer built on it.
    */
   async getSearchConfig(tenantId: string): Promise<SearchConfigCache> {
     this.logger.debug(`Fetching search config for tenant: ${tenantId}`);
@@ -220,7 +223,8 @@ export class TenantConfigService {
       await this.readSearchConfigFromRedis(tenantId);
     // A failed read is not cached: the next request reads Redis again, so the
     // defaults do not outlive the outage by the LRU TTL.
-    if (!redisFailed) this.searchConfigCache.set(tenantId, config);
+    if (redisFailed) return markNotStorable(config);
+    this.searchConfigCache.set(tenantId, config);
     return config;
   }
 

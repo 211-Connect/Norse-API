@@ -6,6 +6,7 @@ import { TenantConfigService } from './tenant-config.service';
 import { CmsRedisService } from './cms-redis.service';
 import { MetricsService } from 'src/metrics/metrics.service';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
+import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 describe('TenantConfigService cache metrics', () => {
   let service: TenantConfigService;
@@ -239,6 +240,20 @@ describe('TenantConfigService cache metrics', () => {
     it('is false when Redis fails', async () => {
       cmsRedisService.get.mockRejectedValue(new Error('redis down'));
       await expect(service.isV2Tenant('tenant-err')).resolves.toBe(false);
+    });
+
+    it('getSearchConfig marks only the result of a failed read', async () => {
+      cmsRedisService.get.mockRejectedValue(new Error('redis down'));
+      const failed = await service.getSearchConfig('t-failed');
+      expect(isMarkedNotStorable(failed)).toBe(true);
+
+      cmsRedisService.get.mockResolvedValue(null);
+      const missing = await service.getSearchConfig('t-missing');
+      expect(isMarkedNotStorable(missing)).toBe(false);
+
+      cmsRedisService.get.mockResolvedValue(JSON.stringify({}));
+      const read = await service.getSearchConfig('t-read');
+      expect(isMarkedNotStorable(read)).toBe(false);
     });
 
     it('getSearchConfig does not cache a failed read', async () => {
