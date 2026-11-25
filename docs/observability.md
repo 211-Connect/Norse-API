@@ -145,7 +145,12 @@ TraceQL examples: `{ name = "v2.search" && duration > 800ms }`,
 Privacy: a span attribute set by Norse-API code must be on the allowlist in
 [src/tracing-sanitizing-exporter.ts](../src/tracing-sanitizing-exporter.ts), or the
 exporter drops it. Only names, counts, flags and durations go on a span; never search
-text, coordinates or keys. A failed span records the error name, not its message.
+text, coordinates or keys. A failed span from `withSpan` records the error name, not its message. Auto-instrumented
+spans can still carry an error message (Redis, HTTP, Elasticsearch); code must not call
+`recordException` or `setStatus` with text from a Mongo error.
+Mongo and mongoose spans (`db.system` `mongodb` or `mongoose`) also lose `db.query.text`,
+`db.statement`, the exception message and stack, and the status text: a write error
+(for example a duplicate key) holds the stored value. Redis spans keep the command name.
 
 ## URL privacy rules
 

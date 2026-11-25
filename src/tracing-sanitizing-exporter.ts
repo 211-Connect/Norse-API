@@ -57,6 +57,14 @@ const ALLOWED_ATTRIBUTES = [
   'hybrid.fast_page',
   'hybrid.cutoff',
   'hybrid.need_counts',
+  // Bounded values only (no user text): `hybrid.embed_winner` is local, remote
+  // or none; `v2.match` is concentrated, spread or none; `v2.match.name` is
+  // skipped, failed, named, none or veto_generic/veto_topic; `v2.urgency_boost`
+  // is none or U-1 to U-4. The searched name is never written to these.
+  'hybrid.embed_winner',
+  'v2.match',
+  'v2.match.name',
+  'v2.urgency_boost',
 ] as const;
 
 /** Non-sensitive instrumentation families (e.g. `db.system`, `nestjs.type`). */
@@ -106,6 +114,35 @@ const URL_ATTRIBUTES = [
  * search data (Redis cache keys were built from geocoded addresses).
  */
 const STATEMENT_ATTRIBUTES = ['db.query.text', 'db.statement'] as const;
+
+/**
+ * Spans of the Mongo driver and of mongoose. Their statement text keeps real
+ * field names, and the error text of a write error (for example a duplicate
+ * key) holds the stored value, so none of it leaves the process. Redis keeps
+ * the command name (see STATEMENT_ATTRIBUTES): the Redis error text holds no
+ * stored value.
+ */
+const MONGO_SYSTEMS = ['mongodb', 'mongoose'] as const;
+const MONGO_DROPPED_ATTRIBUTES = [
+  'db.query.text',
+  'db.statement',
+  'otel.status_description',
+] as const;
+const MONGO_DROPPED_EVENT_ATTRIBUTES = [
+  'exception.message',
+  'exception.stacktrace',
+] as const;
+
+function isMongoSpan(attributes: Record<string, unknown>): boolean {
+  // Both keys: instrumentation versions differ (old `db.system`, new `db.system.name`).
+  return ['db.system.name', 'db.system'].some((key) => {
+    const system = attributes[key];
+    return (
+      typeof system === 'string' &&
+      (MONGO_SYSTEMS as readonly string[]).includes(system)
+    );
+  });
+}
 
 /** Event attributes safe to export from an exception event. */
 const ALLOWED_EVENT_ATTRIBUTES = [
@@ -172,12 +209,17 @@ export function sanitizeExportedSpan(span: ReadableSpan): void {
     name: string;
     attributes: Record<string, unknown>;
     events?: Array<{ attributes?: Record<string, unknown> }>;
+    status?: { code: number; message?: string };
   } = span as unknown as {
     name: string;
     attributes: Record<string, unknown>;
     events?: Array<{ attributes?: Record<string, unknown> }>;
+    status?: { code: number; message?: string };
   };
   const { attributes } = mutableSpan;
+  // Read before the allowlist step: `db.system` stays on the allowlist, but
+  // the check must not depend on that.
+  const mongo = isMongoSpan(attributes);
 
   for (const key of Object.keys(attributes)) {
     if (!isAllowedAttribute(key)) {
@@ -200,9 +242,22 @@ export function sanitizeExportedSpan(span: ReadableSpan): void {
     attributes[key] = value.trim().split(/\s+/)[0];
   }
 
+  if (mongo) {
+    for (const key of MONGO_DROPPED_ATTRIBUTES) delete attributes[key];
+    if (mutableSpan.status?.message !== undefined) {
+      mutableSpan.status = { ...mutableSpan.status };
+      delete mutableSpan.status.message;
+    }
+  }
+
   for (const event of mutableSpan.events ?? []) {
     if (!event.attributes) continue;
     const eventAttributes = event.attributes;
+    if (mongo) {
+      for (const key of MONGO_DROPPED_EVENT_ATTRIBUTES) {
+        delete eventAttributes[key];
+      }
+    }
     for (const key of Object.keys(eventAttributes)) {
       if (!(ALLOWED_EVENT_ATTRIBUTES as readonly string[]).includes(key)) {
         delete eventAttributes[key];

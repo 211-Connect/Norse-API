@@ -10,8 +10,9 @@ function fakeSpan(
   name: string,
   attributes: Record<string, unknown>,
   events: Array<{ attributes?: Record<string, unknown> }> = [],
+  status?: { code: number; message?: string },
 ): ReadableSpan {
-  return { name, attributes, events } as unknown as ReadableSpan;
+  return { name, attributes, events, status } as unknown as ReadableSpan;
 }
 
 function fakeDelegate(): {
@@ -136,6 +137,11 @@ describe('SanitizingSpanExporter', () => {
       'hybrid.fast_page': true,
       'hybrid.cutoff': false,
       'hybrid.need_counts': true,
+      // Bounded values only: a side name, a rule category, a U-code.
+      'hybrid.embed_winner': 'local',
+      'v2.match': 'concentrated',
+      'v2.match.name': 'veto_generic',
+      'v2.urgency_boost': 'U-2',
     };
     const span = fakeSpan('v2.search', {
       ...own,
@@ -179,6 +185,106 @@ describe('SanitizingSpanExporter', () => {
 
     expect(exported[0][0].events?.[0].attributes).toEqual({
       'exception.message': 'failed https://x/search',
+    });
+  });
+
+  describe('Mongo spans', () => {
+    const SECRET = 'PRIVATE-TEXT';
+    const mongoAttributes = (system: string) => ({
+      'db.system': system,
+      'db.operation': 'insert',
+      'db.name': 'probe',
+      'db.query.text': `{"insert":"uniqs","documents":[{"name":"${SECRET}"}]}`,
+      'db.statement': `{"name":"${SECRET}"}`,
+      'otel.status_description': `E11000 duplicate key { name: "${SECRET}" }`,
+    });
+    const mongoEvents = () => [
+      {
+        attributes: {
+          'exception.type': 'MongoServerError',
+          'exception.message': `E11000 duplicate key { name: "${SECRET}" }`,
+          'exception.stacktrace': `MongoServerError: dup { name: "${SECRET}" }\n    at x`,
+        },
+      },
+    ];
+
+    it.each(['mongodb', 'mongoose'])(
+      'drops statement text, exception message, stack and status text on a %s span',
+      (system) => {
+        const span = fakeSpan(
+          'mongodb.insert',
+          mongoAttributes(system),
+          mongoEvents(),
+          { code: 2, message: `E11000 duplicate key ${SECRET}` },
+        );
+        const { exporter, exported } = fakeDelegate();
+
+        new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+        const out = exported[0][0];
+        expect(out.attributes).toEqual({
+          'db.system': system,
+          'db.operation': 'insert',
+          'db.name': 'probe',
+        });
+        expect(out.events[0].attributes).toEqual({
+          'exception.type': 'MongoServerError',
+        });
+        expect(out.status).toEqual({ code: 2 });
+        expect(JSON.stringify(out)).not.toContain(SECRET);
+      },
+    );
+
+    it('treats db.system.name (new semantic convention) the same way', () => {
+      const span = fakeSpan(
+        'find uniqs',
+        { 'db.system.name': 'mongodb', 'db.query.text': `{"a":"${SECRET}"}` },
+        mongoEvents(),
+        { code: 2, message: SECRET },
+      );
+      const { exporter, exported } = fakeDelegate();
+
+      new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+      expect(JSON.stringify(exported[0][0])).not.toContain(SECRET);
+    });
+
+    it('scrubs when only one of the two db.system keys says mongodb', () => {
+      const span = fakeSpan(
+        'find uniqs',
+        {
+          'db.system.name': 'other',
+          'db.system': 'mongodb',
+          'db.query.text': `{"a":"${SECRET}"}`,
+        },
+        mongoEvents(),
+        { code: 2, message: SECRET },
+      );
+      const { exporter, exported } = fakeDelegate();
+
+      new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+      expect(JSON.stringify(exported[0][0])).not.toContain(SECRET);
+    });
+
+    it('leaves other spans unchanged (Redis keeps the command name, errors keep the message)', () => {
+      const span = fakeSpan(
+        'redis-GET',
+        { 'db.system': 'redis', 'db.statement': 'GET some:key' },
+        [{ attributes: { 'exception.message': 'boom' } }],
+        { code: 2, message: 'boom' },
+      );
+      const { exporter, exported } = fakeDelegate();
+
+      new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+      const out = exported[0][0];
+      expect(out.attributes).toEqual({
+        'db.system': 'redis',
+        'db.statement': 'GET',
+      });
+      expect(out.events[0].attributes).toEqual({ 'exception.message': 'boom' });
+      expect(out.status).toEqual({ code: 2, message: 'boom' });
     });
   });
 
