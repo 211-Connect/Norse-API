@@ -38,10 +38,10 @@ async function after<T>(promise: Promise<T>, ms: number) {
 }
 
 describe('request cache limit switch', () => {
-  it('is off by default and reads REQUEST_CACHE_LIMIT_ENABLED with envFlag', () => {
+  it('is on by default, off only for false, and reads REQUEST_CACHE_LIMIT_ENABLED with envFlag', () => {
     const read = (value?: string) =>
       requestCacheLimitEnabled({ get: () => value } as any);
-    expect(REQUEST_CACHE_LIMIT_DEFAULT_ON).toBe(false);
+    expect(REQUEST_CACHE_LIMIT_DEFAULT_ON).toBe(true);
     expect(read(undefined)).toBe(REQUEST_CACHE_LIMIT_DEFAULT_ON);
     expect(read('')).toBe(REQUEST_CACHE_LIMIT_DEFAULT_ON);
     expect(read('1')).toBe(REQUEST_CACHE_LIMIT_DEFAULT_ON);
@@ -154,7 +154,7 @@ describe('RequestCacheService with a request Redis that hangs', () => {
     expect(set).toHaveBeenCalledTimes(1);
   });
 
-  it.each([undefined, 'false'])(
+  it.each(['false', 'FALSE'])(
     'switch %s: waits for Redis with no limit, as before',
     async (env) => {
       const config = { get: () => env };
@@ -196,17 +196,14 @@ describe('HybridSearchService alias check', () => {
   };
   const name = 't-hybrid_search_resources_en';
 
-  it('has the limit with the switch on', async () => {
-    expect(await aliasCall('true')).toEqual([
+  it.each([undefined, 'true'])('switch %s: has the limit', async (v) => {
+    expect(await aliasCall(v)).toEqual([
       { name },
       { requestTimeout: HYBRID_ALIAS_CHECK_LIMIT_MS },
     ]);
   });
 
-  it.each([undefined, 'false'])(
-    'switch %s: the call is as before',
-    async (v) => {
-      expect(await aliasCall(v)).toEqual([{ name }]);
-    },
-  );
+  it.each(['false', 'FALSE'])('switch %s: the call is as before', async (v) => {
+    expect(await aliasCall(v)).toEqual([{ name }]);
+  });
 });

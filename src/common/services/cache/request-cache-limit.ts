@@ -3,9 +3,10 @@ import { envFlag } from 'src/common/config/configuration';
 
 /**
  * The one default of env `REQUEST_CACHE_LIMIT_ENABLED` (any case; read by
- * envFlag). Off: the request cache waits for Redis with no limit, as before.
+ * envFlag). On unless `false`; `false`: the request cache waits for Redis with
+ * no limit, as before.
  */
-export const REQUEST_CACHE_LIMIT_DEFAULT_ON = false;
+export const REQUEST_CACHE_LIMIT_DEFAULT_ON = true;
 
 /**
  * Longest wait for one request-Redis read or write, in ms. A Redis PING from
