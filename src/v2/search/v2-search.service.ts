@@ -14,7 +14,7 @@ import { envFlag } from '../../common/config/configuration';
 import * as rules from '../rules';
 import * as legacyRules from '../rules/legacy';
 import { MATCH, Match, matchOf } from '../rules/match';
-import { nameWords } from 'src/search/internal/name-match/name-match';
+import { isNamed, nameWords } from 'src/search/internal/name-match/name-match';
 import { hitText } from 'src/search/internal/text-matching/hit-text';
 import { needDescription } from '../rules/need-text';
 import { toContractClarification } from '../rules/contract';
@@ -747,7 +747,7 @@ export class V2SearchService {
       match = matchOf({
         words: rulesRequest.content_words ?? [],
         texts: topPage ? topTexts(response) : [],
-        named: (nameClaim?.org_ids.length ?? 0) > 0,
+        named: isNamed(nameClaim),
       });
       span.setAttributes({
         'v2.match': match,
@@ -760,7 +760,9 @@ export class V2SearchService {
                 ? `veto_${nameClaim!.veto}`
                 : nameClaim!.org_ids.length > 0
                   ? 'named'
-                  : 'none',
+                  : isNamed(nameClaim)
+                    ? 'named_service'
+                    : 'none',
       });
     }
     // Off: LEGACY_ENGINE reads `counts` only (it adds its own strong_text_match).

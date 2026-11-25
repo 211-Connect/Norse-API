@@ -6,6 +6,7 @@ import {
   capsTokens,
   claimName,
   genericName,
+  isNamed,
   nameHead,
   nameMatch,
   topicPhrase,
@@ -568,5 +569,154 @@ describe('topicPhrase', () => {
     expect(topicPhrase(['i', 'need'], terms)).toBe(false);
     expect(topicPhrase(['food'], [])).toBe(false);
     expect(topicPhrase(['food'], [' / '])).toBe(false);
+  });
+});
+
+describe('claimName: a service name', () => {
+  const closet = (id: string, over: Partial<NameHit> = {}) =>
+    svc('Compass Housing', 'Compass Closet', {
+      id,
+      taxonomy_names: ['Clothing'],
+      text: 'compass closet clothing',
+      ...over,
+    });
+  const noService = { status: 'ok', org_ids: [], veto: null, pins: [] };
+
+  it('a distinctive name of one org is a claim: pins at most 3, fused order', () => {
+    const hits = ['a', 'b', 'c', 'd', 'e'].map((id) => closet(id));
+    const r = claim('compass closet', hits, {
+      fusedIds: ['x', 'd', 'b'],
+    });
+    expect(r.org_ids).toEqual([]);
+    expect(r.service_ids).toEqual(['d', 'b', 'a', 'c', 'e']);
+    expect(r.pins).toEqual(['d', 'b', 'a']);
+    expect(r.veto).toBeNull();
+    expect(isNamed(r)).toBe(true);
+  });
+  it('a near-full name counts (3 of 4 core words)', () => {
+    const hit = svc('Compass Housing', 'Compass Winter Clothing Closet', {
+      taxonomy_names: ['Clothing'],
+    });
+    expect(claim('compass closet clothing', [hit]).service_ids).toEqual([
+      hit.id,
+    ]);
+  });
+  it('the tail of the name is not read (suffix, dash, bracket)', () => {
+    const hits = [
+      closet('a', { service_name: 'Compass Closet offered by Compass' }),
+      closet('b', { service_name: 'Compass Closet - Ballard' }),
+      closet('c', { service_name: 'Compass Closet (Seattle)' }),
+    ];
+    expect(claim('compass closet', hits).service_ids).toEqual(['a', 'b', 'c']);
+  });
+  it('the same org with two ids counts as one org', () => {
+    const hits = [
+      closet('a'),
+      closet('b', { org_id: 'Compass Housing 2', org_name: 'compass housing' }),
+    ];
+    expect(claim('compass closet', hits).service_ids).toEqual(['a', 'b']);
+  });
+  it('one word is no name', () => {
+    expect(claim('closet', [closet('a')]).service_ids).toBeUndefined();
+  });
+  it("a partial word is no name ('food' is not 'Foodmobile')", () => {
+    const hit = svc('Compass Housing', 'Foodmobile Pickup', {
+      taxonomy_names: ['Clothing'],
+    });
+    expect(claim('food pickup', [hit])).toEqual(noService);
+  });
+  it('a name made of taxonomy words is a topic', () => {
+    const hit = svc('Compass Housing', 'Food Pantry - Ballard', {
+      taxonomy_names: ['Food Pantries'],
+    });
+    expect(claim('food pantry', [hit])).toEqual(noService);
+    const hit2 = svc('Compass Housing', 'Medicare Savings', {
+      taxonomy_names: ['Medicare Savings Programs'],
+    });
+    expect(claim('medicare savings', [hit2])).toEqual(noService);
+  });
+  it('a service with no taxonomy names: the topic check cannot run, no claim', () => {
+    expect(
+      claim('compass closet', [closet('a', { taxonomy_names: [] })])
+        .service_ids,
+    ).toBeUndefined();
+  });
+  it('a name that two orgs hold is no claim', () => {
+    const other = svc('Other Org', 'Compass Closet', {
+      taxonomy_names: ['Clothing'],
+    });
+    expect(claim('compass closet', [closet('a'), other])).toEqual(noService);
+  });
+  it('another org with the words in its org name is no claim', () => {
+    const other = svc('Ballard Compass Closet', 'Other', {
+      org_id: 'o2',
+      taxonomy_names: ['Clothing'],
+    });
+    expect(claim('compass closet', [closet('a'), other])).toEqual(noService);
+  });
+  it('more than 10 fitting services are no claim', () => {
+    const many = Array.from({ length: 11 }, (_, i) => closet(`m${i}`));
+    expect(claim('compass closet', many)).toEqual(noService);
+    expect(claim('compass closet', many.slice(0, 10)).service_ids).toHaveLength(
+      10,
+    );
+  });
+  it('a common word is no claim', () => {
+    const fit = closet('a', { text: 'compass closet clothing' });
+    const others = Array.from({ length: 5 }, (_, i) =>
+      svc(`Org ${i}`, `Help ${i}`, {
+        text: 'compass closet clothing',
+        taxonomy_names: ['Clothing'],
+      }),
+    );
+    expect(claim('compass closet', [fit, ...others])).toEqual(noService);
+  });
+  it('an org claim wins: no service_ids, the pins are the org claim', () => {
+    const hits = [svc('Compass Housing Alliance', 'Compass Housing')];
+    expect(claim('compass housing', hits)).toEqual({
+      status: 'ok',
+      org_ids: ['Compass Housing Alliance'],
+      veto: null,
+      pins: [hits[0].id],
+    });
+  });
+  it('a veto of the org rule blocks a service claim', () => {
+    const hit = svc('Compass Housing', 'Compass Housing', {
+      taxonomy_names: ['Housing'],
+    });
+    const r = claim('compass housing', [hit]);
+    expect(r.service_ids).toBeUndefined();
+  });
+  it('a name an org offers by words only in a service: the service rule runs', () => {
+    const hits = [
+      svc('Food Bank Ballard', 'Pantry'),
+      svc('Food Bank Fremont', 'Pantry'),
+      svc('Other Org', 'Food Bank Express', { taxonomy_names: ['Pantry'] }),
+    ];
+    expect(claim('food bank', hits).service_ids).toBeUndefined();
+  });
+  it('failed list, null unknownWords and a skipped list: no service claim', () => {
+    const hits = [closet('a')];
+    expect(claim('compass closet', hits, { state: 'failed' })).toEqual({
+      ...noService,
+      status: 'failed',
+    });
+    expect(claim('compass closet', [], { state: 'skipped' })).toEqual(
+      noService,
+    );
+    expect(claim('compass closet', hits, { unknownWords: null })).toEqual({
+      ...noService,
+      status: 'failed',
+    });
+  });
+  it('a fitting hit with no org name: no claim', () => {
+    expect(claim('compass closet', [closet('a', { org_name: null })])).toEqual(
+      noService,
+    );
+  });
+  it('isNamed: an org, a service, or neither', () => {
+    expect(isNamed(undefined)).toBe(false);
+    expect(isNamed({ ...noService, status: 'ok' } as never)).toBe(false);
+    expect(isNamed({ ...noService, org_ids: ['o'] } as never)).toBe(true);
   });
 });

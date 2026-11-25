@@ -10,7 +10,7 @@ Pure, deterministic TypeScript that decides what `/v2/search` asks after the mod
 Rules (`gridRule`; switch on only). No results or a weak match comes first, then the match and the need level pick one:
 
 - no results: the `no_match` question only, and the `phone_line` (`Call 211`, number 211).
-- R1 (`match` concentrated, the keyword list names an org): no needs question.
+- R1 (`match` concentrated, the keyword list names an org, or one org's service): no needs question.
 - R2 (need level kind or likely): results, and a quiet `area:<T1>` question for a likely kind.
 - R3 (need level area): one `area:<T1>` question per open area.
 - R4 (no clear need, hits spread): the `spread` question, else the one in-play area question, else `start`.

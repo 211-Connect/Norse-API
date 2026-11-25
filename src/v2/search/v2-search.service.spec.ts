@@ -2987,4 +2987,43 @@ describe('V2SearchService name match (question rule v1)', () => {
     expect(search.mock.calls[0][0]).toHaveProperty('nameWords');
     expect(search.mock.calls[1][0]).not.toHaveProperty('nameWords');
   });
+
+  it.each(['unset', 'false', '1', 'true '])(
+    'question rule v1 %p: no name words on any call, a service claim changes nothing',
+    async (ruleV1) => {
+      const b = build({ ruleV1 });
+      const query = dto({ query: 'compass closet' });
+      await b.service.search({ headers, query });
+      await b.service.pins({ headers, query });
+      for (const c of [b.searchHybrid, b.startEarlyRetrieval, b.searchPins]) {
+        expect(call(c)).not.toHaveProperty('nameWords');
+      }
+      const svcClaim = claim({
+        org_ids: [],
+        pins: ['s1'],
+        service_ids: ['s1'],
+      });
+      const off = await ask({ ruleV1 });
+      const withClaim = await ask({ ruleV1, claim: svcClaim });
+      expect(withClaim.res).toEqual(off.res);
+    },
+  );
+
+  it('a named service: no question, stored; a failed claim still asks, not stored', async () => {
+    const svcClaim = claim({
+      org_ids: [],
+      pins: ['s1'],
+      service_ids: ['s1'],
+    });
+    const named = await ask({ claim: svcClaim });
+    expect(asked(named)).toBe(0);
+    expect(isMarkedNotStorable(named.res)).toBe(false);
+    expect(JSON.stringify(named.res)).not.toContain('nameClaim');
+    expect(JSON.stringify(named.res)).not.toContain('service_ids');
+    const failed = await ask({
+      claim: claim({ status: 'failed', org_ids: [], pins: [] }),
+    });
+    expect(asked(failed)).toBeGreaterThan(0);
+    expect(isMarkedNotStorable(failed.res)).toBe(true);
+  });
 });

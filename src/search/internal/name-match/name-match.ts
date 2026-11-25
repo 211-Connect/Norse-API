@@ -14,6 +14,11 @@ import {
  * hits already hold the org names and passed the request's filters (radius,
  * area, cutoff), so a named org is inside them on every sort and no other read
  * is needed.
+ *
+ * The list also answers a second question: is the query
+ * the (near) full name of one service of one org? That counts like a named
+ * org. The org rule goes first. The service rule runs only when no org is
+ * named and no veto fired.
  */
 
 const NAME = {
@@ -35,6 +40,16 @@ const NAME = {
   topicTermMin: 0.6,
   // Shortest word that is checked for a typo.
   typoMinLength: 5,
+};
+
+/** The service name rule (2026-11-24, measured offline). */
+const SERVICE = {
+  // The share of the service name's core words that the query holds.
+  coverMin: 0.75,
+  // Fewest query tokens: one word is a topic, not a name.
+  tokensMin: 2,
+  // Most fitting services; more is a type of service, not one name.
+  fitMax: 10,
 };
 
 /** What the keyword list returns per hit for the name match. */
@@ -76,7 +91,19 @@ export type NameClaim = {
   veto: 'generic' | 'topic' | null;
   /** The ids that lead a relevance order, in the fused order. */
   pins: string[];
+  /**
+   * The services the query names, in the fused order. Present only when a
+   * service is named; `org_ids` is then empty.
+   */
+  service_ids?: string[];
 };
+
+/** Does the claim name an org or a service? */
+export function isNamed(claim?: NameClaim): boolean {
+  return (
+    (claim?.org_ids.length ?? 0) > 0 || (claim?.service_ids?.length ?? 0) > 0
+  );
+}
 
 export function nameHit(id: string, source: unknown): NameHit {
   const src = (source ?? {}) as Record<string, unknown>;
@@ -225,15 +252,22 @@ export function nameMatch(
     : null;
 }
 
-/** Many hits hold the words but few have them in the org name: a common word, not a name. */
-export function genericName(words: string[], hits: NameHit[]): boolean {
+/**
+ * Many hits hold the words but few have them in the name: a common word, not a
+ * name. `nameOf` is the name that is read; the org name stands by default.
+ */
+export function genericName(
+  words: string[],
+  hits: NameHit[],
+  nameOf: (h: NameHit) => string = (h) => h.org_name ?? '',
+): boolean {
   const qt = queryTokens(words);
   if (qt.length === 0) return false;
   const holders = hits.filter((h) => {
     const xt = new Set(queryWords(h.text));
     return qt.every((t) => holdsWord(t, xt));
   });
-  const inName = holders.filter((h) => holdsAllWords(words, h.org_name ?? ''));
+  const inName = holders.filter((h) => holdsAllWords(words, nameOf(h)));
   return (
     holders.length >= NAME.genericMinHolders &&
     inName.length / holders.length < NAME.genericNameShareMax
@@ -277,6 +311,92 @@ const offeredByOthers = (words: string[], hits: NameHit[]): boolean =>
       holdsAllWords(words, h.service_name.replace(SERVICE_SUFFIX, '')),
   );
 
+const byIdOf = (hits: NameHit[]) => new Map(hits.map((h) => [h.id, h]));
+
+/** The hits of the top `topN` ids of the order. */
+const topHits = (order: string[], byId: Map<string, NameHit>): NameHit[] =>
+  order.slice(0, NAME.topN).flatMap((id) => byId.get(id) ?? []);
+
+/** The ids that lead a relevance order: the fused order, then the rest. */
+function pinIds(
+  hits: NameHit[],
+  order: string[],
+  keep: (h: NameHit) => boolean,
+): string[] {
+  const byId = byIdOf(hits);
+  const rest = hits.map((h) => h.id).filter((id) => !order.includes(id));
+  return [...order, ...rest]
+    .filter((id) => {
+      const h = byId.get(id);
+      return h !== undefined && keep(h);
+    })
+    .slice(0, NAMED_ORG_PIN_MAX);
+}
+
+/**
+ * The core of a service name: without the ' offered by ...' tail, and without
+ * everything from the first ' - ' or '(' ('Food Pantry - Ballard').
+ */
+const serviceCore = (name: string): string[] =>
+  queryWords(
+    name
+      .replace(SERVICE_SUFFIX, '')
+      .replace(/\s[-\u2013]\s.*$/, '')
+      .replace(/\(.*$/, ''),
+  ).filter((w) => !NAME_FUNCTION.has(w));
+
+const plural = (a: string, b: string): boolean =>
+  a === b || a === b + 's' || b === a + 's';
+
+/**
+ * The service the query names, or null. The query is the (near) full name of
+ * services of one org. Nothing is named when:
+ * - a service of another org holds the words (the name is shared);
+ * - the words are a topic of the directory, or only taxonomy words (WellSky
+ *   names services after taxonomy terms);
+ * - too many services fit, or the words are a common word in the top hits;
+ * - the org or the taxonomy of a fitting service is unknown.
+ */
+function serviceClaim(
+  words: string[],
+  hits: NameHit[],
+  order: string[],
+): string[] | null {
+  const qt = queryTokens(words);
+  if (qt.length < SERVICE.tokensMin) return null;
+  const fits = hits.filter((h) => {
+    const core = serviceCore(h.service_name);
+    if (core.length === 0) return false;
+    if (!qt.every((t) => core.some((w) => plural(t, w)))) return false;
+    const covered = core.filter((w) => words.some((t) => plural(t, w)));
+    return covered.length / core.length >= SERVICE.coverMin;
+  });
+  if (fits.length === 0) return null;
+  if (fits.some((h) => !h.org_name || h.taxonomy_names.length === 0)) {
+    return null;
+  }
+  const orgOf = (h: NameHit) => (h.org_name ?? '').toLowerCase();
+  const holders = hits.filter(
+    (h) =>
+      holdsAllWords(words, h.service_name.replace(SERVICE_SUFFIX, '')) ||
+      holdsAllWords(words, h.org_name ?? ''),
+  );
+  if (new Set([...holders, ...fits].map(orgOf)).size > 1) return null;
+  const terms = hits.flatMap((h) => h.taxonomy_names);
+  if (topicPhrase(words, terms)) return null;
+  const termWords = new Set(terms.flatMap((t) => queryWords(t)));
+  if (qt.every((t) => holdsWord(t, termWords))) return null;
+  if (fits.length > SERVICE.fitMax) return null;
+  const order20 = topHits(order, byIdOf(hits));
+  const both = (h: NameHit) => `${h.org_name ?? ''} ${h.service_name}`;
+  if (genericName(words, order20, both)) return null;
+  const ids = new Set(fits.map((h) => h.id));
+  return [
+    ...order.filter((id) => ids.has(id)),
+    ...fits.map((h) => h.id).filter((id) => !order.includes(id)),
+  ];
+}
+
 /**
  * The org(s) the query names, read from the keyword list.
  *
@@ -286,6 +406,9 @@ const offeredByOthers = (words: string[], hits: NameHit[]): boolean =>
  * offers a service by these words. Without a claim the ranking and the
  * questions stay as they are. A claim is dropped when the words are a topic of
  * the directory or a common word in the top hits.
+ *
+ * A query that names no org may name one service of one
+ * org (`service_ids`). The org rule wins, and a veto of the org rule is final.
  */
 export function claimName(i: {
   words: string[];
@@ -324,7 +447,17 @@ export function claimName(i: {
     );
     named = nameMatch(words, candidates);
   }
-  if (!named || (!named.start && offeredByOthers(words, hits))) return none;
+  const byId = byIdOf(hits);
+  const order = i.fusedIds ?? hits.map((h) => h.id);
+  if (!named || (!named.start && offeredByOthers(words, hits))) {
+    const service = serviceClaim(i.words, hits, order);
+    if (!service) return none;
+    return {
+      ...none,
+      service_ids: service,
+      pins: pinIds(hits, order, (h) => service.includes(h.id)),
+    };
+  }
 
   if (
     topicPhrase(
@@ -334,18 +467,15 @@ export function claimName(i: {
   ) {
     return { ...none, veto: 'topic' };
   }
-  const byId = new Map(hits.map((h) => [h.id, h]));
-  const order = i.fusedIds ?? hits.map((h) => h.id);
-  const top = order.slice(0, NAME.topN).flatMap((id) => byId.get(id) ?? []);
-  if (genericName(words, top)) return { ...none, veto: 'generic' };
+  if (genericName(words, topHits(order, byId))) {
+    return { ...none, veto: 'generic' };
+  }
 
   const ids = new Set(named.org_ids);
-  const own = (id: string) => ids.has(byId.get(id)?.org_id ?? '');
-  const rest = hits.map((h) => h.id).filter((id) => !order.includes(id));
   return {
     ...none,
     org_ids: named.org_ids,
-    pins: [...order, ...rest].filter(own).slice(0, NAMED_ORG_PIN_MAX),
+    pins: pinIds(hits, order, (h) => ids.has(h.org_id ?? '')),
   };
 }
 
