@@ -53,6 +53,11 @@ export default () => ({
     process.env.ML_BROKER_EMERGENCY_ONLY_SUPPORTED,
   ML_BROKER_BASE_URL: process.env.ML_BROKER_BASE_URL,
   ML_BROKER_API_KEY: process.env.ML_BROKER_API_KEY,
+  // Optional: v1 /ai-search (needs-classification) uses this broker instead of
+  // ML_BROKER_BASE_URL / ML_BROKER_API_KEY. Each falls back to the shared one
+  // when unset or empty. /v2/search never reads these two.
+  ML_BROKER_V1_BASE_URL: process.env.ML_BROKER_V1_BASE_URL,
+  ML_BROKER_V1_API_KEY: process.env.ML_BROKER_V1_API_KEY,
   OPENCAGE_API_KEY: process.env.OPENCAGE_API_KEY,
   umami: {
     apiUrl: process.env.UMAMI_API_URL || '',

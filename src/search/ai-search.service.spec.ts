@@ -396,3 +396,131 @@ describe('AiSearchService', () => {
     });
   });
 });
+
+describe('AiSearchService v1 broker URL (ML_BROKER_V1_BASE_URL)', () => {
+  const lowInfoReply = {
+    task: 'needs-classification',
+    query: 'rent help',
+    tenant_id: 'default',
+    low_info: {
+      is_low_info: true,
+      reason: 'x',
+      score: 0,
+      matched_pattern: null,
+    },
+    confidence: {
+      level: 'low',
+      top_score: 0.1,
+      top_labels: [],
+      multiple_high_confidence: false,
+    },
+    needs: [],
+    hsis_taxonomies: [],
+  };
+
+  const build = async (config: Record<string, string>) => {
+    const module = await Test.createTestingModule({
+      providers: [
+        AiSearchService,
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((key: string) => config[key]) },
+        },
+        {
+          provide: HybridSearchService,
+          useValue: { embedQuery: jest.fn(), getDocumentsCount: jest.fn() },
+        },
+        { provide: MetricsService, useValue: createMetricsServiceMock() },
+      ],
+    }).compile();
+    return module.get(AiSearchService);
+  };
+
+  const run = async (config: Record<string, string>) => {
+    const fetchSpy = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => lowInfoReply,
+    } as Response);
+    const service = await build(config);
+    await service.predict(headers as any, { query: 'rent help' });
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    return { url, key: (init.headers as any)['x-api-key'] };
+  };
+
+  beforeEach(() => jest.restoreAllMocks());
+
+  const shared = {
+    ML_BROKER_BASE_URL: 'https://broker.shared',
+    ML_BROKER_API_KEY: 'shared-key',
+  };
+
+  it('unset: v1 predict uses ML_BROKER_BASE_URL and ML_BROKER_API_KEY', async () => {
+    const { url, key } = await run(shared);
+    expect(url).toBe(
+      'https://broker.shared/api/v1/tasks/needs-classification/predict',
+    );
+    expect(key).toBe('shared-key');
+  });
+
+  it('set: v1 predict goes to the v1 URL; the key falls back to the shared key', async () => {
+    const { url, key } = await run({
+      ...shared,
+      ML_BROKER_V1_BASE_URL: 'https://broker.v1',
+    });
+    expect(url).toBe(
+      'https://broker.v1/api/v1/tasks/needs-classification/predict',
+    );
+    expect(key).toBe('shared-key');
+  });
+
+  it('set with its own key: v1 predict sends the v1 key', async () => {
+    const { url, key } = await run({
+      ...shared,
+      ML_BROKER_V1_BASE_URL: 'https://broker.v1',
+      ML_BROKER_V1_API_KEY: 'v1-key',
+    });
+    expect(url).toContain('https://broker.v1/');
+    expect(key).toBe('v1-key');
+  });
+
+  it('v1 key alone does not change the URL', async () => {
+    const { url, key } = await run({
+      ...shared,
+      ML_BROKER_V1_API_KEY: 'v1-key',
+    });
+    expect(url).toContain('https://broker.shared/');
+    expect(key).toBe('v1-key');
+  });
+
+  it('empty v1 values count as unset', async () => {
+    const { url, key } = await run({
+      ...shared,
+      ML_BROKER_V1_BASE_URL: '',
+      ML_BROKER_V1_API_KEY: '',
+    });
+    expect(url).toContain('https://broker.shared/');
+    expect(key).toBe('shared-key');
+  });
+
+  it('set: v1 re-rank goes to the v1 URL too', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ hsis_taxonomies: [] }),
+    } as Response);
+    const service = await build({
+      ...shared,
+      ML_BROKER_V1_BASE_URL: 'https://broker.v1',
+    });
+    await service.reRank(headers as any, { need_weights: { 'HO-300': 1 } });
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      'https://broker.v1/api/v1/tasks/needs-classification/re-rank',
+    );
+  });
+
+  it('v1 URL set but no key anywhere: still not configured (503)', async () => {
+    const service = await build({ ML_BROKER_V1_BASE_URL: 'https://broker.v1' });
+    await expect(
+      service.predict(headers as any, { query: 'rent help' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});

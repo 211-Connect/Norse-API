@@ -133,8 +133,14 @@ export class AiSearchService {
     headers: HeadersDto;
     body: Record<string, unknown>;
   }): Promise<MlBrokerResponseByTask[TTask]> {
-    const baseUrl = this.configService.get<string>('ML_BROKER_BASE_URL');
-    const apiKey = this.configService.get<string>('ML_BROKER_API_KEY');
+    // v1 may point at its own broker; unset or empty falls back to the shared
+    // setting, which /v2/search keeps using.
+    const baseUrl =
+      this.configService.get<string>('ML_BROKER_V1_BASE_URL') ||
+      this.configService.get<string>('ML_BROKER_BASE_URL');
+    const apiKey =
+      this.configService.get<string>('ML_BROKER_V1_API_KEY') ||
+      this.configService.get<string>('ML_BROKER_API_KEY');
 
     if (!baseUrl || !apiKey) {
       throw new ServiceUnavailableException(

@@ -269,6 +269,28 @@ describe('SearchClassificationClient', () => {
     }
   });
 
+  it('uses ML_BROKER_BASE_URL and its key, never the v1 settings', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(brokerBody()));
+    await build({
+      ...fullConfig,
+      ML_BROKER_V1_BASE_URL: 'http://broker.v1',
+      ML_BROKER_V1_API_KEY: 'v1-key',
+    }).classify('q', 't1');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('http://broker.test/');
+    expect(init.headers['x-api-key']).toBe('secret-key');
+  });
+
+  it('ignores a v1 URL when ML_BROKER_BASE_URL is missing', async () => {
+    expect(
+      await build({
+        ML_BROKER_API_KEY: 'k',
+        ML_BROKER_V1_BASE_URL: 'http://broker.v1',
+      }).classify('q', 't1'),
+    ).toEqual(ERROR_RESULT);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('returns the error result, without calling fetch, when config is missing', async () => {
     expect(
       await build({ ML_BROKER_BASE_URL: 'http://broker.test' }).classify(
