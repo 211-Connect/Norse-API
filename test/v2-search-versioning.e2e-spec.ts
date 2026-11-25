@@ -11,7 +11,7 @@ import {
   Version,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { TenantMiddleware } from 'src/common/middleware/TenantMiddleware';
@@ -30,10 +30,13 @@ import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const/one-hour';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
-import { TenantConfigService } from 'src/cms-config/tenant-config.service';
-import { V2SearchEnabledGuard } from 'src/v2/search/v2-search-enabled.guard';
 import { V2SearchService } from 'src/v2/search/v2-search.service';
 import { V1_AND_LEGACY } from 'src/common/versioning/api-version';
+import { TenantConfigService } from 'src/cms-config/tenant-config.service';
+import { GatewayIdentityGuard } from 'src/auth/gateway/gateway-identity.guard';
+import { GatewayPermissionsGuard } from 'src/auth/gateway/gateway-permissions.guard';
+import { PermissionsSideChannelService } from 'src/auth/gateway/permissions-side-channel.service';
+import { TenantScopeGuard } from 'src/auth/gateway/tenant-scope.guard';
 
 /** Stands in for the v1 SearchController, which has the same path. */
 @Controller('search')
@@ -50,6 +53,19 @@ const TENANT = '11111111-1111-4111-8111-111111111111';
 /** The URL copies of the x-tenant-id and accept-language headers. */
 const M = `tenant_id=${TENANT}&locale=en`;
 
+/** The gateway guards; the key `key-a` may read TENANT only. */
+const GATEWAY_PROVIDERS = [
+  { provide: APP_GUARD, useClass: GatewayIdentityGuard },
+  {
+    provide: PermissionsSideChannelService,
+    useValue: {
+      resolveSlugs: async () => [`norse-api.${TENANT}.read`],
+    },
+  },
+  { provide: APP_GUARD, useClass: GatewayPermissionsGuard },
+  { provide: APP_GUARD, useClass: TenantScopeGuard },
+];
+
 /**
  * The real V2SearchController (its real decorators and guards) behind a fake
  * V2SearchService, next to a v1 stub on the same path, under the real
@@ -60,17 +76,25 @@ describe('v2 search versioning (e2e)', () => {
   let app: INestApplication;
   const searchMock = jest.fn();
 
-  async function boot(flag: string | undefined) {
+  const pinsMock = jest.fn();
+  /** A tenant with no `enable_v2_api`. The route must not ask. */
+  const tenantConfig = {
+    getSearchConfig: jest.fn(async () => ({})),
+    isV2Tenant: jest.fn(async () => false),
+  };
+
+  /** `flag` is the raw V2_SEARCH_ENABLED value; `gateway` adds the real APP_GUARDs. */
+  async function boot(flag?: string, gateway = false) {
     @Module({
       controllers: [V1SearchStubController, V2SearchController],
       providers: [
-        V2SearchEnabledGuard,
-        {
-          provide: TenantConfigService,
-          useValue: { isV2Tenant: async () => true },
-        },
+        ...(gateway ? GATEWAY_PROVIDERS : []),
+        { provide: TenantConfigService, useValue: tenantConfig },
         { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
-        { provide: V2SearchService, useValue: { search: searchMock } },
+        {
+          provide: V2SearchService,
+          useValue: { search: searchMock, pins: pinsMock },
+        },
         {
           provide: UsageMetricsService,
           useValue: { recordSearchRequest: jest.fn() },
@@ -128,6 +152,10 @@ describe('v2 search versioning (e2e)', () => {
       route: 'v2',
       search: { hits: { total: 0 } },
     });
+    pinsMock.mockReset();
+    pinsMock.mockResolvedValue({ route: 'v2-pins' });
+    tenantConfig.getSearchConfig.mockClear();
+    tenantConfig.isV2Tenant.mockClear();
   });
   afterEach(async () => {
     await app?.close();
@@ -354,22 +382,144 @@ describe('v2 search versioning (e2e)', () => {
     });
   });
 
-  describe('flag off', () => {
-    it.each([undefined, '', 'false', 'TRUE'])(
-      '/v2/search is a 404 when V2_SEARCH_ENABLED is %p, even for a bad query',
-      async (flag) => {
+  describe('global switch V2_SEARCH_ENABLED', () => {
+    const geometry = { type: 'Point', coordinates: [1, 2] };
+    const routes: [string, () => request.Test][] = [
+      ['GET /v2/search', () => get(`/v2/search?query=rent&${M}`)],
+      [
+        'POST /v2/search',
+        () => post(`/v2/search?query=rent&${M}`).send({ geometry }),
+      ],
+      ['GET /v2/search/pins', () => get(`/v2/search/pins?query=rent&${M}`)],
+    ];
+    const badRequests: [string, () => request.Test][] = [
+      ['GET /v2/search', () => get(`/v2/search?urgency=U-9&${M}`)],
+      [
+        'POST /v2/search',
+        () => post(`/v2/search?urgency=U-9&${M}`).send({ geometry }),
+      ],
+      ['GET /v2/search/pins', () => get(`/v2/search/pins?urgency=U-9&${M}`)],
+      ['GET /v2/search without tenant_id', () => get('/v2/search?locale=en')],
+    ];
+    const OFF = [undefined, '', 'false', 'TRUE'];
+
+    describe.each(OFF)('value %p', (flag) => {
+      beforeEach(async () => {
         app = await boot(flag);
-        const res = await get(`/v2/search?urgency=U-9&${M}`);
+      });
+
+      it.each(routes)('%s is a 404', async (_name, call) => {
+        const res = await call();
         expect(res.status).toBe(404);
         expect(searchMock).not.toHaveBeenCalled();
+        expect(pinsMock).not.toHaveBeenCalled();
+      });
+
+      it.each(badRequests)(
+        '%s with a bad query is a 404, before validation',
+        async (_name, call) => {
+          const res = await call();
+          expect(res.status).toBe(404);
+        },
+      );
+
+      it.each(['/search', '/v1/search'])(
+        '%s still reaches the v1 route',
+        async (path) => {
+          const res = await get(path);
+          expect(res.status).toBe(200);
+          expect(res.body).toEqual({ route: 'v1' });
+        },
+      );
+    });
+
+    describe("value 'true'", () => {
+      beforeEach(async () => {
+        app = await boot('true');
+      });
+
+      it.each(routes)(
+        '%s lets a tenant with no enable_v2_api through; no guard reads its config',
+        async (_name, call) => {
+          const res = await call();
+          expect(res.status).toBe(200);
+          expect(res.body.route).toMatch(/^v2/);
+          expect(tenantConfig.getSearchConfig).not.toHaveBeenCalled();
+          expect(tenantConfig.isV2Tenant).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each(badRequests)(
+        '%s with a bad query is a 400',
+        async (_name, call) => {
+          const res = await call();
+          expect(res.status).toBe(400);
+          expect(searchMock).not.toHaveBeenCalled();
+          expect(pinsMock).not.toHaveBeenCalled();
+        },
+      );
+    });
+  });
+
+  /**
+   * With one global switch, the gateway's per-key tenant scope is what keeps a
+   * key inside its own tenants. The three real APP_GUARDs, in AppModule order.
+   */
+  describe('gateway tenant scope on /v2/search', () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    const asKey = (path: string, headerTenant?: string) => {
+      const req = request(app.getHttpServer())
+        .get(path)
+        .set('x-connect211-identity-external-id', 'ext-a')
+        .set('x-connect211-key-id', 'key-a');
+      if (headerTenant) req.set('x-tenant-id', headerTenant);
+      return req;
+    };
+
+    beforeEach(async () => {
+      app = await boot('true', true);
+    });
+
+    it.each(['/v2/search', '/v2/search/pins'])(
+      'GET %s: the key of tenant A reads tenant A',
+      async (path) => {
+        const res = await asKey(`${path}?query=rent&${M}`);
+        expect(res.status).toBe(200);
       },
     );
 
-    it('POST /v2/search is a 404 when the flag is off', async () => {
-      app = await boot(undefined);
-      const res = await post(`/v2/search?query=rent&${M}`).send({});
-      expect(res.status).toBe(404);
-      expect(searchMock).not.toHaveBeenCalled();
-    });
+    it.each([
+      ['/v2/search', undefined],
+      ['/v2/search', TENANT],
+      ['/v2/search', OTHER],
+      ['/v2/search/pins', undefined],
+      ['/v2/search/pins', TENANT],
+    ])(
+      'GET %s: the key of tenant A asking tenant B is a 403 (x-tenant-id %p)',
+      async (path, header) => {
+        const res = await asKey(
+          `${path}?query=rent&tenant_id=${OTHER}&locale=en`,
+          header,
+        );
+        expect(res.status).toBe(403);
+        expect(res.body.message).toBe('tenant_scope_denied');
+        expect(searchMock).not.toHaveBeenCalled();
+        expect(pinsMock).not.toHaveBeenCalled();
+      },
+    );
+
+    // As on v1: the scope guard asks for `.write` on every POST.
+    it.each([TENANT, OTHER])(
+      'POST /v2/search with a read-only key is a 403 (tenant %s)',
+      async (tenant) => {
+        const res = await request(app.getHttpServer())
+          .post(`/v2/search?query=rent&tenant_id=${tenant}&locale=en`)
+          .set('x-connect211-identity-external-id', 'ext-a')
+          .set('x-connect211-key-id', 'key-a')
+          .send({});
+        expect(res.status).toBe(403);
+        expect(searchMock).not.toHaveBeenCalled();
+      },
+    );
   });
 });

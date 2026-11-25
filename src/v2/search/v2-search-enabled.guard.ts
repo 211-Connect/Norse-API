@@ -1,61 +1,24 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { CanActivate, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Request, Response } from 'express';
-import { xTenantIdSchema } from '../../common/dto/headers.dto';
-import { envFlag } from '../../common/config/configuration';
-import { TenantConfigService } from '../../cms-config/tenant-config.service';
-
-const RETRY_AFTER_SECONDS = 5;
 
 /**
- * Two switches for `/v2/search`; both must be on, else the route looks absent
- * (404):
- *  1. global env `V2_SEARCH_ENABLED`, on only for the exact string `true`;
- *  2. per tenant: the Payload flag `enableV2Api` (`getV2TenantFlag`).
- * A guard runs before the validation pipe, so a disabled route never answers
- * 400 for a bad query. When the URL has no valid UUID `tenant_id` the tenant
- * check is skipped (no Redis read, no cache key from user text); `V2UrlMirrorsGuard` answers the 400 next.
+ * The one switch for `/v2/search`, for the whole deployment: env
+ * `V2_SEARCH_ENABLED`, on only for the exact string `true` (stricter than
+ * `envFlag`). Anything else makes the route look absent (404). A guard runs
+ * before the validation pipe, so a disabled route never answers 400 for a bad
+ * query.
  *
- * When the Redis read of the tenant flag fails, the guard uses the last value
- * this pod read for the tenant and the response carries
- * `X-Degraded: tenant-flag-cache`. A tenant this pod never read gets
- * 503 + `Retry-After: 5`. With Redis up nothing changes.
+ * There is no tenant check here. Which tenants a gateway key may search is the
+ * key's scope (`TenantScopeGuard`). As on v1, a request without the gateway
+ * identity headers has no tenant scope.
  */
 @Injectable()
 export class V2SearchEnabledGuard implements CanActivate {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly tenantConfig: TenantConfigService,
-  ) {}
+  constructor(private readonly configService: ConfigService) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (!envFlag(this.configService.get<string>('V2_SEARCH_ENABLED'), false)) {
+  canActivate(): boolean {
+    if (this.configService.get<string>('V2_SEARCH_ENABLED') !== 'true') {
       throw new NotFoundException();
-    }
-    const http = context.switchToHttp();
-    const tenantId = http.getRequest<Request>()?.query?.tenant_id;
-    // Only a UUID reaches Redis and the caches; anything else skips the tenant
-    // check and `V2UrlMirrorsGuard` answers the 400.
-    if (xTenantIdSchema.safeParse(tenantId).success) {
-      // safeParse passed, so the value is a string.
-      const flag = await this.tenantConfig.getV2TenantFlag(tenantId as string);
-      const res = http.getResponse<Response>();
-      if (flag.unknown) {
-        res.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
-        throw new ServiceUnavailableException();
-      }
-      if (flag.degraded) {
-        res.setHeader('X-Degraded', 'tenant-flag-cache');
-      }
-      if (!flag.enabled) {
-        throw new NotFoundException();
-      }
     }
     return true;
   }

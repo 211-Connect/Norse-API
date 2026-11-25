@@ -63,7 +63,9 @@ const V2_DESCRIPTION = [
   '- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.',
   '- The need boost is on by default.',
   '- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.',
-  '- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on.',
+  "- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on. Both choose the search Norse's own pages use.",
+  '',
+  'Changed 2026-11-25 (replaces the per-tenant gate on `/v2/search` of Decisions 81 and 91): `enableV2Api` does not gate the API. One deployment switch, `V2_SEARCH_ENABLED`, turns the route on for every tenant a key may read.',
 ].join('\n');
 
 /**

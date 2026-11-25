@@ -43,7 +43,10 @@ import { RegionService } from 'src/region/internal';
 import { SearchService } from 'src/search/search.service';
 import { SearchPinsResponseDto } from 'src/search/dto/search-pins-response.dto';
 import { resolveArea } from 'src/search/internal/area/resolve-area';
-import { markNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
+import {
+  isMarkedNotStorable,
+  markNotStorable,
+} from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 // Signals when there is no typed text: nothing to classify. `emergency: null`
 // means the check did not run (same as the rules engine's own specs).
@@ -358,10 +361,11 @@ export class V2SearchService {
     const orgWords = this.orgWordsOf(text, headers);
     let needScores: NeedScore[] | undefined;
     let urgencyBoost: HybridCall['urgencyBoost'];
+    // Read for an empty query too: the ranking below uses the same settings.
+    const searchConfig = await this.tenantConfig.getSearchConfig(
+      headers['x-tenant-id'],
+    );
     if (text.trim().length > 0) {
-      const searchConfig = await this.tenantConfig.getSearchConfig(
-        headers['x-tenant-id'],
-      );
       const decided = await this.classifyAndDecide({
         headers,
         dto,
@@ -381,6 +385,9 @@ export class V2SearchService {
         ...(urgencyBoost && { urgencyBoost }),
         ...(orgWords.length > 0 && { nameWords: orgWords }),
       })
+      .then((pins) =>
+        isMarkedNotStorable(searchConfig) ? markNotStorable(pins) : pins,
+      )
       .catch((error: unknown) => throwCallerError(error, headers));
   }
 
@@ -834,9 +841,11 @@ export class V2SearchService {
     };
     // A shared cache may store only band none with no emergency question
     // (ADR 0039 Decision 28); the controller's TTL covers the rest.
-    // Never cache a degraded result: a failed name match, or a page or count
-    // read that Elasticsearch cut short (the match and the options come from it).
-    const degraded = nameFailed || (ruleV1 && partial);
+    // Never cache a degraded result: a failed tenant config read (default
+    // settings), a failed name match, or a page or count read that
+    // Elasticsearch cut short (the match and the options come from it).
+    const degraded =
+      isMarkedNotStorable(searchConfig) || nameFailed || (ruleV1 && partial);
     return decision.cacheable && !degraded ? result : markNotStorable(result);
   }
 }

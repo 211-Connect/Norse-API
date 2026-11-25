@@ -24,6 +24,17 @@ describe('v2 search OpenAPI', () => {
     expect(Object.keys(get.responses)).toEqual(
       expect.arrayContaining(['200', '400', '404']),
     );
+    // One global switch is the only reason for the 404; no tenant gate.
+    for (const operation of [
+      get,
+      doc.paths['/v2/search'].post,
+      doc.paths['/v2/search/pins'].get,
+    ]) {
+      expect(operation.responses['404']).toEqual({
+        description:
+          'The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`.',
+      });
+    }
     const names = get.parameters.map(
       (p: unknown) => (p as { name: string }).name,
     );

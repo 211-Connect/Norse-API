@@ -48,7 +48,7 @@ const OK_DESCRIPTION =
 const BAD_REQUEST =
   'A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.';
 const NOT_FOUND =
-  'The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off.';
+  'The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`.';
 
 /**
  * Reached by `GET /v2/search` and `POST /v2/search` only: the path picks the

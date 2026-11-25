@@ -23,7 +23,10 @@ import { DEFAULT_HOTLINES, DEFAULT_TOP_AREAS } from '../rules/config';
 import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { SearchConfigCache } from 'src/cms-config/types/search-config-cache';
 import { RegionService, RegionSummaryDto } from 'src/region/internal';
-import { isMarkedNotStorable } from 'src/common/interceptors/cdn-cache-control.interceptor';
+import {
+  isMarkedNotStorable,
+  markNotStorable,
+} from 'src/common/interceptors/cdn-cache-control.interceptor';
 
 const golden: {
   rows: {
@@ -1821,6 +1824,39 @@ describe('V2SearchService area search (region, PR #313)', () => {
     expect(searchHybrid.mock.calls[0][0]).not.toHaveProperty('area');
     expect(result).not.toHaveProperty('resolved_location');
   });
+});
+
+// `getSearchConfig` marks the empty config that stands in for a failed Redis
+// read. An answer built on it must not stay in a shared cache.
+describe('V2SearchService with a failed tenant config read', () => {
+  const unread = () => markNotStorable({} as SearchConfigCache);
+
+  it.each(['true', 'off'])(
+    'search is not storable (V2_QUESTION_RULE_V1 %s)',
+    async (ruleV1) => {
+      const { service } = build({ searchConfig: unread(), ruleV1 });
+      const res = await service.search({
+        headers,
+        query: dto({ query: 'help' }),
+      });
+      expect(isMarkedNotStorable(res)).toBe(true);
+    },
+  );
+
+  it.each(['rent', ''])('pins for query %p are not storable', async (query) => {
+    const { service } = build({ searchConfig: unread() });
+    const res = await service.pins({ headers, query: dto({ query }) });
+    expect(isMarkedNotStorable(res)).toBe(true);
+  });
+
+  it.each(['rent', ''])(
+    'pins for query %p stay storable when the read worked',
+    async (query) => {
+      const { service } = build({ searchConfig: {} });
+      const res = await service.pins({ headers, query: dto({ query }) });
+      expect(isMarkedNotStorable(res)).toBe(false);
+    },
+  );
 });
 
 describe('V2SearchService.pins', () => {

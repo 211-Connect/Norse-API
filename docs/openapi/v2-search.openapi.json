@@ -284,7 +284,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -589,7 +589,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -880,7 +880,7 @@
             }
           },
           "404": {
-            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`, or the tenant in `tenant_id` has `enableV2Api` off."
+            "description": "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`."
           }
         },
         "tags": [
@@ -891,7 +891,7 @@
   },
   "info": {
     "title": "Norse API: v2 search (draft)",
-    "description": "Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.\n\nConfirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):\n- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.\n- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.\n- The need boost is on by default.\n- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.\n- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on.",
+    "description": "Draft contract of `/v2/search`, generated from the code. The main Swagger document leaves it out until the v2 ADR (ISS-2493) is accepted.\n\nConfirmed by David, 2026-11-18 (ADR 0039 Decisions 77-81):\n- `relevance_cutoff` uses the dynamic ladder only; there is no `relevance_cutoff_fraction` parameter.\n- Classification always runs; there is no `classify` parameter. `clarify` (`auto` or `never`) stays.\n- The need boost is on by default.\n- For v2 tenants, Norse-API writes tenant scorecard overrides to `sune_scorecard`.\n- Payload has a tenant boolean `enableV2Api` (pushed to Redis) and a search engine option `v2`, refused unless `enableV2Api` is on. Both choose the search Norse's own pages use.\n\nChanged 2026-11-25 (replaces the per-tenant gate on `/v2/search` of Decisions 81 and 91): `enableV2Api` does not gate the API. One deployment switch, `V2_SEARCH_ENABLED`, turns the route on for every tenant a key may read.",
     "version": "2.0.0-draft",
     "contact": {}
   },
