@@ -183,20 +183,22 @@ export class AppModule implements NestModule {
       ServiceController,
     );
 
-    consumer.apply(LocaleMiddleware).forRoutes(
-      TaxonomyController,
-      SearchController,
-      V2SearchController,
-      ResourceController,
-      FavoriteListController,
-      SuggestionController,
-      PrintableDirectoryController,
-      PrintableDirectoryPublicController,
-      PrintableDirectoryDeliveryInternalController,
-      OrganizationController,
-      // Checks ?locale= against accept-language on a CDN-cached route that
-      // returns translations (the cache keys on URL, ignoring Vary).
-      ServiceController,
-    );
+    consumer
+      .apply(LocaleMiddleware)
+      .forRoutes(
+        TaxonomyController,
+        SearchController,
+        V2SearchController,
+        ResourceController,
+        FavoriteListController,
+        SuggestionController,
+        PrintableDirectoryController,
+        PrintableDirectoryPublicController,
+        PrintableDirectoryDeliveryInternalController,
+        OrganizationController,
+        // Checks ?locale= against accept-language on a CDN-cached route that
+        // returns translations (the cache keys on URL, ignoring Vary).
+        ServiceController,
+      );
   }
 }
