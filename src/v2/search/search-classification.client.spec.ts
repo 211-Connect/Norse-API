@@ -70,6 +70,7 @@ describe('SearchClassificationClient', () => {
           mset: jest.fn(() => Promise.resolve()),
         } as never,
         metrics as unknown as MetricsService,
+        configService,
       ),
     );
   };
