@@ -38,6 +38,9 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
+  // Own sockets and a limit for the Elasticsearch calls of /v2; default in
+  // src/common/elasticsearch/v2-isolation.ts.
+  ELASTIC_V2_ISOLATION_ENABLED: process.env.ELASTIC_V2_ISOLATION_ENABLED,
   // Need boost on hybrid search (ISS-2745); on unless `false` (any case; read by envFlag).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,

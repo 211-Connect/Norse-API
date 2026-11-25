@@ -24,6 +24,7 @@ import configuration, {
 } from './common/config/configuration';
 import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
+import { V2ElasticScopeMiddleware } from './common/elasticsearch/v2-isolation';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
 import {
   ApiVersionMiddleware,
@@ -159,6 +160,8 @@ export class AppModule implements NestModule {
       method: RequestMethod.ALL,
     });
 
+    consumer.apply(V2ElasticScopeMiddleware).forRoutes(V2SearchController);
+
     consumer.apply(TenantMiddleware).forRoutes(
       TaxonomyController,
       SearchController,
@@ -180,22 +183,20 @@ export class AppModule implements NestModule {
       ServiceController,
     );
 
-    consumer
-      .apply(LocaleMiddleware)
-      .forRoutes(
-        TaxonomyController,
-        SearchController,
-        V2SearchController,
-        ResourceController,
-        FavoriteListController,
-        SuggestionController,
-        PrintableDirectoryController,
-        PrintableDirectoryPublicController,
-        PrintableDirectoryDeliveryInternalController,
-        OrganizationController,
-        // Checks ?locale= against accept-language on a CDN-cached route that
-        // returns translations (the cache keys on URL, ignoring Vary).
-        ServiceController,
-      );
+    consumer.apply(LocaleMiddleware).forRoutes(
+      TaxonomyController,
+      SearchController,
+      V2SearchController,
+      ResourceController,
+      FavoriteListController,
+      SuggestionController,
+      PrintableDirectoryController,
+      PrintableDirectoryPublicController,
+      PrintableDirectoryDeliveryInternalController,
+      OrganizationController,
+      // Checks ?locale= against accept-language on a CDN-cached route that
+      // returns translations (the cache keys on URL, ignoring Vary).
+      ServiceController,
+    );
   }
 }
