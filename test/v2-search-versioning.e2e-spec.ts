@@ -30,7 +30,6 @@ import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const/one-hour';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
-import { TenantConfigService } from 'src/cms-config/tenant-config.service';
 import { V2SearchEnabledGuard } from 'src/v2/search/v2-search-enabled.guard';
 import { V2SearchService } from 'src/v2/search/v2-search.service';
 import { V1_AND_LEGACY } from 'src/common/versioning/api-version';
@@ -65,10 +64,6 @@ describe('v2 search versioning (e2e)', () => {
       controllers: [V1SearchStubController, V2SearchController],
       providers: [
         V2SearchEnabledGuard,
-        {
-          provide: TenantConfigService,
-          useValue: { isV2Tenant: async () => true },
-        },
         { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
         { provide: V2SearchService, useValue: { search: searchMock } },
         {
@@ -355,7 +350,7 @@ describe('v2 search versioning (e2e)', () => {
   });
 
   describe('flag off', () => {
-    it.each([undefined, '', 'false', 'TRUE'])(
+    it.each([undefined, '', 'false', 'yes'])(
       '/v2/search is a 404 when V2_SEARCH_ENABLED is %p, even for a bad query',
       async (flag) => {
         app = await boot(flag);

@@ -71,8 +71,8 @@ export interface SearchConfigCache {
   /**
    * Payload tenant flag `enableV2Api`, copied here as `enable_v2_api`. True
    * marks a v2 tenant: scorecard overrides go to `sune_scorecard`. Absent or
-   * false: not v2. `V2SearchEnabledGuard` gates GET and POST /v2/search per
-   * tenant on this flag.
+   * false: not v2. It does not gate `/v2/search`: the API serves v2 for every
+   * tenant a key may read, whichever search Norse's pages use.
    */
   enable_v2_api?: boolean;
 }
