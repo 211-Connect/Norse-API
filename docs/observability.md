@@ -146,6 +146,9 @@ Privacy: a span attribute set by Norse-API code must be on the allowlist in
 [src/tracing-sanitizing-exporter.ts](../src/tracing-sanitizing-exporter.ts), or the
 exporter drops it. Only names, counts, flags and durations go on a span; never search
 text, coordinates or keys. A failed span records the error name, not its message.
+Mongo and mongoose spans (`db.system` `mongodb` or `mongoose`) also lose `db.query.text`,
+`db.statement`, the exception message and stack, and the status text: a write error
+(for example a duplicate key) holds the stored value. Redis spans keep the command name.
 
 ## URL privacy rules
 
