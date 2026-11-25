@@ -64,10 +64,24 @@ describe('v2 Elasticsearch isolation', () => {
   };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  it.each([undefined, '', 'false', '1'])(
+  it('is on by default and for any value but false', () => {
+    expect(ELASTIC_V2_ISOLATION_DEFAULT_ON).toBe(true);
+    for (const env of [undefined, '', '1', 'true']) {
+      const options = elasticsearchOptions({
+        get: (key: string) =>
+          ({
+            ELASTIC_NODE: 'http://es',
+            ELASTIC_API_KEY: 'k',
+            ELASTIC_V2_ISOLATION_ENABLED: env,
+          })[key],
+      } as any);
+      expect(options.Transport).toBeDefined();
+    }
+  });
+
+  it.each(['false', 'FALSE'])(
     'switch %p: the client options are as before',
     (env) => {
-      expect(ELASTIC_V2_ISOLATION_DEFAULT_ON).toBe(false);
       const values = {
         ELASTIC_NODE: 'http://es',
         ELASTIC_API_KEY: 'k',
@@ -78,6 +92,12 @@ describe('v2 Elasticsearch isolation', () => {
       ).toEqual({ node: 'http://es', auth: { apiKey: 'k' } });
     },
   );
+
+  it('builds options without a node, as before (tests replace the client)', () => {
+    expect(() =>
+      elasticsearchOptions({ get: () => undefined } as any),
+    ).not.toThrow();
+  });
 
   it('a hung v2 call fails with a timeout and frees its socket', async () => {
     const client = build('true', 200);

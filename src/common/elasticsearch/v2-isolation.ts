@@ -11,9 +11,10 @@ import { envFlag } from '../config/configuration';
 
 /**
  * The one default of env `ELASTIC_V2_ISOLATION_ENABLED` (any case; read by
- * envFlag). Off: v1 and v2 share one client with the library defaults, as before.
+ * envFlag). On unless `false`; `false`: v1 and v2 share one client with the
+ * library defaults, as before.
  */
-export const ELASTIC_V2_ISOLATION_DEFAULT_ON = false;
+export const ELASTIC_V2_ISOLATION_DEFAULT_ON = true;
 
 /**
  * Longest wait for one Elasticsearch call of a v2 request, in ms, time in the
@@ -64,12 +65,14 @@ export function elasticsearchOptions(
   // client-level `requestTimeout` would not start until a socket is free.
   // The type of `agent` omits this undici Pool option; it is passed through.
   const agent: object = { bodyTimeout: limitMs };
-  const v2Client = new Client({ ...base, agent });
+  // Made on the first v2 call: a process that serves no v2 opens nothing.
+  let v2Client: Client | undefined;
 
   class V2IsolatedTransport extends SniffingTransport {
     // Typed loosely: the base method has three overloads.
     async request(params: any, options: any = {}): Promise<any> {
       if (!v2Scope.getStore()) return super.request(params, options);
+      v2Client ??= new Client({ ...base, agent });
       return v2Client.transport.request(params, {
         ...options,
         requestTimeout: options.requestTimeout ?? limitMs,
