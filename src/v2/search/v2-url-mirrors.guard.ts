@@ -16,7 +16,6 @@ import { xTenantIdSchema } from '../../common/dto/headers.dto';
  *
  * `TenantMiddleware` and `LocaleMiddleware` run first and copy the URL values
  * over the headers; the v2 header pipe checks the exact language code.
- * This guard runs after `V2SearchEnabledGuard`, so a disabled route stays a 404.
  * v1 routes do not use it.
  */
 @Injectable()

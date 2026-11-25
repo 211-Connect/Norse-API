@@ -102,7 +102,6 @@ PROFILE=soak SOAK_RPS=10 BASE_URL=... TENANT_ID=... k6 run load-tests/v2-search/
 
 - [ ] Tell the owners of `ml-broker` and of Elasticsearch, with the date, the profile and the maximum rate.
 - [ ] Remember that dev and prod share one `ml-broker` instance. A dev load test loads prod classification.
-- [ ] Check that the dev deployment has `V2_SEARCH_ENABLED=true`. Without it every request is 404 and the warm-up stops the run.
 - [ ] Check `V2_CLASSIFY_TIMEOUT_MS` and `ML_BROKER_EMERGENCY_ONLY_SUPPORTED` on the target. Record them with the results.
 - [ ] Run the smoke profile against the target first.
 - [ ] Open the `ml-broker` and Elasticsearch dashboards and Tempo before the first step.

@@ -39,7 +39,6 @@ import { V2SearchQueryDto } from './dto/v2-search-query.dto';
 import { SearchPinsResponseDto } from '../../search/dto/search-pins-response.dto';
 import { V2ErrorDto, V2SearchResponseDto } from './dto/v2-search-response.dto';
 import { V2HeadersPipe } from './v2-headers.pipe';
-import { V2SearchEnabledGuard } from './v2-search-enabled.guard';
 import { V2UrlMirrorsGuard } from './v2-url-mirrors.guard';
 import { V2SearchService } from './v2-search.service';
 
@@ -47,8 +46,6 @@ const OK_DESCRIPTION =
   'The search answer. A failed classification still answers 200 (`model_version` is null, the emergency question can appear). A failed embedding still answers 200 with keyword results only.';
 const BAD_REQUEST =
   'A query value failed validation, for example a missing or malformed `tenant_id`, a missing `locale` or one that is not exactly one supported code (`en`, not `en-US` and not a weighted list), `query` over 500 characters, `limit` outside 1 to 300, an unknown need code, an unknown `urgency`, an `x-api-version: 2` header, or, on POST only, a Content-Type other than application/json.';
-const NOT_FOUND =
-  "The route looks absent: the `V2_SEARCH_ENABLED` flag is not `true`. The tenant's Payload `enableV2Api` flag does not gate the API.";
 
 /**
  * Reached by `GET /v2/search` and `POST /v2/search` only: the path picks the
@@ -83,16 +80,15 @@ export class V2SearchController {
 
   @Get()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
+  @UseGuards(V2UrlMirrorsGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
   @RequireCdnUrlMirrors()
   @ApiOperation({
     summary:
       'Search with intent and clarification questions, the emergency question first (draft)',
     description:
-      'Hybrid search plus classification and a rules engine. Behind the ' +
-      '`V2_SEARCH_ENABLED` flag; the request and response shapes are a draft ' +
-      'until the v2 ADR (ISS-2493).',
+      'Hybrid search plus classification and a rules engine. Always on; the ' +
+      'request and response shapes are a draft until the v2 ADR (ISS-2493).',
   })
   @ApiResponse({
     status: 200,
@@ -100,7 +96,6 @@ export class V2SearchController {
     description: OK_DESCRIPTION,
   })
   @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
-  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,
@@ -130,7 +125,7 @@ export class V2SearchController {
 
   @Get('pins')
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
+  @UseGuards(V2UrlMirrorsGuard, ArcjetGuard)
   @SetCdnCacheTTL(V2_SEARCH_CDN_TTL)
   @RequireCdnUrlMirrors()
   @ApiOperation({
@@ -140,11 +135,10 @@ export class V2SearchController {
       '10,000. Same membership as `GET /v2/search` (child taxonomy codes, ' +
       '`region`); needs, urgency and clarify are ignored. The query text is ' +
       'classified, as in the list, so need boosts apply to the pins. Matches ' +
-      'without coordinates are left out. Behind the `V2_SEARCH_ENABLED` flag.',
+      'without coordinates are left out.',
   })
   @ApiResponse({ status: 200, type: SearchPinsResponseDto })
   @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
-  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,
@@ -168,14 +162,13 @@ export class V2SearchController {
 
   @Post()
   @Version('2')
-  @UseGuards(V2SearchEnabledGuard, V2UrlMirrorsGuard, ArcjetGuard)
+  @UseGuards(V2UrlMirrorsGuard, ArcjetGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search with a GeoJSON geometry body (draft)',
     description:
-      'Same as `GET`, with the v1 POST body (`geometry`). Behind the ' +
-      '`V2_SEARCH_ENABLED` flag; the shapes are a draft until the v2 ADR ' +
-      '(ISS-2493).',
+      'Same as `GET`, with the v1 POST body (`geometry`). The shapes are a ' +
+      'draft until the v2 ADR (ISS-2493).',
   })
   @ApiResponse({
     status: 200,
@@ -183,7 +176,6 @@ export class V2SearchController {
     description: OK_DESCRIPTION,
   })
   @ApiResponse({ status: 400, type: V2ErrorDto, description: BAD_REQUEST })
-  @ApiResponse({ status: 404, description: NOT_FOUND })
   @ApiQuery({
     name: 'tenant_id',
     required: true,

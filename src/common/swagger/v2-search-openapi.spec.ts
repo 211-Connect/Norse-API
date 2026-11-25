@@ -22,8 +22,10 @@ describe('v2 search OpenAPI', () => {
     expect(Object.keys(doc.paths['/v2/search/pins'])).toEqual(['get']);
     const get = doc.paths['/v2/search'].get;
     expect(Object.keys(get.responses)).toEqual(
-      expect.arrayContaining(['200', '400', '404']),
+      expect.arrayContaining(['200', '400']),
     );
+    // Always on: no route-absent 404.
+    expect(Object.keys(get.responses)).not.toContain('404');
     const names = get.parameters.map(
       (p: unknown) => (p as { name: string }).name,
     );

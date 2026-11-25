@@ -456,7 +456,7 @@ export function setup() {
     console.log(`WARMUP ${i + 1}/${WARMUP_REQUESTS}: status ${res.status} in ${Math.round(res.timings.duration)} ms`);
   }
   if (okCount === 0) {
-    throw new Error("WARMUP failed: no warm-up request returned a 200 with search.hits. Check BASE_URL, TENANT_ID, auth and V2_SEARCH_ENABLED before a loaded run.");
+    throw new Error("WARMUP failed: no warm-up request returned a 200 with search.hits. Check BASE_URL, TENANT_ID and auth before a loaded run.");
   }
 }
 

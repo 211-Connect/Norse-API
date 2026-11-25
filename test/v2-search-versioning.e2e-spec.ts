@@ -30,7 +30,6 @@ import { SetCdnCacheTTL } from 'src/common/decorators/cdn-cache-ttl.decorator';
 import { ONE_HOUR } from 'src/common/const/one-hour';
 import { UsageMetricsService } from 'src/metrics/usage-metrics.service';
 import { V2SearchController } from 'src/v2/search/v2-search.controller';
-import { V2SearchEnabledGuard } from 'src/v2/search/v2-search-enabled.guard';
 import { V2SearchService } from 'src/v2/search/v2-search.service';
 import { V1_AND_LEGACY } from 'src/common/versioning/api-version';
 
@@ -59,11 +58,10 @@ describe('v2 search versioning (e2e)', () => {
   let app: INestApplication;
   const searchMock = jest.fn();
 
-  async function boot(flag: string | undefined) {
+  async function boot() {
     @Module({
       controllers: [V1SearchStubController, V2SearchController],
       providers: [
-        V2SearchEnabledGuard,
         { provide: APP_INTERCEPTOR, useClass: CdnCacheControlInterceptor },
         { provide: V2SearchService, useValue: { search: searchMock } },
         {
@@ -73,7 +71,7 @@ describe('v2 search versioning (e2e)', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: (k: string) => (k === 'V2_SEARCH_ENABLED' ? flag : undefined),
+            get: () => undefined,
           },
         },
       ],
@@ -130,7 +128,7 @@ describe('v2 search versioning (e2e)', () => {
 
   describe('flag on', () => {
     beforeEach(async () => {
-      app = await boot('true');
+      app = await boot();
     });
 
     it('/v2/search without a header reaches the v2 route', async () => {
@@ -208,7 +206,7 @@ describe('v2 search versioning (e2e)', () => {
   describe('cache headers', () => {
     const NO_STORE = 'no-store, no-cache, must-revalidate, private';
     beforeEach(async () => {
-      app = await boot('true');
+      app = await boot();
     });
 
     it('/v2/search stores a band-none answer, with no Vary on the version', async () => {
@@ -242,7 +240,7 @@ describe('v2 search versioning (e2e)', () => {
   // carry the tenant and the language. Missing is a 400, not a private answer.
   describe('v2 needs the tenant_id and locale URL copies', () => {
     beforeEach(async () => {
-      app = await boot('true');
+      app = await boot();
     });
 
     const refused = (res: request.Response, param: string) => {
@@ -349,22 +347,18 @@ describe('v2 search versioning (e2e)', () => {
     });
   });
 
-  describe('flag off', () => {
-    it.each([undefined, '', 'false', 'yes'])(
-      '/v2/search is a 404 when V2_SEARCH_ENABLED is %p, even for a bad query',
-      async (flag) => {
-        app = await boot(flag);
-        const res = await get(`/v2/search?urgency=U-9&${M}`);
-        expect(res.status).toBe(404);
-        expect(searchMock).not.toHaveBeenCalled();
-      },
-    );
-
-    it('POST /v2/search is a 404 when the flag is off', async () => {
-      app = await boot(undefined);
-      const res = await post(`/v2/search?query=rent&${M}`).send({});
-      expect(res.status).toBe(404);
+  describe('always on', () => {
+    it('GET /v2/search needs no env switch: a bad query reaches validation (400, not 404)', async () => {
+      app = await boot();
+      const res = await get(`/v2/search?urgency=U-9&${M}`);
+      expect(res.status).toBe(400);
       expect(searchMock).not.toHaveBeenCalled();
+    });
+
+    it('POST /v2/search needs no env switch', async () => {
+      app = await boot();
+      const res = await post(`/v2/search?query=rent&${M}`).send({});
+      expect(res.status).not.toBe(404);
     });
   });
 });
