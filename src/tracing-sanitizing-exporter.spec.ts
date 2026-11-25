@@ -249,6 +249,24 @@ describe('SanitizingSpanExporter', () => {
       expect(JSON.stringify(exported[0][0])).not.toContain(SECRET);
     });
 
+    it('scrubs when only one of the two db.system keys says mongodb', () => {
+      const span = fakeSpan(
+        'find uniqs',
+        {
+          'db.system.name': 'other',
+          'db.system': 'mongodb',
+          'db.query.text': `{"a":"${SECRET}"}`,
+        },
+        mongoEvents(),
+        { code: 2, message: SECRET },
+      );
+      const { exporter, exported } = fakeDelegate();
+
+      new SanitizingSpanExporter(exporter).export([span], () => undefined);
+
+      expect(JSON.stringify(exported[0][0])).not.toContain(SECRET);
+    });
+
     it('leaves other spans unchanged (Redis keeps the command name, errors keep the message)', () => {
       const span = fakeSpan(
         'redis-GET',

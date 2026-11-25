@@ -134,11 +134,14 @@ const MONGO_DROPPED_EVENT_ATTRIBUTES = [
 ] as const;
 
 function isMongoSpan(attributes: Record<string, unknown>): boolean {
-  const system = attributes['db.system.name'] ?? attributes['db.system'];
-  return (
-    typeof system === 'string' &&
-    (MONGO_SYSTEMS as readonly string[]).includes(system)
-  );
+  // Both keys: instrumentation versions differ (old `db.system`, new `db.system.name`).
+  return ['db.system.name', 'db.system'].some((key) => {
+    const system = attributes[key];
+    return (
+      typeof system === 'string' &&
+      (MONGO_SYSTEMS as readonly string[]).includes(system)
+    );
+  });
 }
 
 /** Event attributes safe to export from an exception event. */
