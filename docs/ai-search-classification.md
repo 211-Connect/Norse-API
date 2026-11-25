@@ -45,6 +45,8 @@ Optional, v1 only (`/ai-search`, needs-classification):
 - `ML_BROKER_V1_BASE_URL`: broker for v1 predict and re-rank. Unset or empty: v1 uses `ML_BROKER_BASE_URL`.
 - `ML_BROKER_V1_API_KEY`: key for that broker. Unset or empty: v1 uses `ML_BROKER_API_KEY`.
 
+Set both together when the two brokers use different keys: with only `ML_BROKER_V1_BASE_URL` set, v1 sends the shared key to the v1 broker.
+
 `/v2/search` never reads the two `ML_BROKER_V1_*` settings.
 
 Runtime constants:

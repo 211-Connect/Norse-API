@@ -502,6 +502,21 @@ describe('AiSearchService v1 broker URL (ML_BROKER_V1_BASE_URL)', () => {
     expect(key).toBe('shared-key');
   });
 
+  it('set: v1 re-rank goes to the v1 URL too', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ hsis_taxonomies: [] }),
+    } as Response);
+    const service = await build({
+      ...shared,
+      ML_BROKER_V1_BASE_URL: 'https://broker.v1',
+    });
+    await service.reRank(headers as any, { need_weights: { 'HO-300': 1 } });
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      'https://broker.v1/api/v1/tasks/needs-classification/re-rank',
+    );
+  });
+
   it('v1 URL set but no key anywhere: still not configured (503)', async () => {
     const service = await build({ ML_BROKER_V1_BASE_URL: 'https://broker.v1' });
     await expect(
