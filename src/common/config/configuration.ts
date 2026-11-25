@@ -38,9 +38,6 @@ export default () => ({
   METRICS_TOKEN: process.env.PROMETHEUS_METRICS_TOKEN || '',
   EMBEDDING_BASE_URL: process.env.EMBEDDING_BASE_URL,
   EMBEDDING_MODEL: process.env.EMBEDDING_MODEL,
-  // Own sockets and a limit for the Elasticsearch calls of /v2; default in
-  // src/common/elasticsearch/v2-isolation.ts.
-  ELASTIC_V2_ISOLATION_ENABLED: process.env.ELASTIC_V2_ISOLATION_ENABLED,
   // Need boost on hybrid search (ISS-2745); on unless `false` (any case; read by envFlag).
   NEED_BOOST_ENABLED: process.env.NEED_BOOST_ENABLED,
   URGENCY_BOOST_ENABLED: process.env.URGENCY_BOOST_ENABLED,
@@ -50,6 +47,9 @@ export default () => ({
   V2_QUESTION_RULE_V1: process.env.V2_QUESTION_RULE_V1,
   // Timeout of the /v2/search classify call, in ms (integer; default 1000).
   V2_CLASSIFY_TIMEOUT_MS: process.env.V2_CLASSIFY_TIMEOUT_MS,
+  // Own sockets and a limit for the Elasticsearch calls of /v2; default in
+  // src/common/elasticsearch/v2-isolation.ts.
+  ELASTIC_V2_ISOLATION_ENABLED: process.env.ELASTIC_V2_ISOLATION_ENABLED,
   // ml-broker accepts `emergency_only` on search-classification (ml-broker
   // PR #20); on only for the exact string `true`.
   ML_BROKER_EMERGENCY_ONLY_SUPPORTED:
