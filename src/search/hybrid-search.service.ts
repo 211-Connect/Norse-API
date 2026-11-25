@@ -333,6 +333,9 @@ export interface EarlyLists {
   taxonomy: Promise<RankedList | undefined>;
 }
 
+// Name our TEI server knows the model by. Same model as EMBEDDING_MODEL, which
+// holds the remote provider's spelling; TEI warns on any other spelling.
+const EMBEDDING_LOCAL_MODEL = 'BAAI/bge-m3';
 const EMBEDDING_TIMEOUT_MS = 10_000;
 
 // When a tenant sets `pinned_resources_mode` to `boost`, pinned/priority stop
@@ -2167,6 +2170,7 @@ export class HybridSearchService {
     // null = send no Authorization header (own TEI server has no key).
     apiKey: string | undefined | null,
     operation: 'embed' | 'embed_local',
+    model: string,
     query: string,
   ): Promise<number[]> {
     const response = await this.metrics.observeDownstream(
@@ -2179,7 +2183,7 @@ export class HybridSearchService {
             'Content-Type': 'application/json',
             ...(apiKey === null ? {} : { Authorization: `Bearer ${apiKey}` }),
           },
-          body: JSON.stringify({ model: this.embeddingModel, input: query }),
+          body: JSON.stringify({ model, input: query }),
           signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS),
         }),
       (res) => (res.ok ? 'ok' : 'error'),
@@ -2227,13 +2231,20 @@ export class HybridSearchService {
           };
         const result = await raceEmbeddings({
           local: side('local', () =>
-            this.requestEmbedding(localBaseUrl, null, 'embed_local', query),
+            this.requestEmbedding(
+              localBaseUrl,
+              null,
+              'embed_local',
+              EMBEDDING_LOCAL_MODEL,
+              query,
+            ),
           ),
           remote: side('remote', () =>
             this.requestEmbedding(
               this.embeddingBaseUrl,
               this.runpodApiKey,
               'embed',
+              this.embeddingModel,
               query,
             ),
           ),
@@ -2245,6 +2256,7 @@ export class HybridSearchService {
           this.embeddingBaseUrl,
           this.runpodApiKey,
           'embed',
+          this.embeddingModel,
           query,
         );
       }

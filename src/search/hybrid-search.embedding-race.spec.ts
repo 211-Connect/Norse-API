@@ -116,6 +116,10 @@ describe('HybridSearchService embedding race', () => {
       );
       expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
       expect(urls()).toEqual([REMOTE_URL]);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        model: 'model-x',
+        input: 'food bank',
+      });
       expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer k');
       expect(winner()).toBeUndefined();
     },
@@ -131,8 +135,14 @@ describe('HybridSearchService embedding race', () => {
     expect(urls().sort()).toEqual([LOCAL_URL, REMOTE_URL].sort());
     expect(callTo(LOCAL_URL)[1].headers.Authorization).toBeUndefined();
     expect(callTo(REMOTE_URL)[1].headers.Authorization).toBe('Bearer k');
-    expect(JSON.parse(callTo(LOCAL_URL)[1].body).model).toBe('model-x');
-    expect(JSON.parse(callTo(REMOTE_URL)[1].body).model).toBe('model-x');
+    expect(JSON.parse(callTo(LOCAL_URL)[1].body)).toEqual({
+      model: 'BAAI/bge-m3',
+      input: 'food bank',
+    });
+    expect(JSON.parse(callTo(REMOTE_URL)[1].body)).toEqual({
+      model: 'model-x',
+      input: 'food bank',
+    });
     expect(winner()).toBe('local');
     release(undefined);
     await flush();
