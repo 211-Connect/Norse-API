@@ -24,6 +24,7 @@ import configuration, {
 } from './common/config/configuration';
 import { createKeyv } from '@keyv/redis';
 import { CacheModule } from '@nestjs/cache-manager';
+import { V2ElasticScopeMiddleware } from './common/elasticsearch/v2-isolation';
 import { ServiceProviderMiddleware } from './common/middleware/ServiceProviderMiddleware';
 import {
   ApiVersionMiddleware,
@@ -158,6 +159,8 @@ export class AppModule implements NestModule {
       path: '*',
       method: RequestMethod.ALL,
     });
+
+    consumer.apply(V2ElasticScopeMiddleware).forRoutes(V2SearchController);
 
     consumer.apply(TenantMiddleware).forRoutes(
       TaxonomyController,
