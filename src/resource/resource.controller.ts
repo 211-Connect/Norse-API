@@ -38,6 +38,7 @@ import {
   ResourceBatchResponseDto,
 } from './dto/resource-batch.dto';
 import { RESOURCE_EXAMPLE } from './dto/resource-examples';
+import { ResourceNotFoundResponseDto } from './dto/resource-not-found.dto';
 import {
   TransformedResource,
   ResourceBatchResponse,
@@ -75,6 +76,12 @@ export class ResourceController {
     type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
   })
+  @ApiResponse({
+    status: 404,
+    description:
+      'No resource for this id in this tenant. When the id was re-keyed, `redirect` names its new path.',
+    type: ResourceNotFoundResponseDto,
+  })
   async getResourceById(
     @Param('id') id: string,
     @CustomHeaders(new ZodValidationPipe(headersSchema)) headers: HeadersDto,
@@ -104,6 +111,12 @@ export class ResourceController {
     status: 200,
     type: TransformedResourceOpenApiDto,
     example: RESOURCE_EXAMPLE,
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'No resource for this id in this tenant. When the id was re-keyed, `redirect` names its new path.',
+    type: ResourceNotFoundResponseDto,
   })
   getResourceByOriginalId(
     @Param('id') id: string, // The path parameter named id, but it is original ID
