@@ -38,7 +38,7 @@ export async function createInternalRegionsOpenApi(): Promise<OpenAPIObject> {
     const config = new DocumentBuilder()
       .setTitle('Norse API: internal Regions')
       .setDescription(
-        'Internal, global Region catalog endpoints. Requires the internal API key.',
+        'Internal, global Region catalog endpoints. Requires a gateway API key (through the gateway) or the internal API key.',
       )
       .setVersion('1.0.0')
       .addApiKey(

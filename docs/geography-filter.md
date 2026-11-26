@@ -25,16 +25,18 @@ Dagster [#601](https://github.com/211-Connect/dagster-data-orchestration/pull/60
 ## Auth: the internal key, not a tenant
 
 The four routes are not tenant-scoped: the writer set scopes services, and
-Regions are not tenant data. They are guarded by the internal key instead, on
-every path:
+Regions are not tenant data. The services routes are guarded by the internal
+key on every path. The Region routes also take a gateway API key
+(`GatewayOrInternalKeyGuard`; see [internal-regions.md](internal-regions.md#status)):
 
-- **Internal key, always.** Both controllers carry
+- **Internal key, always (services).** The services controller carries
   `@UseGuards(InternalApiGuard)`: every call sends `x-internal-api-key`, equal
   to Norse-API's `INTERNAL_API_KEY`. A missing or wrong key is `401`. So is
   every call when `INTERNAL_API_KEY` is unset or empty: the guard fails closed.
   The comparison is constant-time.
 - **Through the gateway.** A gateway key holding `norse-api.invoke`, plus the
-  internal key. No `x-tenant-id`: both controllers carry `@NotTenantScoped()`,
+  internal key for the services routes; the gateway key alone for the Region
+  routes. No `x-tenant-id`: both controllers carry `@NotTenantScoped()`,
   which exempts them from `TenantScopeGuard` and from nothing else.
   `GatewayIdentityGuard` and `GatewayPermissionsGuard` still run.
 - **Direct.** `api.c211.io` and `api-dev.c211.io` (App Platform, no gateway)
@@ -63,7 +65,8 @@ published. Each controller's own spec checks the same for its module.
 
 ## The four routes
 
-Send `x-api-version: 1` and `x-internal-api-key` on every call. No
+Send `x-api-version: 1` and `x-internal-api-key` on every call (the Region
+routes take a gateway API key instead, through the gateway). No
 `x-tenant-id`: the writer set scopes services, and Regions are not tenant data.
 
 | Route | Input | Returns |

@@ -20,7 +20,7 @@ import {
   RegionSearchResponseDto,
 } from './dto';
 import { NotTenantScoped } from 'src/auth/gateway/gateway-principal';
-import { InternalApiGuard } from 'src/common/guards/internal-api.guard';
+import { GatewayOrInternalKeyGuard } from 'src/common/guards/gateway-or-internal-key.guard';
 import { RegionService } from './region.service';
 import {
   PlaceDetailDto,
@@ -31,11 +31,12 @@ import {
 import { V1_AND_LEGACY } from '../../common/versioning/api-version';
 
 /**
- * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024).
- * Internal and unpublished: left out of the OpenAPI document the Norse SDK is
- * generated from. Regions are not tenant data, so the routes are not
- * tenant-scoped; the internal key (`x-internal-api-key`) guards them on every
- * path — see docs/geography-filter.md.
+ * Region typeahead and lookup for ServiceNet's Geography filter (ADR 0024)
+ * and for gateway API clients. Unpublished: left out of the OpenAPI document
+ * the Norse SDK is generated from. Regions are not tenant data, so the routes
+ * are not tenant-scoped. A gateway API key (`x-api-key` through the gateway)
+ * or the internal key (`x-internal-api-key`) is required; on a direct host
+ * only the internal key works — see docs/internal-regions.md.
  */
 @ApiSecurity('x-internal-api-key')
 @ApiHeader({
@@ -45,7 +46,7 @@ import { V1_AND_LEGACY } from '../../common/versioning/api-version';
   schema: { type: 'string', enum: ['1'], default: '1' },
 })
 @NotTenantScoped()
-@UseGuards(InternalApiGuard)
+@UseGuards(GatewayOrInternalKeyGuard)
 @Controller('internal/regions')
 export class RegionController {
   constructor(private readonly regionService: RegionService) {}
@@ -76,7 +77,7 @@ export class RegionController {
   @ApiResponse({ status: 400, description: 'Invalid query or cursor' })
   @ApiResponse({
     status: 401,
-    description: 'Missing or invalid internal API key',
+    description: 'No gateway API key and no valid internal API key',
   })
   @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })
   @ApiResponse({ status: 503, description: 'Elasticsearch timed out' })
@@ -95,7 +96,7 @@ export class RegionController {
   @ApiResponse({ status: 400, description: 'Malformed slug' })
   @ApiResponse({
     status: 401,
-    description: 'Missing or invalid internal API key',
+    description: 'No gateway API key and no valid internal API key',
   })
   @ApiResponse({ status: 404, description: 'No such published Place' })
   @ApiResponse({ status: 502, description: 'Elasticsearch request failed' })

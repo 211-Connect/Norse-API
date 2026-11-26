@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "nest build",
-    "openapi:internal-regions": "ts-node -r tsconfig-paths/register src/common/swagger/internal-regions-openapi.ts",
+    "openapi:internal-regions": "ts-node --files -r tsconfig-paths/register src/common/swagger/internal-regions-openapi.ts",
     "openapi:v2-search": "ts-node --files -r tsconfig-paths/register src/common/swagger/v2-search-openapi.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",

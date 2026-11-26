@@ -24,8 +24,8 @@ const KEY = 'internal-key-for-tests';
 
 type Route = [string, (server: any) => request.Test];
 
-/** The four Geography filter routes ServiceNet calls (ADR 0023/0024). */
-const ROUTES: Route[] = [
+/** The Region routes: a gateway key or the internal key (ADR 0024). */
+const REGION_ROUTES: Route[] = [
   [
     'GET /internal/regions',
     (s) => request(s).get('/internal/regions?q=jack').set('x-api-version', '1'),
@@ -35,6 +35,10 @@ const ROUTES: Route[] = [
     (s) =>
       request(s).get('/internal/regions/state:MO').set('x-api-version', '1'),
   ],
+];
+
+/** The services routes: the internal key only, gateway or not (ADR 0023). */
+const SERVICE_ROUTES: Route[] = [
   [
     'POST /internal/services/search',
     (s) =>
@@ -53,6 +57,9 @@ const ROUTES: Route[] = [
   ],
 ];
 
+/** The four Geography filter routes ServiceNet calls (ADR 0023/0024). */
+const ROUTES: Route[] = [...REGION_ROUTES, ...SERVICE_ROUTES];
+
 const GATEWAY = {
   'x-connect211-identity-external-id': 'servicenet',
   'x-connect211-key-id': 'key_servicenet',
@@ -65,10 +72,11 @@ const MODES: [string, Record<string, string>][] = [
 
 /**
  * The global gateway guards in AppModule's order, in front of the internal
- * routes and one existing tenant-scoped route: the internal routes answer to
- * the internal key instead of a tenant, and nothing else changes.
+ * routes and one existing tenant-scoped route. The services routes answer to
+ * the internal key only; the Region routes also take a gateway key. Neither
+ * needs a tenant, and nothing else changes.
  */
-describe('Geography filter internal routes: internal key, not tenant scope', () => {
+describe('Geography filter internal routes: a key, not tenant scope', () => {
   const search = jest.fn();
   const mget = jest.fn();
 
@@ -144,17 +152,59 @@ describe('Geography filter internal routes: internal key, not tenant scope', () 
           expect([400, 401, 403]).not.toContain(res.status);
           expect(search).toHaveBeenCalled();
         });
+      });
+    });
 
+    describe('gateway mode, no internal key', () => {
+      it.each(REGION_ROUTES)(
+        '%s reaches the handler with the gateway key alone',
+        async (_route, call) => {
+          const res = await call(app.getHttpServer()).set(GATEWAY);
+          expect([400, 401, 403]).not.toContain(res.status);
+          expect(search).toHaveBeenCalled();
+        },
+      );
+
+      it.each(REGION_ROUTES)(
+        '%s ignores a wrong internal key next to the gateway key',
+        async (_route, call) => {
+          const res = await call(app.getHttpServer())
+            .set(GATEWAY)
+            .set('x-internal-api-key', `${KEY}-wrong`);
+          expect([400, 401, 403]).not.toContain(res.status);
+        },
+      );
+
+      describe.each(SERVICE_ROUTES)('%s', (_route, call) => {
         it('401s without the key, before touching Elasticsearch', async () => {
-          const res = await call(app.getHttpServer()).set(identity);
+          const res = await call(app.getHttpServer()).set(GATEWAY);
           expect(res.status).toBe(401);
           expect(search).not.toHaveBeenCalled();
         });
 
         it('401s with the wrong key, before touching Elasticsearch', async () => {
           const res = await call(app.getHttpServer())
-            .set(identity)
+            .set(GATEWAY)
             .set('x-internal-api-key', `${KEY}-wrong`);
+          expect(res.status).toBe(401);
+          expect(search).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    describe('legacy mode (a direct host), no gateway identity', () => {
+      describe.each(ROUTES)('%s', (_route, call) => {
+        it('401s without the key, before touching Elasticsearch', async () => {
+          const res = await call(app.getHttpServer());
+          expect(res.status).toBe(401);
+          expect(search).not.toHaveBeenCalled();
+        });
+
+        it('401s with the wrong key, before touching Elasticsearch', async () => {
+          const res = await call(app.getHttpServer()).set(
+            'x-internal-api-key',
+            `${KEY}-wrong`,
+          );
           expect(res.status).toBe(401);
           expect(search).not.toHaveBeenCalled();
         });
@@ -182,15 +232,34 @@ describe('Geography filter internal routes: internal key, not tenant scope', () 
     });
     afterAll(() => app.close());
 
-    describe.each(MODES)('%s mode', (_mode, identity) => {
-      it.each(ROUTES)('%s fails closed', async (_route, call) => {
+    it.each(SERVICE_ROUTES)(
+      '%s fails closed in gateway mode',
+      async (_route, call) => {
         for (const sent of ['', 'anything', KEY]) {
-          const req = call(app.getHttpServer()).set(identity);
+          const req = call(app.getHttpServer()).set(GATEWAY);
           const res = await (sent ? req.set('x-internal-api-key', sent) : req);
           expect(res.status).toBe(401);
         }
         expect(search).not.toHaveBeenCalled();
-      });
+      },
+    );
+
+    it.each(ROUTES)('%s fails closed in legacy mode', async (_route, call) => {
+      for (const sent of ['', 'anything', KEY]) {
+        const req = call(app.getHttpServer());
+        const res = await (sent ? req.set('x-internal-api-key', sent) : req);
+        expect(res.status).toBe(401);
+      }
+      expect(search).not.toHaveBeenCalled();
     });
+
+    it.each(REGION_ROUTES)(
+      '%s still serves a gateway key',
+      async (_route, call) => {
+        const res = await call(app.getHttpServer()).set(GATEWAY);
+        expect([400, 401, 403]).not.toContain(res.status);
+        expect(search).toHaveBeenCalled();
+      },
+    );
   });
 });

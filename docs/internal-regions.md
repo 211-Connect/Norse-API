@@ -15,19 +15,30 @@ INTEG-024.
 
 `centroid` is `{ lat, lng }` from the seed's `[lon, lat]`, present for counties and ZIPs (the seed has none for states). ServiceNet biases address search toward it (ISS-1875).
 
-Send `x-api-version: 1`, as for every versioned route, and
-`x-internal-api-key`. No `x-tenant-id`: Regions are not tenant data.
+Send `x-api-version: 1`, as for every versioned route, and one credential:
+a gateway API key (`x-api-key`, through the gateway) or `x-internal-api-key`.
+No `x-tenant-id`: Regions are not tenant data.
 
 ## Status
 
 - **Unpublished.** `@ApiExcludeController()` keeps these routes out of
   `/swagger/json`, so the Norse SDK never sees them.
   `region.controller.spec.ts` checks the generated document.
-- **Internal key, not tenant scope.** Not tenant-scoped
-  (`@NotTenantScoped()`). Every call needs `x-internal-api-key` equal to
-  `INTERNAL_API_KEY`, on the gateway path (a key with `norse-api.invoke`) and
-  on `api.c211.io` / `api-dev.c211.io` alike; an unset key rejects
-  everything. ISS-1887 is defence in depth. See
+- **A gateway key or the internal key, not tenant scope.** Not tenant-scoped
+  (`@NotTenantScoped()`). `GatewayOrInternalKeyGuard` lets a call through
+  when either holds:
+  - **Through the gateway:** any gateway API key c211-auth accepts for Norse-API
+    (it holds `norse-api.invoke`). No internal key and no tenant scope are needed,
+    so an external developer's V2 key can read Regions.
+  - **The internal key:** `x-internal-api-key` equal to `INTERNAL_API_KEY`, on
+    either path. ServiceNet calls this way.
+
+  On `api.c211.io` / `api-dev.c211.io` (no gateway) only the internal key
+  works, and an unset `INTERNAL_API_KEY` rejects every call there. Anything
+  else is `401`. Regions are public Census geography, so the gateway key is
+  enough; the internal-only services routes beside them are unchanged. If
+  ISS-1887 starts blocking `/internal/*` at the gateway, it has to leave
+  `/internal/regions` open. See
   [geography-filter.md](geography-filter.md#auth-the-internal-key-not-a-tenant).
 
 ## Internal OpenAPI contract
@@ -129,6 +140,13 @@ The detail returns centroid as `{lat, lng}`, geometry as GeoJSON Polygon or
 MultiPolygon, and `bbox` as `[minLng, minLat, maxLng, maxLat]`, calculated from
 all geometry coordinates. `fips` is the seven-digit Census GEOID as a string.
 Place IDs are not accepted by the existing Region-by-ID or Geography filters.
+
+Through the gateway, with a gateway API key:
+
+```sh
+curl -H "x-api-key: $GATEWAY_API_KEY" \
+  'https://dev-services.c211.io/norse-api/v1/internal/regions?q=king&types=county&states=WA'
+```
 
 For a locally configured API and Elasticsearch alias containing published Places:
 
