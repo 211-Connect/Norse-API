@@ -17,6 +17,7 @@ import { Request } from 'express';
 
 import { InternalApiGuard } from '../common/guards/internal-api.guard';
 import { X_TENANT_ID_HEADER_DESCRIPTION } from '../common/swagger/header-descriptions';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 import {
   RecordCrawlerTrafficDto,
   RecordCrawlerTrafficResponseDto,
@@ -31,7 +32,7 @@ import { CrawlerTrafficService } from './services/crawler-traffic.service';
 @ApiTags('Crawler Traffic (Internal)')
 @UseGuards(InternalApiGuard)
 @ApiSecurity('x-internal-api-key')
-@Controller({ path: 'internal/crawler-traffic', version: '1' })
+@Controller({ path: 'internal/crawler-traffic', version: V1_AND_LEGACY })
 @ApiHeader({
   name: 'x-tenant-id',
   required: true,
