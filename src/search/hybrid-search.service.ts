@@ -2136,24 +2136,30 @@ export class HybridSearchService {
   }
 
   /**
-   * Embeds the query text. The vector is cached by model and hashed text
-   * (24 h by default), so a repeated query skips the embedding API. A cache
-   * failure never fails the search: RequestCacheService treats a Redis error
-   * as a miss, and a thrown factory writes nothing.
+   * Embeds the query text.
    *
-   * v1 (also the default) asks EMBEDDING_BASE_URL only (Lucas 2026-11-25). For
-   * v2 with EMBEDDING_LOCAL_BASE_URL set, a miss asks the own TEI server and
-   * EMBEDDING_BASE_URL at once and takes the first good answer. Such an answer
-   * has its own cache key, so v1 never reads a vector that TEI made.
+   * v1 (also the default) is the same as tag v1.6.0 (Lucas 2026-11-25): the
+   * raw text goes to EMBEDDING_BASE_URL on every call, with no cache and no
+   * normalizing, and the API numbers come back unrounded.
+   *
+   * v2 caches the vector by model and hashed normalized text (24 h by
+   * default), so a repeated query skips the embedding API. A cache failure
+   * never fails the search: RequestCacheService treats a Redis error as a
+   * miss, and a thrown factory writes nothing. With EMBEDDING_LOCAL_BASE_URL
+   * set, a miss asks the own TEI server and EMBEDDING_BASE_URL at once and
+   * takes the first good answer, stored under its own cache key.
    */
   async embedQuery(
     query: string,
     rankingVersion: RankingVersion = 'v1',
   ): Promise<number[]> {
     return withSpan('hybrid.embed', async (span) => {
+      if (rankingVersion !== 'v2') {
+        span.setAttribute('hybrid.embed_cache_hit', false);
+        return this.fetchEmbedding(query, span, undefined);
+      }
       const text = normalizeQueryText(query);
-      const localBaseUrl =
-        rankingVersion === 'v2' ? this.embeddingLocalBaseUrl : undefined;
+      const localBaseUrl = this.embeddingLocalBaseUrl;
       if (!this.embeddingCacheEnabled || !this.embeddingModel) {
         span.setAttribute('hybrid.embed_cache_hit', false);
         return this.fetchEmbedding(text, span, localBaseUrl);

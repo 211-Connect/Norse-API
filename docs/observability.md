@@ -125,7 +125,7 @@ search apart: they all post to the same `_search` path.
 | `v2.rules.decide`, `v2.rules.finalize` | Rules engine |
 | `v2.retrieval` | `HybridSearchService.searchHybrid` |
 | `hybrid.prepare` | Everything before the final request. Attributes: `hybrid.fused`, `hybrid.cutoff`, `hybrid.need_counts` |
-| `hybrid.embed` | Query embedding: cache read, API call on a miss. Attribute: `hybrid.embed_cache_hit` (true when the API was not called), `hybrid.embed_winner` (`local`, `remote`, or `none` when both failed; absent on v1, on a cache hit, or when `EMBEDDING_LOCAL_BASE_URL` is empty) |
+| `hybrid.embed` | Query embedding: v2 cache read, API call on a miss; v1 always calls the API. Attribute: `hybrid.embed_cache_hit` (true when the API was not called; always false on v1), `hybrid.embed_winner` (`local`, `remote`, or `none` when both failed; absent on v1, on a cache hit, or when `EMBEDDING_LOCAL_BASE_URL` is empty) |
 | `hybrid.word_rarity` | Word rarity: cache read, probe, cache write |
 | `hybrid.cutoff_probe` | Relevance cutoff probe; its Elasticsearch calls are `elasticsearch hybrid_cutoff_head`, `_count`, `_kept`, `_widened` |
 | `hybrid.fused_order` | Rank fusion lists that wait for the taxonomy lookup |

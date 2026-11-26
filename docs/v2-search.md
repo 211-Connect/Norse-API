@@ -15,7 +15,7 @@ Hybrid search plus classification and the clarification rules engine ([v2-rules-
 - `NEED_BOOST_ENABLED`: the need boost (need list in rank fusion, summed-ranking fallback) is on by default (Lucas 2026-11-18). Unset means on; only `false` (any case, no spaces) turns it off; a value with spaces reads as the default (on). It needs the `sune_need_weights` rank_features mapping on the index.
 - `V2_CLASSIFY_TIMEOUT_MS`: timeout of the classify call, integer ms, default 1000 (Lucas 2026-11-13: ml-broker is slow; was 300). A value outside 100 to 5000 is clamped to that range; a value that is not a positive integer uses the default.
 - `CLASSIFY_CACHE_ENABLED`: the classify result cache is on unless `false` (any case). Only `false` turns it off (a value like `"false "` does not, `FALSE` does).
-- `EMBEDDING_CACHE_ENABLED`: the query embedding cache is on unless `false` (any case, no spaces). `EMBEDDING_CACHE_TTL_MS` sets its lifetime (positive integer ms, default 24 h).
+- `EMBEDDING_CACHE_ENABLED`: the query embedding cache (v2 only; v1 has no cache and sends the raw text, as tag v1.6.0) is on unless `false` (any case, no spaces). `EMBEDDING_CACHE_TTL_MS` sets its lifetime (positive integer ms, default 24 h).
 - `EMBEDDING_LOCAL_BASE_URL`: our own embedding server, v2 only. Set: a v2 query embedding asks it and `EMBEDDING_BASE_URL` at once and uses the first good answer, stored under its own cache key (`query_embedding:race:`). Empty: `EMBEDDING_BASE_URL` only. v1 never calls it and never reads that key.
 - Tenant setting `ai_classification` (in the `search_config:<tenant>` Redis value): only exactly `off` switches AI classification off for that tenant. A missing, null or unknown value means on (`tenantAiClassification`).
 

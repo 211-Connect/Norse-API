@@ -259,7 +259,8 @@ describe('HybridSearchService embedding race', () => {
       await flush();
       expect(sets).toEqual([RACE_KEY]);
       expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
-      expect(sets).toEqual([RACE_KEY, REMOTE_KEY]);
+      // v1 uses no cache (as tag v1.6.0): it writes nothing.
+      expect(sets).toEqual([RACE_KEY]);
     });
 
     it('v2 with TEI never reads what v1 stored', async () => {
@@ -267,7 +268,8 @@ describe('HybridSearchService embedding race', () => {
       const service = await build(cacheOn);
       expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
       expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
-      expect(sets).toEqual([REMOTE_KEY, RACE_KEY]);
+      // v1 wrote nothing, so only the v2 entry exists.
+      expect(sets).toEqual([RACE_KEY]);
       await flush();
     });
 
@@ -303,12 +305,12 @@ describe('HybridSearchService embedding race', () => {
       expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
       expect(local).not.toHaveBeenCalled();
       expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
-      expect(sets).toEqual([REMOTE_KEY, RACE_KEY]);
+      expect(sets).toEqual([RACE_KEY]);
       await flush();
     });
 
     it.each([[undefined], ['   ']])(
-      'local address %p: v1 and v2 share the remote entry, as before',
+      'local address %p: v1 sends raw text and bypasses the v2 remote entry',
       async (value) => {
         const service = await build({
           EMBEDDING_CACHE_ENABLED: 'true',
@@ -317,7 +319,7 @@ describe('HybridSearchService embedding race', () => {
         await service.embedQuery('  food   bank ', 'v2');
         expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
         expect(sets).toEqual([REMOTE_KEY]);
-        expect(urls()).toEqual([REMOTE_URL]);
+        expect(urls()).toEqual([REMOTE_URL, REMOTE_URL]);
       },
     );
   });

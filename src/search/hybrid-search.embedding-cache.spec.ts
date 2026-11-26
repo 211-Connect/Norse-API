@@ -83,7 +83,7 @@ describe('HybridSearchService query embedding cache', () => {
 
   it('miss calls the API once and writes the cache with the 24 h default', async () => {
     const service = await build();
-    expectClose(await service.embedQuery('food bank'), VECTOR);
+    expectClose(await service.embedQuery('food bank', 'v2'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sets).toHaveLength(1);
     expect(sets[0][0]).toBe(
@@ -95,23 +95,23 @@ describe('HybridSearchService query embedding cache', () => {
 
   it('normalizes the text for the key and for the API request', async () => {
     const service = await build();
-    await service.embedQuery('  food   bank\n');
-    await service.embedQuery('food bank');
+    await service.embedQuery('  food   bank\n', 'v2');
+    await service.embedQuery('food bank', 'v2');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).input).toBe('food bank');
   });
 
   it('hit makes no API call and returns the same numbers', async () => {
     const service = await build();
-    const first = await service.embedQuery('food bank');
-    const second = await service.embedQuery('food bank');
+    const first = await service.embedQuery('food bank', 'v2');
+    const second = await service.embedQuery('food bank', 'v2');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expectClose(second, first);
   });
 
   it('stores no search text in the key or the value', async () => {
     const service = await build();
-    await service.embedQuery('very private words');
+    await service.embedQuery('very private words', 'v2');
     const [key, value] = sets[0];
     expect(key).not.toContain('private');
     expect(String(value)).not.toContain('private');
@@ -120,8 +120,8 @@ describe('HybridSearchService query embedding cache', () => {
   it('two concurrent calls for the same text make one API call', async () => {
     const service = await build();
     const [a, b] = await Promise.all([
-      service.embedQuery('food bank'),
-      service.embedQuery('food bank'),
+      service.embedQuery('food bank', 'v2'),
+      service.embedQuery('food bank', 'v2'),
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expectClose(a, b);
@@ -136,37 +136,37 @@ describe('HybridSearchService query embedding cache', () => {
         text: () => Promise.resolve('x'),
       }),
     );
-    await expect(service.embedQuery('food bank')).rejects.toThrow();
+    await expect(service.embedQuery('food bank', 'v2')).rejects.toThrow();
     expect(sets).toHaveLength(0);
-    expectClose(await service.embedQuery('food bank'), VECTOR);
+    expectClose(await service.embedQuery('food bank', 'v2'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('EMBEDDING_CACHE_ENABLED=false skips the cache', async () => {
     const service = await build({ EMBEDDING_CACHE_ENABLED: 'false' });
-    await service.embedQuery('food bank');
-    await service.embedQuery('food bank');
+    await service.embedQuery('food bank', 'v2');
+    await service.embedQuery('food bank', 'v2');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sets).toHaveLength(0);
   });
 
   it('false in any case turns the cache off; padded values do not', async () => {
     let service = await build({ EMBEDDING_CACHE_ENABLED: 'FALSE' });
-    await service.embedQuery('food bank');
+    await service.embedQuery('food bank', 'v2');
     expect(sets).toHaveLength(0);
     service = await build({ EMBEDDING_CACHE_ENABLED: ' false' });
-    await service.embedQuery('food bank 2');
+    await service.embedQuery('food bank 2', 'v2');
     expect(sets).toHaveLength(1);
   });
 
   it('EMBEDDING_CACHE_TTL_MS overrides the TTL; bad values give the default', async () => {
     let service = await build({ EMBEDDING_CACHE_TTL_MS: '5000' });
-    await service.embedQuery('a');
+    await service.embedQuery('a', 'v2');
     expect(sets[0][2]).toBe(5000);
     for (const bad of ['0', '-5', 'abc', '1.5']) {
       sets = [];
       service = await build({ EMBEDDING_CACHE_TTL_MS: bad });
-      await service.embedQuery('b' + bad);
+      await service.embedQuery('b' + bad, 'v2');
       expect(sets[0][2]).toBe(24 * 60 * 60 * 1000);
     }
   });
@@ -175,10 +175,10 @@ describe('HybridSearchService query embedding cache', () => {
     const service = await build();
     const key = queryEmbeddingCacheKey('remote', 'model-x', 'food bank');
     store.set(key, 'garbage!!');
-    expectClose(await service.embedQuery('food bank'), VECTOR);
+    expectClose(await service.embedQuery('food bank', 'v2'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(store.get(key)).not.toBe('garbage!!');
-    expectClose(await service.embedQuery('food bank'), VECTOR);
+    expectClose(await service.embedQuery('food bank', 'v2'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -186,7 +186,68 @@ describe('HybridSearchService query embedding cache', () => {
     const service = await build();
     const cache = (service as any).requestCacheService.cacheManager;
     cache.get.mockRejectedValueOnce(new Error('redis down'));
-    expectClose(await service.embedQuery('food bank'), VECTOR);
+    expectClose(await service.embedQuery('food bank', 'v2'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe.each([
+    ['undefined', undefined],
+    ['v1', 'v1' as const],
+  ])('rankingVersion %s (same as tag v1.6.0)', (_name, rv) => {
+    it('sends the raw text unchanged', async () => {
+      const service = await build();
+      await service.embedQuery('  food   bank\n', rv);
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body).input).toBe(
+        '  food   bank\n',
+      );
+    });
+
+    it('two sequential calls make two API calls and no cache write', async () => {
+      const service = await build();
+      await service.embedQuery('food bank', rv);
+      await service.embedQuery('food bank', rv);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sets).toHaveLength(0);
+    });
+
+    it('never calls the cache', async () => {
+      const service = await build();
+      const rc = (service as any).requestCacheService;
+      const getOrSet = jest.spyOn(rc, 'getOrSet');
+      const setMany = jest.spyOn(rc, 'setMany');
+      await service.embedQuery('food bank', rv);
+      expect(getOrSet).not.toHaveBeenCalled();
+      expect(setMany).not.toHaveBeenCalled();
+    });
+
+    it('returns the API numbers unrounded', async () => {
+      const service = await build();
+      fetchMock.mockImplementationOnce(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: [{ embedding: [0.1, 0.2] }] }),
+        }),
+      );
+      expect(await service.embedQuery('food bank', rv)).toStrictEqual([
+        0.1, 0.2,
+      ]);
+    });
+
+    it('does not read an entry v2 stored', async () => {
+      const service = await build();
+      await service.embedQuery('food bank', 'v2');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await service.embedQuery('food bank', rv);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('works when the cache throws', async () => {
+      const service = await build();
+      const cache = (service as any).requestCacheService.cacheManager;
+      cache.get.mockRejectedValue(new Error('redis down'));
+      cache.set.mockRejectedValue(new Error('redis down'));
+      cache.mset.mockRejectedValue(new Error('redis down'));
+      expect(await service.embedQuery('food bank', rv)).toStrictEqual(VECTOR);
+    });
   });
 });
