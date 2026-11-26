@@ -74,6 +74,7 @@ describe('HybridSearchService — early retrieval start', () => {
         ? 'need'
         : 'keyword';
 
+  let localUrl: string | undefined;
   const build = async () => {
     requests = [];
     const esSearch = jest.fn((req: any) => {
@@ -192,6 +193,7 @@ describe('HybridSearchService — early retrieval start', () => {
               if (key === 'EMBEDDING_MODEL') return 'model-x';
               if (key === 'RUNPOD_API_KEY') return 'key';
               if (key === 'NEED_BOOST_ENABLED') return enabled;
+              if (key === 'EMBEDDING_LOCAL_BASE_URL') return localUrl;
               return undefined;
             }),
           },
@@ -250,6 +252,7 @@ describe('HybridSearchService — early retrieval start', () => {
   beforeEach(async () => {
     mode = 'ok';
     enabled = undefined;
+    localUrl = undefined;
     taxonomyGate = undefined;
     rarityGate = undefined;
     searchConfig = {};
@@ -511,5 +514,72 @@ describe('HybridSearchService — early retrieval start', () => {
     expect(requests.filter(isList)).toHaveLength(0);
     expect(requests.filter(isStats)).toHaveLength(0);
     expect((res.search.hits.total as { value: number }).value).toBe(1234);
+  });
+
+  describe('which embedding server each caller asks (local address set)', () => {
+    const realFetch = global.fetch;
+    let urls: string[];
+    const REMOTE = 'https://embed.example/embeddings';
+    const LOCAL = 'http://tei.local/v1/embeddings';
+
+    beforeEach(async () => {
+      localUrl = 'http://tei.local/v1';
+      await build();
+      (service.embedQuery as jest.Mock).mockRestore();
+      urls = [];
+      global.fetch = jest.fn((url: string) => {
+        urls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({ data: [{ embedding: [0.1, 0.2, 0.3, 0.4] }] }),
+        });
+      }) as any;
+    });
+    afterEach(() => {
+      global.fetch = realFetch;
+    });
+
+    it.each<[string, (o: any) => Promise<unknown>]>([
+      ['search', (o) => service.searchHybrid(o)],
+      [
+        'search with the cutoff on',
+        (o) =>
+          service.searchHybrid({
+            ...o,
+            query: { ...o.query, relevance_cutoff: 'on' },
+          }),
+      ],
+      [
+        'search with the early handle',
+        (o) =>
+          service.searchHybrid({ ...o, early: service.startEarlyRetrieval(o) }),
+      ],
+      [
+        'pins that read scores',
+        (o) =>
+          service.buildPinsRequest({
+            ...o,
+            query: { ...o.query, relevance_cutoff: 'on' },
+          }),
+      ],
+    ])('%s: v1 asks the remote only, v2 asks both', async (_name, call) => {
+      await call(options({ rankingVersion: undefined }));
+      expect(urls).toEqual([REMOTE]);
+
+      urls = [];
+      await call(options({ rankingVersion: 'v1' }));
+      expect(urls).toEqual([REMOTE]);
+
+      urls = [];
+      await call(options());
+      expect(urls.sort()).toEqual([LOCAL, REMOTE].sort());
+    });
+
+    it('v1 pins without the cutoff and the v1 count ask neither', async () => {
+      await service.buildPinsRequest(options({ rankingVersion: undefined }));
+      await service.getDocumentsCount(headers, 'food shelf', ['BH-1800']);
+      expect(urls).toEqual([]);
+    });
   });
 });

@@ -86,7 +86,9 @@ describe('HybridSearchService query embedding cache', () => {
     expectClose(await service.embedQuery('food bank'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sets).toHaveLength(1);
-    expect(sets[0][0]).toBe(queryEmbeddingCacheKey('model-x', 'food bank'));
+    expect(sets[0][0]).toBe(
+      queryEmbeddingCacheKey('remote', 'model-x', 'food bank'),
+    );
     expect(typeof sets[0][1]).toBe('string');
     expect(sets[0][2]).toBe(24 * 60 * 60 * 1000);
   });
@@ -171,7 +173,7 @@ describe('HybridSearchService query embedding cache', () => {
 
   it('a corrupt cached value counts as a miss and is overwritten', async () => {
     const service = await build();
-    const key = queryEmbeddingCacheKey('model-x', 'food bank');
+    const key = queryEmbeddingCacheKey('remote', 'model-x', 'food bank');
     store.set(key, 'garbage!!');
     expectClose(await service.embedQuery('food bank'), VECTOR);
     expect(fetchMock).toHaveBeenCalledTimes(1);

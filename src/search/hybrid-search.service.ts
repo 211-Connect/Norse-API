@@ -1021,7 +1021,8 @@ export class HybridSearchService {
     const startLists = fuseEligible && !cutoffRequested;
 
     const embedPromise: Promise<number[] | undefined> = wantsVector
-      ? (options.queryVector ?? this.startEmbedding(queryStr))
+      ? (options.queryVector ??
+        this.startEmbedding(queryStr, options.rankingVersion))
       : Promise.resolve(undefined);
     const facetsPromise = this.tenantConfigService.getFacets(tenantId);
     const searchConfigPromise =
@@ -2001,8 +2002,11 @@ export class HybridSearchService {
   }
 
   /** Starts the query embedding. Never rejects: a failure logs the same warning as before and resolves undefined (lexical-only fallback). */
-  startEmbedding(query: string): Promise<number[] | undefined> {
-    return this.embedQuery(query).catch((err: Error) => {
+  startEmbedding(
+    query: string,
+    rankingVersion?: RankingVersion,
+  ): Promise<number[] | undefined> {
+    return this.embedQuery(query, rankingVersion).catch((err: Error) => {
       this.logger.warn(
         `Embedding failed, falling back to lexical-only: ${err.message}`,
       );
@@ -2135,24 +2139,38 @@ export class HybridSearchService {
    * Embeds the query text. The vector is cached by model and hashed text
    * (24 h by default), so a repeated query skips the embedding API. A cache
    * failure never fails the search: RequestCacheService treats a Redis error
-   * as a miss, and a thrown factory writes nothing. With
-   * EMBEDDING_LOCAL_BASE_URL set, a miss asks the own TEI server and
-   * EMBEDDING_BASE_URL at once and takes the first good answer.
+   * as a miss, and a thrown factory writes nothing.
+   *
+   * v1 (also the default) asks EMBEDDING_BASE_URL only (Lucas 2026-11-25). For
+   * v2 with EMBEDDING_LOCAL_BASE_URL set, a miss asks the own TEI server and
+   * EMBEDDING_BASE_URL at once and takes the first good answer. Such an answer
+   * has its own cache key, so v1 never reads a vector that TEI made.
    */
-  async embedQuery(query: string): Promise<number[]> {
+  async embedQuery(
+    query: string,
+    rankingVersion: RankingVersion = 'v1',
+  ): Promise<number[]> {
     return withSpan('hybrid.embed', async (span) => {
       const text = normalizeQueryText(query);
+      const localBaseUrl =
+        rankingVersion === 'v2' ? this.embeddingLocalBaseUrl : undefined;
       if (!this.embeddingCacheEnabled || !this.embeddingModel) {
         span.setAttribute('hybrid.embed_cache_hit', false);
-        return this.fetchEmbedding(text, span);
+        return this.fetchEmbedding(text, span, localBaseUrl);
       }
-      const key = queryEmbeddingCacheKey(this.embeddingModel, text);
+      const key = queryEmbeddingCacheKey(
+        localBaseUrl ? 'race' : 'remote',
+        this.embeddingModel,
+        text,
+      );
       let called = false;
       const packed = await this.requestCacheService.getOrSet<string>(
         key,
         async () => {
           called = true;
-          return packEmbedding(await this.fetchEmbedding(text, span));
+          return packEmbedding(
+            await this.fetchEmbedding(text, span, localBaseUrl),
+          );
         },
         this.embeddingCacheTtlMs,
       );
@@ -2164,7 +2182,7 @@ export class HybridSearchService {
       // A stored value that does not decode counts as a miss: ask the API
       // and overwrite it.
       span.setAttribute('hybrid.embed_cache_hit', false);
-      const fresh = await this.fetchEmbedding(text, span);
+      const fresh = await this.fetchEmbedding(text, span, localBaseUrl);
       await this.requestCacheService.setMany(
         { [key]: packEmbedding(fresh) },
         this.embeddingCacheTtlMs,
@@ -2207,11 +2225,15 @@ export class HybridSearchService {
   }
 
   /**
-   * One embedding call to EMBEDDING_BASE_URL. With EMBEDDING_LOCAL_BASE_URL
-   * set, it races the own TEI server against it (same model, same cache key)
-   * and records the winner on the span.
+   * One embedding call to EMBEDDING_BASE_URL. With a `localBaseUrl`, it races
+   * the own TEI server against it (same model) and records the winner on the
+   * span.
    */
-  private async fetchEmbedding(query: string, span: Span): Promise<number[]> {
+  private async fetchEmbedding(
+    query: string,
+    span: Span,
+    localBaseUrl: string | undefined,
+  ): Promise<number[]> {
     this.logger.debug(
       `Embedding query: ${describeQueryForLog(query)} using model: ${this.embeddingModel}`,
     );
@@ -2222,7 +2244,6 @@ export class HybridSearchService {
       );
     }
 
-    const localBaseUrl = this.embeddingLocalBaseUrl;
     try {
       let embedding: number[];
       if (localBaseUrl) {

@@ -114,7 +114,7 @@ describe('HybridSearchService embedding race', () => {
       const service = await build(
         value === undefined ? {} : { EMBEDDING_LOCAL_BASE_URL: value },
       );
-      expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+      expect(await service.embedQuery('food bank', 'v2')).toEqual(REMOTE_VEC);
       expect(urls()).toEqual([REMOTE_URL]);
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
         model: 'model-x',
@@ -131,7 +131,7 @@ describe('HybridSearchService embedding race', () => {
       () => new Promise((res) => (release = () => res(ok(REMOTE_VEC)))),
     );
     const service = await build(withLocal);
-    expect(await service.embedQuery('food bank')).toEqual(LOCAL_VEC);
+    expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
     expect(urls().sort()).toEqual([LOCAL_URL, REMOTE_URL].sort());
     expect(callTo(LOCAL_URL)[1].headers.Authorization).toBeUndefined();
     expect(callTo(REMOTE_URL)[1].headers.Authorization).toBe('Bearer k');
@@ -153,7 +153,7 @@ describe('HybridSearchService embedding race', () => {
       () => new Promise((res) => setTimeout(() => res(ok(LOCAL_VEC)), 15)),
     );
     const service = await build(withLocal);
-    expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+    expect(await service.embedQuery('food bank', 'v2')).toEqual(REMOTE_VEC);
     expect(winner()).toBe('remote');
     await flush();
   });
@@ -168,14 +168,14 @@ describe('HybridSearchService embedding race', () => {
       () => new Promise((res) => setTimeout(() => res(ok(REMOTE_VEC)), 10)),
     );
     const service = await build(withLocal);
-    expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+    expect(await service.embedQuery('food bank', 'v2')).toEqual(REMOTE_VEC);
     expect(winner()).toBe('remote');
   });
 
   it('OpenRouter 500: local wins', async () => {
     remote.mockImplementation(() => status(500));
     const service = await build(withLocal);
-    expect(await service.embedQuery('food bank')).toEqual(LOCAL_VEC);
+    expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
     expect(winner()).toBe('local');
     await flush();
   });
@@ -184,19 +184,141 @@ describe('HybridSearchService embedding race', () => {
     local.mockImplementation(() => status(503));
     remote.mockImplementation(() => status(500));
     const service = await build(withLocal);
-    await expect(service.embedQuery('food bank')).rejects.toBeInstanceOf(
+    await expect(service.embedQuery('food bank', 'v2')).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
     expect(winner()).toBe('none');
   });
 
-  it('cache keys stay the same with the race on', async () => {
-    const service = await build({
-      ...withLocal,
-      EMBEDDING_CACHE_ENABLED: 'true',
+  describe('v1 stays on EMBEDDING_BASE_URL (Lucas 2026-11-25)', () => {
+    const cacheOn = { ...withLocal, EMBEDDING_CACHE_ENABLED: 'true' };
+    const REMOTE_KEY = queryEmbeddingCacheKey('remote', 'model-x', 'food bank');
+    const RACE_KEY = queryEmbeddingCacheKey('race', 'model-x', 'food bank');
+    /** The remote side answers after the local side, so local wins a race. */
+    const slowRemote = () =>
+      remote.mockImplementation(
+        () => new Promise((res) => setTimeout(() => res(ok(REMOTE_VEC)), 15)),
+      );
+
+    it.each([[undefined], ['v1' as const]])(
+      'version %p makes no TEI call and sets no winner',
+      async (version) => {
+        const service = await build(withLocal);
+        expect(await service.embedQuery('food bank', version)).toEqual(
+          REMOTE_VEC,
+        );
+        expect(urls()).toEqual([REMOTE_URL]);
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+          model: 'model-x',
+          input: 'food bank',
+        });
+        expect(winner()).toBeUndefined();
+      },
+    );
+
+    it('startEmbedding passes the version on', async () => {
+      const service = await build(withLocal);
+      await service.startEmbedding('food bank');
+      expect(urls()).toEqual([REMOTE_URL]);
+      await service.startEmbedding('food bank', 'v2');
+      expect(urls().filter((u) => u === LOCAL_URL)).toHaveLength(1);
+      await flush();
     });
-    await service.embedQuery('  food   bank ');
-    await flush();
-    expect(sets).toEqual([queryEmbeddingCacheKey('model-x', 'food bank')]);
+
+    it('OpenRouter down: v1 fails as before, v2 answers from TEI', async () => {
+      remote.mockImplementation(() => status(500));
+      const service = await build(cacheOn);
+      await expect(service.embedQuery('food bank')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+      expect(local).not.toHaveBeenCalled();
+      expect(winner()).toBeUndefined();
+      expect(sets).toEqual([]);
+      expect(await service.startEmbedding('food bank')).toBeUndefined();
+      expect(local).not.toHaveBeenCalled();
+
+      expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
+      // v2's stored TEI vector does not rescue v1.
+      await expect(service.embedQuery('food bank')).rejects.toBeInstanceOf(
+        InternalServerErrorException,
+      );
+      await flush();
+    });
+
+    it('TEI down: v1 sees nothing of it', async () => {
+      local.mockImplementation(() => Promise.reject(new Error('refused')));
+      const service = await build(cacheOn);
+      expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+      expect(local).not.toHaveBeenCalled();
+    });
+
+    it('v1 never reads what v2 stored', async () => {
+      slowRemote();
+      const service = await build(cacheOn);
+      expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
+      await flush();
+      expect(sets).toEqual([RACE_KEY]);
+      expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
+      expect(sets).toEqual([RACE_KEY, REMOTE_KEY]);
+    });
+
+    it('v2 with TEI never reads what v1 stored', async () => {
+      slowRemote();
+      const service = await build(cacheOn);
+      expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
+      expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
+      expect(sets).toEqual([REMOTE_KEY, RACE_KEY]);
+      await flush();
+    });
+
+    it('concurrent v1 and v2 calls do not share one in-flight answer', async () => {
+      slowRemote();
+      const service = await build(cacheOn);
+      const [v2, v1] = await Promise.all([
+        service.embedQuery('food bank', 'v2'),
+        service.embedQuery('food bank', 'v1'),
+      ]);
+      expect(v2).toEqual(LOCAL_VEC);
+      expect(v1).toEqual(REMOTE_VEC);
+      await flush();
+    });
+
+    it('v1 does not read a vector stored under the key of older builds', async () => {
+      // Those builds stored a TEI vector under one key for v1 and v2.
+      const { packEmbedding } = jest.requireActual<
+        typeof import('./internal/embedding-codec')
+      >('./internal/embedding-codec');
+      const old = REMOTE_KEY.replace(':remote:v1:', ':v1:');
+      expect(old).not.toBe(REMOTE_KEY);
+      store.set(old, packEmbedding(LOCAL_VEC));
+      const service = await build(cacheOn);
+      expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+    });
+
+    it('a corrupt entry is refetched from the right side only', async () => {
+      slowRemote();
+      const service = await build(cacheOn);
+      store.set(REMOTE_KEY, 'garbage!!');
+      store.set(RACE_KEY, 'garbage!!');
+      expect(await service.embedQuery('food bank', 'v1')).toEqual(REMOTE_VEC);
+      expect(local).not.toHaveBeenCalled();
+      expect(await service.embedQuery('food bank', 'v2')).toEqual(LOCAL_VEC);
+      expect(sets).toEqual([REMOTE_KEY, RACE_KEY]);
+      await flush();
+    });
+
+    it.each([[undefined], ['   ']])(
+      'local address %p: v1 and v2 share the remote entry, as before',
+      async (value) => {
+        const service = await build({
+          EMBEDDING_CACHE_ENABLED: 'true',
+          ...(value !== undefined && { EMBEDDING_LOCAL_BASE_URL: value }),
+        });
+        await service.embedQuery('  food   bank ', 'v2');
+        expect(await service.embedQuery('food bank')).toEqual(REMOTE_VEC);
+        expect(sets).toEqual([REMOTE_KEY]);
+        expect(urls()).toEqual([REMOTE_URL]);
+      },
+    );
   });
 });

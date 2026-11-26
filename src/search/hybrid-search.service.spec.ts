@@ -870,7 +870,7 @@ describe('HybridSearchService', () => {
         query: pinsQuery,
         rankingVersion: 'v2',
       });
-      expect(embed).toHaveBeenCalledWith('food');
+      expect(embed).toHaveBeenCalledWith('food', 'v2');
     });
 
     it('keeps the embedding when relevance_cutoff reads the scores', async () => {
@@ -883,7 +883,7 @@ describe('HybridSearchService', () => {
         query: { ...pinsQuery, relevance_cutoff: 'on' },
       });
 
-      expect(embed).toHaveBeenCalledWith('food');
+      expect(embed).toHaveBeenCalledWith('food', undefined);
     });
   });
 
