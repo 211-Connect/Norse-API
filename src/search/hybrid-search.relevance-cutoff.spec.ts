@@ -57,12 +57,17 @@ type Plan = {
   widenedServices?: string[];
   /** ISS-2739 word-rarity lookup answers instead of failing. */
   rarityOk?: boolean;
+  /** Count calls at these min_score values reject (a rung that fails). */
+  rejectMinScores?: number[];
 };
 
 describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
   let service: HybridSearchService;
   let requests: any[];
   let plan: Plan;
+  // Ranking version of the searches under test. v1 sends the old request
+  // sequence (v1.6.0); v2 sends the combined first-cut call.
+  let version: 'v1' | 'v2' = 'v1';
   // Holds the count answers of the ladder rungs (everything above the base 20).
   let ladderGate: Promise<void> | undefined;
 
@@ -147,6 +152,11 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       //    several of these; countsByMinScore answers per threshold. Tolerance
       //    lookup because 0.3 * 100 is not exactly 30 in IEEE arithmetic.
       if (req.size === 0 && req.min_score != null) {
+        if (
+          plan.rejectMinScores?.some((m) => Math.abs(m - req.min_score) < 1e-6)
+        ) {
+          return Promise.reject(new Error('rung count failed'));
+        }
         if (ladderGate && req.min_score > 21) {
           return ladderGate.then(() => countAnswer(req));
         }
@@ -257,12 +267,14 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     const res: any = await service.searchHybrid({
       headers,
       query: { ...baseQuery, relevance_cutoff: 'on', ...overrides },
-    });
+      rankingVersion: version,
+    } as any);
     return res;
   };
 
   beforeEach(async () => {
     ladderGate = undefined;
+    version = 'v1';
     // 1,234 matched, 18 of them above a fifth of the top score.
     plan = { matched: 1234, topScore: 100, survivors: 18 };
     await build();
@@ -397,6 +409,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('fetches only the grouping key and orders strictly by score', async () => {
+      version = 'v2';
       await run({ sort: 'distance' });
 
       // The grouping key and nothing else: the probe never needs the document,
@@ -427,6 +440,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('a cut over 1000 discards the cut call docs and never fetches a kept page', async () => {
+      version = 'v2';
       plan = { matched: 27452, topScore: 100, survivors: 1500 };
       await run();
 
@@ -443,7 +457,10 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
   });
 
-  describe('the cut call counts and collects in one request', () => {
+  describe('v2: the cut call counts and collects in one request', () => {
+    beforeEach(() => {
+      version = 'v2';
+    });
     const keptCalls = () =>
       requests.filter(
         (r) =>
@@ -559,6 +576,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('reports cut_too_large rather than trimming a cut it will not enumerate', async () => {
+      version = 'v2';
       // "Found it, too big" — not "could not find it". The cut point was
       // located exactly; it is simply larger than we will put in an ids filter.
       plan = { matched: 27452, topScore: 100, survivors: 1500 };
@@ -625,6 +643,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('clamps the threshold to the top-20 score when it sits below the fraction', async () => {
+      version = 'v2';
       // 0.2 x 300 = 60, but the probe's own 20th result scores 50: cutting at
       // 60 would remove the probe's top 19..20, so the threshold clamps to 50.
       plan = { matched: 1234, topScore: 300, rank20Score: 50, survivors: 24 };
@@ -640,6 +659,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('keeps a tie group at the clamp whole', async () => {
+      version = 'v2';
       // min_score is inclusive: every document tied at the threshold goes with
       // the group — the boundary cannot split a tie.
       plan = {
@@ -657,6 +677,7 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
 
     it('does not clamp when fewer than the floor + 1 hits come back', async () => {
+      version = 'v2';
       plan = { matched: 12, topScore: 100, survivors: 5, headHits: 12 };
       const response = await run();
 
@@ -672,7 +693,10 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
     });
   });
 
-  describe('the fraction ladder', () => {
+  describe('v2: the fraction ladder', () => {
+    beforeEach(() => {
+      version = 'v2';
+    });
     it('climbs to the first rung that enumerates and stops there', async () => {
       // Washington Q7's measured distribution: 0.2 leaves 5,524 survivors,
       // each rung thins it, 0.5 finally fits under MAX_ENUMERATED_CUT.
@@ -724,7 +748,8 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
       const pending: Promise<any> = service.searchHybrid({
         headers,
         query: { ...baseQuery, relevance_cutoff: 'on' },
-      });
+        rankingVersion: 'v2',
+      } as any);
       await new Promise((r) => setTimeout(r, 20));
 
       // all four rung counts are out while none has answered
@@ -781,6 +806,230 @@ describe('HybridSearchService — relevance cutoff (ISS-1752)', () => {
         candidates_examined: 1500,
       });
     });
+  });
+
+  // v1 keeps the request sequence of tag v1.6.0: head, a size 0 count at the
+  // base threshold, ladder rungs counted one at a time, a separate kept fetch,
+  // then the service-floor widening. Only v2 uses the combined first-cut call.
+  describe('v1: the v1.6.0 request sequence', () => {
+    const label = (r: any): string => {
+      if (r._source === false) return 'head';
+      if (r.size === 0 && r.min_score != null)
+        return `count@${Math.round(r.min_score)}`;
+      if (r.size === 1001) return 'first_cut';
+      if (r.min_score != null && Array.isArray(r._source))
+        return `kept:${r.size}`;
+      if (r.size === 200 && Array.isArray(r._source)) return 'widened';
+      return 'other';
+    };
+    const sequence = () =>
+      requests.filter((r) => r.index !== 'hybrid_taxonomies').map(label);
+    const keptIdsOf = () =>
+      mainRequest().query.function_score.query.bool.filter.find(
+        (clause: any) => clause.ids,
+      )?.ids.values;
+    const ladderPlan: Plan = {
+      matched: 15700,
+      topScore: 100,
+      rank20Score: 60,
+      survivors: 5524,
+      countsByMinScore: { 20: 5524, 25: 3504, 30: 2788, 40: 1064, 50: 490 },
+    };
+
+    it('a normal cut is head, size 0 count, one kept fetch', async () => {
+      const response = await run();
+
+      expect(sequence()).toEqual(['head', 'count@20', 'kept:18', 'other']);
+      const count = requests.find((r) => label(r) === 'count@20');
+      expect(count).toMatchObject({
+        size: 0,
+        track_total_hits: true,
+        min_score: 20,
+      });
+      expect(count._source).toBeUndefined();
+      const kept = requests.find((r) => label(r) === 'kept:18');
+      expect(kept).toMatchObject({
+        size: 18,
+        track_total_hits: false,
+        min_score: 20,
+        _source: ['service_id'],
+        sort: ['_score'],
+      });
+      expect(keptIdsOf()).toHaveLength(18);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 18,
+        candidates_examined: 18,
+      });
+    });
+
+    it('a declined no_elbow fetches no document ids', async () => {
+      plan = { matched: 500, topScore: 100, survivors: 450 };
+      const response = await run();
+
+      expect(sequence()).toEqual(['head', 'count@20', 'other']);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: false,
+        reason: 'no_elbow',
+      });
+      expect(JSON.stringify(mainRequest())).not.toContain('"ids"');
+    });
+
+    it('counts the rungs in ladder order and stops at the first that fits', async () => {
+      plan = ladderPlan;
+      const full = await run();
+      expect(sequence()).toEqual([
+        'head',
+        'count@20',
+        'count@25',
+        'count@30',
+        'count@40',
+        'count@50',
+        'kept:490',
+        'other',
+      ]);
+      expect(full.relevance_cutoff).toMatchObject({ applied: true, kept: 490 });
+
+      // The second rung fits: no third rung is sent.
+      plan = {
+        matched: 20000,
+        topScore: 100,
+        rank20Score: 60,
+        survivors: 1500,
+        countsByMinScore: { 20: 1500, 25: 800, 30: 100 },
+      };
+      const early = await run();
+      expect(sequence()).toEqual([
+        'head',
+        'count@20',
+        'count@25',
+        'kept:800',
+        'other',
+      ]);
+      expect(early.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 800,
+        candidates_examined: 800,
+      });
+    });
+
+    it('sends the rungs one at a time', async () => {
+      plan = ladderPlan;
+      let release!: () => void;
+      ladderGate = new Promise<void>((r) => (release = r));
+      await build();
+      const pending: Promise<any> = service.searchHybrid({
+        headers,
+        query: { ...baseQuery, relevance_cutoff: 'on' },
+        rankingVersion: 'v1',
+      } as any);
+      await new Promise((r) => setTimeout(r, 20));
+
+      // the first rung is out and unanswered; the second is not sent
+      const rungs = requests
+        .filter((r) => r.size === 0 && r.min_score != null && r.min_score > 21)
+        .map((r) => Math.round(r.min_score));
+      expect(rungs).toEqual([25]);
+
+      release();
+      const response = await pending;
+      ladderGate = undefined;
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 490,
+      });
+    });
+
+    it('declines cut_too_large after every rung and fetches no kept page', async () => {
+      plan = {
+        matched: 27452,
+        topScore: 100,
+        survivors: 1500,
+        countsByMinScore: { 20: 1500, 25: 1400, 30: 1300, 40: 1200, 50: 1100 },
+      };
+      const response = await run();
+
+      expect(sequence()).toEqual([
+        'head',
+        'count@20',
+        'count@25',
+        'count@30',
+        'count@40',
+        'count@50',
+        'other',
+      ]);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: false,
+        reason: 'cut_too_large',
+        candidates_examined: 1500,
+      });
+    });
+
+    it('a rung that is never reached cannot fail the probe', async () => {
+      plan = {
+        matched: 20000,
+        topScore: 100,
+        rank20Score: 60,
+        survivors: 1500,
+        countsByMinScore: { 20: 1500, 25: 800, 30: 100 },
+        rejectMinScores: [30, 40, 50],
+      };
+      const response = await run();
+
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 800,
+      });
+    });
+
+    it('widens to the service floor after the kept fetch', async () => {
+      plan = {
+        matched: 900,
+        topScore: 100,
+        survivors: 8,
+        keptServices: Array.from({ length: 8 }, (_, i) => `dup-${i % 2}`),
+      };
+      const response = await run();
+
+      expect(sequence()).toEqual([
+        'head',
+        'count@20',
+        'kept:8',
+        'widened',
+        'other',
+      ]);
+      expect(response.relevance_cutoff).toMatchObject({
+        applied: true,
+        kept: 13,
+      });
+    });
+
+    it.each([
+      ['a normal cut', { matched: 1234, topScore: 100, survivors: 18 }],
+      ['a ladder cut', ladderPlan],
+      [
+        'a service-floor widening',
+        {
+          matched: 900,
+          topScore: 100,
+          survivors: 8,
+          keptServices: Array.from({ length: 8 }, (_, i) => `dup-${i % 2}`),
+        },
+      ],
+    ] as [string, Plan][])(
+      'keeps the same ids and cutoff as v2 for %s',
+      async (_name, p) => {
+        plan = p;
+        version = 'v1';
+        const v1 = await run();
+        const v1Ids = keptIdsOf();
+        version = 'v2';
+        const v2 = await run();
+
+        expect(keptIdsOf()).toEqual(v1Ids);
+        expect(v2.relevance_cutoff).toEqual(v1.relevance_cutoff);
+      },
+    );
   });
 
   // v2 scores names by word rarity. A failed rarity lookup scores flat, so a
