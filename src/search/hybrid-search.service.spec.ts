@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { createMetricsServiceMock } from 'src/metrics/testing/metrics-service.mock';
 import { ConfigService } from '@nestjs/config';
@@ -1379,10 +1380,63 @@ describe('HybridSearchService', () => {
   // the shared name directly sees that rewrite half done: services missing for
   // minutes, or listed twice.
   describe('index resolution', () => {
-    it('searches the tenant alias when it exists', async () => {
+    const v2 = { rankingVersion: 'v2' as const };
+
+    // v1 equals v1.6.0: the shared name, and no alias check at all.
+    it.each([undefined, 'v1' as const])(
+      'v1 (%s) searches the shared name, also when an alias exists',
+      async (rankingVersion) => {
+        esExistsAlias.mockResolvedValue(true);
+
+        await service.searchHybrid({
+          headers,
+          query: baseQuery,
+          rankingVersion,
+        });
+
+        expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
+        expect(esExistsAlias).not.toHaveBeenCalled();
+        const cache = (service as any).requestCacheService;
+        expect(
+          cache.getOrSet.mock.calls.filter(([key]: [string]) =>
+            key.startsWith('hybrid_alias_exists:'),
+          ),
+        ).toEqual([]);
+      },
+    );
+
+    it('v1 keeps the language suffix of the shared name', async () => {
+      await service.searchHybrid({
+        headers: { ...headers, 'accept-language': 'zh-Hans,en' },
+        query: baseQuery,
+      });
+
+      expect(capturedMainRequest.index).toBe('hybrid_search_resources_zh_hans');
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
+
+    it('v1 still answers 400 for a lang that is not a language code', async () => {
+      await expect(
+        service.searchHybrid({
+          headers: { ...headers, 'accept-language': '*' },
+          query: baseQuery,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('counts through the shared name, also when an alias exists', async () => {
       esExistsAlias.mockResolvedValue(true);
 
-      await service.searchHybrid({ headers, query: baseQuery });
+      await service.getDocumentsCount(headers, 'q', ['BH-100']);
+
+      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
+      expect(esExistsAlias).not.toHaveBeenCalled();
+    });
+
+    it('v2 searches the tenant alias when it exists', async () => {
+      esExistsAlias.mockResolvedValue(true);
+
+      await service.searchHybrid({ headers, query: baseQuery, ...v2 });
 
       expect(esExistsAlias).toHaveBeenCalledWith(
         { name: 'tenant-a-hybrid_search_resources_en' },
@@ -1393,40 +1447,21 @@ describe('HybridSearchService', () => {
       );
     });
 
-    it('counts through the tenant alias when it exists', async () => {
-      esExistsAlias.mockResolvedValue(true);
-
-      await service.getDocumentsCount(headers, 'q', ['BH-100']);
-
-      expect(esCount.mock.calls[0][0].index).toBe(
-        'tenant-a-hybrid_search_resources_en',
-      );
-    });
-
-    it('falls back to the shared name when the tenant has no alias', async () => {
-      await service.searchHybrid({ headers, query: baseQuery });
+    it('v2 falls back to the shared name when the tenant has no alias', async () => {
+      await service.searchHybrid({ headers, query: baseQuery, ...v2 });
 
       expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
     });
 
-    it('searches the shared name when the alias check fails', async () => {
+    it('v2 searches the shared name when the alias check fails', async () => {
       esExistsAlias.mockRejectedValue(new Error('security_exception'));
 
-      await service.searchHybrid({ headers, query: baseQuery });
+      await service.searchHybrid({ headers, query: baseQuery, ...v2 });
 
       expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
     });
 
-    it('counts through the shared name when the alias check fails', async () => {
-      esExistsAlias.mockRejectedValue(new Error('security_exception'));
-
-      const count = await service.getDocumentsCount(headers, 'q', ['BH-100']);
-
-      expect(count).toBe(42);
-      expect(esCount.mock.calls[0][0].index).toBe('hybrid_search_resources_en');
-    });
-
-    it('does not cache a failed alias check', async () => {
+    it('v2 does not cache a failed alias check', async () => {
       // A cache that keeps successes and, like RequestCacheService, drops failures.
       const store = new Map<string, unknown>();
       const cache = (service as any).requestCacheService;
@@ -1442,10 +1477,10 @@ describe('HybridSearchService', () => {
         .mockRejectedValueOnce(new Error('timeout'))
         .mockResolvedValueOnce(true);
 
-      await service.searchHybrid({ headers, query: baseQuery });
+      await service.searchHybrid({ headers, query: baseQuery, ...v2 });
       expect(capturedMainRequest.index).toBe('hybrid_search_resources_en');
 
-      await service.searchHybrid({ headers, query: baseQuery });
+      await service.searchHybrid({ headers, query: baseQuery, ...v2 });
       expect(capturedMainRequest.index).toBe(
         'tenant-a-hybrid_search_resources_en',
       );

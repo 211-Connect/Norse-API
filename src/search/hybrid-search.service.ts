@@ -62,7 +62,10 @@ import {
   SUNE_ENRICHMENT_FIELDS,
   stripEnrichment,
 } from './internal/enrichment-fields';
-import { resolveHybridIndex as resolveTenantHybridIndex } from './internal/hybrid-index';
+import {
+  resolveHybridIndex as resolveTenantHybridIndex,
+  sharedHybridIndex,
+} from './internal/hybrid-index';
 import {
   contentWords,
   idf,
@@ -654,8 +657,8 @@ export class HybridSearchService {
 
     return this.requestCacheService.getOrSet(cacheKey, async () => {
       try {
-        // Resolved on a cache miss only: a cached count needs no index.
-        const index = await this.resolveHybridIndex(tenantId, lang);
+        // v1 only (AI search clarify), so the shared index.
+        const index = sharedHybridIndex(lang);
         const result = await this.metrics.observeDownstream(
           'elasticsearch',
           'hybrid_documents_count',
@@ -952,7 +955,9 @@ export class HybridSearchService {
     assertQueryLength(queryStr);
     const hardScopeCodes = q.taxonomy ?? [];
 
-    const index = await this.resolveHybridIndex(tenantId, lang);
+    const index = v2
+      ? await this.resolveHybridIndex(tenantId, lang)
+      : sharedHybridIndex(lang);
     const identity: SearchIdentity = {
       tenantId,
       lang,
@@ -3574,7 +3579,7 @@ export class HybridSearchService {
     return esQuery;
   }
 
-  /** The tenant's alias when it has one, else the shared index (`resolveHybridIndex`). */
+  /** v2 only: the tenant's alias when it has one, else the shared index. */
   private resolveHybridIndex(tenantId: string, lang: string): Promise<string> {
     return resolveTenantHybridIndex(
       {

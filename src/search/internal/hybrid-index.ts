@@ -23,7 +23,15 @@ export interface HybridIndexDeps {
 }
 
 /**
- * The index name a tenant's hybrid reads use: search and count (HybridSearchService).
+ * The index all tenants share for one language. v1 reads it directly, as v1.6.0
+ * did. A lang that is not a language code throws the 400 from
+ * `languageIndexSuffix`.
+ */
+export const sharedHybridIndex = (lang: string): string =>
+  `hybrid_search_resources_${languageIndexSuffix(lang)}`;
+
+/**
+ * The index name a tenant's v2 hybrid search reads (HybridSearchService).
  *
  * Dagster keeps every tenant in one shared index per language, and publishes a
  * tenant by pointing the tenant's alias, `{tenant}-hybrid_search_resources_{lang}`,
@@ -42,7 +50,7 @@ export async function resolveHybridIndex(
   tenantId: string,
   lang: string,
 ): Promise<string> {
-  const shared = `hybrid_search_resources_${languageIndexSuffix(lang)}`;
+  const shared = sharedHybridIndex(lang);
   const alias = `${tenantId}-${shared}`;
   try {
     const exists = await deps.cache.getOrSet(
