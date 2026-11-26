@@ -22,6 +22,7 @@ import {
   RecordCrawlerTrafficResponseDto,
 } from './dto';
 import { CrawlerTrafficService } from './services/crawler-traffic.service';
+import { V1_AND_LEGACY } from '../common/versioning/api-version';
 
 /**
  * Service-to-service ingest for Norse's per-crawler counters. Guarded by
@@ -31,7 +32,7 @@ import { CrawlerTrafficService } from './services/crawler-traffic.service';
 @ApiTags('Crawler Traffic (Internal)')
 @UseGuards(InternalApiGuard)
 @ApiSecurity('x-internal-api-key')
-@Controller({ path: 'internal/crawler-traffic', version: '1' })
+@Controller({ path: 'internal/crawler-traffic', version: V1_AND_LEGACY })
 @ApiHeader({
   name: 'x-tenant-id',
   required: true,
